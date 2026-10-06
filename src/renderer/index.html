@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- frame-src is the two schemes main serves a frame from: a plugin's view, and a server's own page for
+         one of its tools. Nothing else frames, and a frame that tries to go anywhere else is refused here. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; frame-src jaspers-plugin: jaspers-app:" />
+    <title>Jaspers Terminal</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

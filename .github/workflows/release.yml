@@ -1,0 +1,219 @@
+name: Release
+
+# A version tag is a release for Windows and the Mac, built side by side, neither waiting on the other:
+# on a Windows runner, the installer, signed with Azure Artifact Signing; on a macOS runner, the DMG
+# and the zip installed Macs update from, signed with the Developer ID and notarized. Each is smoke
+# tested, then uploaded to the terminal-releases Blob store together with the feed its installed apps
+# check, and copied to the unversioned name the website's download button links to.
+#
+# To release: bump `version` in package.json, commit, tag that commit `v<version>`, push the tag. The
+# run's summary links the installer and the DMG. A failed job is re-run on its own, in place. Run by
+# hand on a branch, both jobs are a dry run: built, signed, and smoke tested, nothing uploaded.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One release at a time.
+concurrency:
+  group: release
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # The installed app compares versions, so a tag that says one thing and the package another
+      # would ship a version nobody asked for.
+      - name: The tag names the version in package.json
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in package.json."
+            exit 1
+          fi
+      - run: npm ci
+      # out/, then dist/: the installer, its blockmap for differential downloads, and latest.yml.
+      # electron-builder signs each executable with Azure Artifact Signing, whose PowerShell module
+      # reads the three variables. Nothing is published from here: the upload below is the release.
+      - run: npm run dist -- --publish never
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      # What the package tells the installed app: where the feed is, and who signs its updates.
+      - name: Read app-update.yml
+        id: app
+        run: |
+          node -e '
+            const fs = require("fs")
+            const { parse } = require("yaml")
+            const [file] = fs.globSync("dist/win*-unpacked/resources/app-update.yml")
+            const config = parse(fs.readFileSync(file, "utf8"))
+            const publisher = [].concat(config.publisherName ?? [])[0]
+            if (!config.url || !publisher) throw new Error("app-update.yml lacks url or publisherName: " + JSON.stringify(config))
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `feed=${config.url.replace(/\/$/, "")}\npublisher=${publisher}\n`)
+          '
+      # The installed app refuses an update whose signer is not that publisherName, so a mismatch
+      # here would refuse every update after this one. Fail the release instead.
+      - name: The installer is signed by the publisher the app expects
+        shell: pwsh
+        env:
+          PUBLISHER: ${{ steps.app.outputs.publisher }}
+        run: |
+          $installer = Get-Item dist/Jaspers-Terminal-Setup-*.exe
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+          if ($signature.Status -ne 'Valid') { throw "$($installer.Name) signature status: $($signature.Status)" }
+          $signer = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+          if ($signer -ne $env:PUBLISHER) { throw "Signed by '$signer', but the app expects '$env:PUBLISHER'. Fix publisherName in electron-builder.yml." }
+          Write-Output "Signed by $($signature.SignerCertificate.Subject)"
+      # The installer, installed silently into a folder of its own, has to open the app, get through
+      # setup, and put a view on the grid: each release is the first time that build runs on Windows.
+      - name: The installed app runs
+        env:
+          SMOKE_DIR: ${{ runner.temp }}/smoke
+        run: INSTALLER=$(ls dist/Jaspers-Terminal-Setup-*.exe) npm run test:packaged
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-test-windows
+          path: ${{ runner.temp }}/smoke/packaged.png
+          if-no-files-found: ignore
+      # The installer and its blockmap, then latest.yml, then the installer again as the website's
+      # download: scripts/upload-release.mjs says why in that order. It needs the Blob SDK, installed
+      # beside it.
+      - name: Upload the installer and the feed
+        if: github.ref_type == 'tag'
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.RELEASES_BLOB_TOKEN }}
+          FEED: ${{ steps.app.outputs.feed }}
+        run: |
+          mkdir "$RUNNER_TEMP/blob"
+          npm install --prefix "$RUNNER_TEMP/blob" --no-audit --no-fund @vercel/blob@2
+          cp scripts/upload-release.mjs "$RUNNER_TEMP/blob/"
+          node "$RUNNER_TEMP/blob/upload-release.mjs" "$FEED" dist/latest.yml \
+            dist/Jaspers-Terminal-Setup-*.exe dist/Jaspers-Terminal-Setup-*.exe.blockmap \
+            --download Jaspers-Terminal-Setup.exe
+          echo "**Windows installer:** $FEED/$(basename dist/Jaspers-Terminal-Setup-*.exe)" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Website download:** $FEED/Jaspers-Terminal-Setup.exe" >> "$GITHUB_STEP_SUMMARY"
+      - if: github.ref_type != 'tag'
+        run: |
+          echo "Windows, dry run: built, signed, and smoke tested. Nothing uploaded." >> "$GITHUB_STEP_SUMMARY"
+
+  mac:
+    runs-on: macos-latest
+    # Notarization takes a few minutes as a rule, but Apple's queue can hold a submission for an hour
+    # or more, and a job that gives up has to submit again.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # The same check as on Windows.
+      - name: The tag names the version in package.json
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in package.json."
+            exit 1
+          fi
+      # Without them the build still succeeds, unsigned or not notarized, so say which one is missing
+      # before building. electron-builder reads the notarization key from a file, whose path it takes
+      # from APPLE_API_KEY.
+      - name: The signing and notarization secrets are set
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Set the $name secret. docs/development.md, Releasing and updates, says what it is."
+              exit 1
+            fi
+          done
+          printf '%s\n' "$APPLE_API_KEY" > "$RUNNER_TEMP/notarization.p8"
+      - run: npm ci
+      # out/, then dist/: the app, signed with the Developer ID certificate in CSC_LINK, which
+      # electron-builder imports into a keychain of its own, then notarized, the ticket stapled to it;
+      # then the DMG and the zip made from it, their blockmaps, and latest-mac.yml. Nothing is
+      # published from here: the upload below is the release.
+      - run: npm run dist -- --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ runner.temp }}/notarization.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      # What a Mac checks before it opens a downloaded app: a Developer ID signature over all of it,
+      # and Apple's notarization ticket, which exists only for this exact build, stapled so the check
+      # needs no network.
+      - name: The app is signed with the Developer ID and notarized
+        run: |
+          app="dist/mac-arm64/Jaspers Terminal.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          signer=$(codesign -dv --verbose=2 "$app" 2>&1 | sed -n 's/^Authority=\(Developer ID Application: .*\)$/\1/p')
+          if [ -z "$signer" ]; then
+            echo "::error::The app is not signed with a Developer ID. Is CSC_LINK the certificate electron-builder.yml names?"
+            exit 1
+          fi
+          xcrun stapler validate "$app"
+          echo "Signed by $signer"
+      - name: Read app-update.yml
+        id: app
+        run: |
+          node -e '
+            const fs = require("fs")
+            const { parse } = require("yaml")
+            const config = parse(fs.readFileSync("dist/mac-arm64/Jaspers Terminal.app/Contents/Resources/app-update.yml", "utf8"))
+            if (!config.url) throw new Error("app-update.yml lacks url: " + JSON.stringify(config))
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `feed=${config.url.replace(/\/$/, "")}\n`)
+          '
+      # The app has to open, get through setup, and put a view on the grid, as on Windows.
+      - name: The app runs
+        env:
+          SMOKE_DIR: ${{ runner.temp }}/smoke
+        run: APP_BINARY="dist/mac-arm64/Jaspers Terminal.app/Contents/MacOS/Jaspers Terminal" npm run test:packaged
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-test-mac
+          path: ${{ runner.temp }}/smoke/packaged.png
+          if-no-files-found: ignore
+      # The zip, which installed Macs download, and the DMG, which people install from, with their
+      # blockmaps; then latest-mac.yml; then the DMG as the website's download. As on Windows.
+      - name: Upload the DMG, the zip, and the feed
+        if: github.ref_type == 'tag'
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.RELEASES_BLOB_TOKEN }}
+          FEED: ${{ steps.app.outputs.feed }}
+        run: |
+          mkdir "$RUNNER_TEMP/blob"
+          npm install --prefix "$RUNNER_TEMP/blob" --no-audit --no-fund @vercel/blob@2
+          cp scripts/upload-release.mjs "$RUNNER_TEMP/blob/"
+          node "$RUNNER_TEMP/blob/upload-release.mjs" "$FEED" dist/latest-mac.yml \
+            dist/Jaspers-Terminal-*-arm64.zip dist/Jaspers-Terminal-*-arm64.zip.blockmap \
+            dist/Jaspers-Terminal-*-arm64.dmg dist/Jaspers-Terminal-*-arm64.dmg.blockmap \
+            --download Jaspers-Terminal-arm64.dmg
+          echo "**Mac DMG:** $FEED/$(basename dist/Jaspers-Terminal-*-arm64.dmg)" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Website download:** $FEED/Jaspers-Terminal-arm64.dmg" >> "$GITHUB_STEP_SUMMARY"
+      - if: github.ref_type != 'tag'
+        run: |
+          echo "Mac, dry run: built, signed, notarized, and smoke tested. Nothing uploaded." >> "$GITHUB_STEP_SUMMARY"

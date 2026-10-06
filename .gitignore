@@ -1,0 +1,8 @@
+node_modules/
+out/
+dist/
+.DS_Store
+packages/sdk/dist/
+packages/sdk/LICENSE
+.claude/
+docs/superpowers/

@@ -1,0 +1,49 @@
+/*
+ * The theme the app and every plugin view are drawn in: the colors and faces a view uses to look like
+ * the app, light and dark. A view's page links this file before the plugin's own CSS, and the app's
+ * stylesheet imports it, so the two never drift apart. Which set applies is `prefers-color-scheme`,
+ * which follows Settings > Appearance in the app and in every view's frame alike.
+ *
+ * The names are a contract with plugin authors: add to them, never rename or remove one.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --jaspers-background: #ffffff;
+  --jaspers-foreground: #171717;
+  /* A quiet fill: a hovered row, a code block, a selected entry. */
+  --jaspers-muted: #f5f5f5;
+  --jaspers-muted-foreground: #737373;
+  --jaspers-border: #e5e5e5;
+  /* The strong fill, and what is written on it: a pressed tab, a chosen option. */
+  --jaspers-primary: #171717;
+  --jaspers-primary-foreground: #ffffff;
+  /* Errors and anything that deletes. */
+  --jaspers-destructive: #dc2626;
+  /* A number's sign: a gain and a loss. */
+  --jaspers-positive: #15803d;
+  --jaspers-negative: #b91c1c;
+
+  --jaspers-font-sans:
+    ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --jaspers-font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  /* Reading text: a serif on the faces macOS ships. */
+  --jaspers-font-prose: Charter, 'Iowan Old Style', Georgia, ui-serif, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --jaspers-background: #0a0a0a;
+    --jaspers-foreground: #ededed;
+    --jaspers-muted: #1a1a1a;
+    --jaspers-muted-foreground: #a3a3a3;
+    --jaspers-border: #2a2a2a;
+    --jaspers-primary: #ededed;
+    --jaspers-primary-foreground: #0a0a0a;
+    --jaspers-destructive: #f87171;
+    --jaspers-positive: #4ade80;
+    --jaspers-negative: #f87171;
+  }
+}

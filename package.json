@@ -1,0 +1,59 @@
+{
+  "name": "jaspers-terminal",
+  "version": "0.5.5",
+  "private": true,
+  "description": "An open source, extensible desktop terminal for financial research.",
+  "author": "Jaspers Inc.",
+  "license": "MIT",
+  "main": "./out/main/index.js",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "predev": "node scripts/build-host-runtime.mjs",
+    "dev": "electron-vite dev",
+    "prebuild": "node scripts/build-host-runtime.mjs",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "dist": "npm run build && electron-builder",
+    "sdk:build": "npm run build --workspace @jaspers-ai/sdk",
+    "typecheck": "tsc --noEmit",
+    "test": "node --conditions=jaspers-source --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test 'src/**/*.test.ts'",
+    "test:packaged": "node --conditions=jaspers-source --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/packaged.test.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.13.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/yauzl": "^3.4.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.16.1",
+    "electron-vite": "^5.0.0",
+    "playwright-core": "^1.63.0",
+    "prettier": "3.9.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "echarts": "^6.1.0",
+    "electron-updater": "^6.8.9",
+    "esbuild": "^0.28.2",
+    "htmlparser2": "^12.0.0",
+    "tar": "^7.5.22",
+    "yaml": "^2.9.1",
+    "yauzl": "^3.4.0",
+    "zod": "^4.6.2"
+  }
+}

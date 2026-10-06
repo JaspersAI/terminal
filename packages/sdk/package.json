@@ -1,0 +1,49 @@
+{
+  "name": "@jaspers-ai/sdk",
+  "version": "0.3.0",
+  "description": "What Jaspers Terminal plugins are written against: definePlugin, defineView, defineSource, the view hooks, and the skills helpers.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "jaspers-source": "./src/index.ts",
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./define": {
+      "jaspers-source": "./src/define.ts",
+      "types": "./dist/types/define.d.ts",
+      "default": "./dist/define.js"
+    },
+    "./skills": {
+      "jaspers-source": "./src/skills.ts",
+      "types": "./dist/types/skills.d.ts",
+      "default": "./dist/skills.js"
+    },
+    "./host": {
+      "jaspers-source": "./src/host.ts",
+      "types": "./dist/types/host.d.ts",
+      "default": "./dist/host.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "jaspers",
+    "jaspers-terminal",
+    "plugin",
+    "sdk"
+  ],
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "zod": "^4.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+node_modules/
+out/
+dist/
+packages/sdk/dist/
+packages/sdk/LICENSE
+package-lock.json
+.claude/
+**/*.md
+LICENSE

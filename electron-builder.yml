@@ -1,0 +1,73 @@
+# `npm run dist` builds out/ and then packages it here into dist/, for the platform it runs on.
+appId: com.jaspers.terminal
+productName: Jaspers Terminal
+copyright: Copyright © 2026 Jaspers Inc.
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+# esbuild is a native binary, and nothing can run from inside an asar.
+asarUnpack:
+  - node_modules/esbuild/**
+  - node_modules/@esbuild/**
+# Nothing native to rebuild against Electron.
+npmRebuild: false
+# The feed the installed app checks for a newer version: latest.yml on Windows, latest-mac.yml on a
+# Mac, and the files they name, which the release workflow uploads to the terminal-releases Blob
+# store, a folder per platform: the builder puts win or mac in place of ${os}. It writes this into the
+# package as app-update.yml, where electron-updater reads it.
+publish:
+  provider: generic
+  url: https://pb2dfczv1ag1oogd.public.blob.vercel-storage.com/${os}
+mac:
+  target:
+    - target: dir
+      arch: arm64
+    - target: dmg
+      arch: arm64
+    # What an installed app downloads to update itself; the builder writes latest-mac.yml for it.
+    - target: zip
+      arch: arm64
+  # Names without spaces, since they end up in URLs.
+  artifactName: Jaspers-Terminal-${version}-${arch}.${ext}
+  category: public.app-category.finance
+  # The logo on macOS's icon grid: an 824 px tile with continuous corners on a 1024 px canvas. The
+  # builder makes the .icns from it.
+  icon: build/icon.png
+  # Signed with the Developer ID Application certificate of team 35T5S645NF, found in the keychain
+  # (the release workflow imports it from CSC_LINK), and notarized when APPLE_API_KEY,
+  # APPLE_API_KEY_ID, and APPLE_API_ISSUER are set. The name is pinned: Squirrel.Mac installs only an
+  # update signed by the running app's team, so a build signed by anyone else would strand every
+  # install after it. Without the certificate the build is left unsigned; preview.yml signs ad-hoc
+  # instead.
+  identity: 'Jaspers, Inc. (35T5S645NF)'
+  # Notarization requires the hardened runtime, which allows the app and its helpers only what the
+  # entitlements name.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # A Pro mode command may read the user's Desktop and Downloads (src/shared/app/pro-mode.ts). macOS
+  # asks the user once, the first time one does, and shows these words with the question.
+  extendInfo:
+    NSDesktopFolderUsageDescription: Pro mode commands you approve can read files on your Desktop.
+    NSDownloadsFolderUsageDescription: Pro mode commands you approve can read files in your Downloads.
+win:
+  target:
+    - target: nsis
+      arch: x64
+  # The logo's own tile, square, as the tray shows it there; the builder makes the .ico from it.
+  icon: build/icon-win.png
+  # Signed by Azure Artifact Signing, whose PowerShell module reads AZURE_TENANT_ID, AZURE_CLIENT_ID,
+  # and AZURE_CLIENT_SECRET: the release workflow has them, and a build without them fails to sign.
+  # publisherName is the certificate's subject CN. The builder pins it in app-update.yml, and the
+  # installed app refuses an update signed by anyone else, so a name that does not match the
+  # certificate would refuse every update: the release workflow checks the installer against it.
+  azureSignOptions:
+    publisherName: 'Jaspers Inc.'
+    endpoint: https://eus.codesigning.azure.net
+    codeSigningAccountName: signing-jaspers
+    certificateProfileName: jaspers-terminal
+# One-click and per-user, the defaults: an update installs without asking for an administrator.
+nsis:
+  artifactName: Jaspers-Terminal-Setup-${version}.${ext}

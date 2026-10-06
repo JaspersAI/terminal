@@ -1,0 +1,118 @@
+name: Preview
+
+# A pull request from Ship gets a macOS build to try: the DMG goes to a public Vercel Blob store and
+# a comment on the pull request links to it. The org's plan has 2,000 minutes a month and a macOS
+# minute counts as ten while the repo is private, so only Ship's branches build. Deleting the job's
+# `if:` builds every pull request.
+#
+# It also runs by hand on a branch, main included, for a build of what is merged rather than of one
+# pull request: Actions > Preview > Run workflow, or `gh workflow run preview.yml --ref main`. There
+# is no pull request to comment on then, so the link goes in the run's summary.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# One build per pull request: a newer push cancels the older run.
+concurrency:
+  group: preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dmg:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'ship/')
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      # Empty when run by hand: the steps below name the build after the branch instead.
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      REF: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # The DMG electron-builder.yml makes, ad-hoc signed rather than with the Developer ID, whose
+      # certificate stays away from a pull request's code: only release.yml has it. Never published:
+      # the upload below is the only place it goes. electron-builder skips signing in a pull
+      # request's build unless told otherwise, and a Mac that downloads an unsigned app calls it
+      # damaged instead of offering Open Anyway. An ad-hoc signature cannot satisfy the hardened
+      # runtime, so that is off too.
+      - run: npm run dist -- --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false
+        env:
+          CSC_FOR_PULL_REQUEST: true
+      # An unsigned app is a DMG that will not open: fail here rather than on his Mac.
+      - run: codesign --verify --deep --strict 'dist/mac-arm64/Jaspers Terminal.app'
+      # The SDK rather than `vercel blob put`: the CLI wants an account login even when it has the
+      # store's token, and an account token is too much to show a pull request's code. A path per
+      # commit, so a push never overwrites an older build and no cache can serve a stale one.
+      - name: Upload the DMG
+        id: upload
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+        run: |
+          if [ -z "$BLOB_READ_WRITE_TOKEN" ]; then
+            echo "::error::Set the BLOB_READ_WRITE_TOKEN secret to the preview store's read-write token."
+            exit 1
+          fi
+          mkdir "$RUNNER_TEMP/blob"
+          npm install --prefix "$RUNNER_TEMP/blob" --no-audit --no-fund @vercel/blob@2
+          cat > "$RUNNER_TEMP/blob/upload.mjs" <<'EOF'
+          import { createReadStream } from 'node:fs'
+          import { put } from '@vercel/blob'
+
+          const [file, pathname] = process.argv.slice(2)
+          const { url } = await put(pathname, createReadStream(file), {
+            access: 'public',
+            multipart: true,
+            // The same commit run again, or its pull request reopened, writes the same path.
+            allowOverwrite: true,
+          })
+          console.log(url)
+          EOF
+          if [ -n "$PR" ]; then
+            path="pr-$PR/Jaspers-Terminal-pr$PR-${SHA:0:7}.dmg"
+          else
+            # A build of a branch as it stands: named after the branch, still a path per commit.
+            safe=$(printf '%s' "$REF" | tr -c 'A-Za-z0-9._-' '-')
+            path="$safe/Jaspers-Terminal-$safe-${SHA:0:7}.dmg"
+          fi
+          url=$(node "$RUNNER_TEMP/blob/upload.mjs" dist/*.dmg "$path")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      # One comment per pull request, edited to point at the latest build.
+      - name: Comment with the link
+        if: env.PR != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.upload.outputs.url }}
+        run: |
+          cat > "$RUNNER_TEMP/comment.md" <<EOF
+          ### Preview build
+
+          **[Download Jaspers Terminal for PR #$PR]($URL)** (macOS, Apple Silicon), built from ${SHA:0:7}.
+
+          The first time you open a build, macOS says it cannot verify the app. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+
+          This is the same app as the one you have installed: it replaces it in Applications and uses the same data.
+          EOF
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --edit-last --body-file "$RUNNER_TEMP/comment.md" ||
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
+      # Run by hand there is nobody to comment to, so the link is the run's own summary.
+      - name: Put the link in the summary
+        if: env.PR == ''
+        env:
+          URL: ${{ steps.upload.outputs.url }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ### Preview build
+
+          **[Download Jaspers Terminal]($URL)** (macOS, Apple Silicon), built from \`$REF\` at ${SHA:0:7}.
+
+          The first time you open a build, macOS says it cannot verify the app. Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+          EOF

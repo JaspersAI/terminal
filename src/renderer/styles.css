@@ -1,0 +1,102 @@
+@import 'tailwindcss';
+@import '../host-runtime/theme.css';
+
+/* The theme's colors as utilities: bg-background, text-foreground, border-border, text-positive, ...
+   Inline, so each utility reads the theme's variable, which changes with the color scheme. The faces
+   are Tailwind's own stacks, which the theme repeats for views; prose is the app's. */
+@theme inline {
+  --color-background: var(--jaspers-background);
+  --color-foreground: var(--jaspers-foreground);
+  --color-muted: var(--jaspers-muted);
+  --color-muted-foreground: var(--jaspers-muted-foreground);
+  --color-border: var(--jaspers-border);
+  --color-primary: var(--jaspers-primary);
+  --color-primary-foreground: var(--jaspers-primary-foreground);
+  --color-destructive: var(--jaspers-destructive);
+  --color-positive: var(--jaspers-positive);
+  --color-negative: var(--jaspers-negative);
+  --color-gridline: var(--app-gridline);
+  --color-warning: var(--app-warning);
+  --color-scrim: var(--app-scrim);
+
+  --font-prose: var(--jaspers-font-prose);
+}
+
+@theme {
+  /* The answer's prose, a size up from the interface. */
+  --text-prose: 17px;
+  --text-prose--line-height: 1.55;
+
+  /* How the box arrives: up a few px and in. No fill mode, so the fade-out class wins once it has landed. */
+  --animate-rise: rise 400ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* The reply fading in under its question, and the three squares that pulse in turn until it does. */
+  --animate-appear: appear 400ms ease-out;
+  @keyframes appear {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  --animate-dots: dots 1.2s ease-in-out infinite;
+  @keyframes dots {
+    0%,
+    80%,
+    100% {
+      opacity: 0.25;
+    }
+    40% {
+      opacity: 1;
+    }
+  }
+
+  /* Eye's dot while it records: a slow, calm breath, nothing that asks to be looked at. The dot wears
+     it as animate-watch with motion-reduce:animate-none, so reduced motion gets no animation at all
+     and reads the state from the dot's color and its label instead. */
+  --animate-watch: watch 4s ease-in-out infinite;
+  @keyframes watch {
+    0%,
+    100% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+}
+
+/* The app's own colors, beside the theme's: views have no use for them. */
+:root {
+  /* Cell edges on the grid: lighter than border so an element's ring still reads against them. */
+  --app-gridline: #f0f0f0;
+  /* A caution that is not an error. */
+  --app-warning: #b45309;
+  /* What a modal dims the screen behind it with. */
+  --app-scrim: rgb(23 23 23 / 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --app-gridline: #161616;
+    --app-warning: #fbbf24;
+    --app-scrim: rgb(0 0 0 / 0.6);
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}

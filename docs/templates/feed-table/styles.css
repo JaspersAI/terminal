@@ -1,0 +1,35 @@
+/* Plain CSS: there is no Tailwind inside a view's frame. Colors come from the app's theme variables,
+   each with a fallback, so the view follows light and dark with the app. */
+.ft {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ft th,
+.ft td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--jaspers-border, #e5e5e5);
+  text-align: left;
+  white-space: nowrap;
+}
+.ft th {
+  color: var(--jaspers-muted-foreground, #737373);
+  font-weight: 500;
+}
+/* Room at the right edge of the last column. */
+.ft th:last-child,
+.ft td:last-child {
+  padding-right: 36px;
+}
+.ft-number {
+  font-family: var(--jaspers-font-mono, ui-monospace, monospace);
+  text-align: right;
+}
+.ft-note {
+  margin: 12px;
+  color: var(--jaspers-muted-foreground, #737373);
+  font-size: 13px;
+}
+.ft-error {
+  color: var(--jaspers-destructive, #dc2626);
+}
