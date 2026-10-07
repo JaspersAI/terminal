@@ -17,7 +17,7 @@
 
 ---
 
-Say what you want to see, by voice or by typing. ChatGPT and Claude answer in a thread; markets happen on a screen. In Jaspers, the assistant works the screen itself: it puts the right view on the grid, fills it with market and alternative data from MCP servers, reads what every view shows, and changes it as you ask. When nothing installed has the data, its coding agent writes the plugin that does. Everything on screen comes from plugins.
+Say what you want to see, by voice or by typing. In Jaspers, the assistant works the screen itself: it puts the right view on the grid, fills it with market and alternative data from MCP servers, reads what every view shows, and changes it as you ask. When nothing installed has the data, its coding agent writes the plugin that does. Everything on screen comes from plugins.
 
 <!-- Screenshot: replace with a capture of a workspace once one is ready.
 <p align="center">
