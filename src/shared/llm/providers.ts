@@ -47,7 +47,7 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       hint: 'Models, voice, and web search with one sign-in',
       api: 'openai',
       baseUrl: JASPERS_URL,
-      model: 'z-ai/glm-5.3',
+      model: 'anthropic/claude-opus-5.5',
       tokenRequired: true,
     },
     {
@@ -99,7 +99,7 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       hint: 'Many models, one key',
       api: 'openai',
       baseUrl: 'https://openrouter.ai/api/v1',
-      model: '~anthropic/claude-opus-latest',
+      model: 'anthropic/claude-opus-5.5',
       keyUrl: 'https://openrouter.ai/keys',
       tokenPrefix: 'sk-or-',
       tokenRequired: true,

@@ -68,7 +68,7 @@ test('Amazon Bedrock is the Messages endpoint, with the region in its base URL',
 const JASPERS_LLM = {
   providerId: 'jaspers',
   baseUrl: 'https://account.jsprai.com/v1',
-  model: 'z-ai/glm-5.3',
+  model: 'anthropic/claude-opus-5.5',
   token: 'sealed-key',
 }
 
@@ -117,7 +117,12 @@ test('Jaspers is one address for both kinds, takes no key, and needs the sign-in
 test('signing in sets Jaspers up wherever the user has no provider, and leaves every chosen one alone', () => {
   const none = { llm: null, voice: null, search: null }
   assert.deepEqual(withJaspersWhereNone(none), {
-    llm: { providerId: 'jaspers', baseUrl: 'https://account.jsprai.com/v1', model: 'z-ai/glm-5.3', token: null },
+    llm: {
+      providerId: 'jaspers',
+      baseUrl: 'https://account.jsprai.com/v1',
+      model: 'anthropic/claude-opus-5.5',
+      token: null,
+    },
     voice: {
       providerId: 'jaspers',
       baseUrl: 'https://account.jsprai.com/v1',
