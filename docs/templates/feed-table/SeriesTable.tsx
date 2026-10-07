@@ -10,7 +10,6 @@ interface Observation {
 
 interface State {
   series?: string
-  limit?: number
 }
 
 // The panel's state arrives a moment after the view mounts: read it first, so the source's first
@@ -18,12 +17,12 @@ interface State {
 export function SeriesTable({ panel }: { panel: PanelRef }) {
   const state = useData(`workspaces/${panel.workspaceId}/panels/${panel.id}/state`) as State | undefined
   if (state === undefined) return <p className="ft-note">Loading…</p>
-  return <Table panel={panel} series={state.series ?? 'DGS10'} limit={state.limit ?? 30} />
+  return <Table panel={panel} series={state.series ?? 'DGS10'} />
 }
 
-function Table({ panel, series, limit }: { panel: PanelRef; series: string; limit: number }) {
+function Table({ panel, series }: { panel: PanelRef; series: string }) {
   // Runs the source again whenever the arguments change by value.
-  const { data, error } = useData('feed-table/series', { series, limit })
+  const { data, error } = useData('feed-table/series', { series })
   const rows = (data ?? []) as Observation[]
   usePublish(panel, { series, count: rows.length, latest: rows[0]?.value ?? null })
 

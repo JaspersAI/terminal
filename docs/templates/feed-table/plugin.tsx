@@ -19,14 +19,12 @@ const series = defineSource({
   hosts: [HOST],
   input: z.object({
     series: z.string().min(1).describe('The FRED series id, like DGS10.'),
-    limit: z.number().int().min(1).max(5000).default(250).describe('How many observations, newest first.'),
   }),
   async run(args, ctx) {
     const query = new URLSearchParams({
       series_id: args.series.toUpperCase(),
       file_type: 'json',
       sort_order: 'desc',
-      limit: String(args.limit),
       // Single quotes: a template literal would read this as an interpolation.
       api_key: '${secret:apikey}',
     })
@@ -52,11 +50,10 @@ export default definePlugin({
       // What the assistant sets. Every write is checked against this, whole.
       state: z.object({
         series: z.string().default('DGS10').describe('The FRED series id to show.'),
-        limit: z.number().int().min(1).max(5000).default(30),
       }),
       // What the view reports about itself, for the assistant to read.
       output: z.object({ series: z.string(), count: z.number(), latest: z.number().nullable() }),
-      instructions: 'A table of one FRED series. Set state.series to the series id and state.limit to how many rows.',
+      instructions: 'A table of one FRED series. Set state.series to the series id.',
       renders: [series],
       summarize: (state, output) => `${state.series ?? 'FRED'}: ${output.count} rows, latest ${output.latest ?? '–'}`,
     }),
