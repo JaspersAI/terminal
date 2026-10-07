@@ -41,15 +41,27 @@ You and your superagent arrange the Terminal's dynamic grid to fit your work, co
 
 **Download** Jaspers Terminal for macOS and Windows at [jsprai.com/terminal](https://jsprai.com/terminal/).
 
-## A coding agent, built in
+## Open source
 
-Jaspers connects to any data source with an API, because it writes the connection itself. Ask for the thing, not the plugin: "chart the 10-year Treasury yield from FRED", "make me a PDF of this memo", "connect me to my firm's research server at this address". The assistant first searches [Jaspers Hub](https://hub.jsprai.com) for a published plugin that does it and offers to install that. When Hub has none, it hands the request to its builder, a second model loop with the SDK documentation and four plugin templates in front of it. The builder researches the service's API, writes the data source and the views, fixes its own build errors, and tests each source with a real call. Then the chart lands on your grid.
+MIT-licensed, and complete without a Jaspers subscription. Read how any source is queried, change any plugin, or write your own with `@jaspers-ai/sdk`, a small React API: define a source, define a view. The app uses open standards instead of inventing its own: the Model Context Protocol for data and interfaces, Agent Skills for workflows. Jaspers' own market data takes no private path: Jaspers Discover and Jaspers Research are plugins on [Jaspers Hub](https://hub.jsprai.com) like any other, hosted, metered, and optional.
 
-You approve before anything runs. One question in the answer box shows the plugin's envelope, every host it may reach, every key it may ask for, every capability and npm package it uses, with the files below it, and the app holds every line the builder writes afterwards to that list: an edit that reaches a new host or adds a package fails to build until you are asked again. Keys are never typed into the chat or written into code; the plugin declares one and the app asks for it in a secure field when a source first needs it. A build that stops partway, by Stop, a provider failing, or the app closing, keeps what it wrote and carries on when you ask again. The result is an ordinary plugin folder under `~/Jaspers/plugins/`, listed in Settings > Plugins as built by the assistant, yours to edit, remove, or publish to Hub. See [Asking the assistant for a plugin](docs/asking-for-a-plugin.md).
+## You own your data
 
-## Bring your own model, or sign in with Jaspers
+Everything the Terminal fetches is kept in one SQLite file on your machine, `~/Jaspers/data/jaspers.db`, stamped with what was asked and when. Nothing expires and nothing leaves the machine. The assistant queries across all of it with SQL, so two vendors line up in one answer, and full-text search finds a phrase from last week's filing. Open the same file in sqlite3, DuckDB, or pandas while Jaspers runs. API keys are sealed in your OS keychain; plugin views run sandboxed with no network of their own, and plugin code gets only the capabilities it declares.
 
-Run on Anthropic, OpenAI, Google, Amazon Bedrock, OpenRouter, Groq, xAI, any OpenAI-compatible endpoint, or a local model through Ollama. Voice through ElevenLabs, OpenAI, Deepgram, or Cartesia. Or skip the setup: sign in with Jaspers in your browser, and the model, voice, web search, and Jaspers Discover are ready in one step. Nothing needs an account: without one, the app is yours with your own providers, and your keys, data, and history stay on your machine.
+Bring your own model: Anthropic, OpenAI, Google, Amazon Bedrock, OpenRouter, Groq, xAI, any OpenAI-compatible endpoint, or a local model through Ollama, with voice through ElevenLabs, OpenAI, Deepgram, or Cartesia. Or sign in with Jaspers in your browser, and the model, voice, web search, and Jaspers Discover are ready in one step. Either way your keys, data, and history stay on your machine.
+
+## Discover data and create connections on the fly
+
+Jaspers connects to any data source with an API, because it writes the connection itself. Ask for the thing, not the plugin: "chart the 10-year Treasury yield from FRED", "connect me to my firm's research server at this address". The assistant first searches [Jaspers Hub](https://hub.jsprai.com), where plugins and skills are found, published, and shared, and offers to install one that does it. When Hub has none, it hands the request to its coding agent, which researches the service's API, writes the data source and the views, fixes its own build errors, and tests each source with a real call. Then the chart lands on your grid.
+
+You approve before anything runs. One question shows the plugin's envelope, every host it may reach, every key it may ask for, every capability and npm package it uses, and the app holds every line written afterwards to that list. Keys are never typed into the chat or written into code. The result is an ordinary plugin folder, yours to edit, remove, or publish to Hub from Settings, where every version is reviewed before it is listed. Any MCP server plugs in the same way: add one in Settings with a URL or a command, or let a plugin declare it. See [Asking the assistant for a plugin](docs/asking-for-a-plugin.md).
+
+## Build real-time dashboards of any kind
+
+Your workspace is a grid, lettered and numbered like a spreadsheet and laid out like a trading screen, up to 100 × 100 cells and spread across every monitor you have. Built-in tables, charts (line, area, bar, scatter, pie, candlestick, heatmap), and metrics show whatever a source returns, so a server needs no view of its own; one that ships its own as an MCP App has it shown right on the grid. Every tile is a piece of work with its own agent and conversation, and they run side by side: refine one from its command line ("log scale", "add the 200-day average"), close it, and reopen it later with its views and conversation intact. The empty cells take Excel formulas, NPV and IRR included.
+
+Keep it current in plain words: "refresh this every 30 seconds", "every morning at nine, screen for software companies growing fast". Tasks belong to a workspace, survive a restart, and keep running from the menu bar when the window is closed. In Pro mode the assistant can run shell scripts you approve, confined by macOS to a folder of its own.
 
 ## Quick start
 
@@ -65,12 +77,6 @@ npm run dev
 On first launch, sign in with Jaspers, or pick a language model provider and paste its key. A voice provider is optional. The last step is the plugin directory, which is Jaspers Hub's: the featured plugins first, then the rest of Hub. Signing in with Jaspers installs Jaspers Discover and Jaspers Research by themselves; nothing else installs until you press its Install, and Settings > Plugins keeps the same list, with a search. Finish, and the assistant welcomes you in the chat, with an example of something to ask for with what you installed.
 
 See [Getting started](docs/getting-started.md) for the commands, packaging, and how to reset.
-
-## Jaspers Hub
-
-[Jaspers Hub](https://hub.jsprai.com) is where plugins and skills are found, published, and shared. The app ships no plugins: its plugin directory, in setup's last step and in Settings > Plugins, is Hub's, the plugins Hub features first, in Hub's order, then every other plugin there, most starred first. The assistant searches the same directory before it builds anything. Jaspers' own market data takes no private path: Jaspers Discover and Jaspers Research are published there as `jaspers`, marked official, and install and run like any other plugin. Discover covers about 7,100 US public companies with fundamentals, valuation, ownership, and a qualitative reading of their SEC filings; Research puts a team of analysts on one listed company in parallel and answers with verified citations. Both are hosted, metered, and optional: the Terminal is complete without them. Each of them also lives in its own repo under [JaspersAI](https://github.com/JaspersAI), and those repos are the examples to read when writing your own.
-
-Publish your own from Settings, a plugin you wrote with the SDK, one the coding agent built for you, or a skill, which the assistant can also publish when you ask. Every version waits for Hub's review and is listed once approved; Settings shows where each one stands. See [Publishing a plugin](docs/publishing-a-plugin.md).
 
 ## Documentation
 
