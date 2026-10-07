@@ -601,6 +601,35 @@ export function notPlaced(view: string): string | null {
   return 'A note is not placed by work: a status, a plan, or a finding is said in your reply, which the user reads in your tile. The views are for what the plugins show.'
 }
 
+/** What the user is offered when the orchestrator would start a loop: start it, or not. */
+export const START = 'Start'
+export const NO = 'No'
+
+/**
+ * What the user is asked before the orchestrator starts a loop, since none is started without their
+ * say: what the work is, as the loop will carry it, and which plugins do it.
+ */
+export function startQuestion(desc: string, plugins: readonly string[]): string {
+  const what = desc.slice(0, DESC_MAX)
+  return `Start a new loop for this: ${what}${plugins.length > 0 ? `, with ${plugins.join(', ')}` : ''}?`
+}
+
+/**
+ * Why no loop was started, in words for the orchestrator's model, or null when the user said Start.
+ * Only that one choice starts one: a no, a closed question, and words of the user's own all leave the
+ * request where it was, and the words are the model's to follow.
+ */
+export function notStarted(answer: string | null): string | null {
+  if (answer === START) return null
+  if (answer === null) {
+    return 'The user closed the question without answering, so nothing was started. Say what you would have started, and leave it to them.'
+  }
+  if (answer === NO) {
+    return 'The user said no to starting new work for this, so nothing was started. Answer in words, send it to work that exists, or ask them which.'
+  }
+  return `Nothing was started. In place of an answer the user wrote ${JSON.stringify(answer)}: do as it says, and call create_loop again only if it says to start.`
+}
+
 /**
  * Why a loop's agent may not change this element, in words for its model, or null when it may: the
  * tile is its own. `id` is an element's or a panel's. One that is on no grid answers null too: the

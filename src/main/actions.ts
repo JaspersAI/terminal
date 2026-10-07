@@ -768,16 +768,23 @@ export function createLoop(
   const { element } = changeGrid(
     workspaceId,
     window,
-    (grid) =>
-      placeView(grid, {
-        ...placement,
-        size: placement.size ?? FRAME_SIZE,
-        content: { kind: 'frame' },
-        loop: made.loop.id,
-      }),
+    (grid) => placeView(grid, frameRequest(placement, made.loop.id)),
     (next) => withLoops(next, workspaceId, made.loops),
   )
   return { loop: made.loop, element }
+}
+
+/** A loop's frame as it is placed: where the orchestrator said, half a window when it did not. */
+function frameRequest(placement: Placement, loop?: string) {
+  return { ...placement, size: placement.size ?? FRAME_SIZE, content: { kind: 'frame' } as const, loop }
+}
+
+/**
+ * Refuses, as `createLoop` would, a loop whose frame has no room on the window as it is now. Asked
+ * before the user is asked to start the work, so they are not asked to start what cannot be placed.
+ */
+export function roomForLoop(workspaceId: string, window: number, placement: Placement): void {
+  placeView(getGrid(workspaceId, window), frameRequest(placement))
 }
 
 /** The loop an element on the workspace's grids belongs to, when it is there and has one. */

@@ -13,11 +13,15 @@ import {
   gone,
   isTile,
   named,
+  NO,
   NO_LOOPS,
   notOwn,
   notPlaced,
+  notStarted,
   readLoops,
   retagged,
+  START,
+  startQuestion,
   statusOf,
   tilesOf,
   viewPlugin,
@@ -568,4 +572,30 @@ test('the note is no agent’s to place: its words go in the reply, and any othe
   assert.match(notPlaced('core/note')!, /^A note is not placed by work: .* said in your reply/)
   assert.equal(notPlaced('core/table'), null)
   assert.equal(notPlaced('watchlist/quotes'), null)
+})
+
+test('a loop is started only when the user says Start to what it is and which plugins; anything else starts nothing', () => {
+  assert.equal(
+    startQuestion('Screen of US small caps', ['screener-mcp', 'yfinance']),
+    'Start a new loop for this: Screen of US small caps, with screener-mcp, yfinance?',
+  )
+  assert.equal(startQuestion('Screen of US small caps', []), 'Start a new loop for this: Screen of US small caps?')
+  // The desc is shown as the loop will carry it.
+  assert.equal(startQuestion('x'.repeat(DESC_MAX + 5), []), `Start a new loop for this: ${'x'.repeat(DESC_MAX)}?`)
+  assert.equal(START, 'Start')
+  assert.equal(NO, 'No')
+  assert.equal(notStarted(START), null)
+  // A no, a closed question, and words of the user's own each say nothing was started, and what to do.
+  assert.match(
+    notStarted(NO)!,
+    /^The user said no to starting new work for this, so nothing was started\. .*ask them which\.$/,
+  )
+  assert.match(notStarted(null)!, /^The user closed the question without answering, so nothing was started\./)
+  assert.match(
+    notStarted('put it in loop_3')!,
+    /^Nothing was started\. .*"put it in loop_3".*call create_loop again only if it says to start\.$/,
+  )
+  // Not read loosely: a typed yes is words of the user's own, not Start.
+  assert.notEqual(notStarted('yes'), null)
+  assert.notEqual(notStarted('start'), null)
 })

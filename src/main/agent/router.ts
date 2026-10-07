@@ -1,7 +1,7 @@
 import { handedBy } from '../../shared/agent/typed'
-import { loopName, named, type Loop } from '../../shared/loops/loops'
+import { loopName, named, NO, notStarted, START, startQuestion, type Loop } from '../../shared/loops/loops'
 import { usableSkills } from '../../shared/skills/skills'
-import { asWindow, closeLoop, createLoop, deleteLoop, reopenLoop } from '../actions'
+import { askUser, asWindow, closeLoop, createLoop, deleteLoop, reopenLoop, roomForLoop } from '../actions'
 import { gridSizeOf } from '../grid/grid'
 import { getState, toPublic } from '../state'
 import { handOver, sendToLoop } from './loop'
@@ -9,6 +9,7 @@ import { findLoop } from './tools/loops'
 import { asAnchor, asRect, asSize, placementProperties } from './tools/grid'
 import { optional, WINDOW } from './tools/input'
 import type { Tool, ToolContext } from './tools/types'
+import { askedBy } from './utils/runs'
 
 // The orchestrator's tools that hold loops: one is started, handed a request, closed, reopened, or
 // deleted. (Reading
@@ -102,7 +103,7 @@ function createLoopTool(context: ToolContext): Tool {
     name: 'create_loop',
     handoff: true,
     description:
-      "Starts a piece of work with a tile and an agent of its own: for anything to be shown, anything long, anything the user will come back to. Give it one line saying what it is, a brief for its agent saying what to do and what done looks like, and the installed plugins and skills it will need, by id. Its agent starts at once on the user's request as they typed it, with message under it when you write one, and does the work in its tile, where every view it shows goes and where it tells the user what it found: do not also do the work yourself. A round in which you only started or sent work ends your part: the user is told what these calls answered, and you write nothing more.",
+      "Starts a piece of work with a tile and an agent of its own: for anything to be shown, anything long, anything the user will come back to. The user is asked first whether to start it, shown desc and plugins, and nothing is made unless they press Start: do not ask that yourself, and when they say no or write something else the call says so. Give it one line saying what it is, a brief for its agent saying what to do and what done looks like, and the installed plugins and skills it will need, by id. Its agent starts at once on the user's request as they typed it, with message under it when you write one, and does the work in its tile, where every view it shows goes and where it tells the user what it found: do not also do the work yourself. A round in which you only started or sent work ends your part: the user is told what these calls answered, and you write nothing more.",
     parameters: {
       type: 'object',
       properties: {
@@ -146,7 +147,25 @@ function createLoopTool(context: ToolContext): Tool {
         anchor: optional(input.anchor, asAnchor),
         rect: optional(input.rect, asRect),
       }
-      const { loop } = createLoop(workspaceId, asWindow(input.window), { desc, brief, plugins, skills }, placement)
+      const window = asWindow(input.window)
+      // A tile with no room is refused here, before the user is asked to start it.
+      roomForLoop(workspaceId, window, placement)
+      // No work goes on the grid unasked: the user is shown what it is and which plugins, and only
+      // Start starts it. A task's run is not asked, since nobody is at it and its instructions are
+      // the user's own words, written when they scheduled it. A refusal is a failed call, so the round
+      // goes back to the model to read rather than ending the run as a handoff would.
+      if (ran.task === undefined) {
+        const answer = await askUser(
+          startQuestion(desc, plugins),
+          [START, NO],
+          ran.signal,
+          undefined,
+          askedBy(ran.runId),
+        )
+        const refused = notStarted(answer)
+        if (refused !== null) throw new Error(refused)
+      }
+      const { loop } = createLoop(workspaceId, window, { desc, brief, plugins, skills }, placement)
       const written = optional(input.message, (value) => asWords(value, 'message'))
       return hand(ran, loop, written, `Started ${loopName(loop.id)}.`)
     },

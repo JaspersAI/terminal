@@ -576,6 +576,24 @@ test('the orchestrator is told a skill to write is its own to do, as a task to s
   assert.match(ROUTER_RULES, /Answer in words yourself when words are the whole answer: [^.;]*a skill to write;/)
 })
 
+test('the orchestrator is told create_loop asks the user first, and to ask which place a request belongs in when that is not certain', () => {
+  // The tool asks, so the model is told not to: one question, not two.
+  assert.match(
+    ROUTER_RULES,
+    /start one with create_loop[^.]*; it asks the user whether to start that work before anything is made, so do not ask that yourself\./,
+  )
+  assert.match(
+    ROUTER_RULES,
+    /When it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them/,
+  )
+  assert.match(ROUTER_RULES, /never settle that yourself when it could go either way/)
+  // A loop's agent routes nothing, and is told none of it.
+  for (const rules of [loopRules(true), loopRules(false)]) {
+    assert.doesNotMatch(rules, /ask the user which with ask_user/)
+    assert.doesNotMatch(rules, /whether to start that work/)
+  }
+})
+
 test('the orchestrator is told what each view is and renders, and not the state a piece of work places it with', () => {
   const state = tree(EMPTY_GRID, { 'core/note': NOTE, 'tradingview/chart': TV }, { 'screener/screen': SCREEN })
   const lines = describeInstalledToRoute(state).split('\n')
