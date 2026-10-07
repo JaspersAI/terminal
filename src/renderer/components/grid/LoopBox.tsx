@@ -16,6 +16,7 @@ import type { WaitingView } from '../../../shared/plugins/needs'
 import { errorMessage } from '../../lib/errors'
 import { useAppState } from '../../lib/state'
 import { over, without, type LiveExchange } from '../composer/live'
+import { pasteLinks } from '../composer/paste'
 import { QuestionField } from '../composer/QuestionField'
 import { PAGE } from '../composer/request'
 import { SecretField } from '../composer/SecretField'
@@ -280,6 +281,7 @@ export function LoopBox({
             value={draft}
             placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
             onChange={(event) => setDraft(event.target.value)}
+            onPaste={pasteLinks}
             className="min-w-0 flex-1 bg-transparent px-1.5 py-1 text-xs outline-none"
           />
           <button

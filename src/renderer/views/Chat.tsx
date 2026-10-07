@@ -10,6 +10,7 @@ import {
 import { usePublish } from '@jaspers-ai/sdk'
 import { askedIn } from '../../shared/agent/asking'
 import { useEarlier, useNoticeTimer } from '../components/composer/conversation'
+import { pasteLinks } from '../components/composer/paste'
 import { QuestionField } from '../components/composer/QuestionField'
 import { useRequest } from '../components/composer/request'
 import { SecretField } from '../components/composer/SecretField'
@@ -139,6 +140,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
           aria-activedescendant={menuOpen ? `slash-option-${active}` : undefined}
           aria-autocomplete="list"
           onKeyDown={menuKey}
+          onPaste={pasteLinks}
           onChange={(event) => {
             setDraft(event.target.value)
             setMenuIndex(0)
