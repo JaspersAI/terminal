@@ -66,7 +66,7 @@ See [Getting started](docs/getting-started.md) for the commands, packaging, and 
 
 The app ships no plugins. Its plugin directory, in setup's last step and in Settings > Plugins, is [Jaspers Hub](https://hub.jsprai.com)'s: the plugins Hub features first, in Hub's order, then every other plugin there, most starred first. Jaspers' own are published there as `jaspers` and marked official, with the Jaspers Screener and Jaspers Research featured. Each of them also lives in its own repo under [JaspersAI](https://github.com/JaspersAI), and those repos are the examples to read when writing your own.
 
-A plugin or a skill of your own goes to Hub from Settings, and is listed once Hub has reviewed it: see [Publishing a plugin](docs/publishing-a-plugin.md).
+A plugin or a skill of your own goes to Hub from Settings, a skill also by asking the assistant, and is listed once Hub has reviewed it: see [Publishing a plugin](docs/publishing-a-plugin.md).
 
 ## Documentation
 

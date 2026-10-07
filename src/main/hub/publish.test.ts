@@ -7,7 +7,7 @@ import { after, test } from 'node:test'
 import * as tar from 'tar'
 import { RefusedError } from '../jaspers/session.ts'
 import { HubError } from './hub.ts'
-import { NoHandleError, packFolder, publish, type PublishDeps } from './publish.ts'
+import { NoHandleError, packFolder, preparePublish, publish, sendPublish, type PublishDeps } from './publish.ts'
 
 // Publishing to Hub with Hub stood in for: what is packed, who may publish what, and what Hub's
 // refusals are said as.
@@ -234,5 +234,30 @@ test("Hub's refusals are said in words that say what to do", async () => {
     {
       message: 'Hub answered 503: The hub is busy with other uploads. Try again in a minute.',
     },
+  )
+})
+
+// The assistant asks the user with what will be sent in front of them, so what can refuse is read
+// first, and the sending is a step of its own.
+test('what will be sent is read first, without sending, and sent on its own afterwards', async () => {
+  const given = deps({ origin: 'local', dir: folder(SKILL) })
+  const prepared = await preparePublish({ kind: 'skill', id: 'my-folder' }, given)
+  assert.equal(prepared.name, 'brief')
+  assert.equal(prepared.version, '1.0.0')
+  assert.equal(prepared.handle, 'acme')
+  assert.equal(given.sent.length, 0)
+  assert.deepEqual(await sendPublish(prepared, given), PUBLISHED)
+  assert.deepEqual(await entries(given.sent[0]!), ['brief/SKILL.md'])
+  // and what refuses, refuses here, before anything is packed
+  await assert.rejects(
+    preparePublish({ kind: 'skill', id: 'brief' }, deps({ origin: 'installed', dir: folder(SKILL) })),
+    { message: 'brief was installed from elsewhere: only a skill of your own is published to Hub.' },
+  )
+  await assert.rejects(
+    preparePublish(
+      { kind: 'skill', id: 'my-folder' },
+      deps({ origin: 'local', dir: folder(SKILL) }, { me: async () => ({ handle: null, items: [] }) }),
+    ),
+    NoHandleError,
   )
 })

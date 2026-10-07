@@ -2,11 +2,10 @@ import { ipcMain } from 'electron'
 import { HANDLE_RULE, isHandle, type PublishAnswer } from '../../shared/hub/hub'
 import { isPluginId } from '../../shared/plugins/id'
 import { isSkillName } from '../../shared/skills/skills'
-import { asAccount, signedIn } from '../jaspers/jaspers'
-import { skillDir } from '../skills/skills'
-import { getState } from '../state'
-import { HubError, claimHandle, featuredPlugins, hubMe, pluginPage, publishArchive, searchPlugins } from './hub'
-import { NoHandleError, publish, type PublishDeps, type PublishRequest } from './publish'
+import { asAccount } from '../jaspers/jaspers'
+import { HubError, claimHandle, featuredPlugins, hubMe, pluginPage, searchPlugins } from './hub'
+import { NoHandleError, publish, type PublishRequest } from './publish'
+import { publishing } from './publishing'
 
 // The renderer's side of Hub: the directory's listings, what Hub holds of the signed-in user, a
 // handle claimed, and a plugin or skill of the user's own published. What the renderer sends is
@@ -15,22 +14,6 @@ import { NoHandleError, publish, type PublishDeps, type PublishRequest } from '.
 
 /** Hub reads a search of at most this many characters. */
 const QUERY_MAX = 200
-
-/** Publishing with the app's own: the sign-in, the plugins and skills in the tree, and Hub as the account. */
-const publishing: PublishDeps = {
-  signedIn,
-  find: (kind, id) => {
-    if (kind === 'plugin') {
-      const plugin = getState().plugins[id]
-      return plugin ? { origin: plugin.origin, dir: plugin.dir } : null
-    }
-    const skill = getState().skills[id]
-    const dir = skillDir(id)
-    return skill && dir ? { origin: skill.origin, dir } : null
-  },
-  me: () => hubMe(asAccount),
-  publishArchive: (body) => publishArchive(body, asAccount),
-}
 
 export function registerHubIpc(): void {
   ipcMain.handle('hub:featured', () => featuredPlugins())

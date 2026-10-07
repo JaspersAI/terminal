@@ -173,8 +173,8 @@ test('instructions that name a tool a run does not have are caught when the task
   assert.equal(missingInRun('Note the preask_userland figures.'), undefined)
 })
 
-test('tasks cannot install plugins or skills or add connections', () => {
-  for (const tool of ['install_plugin', 'install_skill', 'add_connection']) {
+test('tasks cannot install plugins or skills, add connections, or publish a skill', () => {
+  for (const tool of ['install_plugin', 'install_skill', 'add_connection', 'publish_skill']) {
     assert.throws(() => checkTaskInput({ ...task(), call: { tool, input: {} } }, { toolExists: () => true }), {
       message: `A task cannot call ${tool}.`,
     })

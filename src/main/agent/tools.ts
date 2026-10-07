@@ -8,6 +8,7 @@ import { loopsTools } from './tools/loops'
 import { gridTools } from './tools/grid'
 import { installTools } from './tools/installs'
 import { memoryTools } from './tools/memory'
+import { publishTools } from './tools/publish'
 import { shellTools } from './tools/shell'
 import { skillTools } from './tools/skills'
 import { stateTools } from './tools/state'
@@ -16,7 +17,14 @@ import type { Tool, ToolContext } from './tools/types'
 import { webTools } from './tools/web'
 
 /** The fixed tools, composed by responsibility. Dynamic catalogs are read again each round. */
-const TOOLS: Tool[] = [...cellsTools, ...memoryTools, ...conversationTools, ...stateTools, ...installTools]
+const TOOLS: Tool[] = [
+  ...cellsTools,
+  ...memoryTools,
+  ...conversationTools,
+  ...stateTools,
+  ...installTools,
+  ...publishTools,
+]
 
 /**
  * Rebuilt each round because plugins, connections, and skills can change between calls, because the

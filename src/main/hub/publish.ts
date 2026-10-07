@@ -39,7 +39,21 @@ export class NoHandleError extends Error {
 /** What is the user's own: a plugin in their folder or one the assistant built for them, and a skill in their folder. */
 const OWN: Record<PublishRequest['kind'], string[]> = { plugin: ['local', 'built'], skill: ['local'] }
 
-export async function publish({ kind, id }: PublishRequest, deps: PublishDeps): Promise<HubPublished> {
+/** What is sent, read before anything is: the item as Hub reads it, the handle it goes under, and its folder. */
+export interface PreparedPublish extends PublishRequest {
+  name: string
+  version: string
+  handle: string
+  dir: string
+  /** A plugin's packages listed only for development, which stay out of what is sent. */
+  devOnly: string[]
+}
+
+/**
+ * Everything that can refuse, before anything is packed: the item is the user's own, the sign-in,
+ * what Hub will read of it, and the handle. The assistant asks the user with this in front of them.
+ */
+export async function preparePublish({ kind, id }: PublishRequest, deps: PublishDeps): Promise<PreparedPublish> {
   const found = deps.find(kind, id)
   if (!found) throw new Error(`There is no ${kind} ${id} here.`)
   if (!OWN[kind].includes(found.origin)) {
@@ -48,13 +62,26 @@ export async function publish({ kind, id }: PublishRequest, deps: PublishDeps): 
   }
   if (!deps.signedIn()) throw new Error('Sign in with Jaspers to publish to Hub.')
   const { name, version, devOnly } = await readPackage(kind, found.dir, id)
-  if ((await deps.me()).handle === null) throw new NoHandleError()
-  const body = await packFolder(found.dir, name, devOnly)
+  const { handle } = await deps.me()
+  if (handle === null) throw new NoHandleError()
+  return { kind, id, name, version, handle, dir: found.dir, devOnly }
+}
+
+/** Packs what was prepared and sends it as the account. Hub's refusals are said in words that say what to do. */
+export async function sendPublish(
+  { kind, name, version, dir, devOnly }: PreparedPublish,
+  deps: PublishDeps,
+): Promise<HubPublished> {
+  const body = await packFolder(dir, name, devOnly)
   try {
     return await deps.publishArchive(body)
   } catch (err) {
     throw refusal(err, kind, name, version)
   }
+}
+
+export async function publish(request: PublishRequest, deps: PublishDeps): Promise<HubPublished> {
+  return sendPublish(await preparePublish(request, deps), deps)
 }
 
 /**

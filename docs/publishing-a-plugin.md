@@ -2,7 +2,7 @@
 
 ## To Jaspers Hub
 
-A plugin of your own, one in `~/Jaspers/plugins` that you wrote or the assistant built for you, publishes from its page in Settings > Plugins: **Publish to Hub**. A skill of your own publishes the same way from its page in Settings > Skills. Nothing installed from elsewhere is offered. Publishing needs the sign-in with Jaspers; without it the button signs you in.
+A plugin of your own, one in `~/Jaspers/plugins` that you wrote or the assistant built for you, publishes from its page in Settings > Plugins: **Publish to Hub**. A skill of your own publishes the same way from its page in Settings > Skills, or by asking the assistant: it shows the skill's name, version, and where it will be listed, and sends it when you press **Publish**. Nothing installed from elsewhere is offered. Publishing needs the sign-in with Jaspers; without it the button signs you in.
 
 The first time, Hub has no handle for you, and the app asks for one: lower-case letters, digits, and hyphens, starting with a letter or a digit, at most 39. It is claimed once, and what you publish is listed under it, at `https://hub.jsprai.com/<handle>/<name>`. A handle someone has, or one Hub keeps back, is refused in Hub's words.
 

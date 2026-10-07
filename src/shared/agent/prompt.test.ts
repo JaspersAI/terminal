@@ -572,8 +572,11 @@ test('the orchestrator is told to route, by the tools that hold work, and of no 
   assert.match(ROUTER_RULES, /never to a second piece/)
 })
 
-test('the orchestrator is told a skill to write is its own to do, as a task to schedule is, and not a piece of work', () => {
-  assert.match(ROUTER_RULES, /Answer in words yourself when words are the whole answer: [^.;]*a skill to write;/)
+test('the orchestrator is told a skill to write or publish is its own to do, as a task to schedule is, and not a piece of work', () => {
+  assert.match(
+    ROUTER_RULES,
+    /Answer in words yourself when words are the whole answer: [^.;]*a skill to write or publish;/,
+  )
 })
 
 test('the orchestrator is told create_loop asks the user first, and to ask which place a request belongs in when that is not certain', () => {

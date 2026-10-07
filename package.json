@@ -1,6 +1,6 @@
 {
   "name": "jaspers-terminal",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "private": true,
   "description": "An open source, extensible desktop terminal for financial research.",
   "author": "Jaspers Inc.",
