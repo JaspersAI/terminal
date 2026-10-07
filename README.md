@@ -49,6 +49,10 @@ Jaspers connects to any data source with an API, because it writes the connectio
 
 You approve before anything runs. One question in the answer box shows the plugin's envelope, every host it may reach, every key it may ask for, every capability and npm package it uses, with the files below it, and the app holds every line the builder writes afterwards to that list: an edit that reaches a new host or adds a package fails to build until you are asked again. Keys are never typed into the chat or written into code; the plugin declares one and the app asks for it in a secure field when a source first needs it. A build that stops partway, by Stop, a provider failing, or the app closing, keeps what it wrote and carries on when you ask again. The result is an ordinary plugin folder under `~/Jaspers/plugins/`, listed in Settings > Plugins as built by the assistant, yours to edit, remove, or publish to Hub. See [Asking the assistant for a plugin](docs/asking-for-a-plugin.md).
 
+## Bring your own model, or sign in with Jaspers
+
+Run on Anthropic, OpenAI, Google, Amazon Bedrock, OpenRouter, Groq, xAI, any OpenAI-compatible endpoint, or a local model through Ollama. Voice through ElevenLabs, OpenAI, Deepgram, or Cartesia. Or skip the setup: sign in with Jaspers in your browser, and the model, voice, web search, and Jaspers Discover are ready in one step. Nothing needs an account: without one, the app is yours with your own providers, and your keys, data, and history stay on your machine.
+
 ## Quick start
 
 Requires [Node 24](.nvmrc) (`nvm use`). Developed on macOS.
@@ -60,13 +64,13 @@ npm install
 npm run dev
 ```
 
-On first launch, sign in with Jaspers, or pick a language model provider and paste its key. A voice provider is optional. The last step is the plugin directory, which is Jaspers Hub's: the featured plugins first, then the rest of Hub. Signing in with Jaspers installs the Jaspers Screener and Jaspers Research by themselves; nothing else installs until you press its Install, and Settings > Plugins keeps the same list, with a search. Finish, and the assistant welcomes you in the chat, with an example of something to ask for with what you installed.
+On first launch, sign in with Jaspers, or pick a language model provider and paste its key. A voice provider is optional. The last step is the plugin directory, which is Jaspers Hub's: the featured plugins first, then the rest of Hub. Signing in with Jaspers installs Jaspers Discover and Jaspers Research by themselves; nothing else installs until you press its Install, and Settings > Plugins keeps the same list, with a search. Finish, and the assistant welcomes you in the chat, with an example of something to ask for with what you installed.
 
 See [Getting started](docs/getting-started.md) for the commands, packaging, and how to reset.
 
 ## Jaspers Hub
 
-[Jaspers Hub](https://hub.jsprai.com) is where plugins and skills are found, published, and shared. The app ships no plugins: its plugin directory, in setup's last step and in Settings > Plugins, is Hub's, the plugins Hub features first, in Hub's order, then every other plugin there, most starred first. The assistant searches the same directory before it builds anything. Jaspers' own market data takes no private path: the Jaspers Screener and Jaspers Research are published there as `jaspers`, marked official, and install and run like any other plugin. Each of them also lives in its own repo under [JaspersAI](https://github.com/JaspersAI), and those repos are the examples to read when writing your own.
+[Jaspers Hub](https://hub.jsprai.com) is where plugins and skills are found, published, and shared. The app ships no plugins: its plugin directory, in setup's last step and in Settings > Plugins, is Hub's, the plugins Hub features first, in Hub's order, then every other plugin there, most starred first. The assistant searches the same directory before it builds anything. Jaspers' own market data takes no private path: Jaspers Discover and Jaspers Research are published there as `jaspers`, marked official, and install and run like any other plugin. Discover covers about 7,100 US public companies with fundamentals, valuation, ownership, and a qualitative reading of their SEC filings; Research puts a team of analysts on one listed company in parallel and answers with verified citations. Both are hosted, metered, and optional: the Terminal is complete without them. Each of them also lives in its own repo under [JaspersAI](https://github.com/JaspersAI), and those repos are the examples to read when writing your own.
 
 Publish your own from Settings, a plugin you wrote with the SDK, one the coding agent built for you, or a skill, which the assistant can also publish when you ask. Every version waits for Hub's review and is listed once approved; Settings shows where each one stands. See [Publishing a plugin](docs/publishing-a-plugin.md).
 
