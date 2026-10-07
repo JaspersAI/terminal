@@ -333,6 +333,18 @@ export function placeView(
 }
 
 /**
+ * Puts a new frame on a window's own cells, given the whole grid. What is inside another frame is laid
+ * out on that frame's cells, not the window's, so it takes none of them: a frame's tile at full size
+ * leaves the window's other cells free.
+ */
+export function placeFrame(
+  grid: Grid,
+  request: PlaceRequest,
+): { grid: Grid; element: GridElement; panel: Panel; resolved: Resolved } {
+  return placeView(layoutOf(grid), request)
+}
+
+/**
  * Puts a new panel on the grid in a frame of its own: the frame on the window's cells, where the
  * request says, and the panel inside it, taking the whole of it. It takes the whole grid, since it
  * changes two layouts of it at once. How the frame's place came out is what is reported.
@@ -343,7 +355,7 @@ export function placeFramed(
 ): { grid: Grid; frame: GridElement; element: GridElement; panel: Panel; resolved: Resolved } {
   const { content, state, loop, ...where } = request
   const tag = loop === undefined ? {} : { loop }
-  const framed = placeView(layoutOf(grid), { ...where, content: { kind: 'frame' }, ...tag })
+  const framed = placeFrame(grid, { ...where, content: { kind: 'frame' }, ...tag })
   const around = withLayout(grid, undefined, framed.grid)
   const held = placeView(layoutOf(around, framed.element.id), { content, state, size: 'full', ...tag })
   return {

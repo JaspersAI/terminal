@@ -35,6 +35,7 @@ import {
   publishText,
   rangeName,
   refreshPanel,
+  placeFrame,
   placeFramed,
   placeView,
   removeElement,
@@ -1180,6 +1181,27 @@ test('the map of a window says what each frame holds, and the map of a frame is 
     'e3 [0,8 16×4] view core/chart: "core/chart"  ← focused',
     'free: none',
   ])
+})
+
+test("a new frame goes on the window's free cells, though a frame there holds a view taking all of its own", () => {
+  // One loop on the left half, its view filling the frame: on the frame's cells that is the whole grid.
+  const one = placeFramed(EMPTY_GRID, { content: view('core/table'), size: 'half', anchor: 'left', loop: 'f1' }).grid
+  assert.deepEqual(
+    one.elements.map((e) => [e.id, e.parent, e.rect]),
+    [
+      ['e1', undefined, r(0, 0, 8, 12)],
+      ['e2', 'e1', r(0, 0, 16, 12)],
+    ],
+  )
+  // The right half is free, at its full size, by its cells, and wherever the grid picks.
+  for (const where of [{ rect: r(8, 0, 8, 12) }, { rect: r(9, 0, 7, 10) }, { size: 'half' as const }, {}]) {
+    const placed = placeFrame(one, { ...where, content: { kind: 'frame' } })
+    assert.equal(placed.resolved, 'exact')
+    assert.ok(placed.element.rect.x >= 8, `${JSON.stringify(where)} landed on loop_1`)
+  }
+  // Only the window's own cells count: with the right half taken too, there is no room.
+  const both = placeFramed(one, { content: view('core/note'), size: 'half', anchor: 'right', loop: 'f3' }).grid
+  assert.throws(() => placeFrame(both, { content: { kind: 'frame' } }), /grid_full/)
 })
 
 test('a panel placed in a frame of its own is inside it, taking the whole of it, and the frame is where the placement says', () => {
