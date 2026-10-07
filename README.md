@@ -19,8 +19,6 @@
 
 Say what you want to see, by voice or by typing. ChatGPT and Claude answer in a thread; markets happen on a screen. In Jaspers, the assistant works the screen itself: it puts the right view on the grid, fills it with market and alternative data from MCP servers, reads what every view shows, and changes it as you ask. When nothing installed has the data, its coding agent writes the plugin that does. Everything on screen comes from plugins.
 
-> **Early stage.** Features land one at a time.
-
 <!-- Screenshot: replace with a capture of a workspace once one is ready.
 <p align="center">
   <img src="docs/assets/screenshot.png" alt="A Jaspers Terminal workspace" width="800">
@@ -90,12 +88,6 @@ Publish your own from Settings, a plugin you wrote with the SDK, one the coding 
 | [Roadmap](docs/roadmap.md) | What would matter most next |
 
 Contributor commands and architectural rules are in [CLAUDE.md](CLAUDE.md); implementation constraints are in [Development](docs/development.md).
-
-## Principles
-
-- One feature at a time. Scope follows use, not a spec.
-- Add nothing ahead of need. Small, readable code over abstraction.
-- Extension APIs come from real extension points, not guesses.
 
 ## License
 
