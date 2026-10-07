@@ -1,6 +1,6 @@
 # Getting started
 
-Jaspers Terminal runs from source today. There is no public download yet: package your own copy (see [Packaging](#packaging) below), or, on Windows, install the build the release workflow makes.
+Download Jaspers Terminal for macOS or Windows at [jsprai.com/terminal](https://jsprai.com/terminal/), or run it from source as below and package your own copy (see [Packaging](#packaging)).
 
 ## Requirements
 

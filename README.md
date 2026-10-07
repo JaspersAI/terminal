@@ -5,19 +5,19 @@
 <h1 align="center">Jaspers Terminal</h1>
 
 <p align="center">
-  An open source, extensible desktop terminal for financial research.
+  The agentic terminal for public markets.
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-black"></a>
   <a href="https://www.npmjs.com/package/@jaspers-ai/sdk"><img alt="@jaspers-ai/sdk on npm" src="https://img.shields.io/npm/v/@jaspers-ai/sdk?label=%40jaspers-ai%2Fsdk&color=black"></a>
   <img alt="Node 24" src="https://img.shields.io/badge/node-24-black">
-  <img alt="macOS" src="https://img.shields.io/badge/platform-macOS-black">
+  <img alt="macOS and Windows" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Windows-black">
 </p>
 
 ---
 
-Ask for what you want to see, by voice or by typing. An AI assistant lays views out on a grid, fills them with data from MCP servers, and keeps adjusting them as you refine the request. Everything on screen comes from plugins.
+Say what you want to see, by voice or by typing. ChatGPT and Claude answer in a thread; markets happen on a screen. In Jaspers, the assistant works the screen itself: it puts the right view on the grid, fills it with market and alternative data from MCP servers, reads what every view shows, and changes it as you ask. When nothing installed has the data, its coding agent writes the plugin that does. Everything on screen comes from plugins.
 
 > **Early stage.** Features land one at a time.
 
@@ -43,6 +43,12 @@ You and your superagent arrange the Terminal's dynamic grid to fit your work, co
 
 **Download** Jaspers Terminal for macOS and Windows at [jsprai.com/terminal](https://jsprai.com/terminal/).
 
+## A coding agent, built in
+
+Jaspers connects to any data source with an API, because it writes the connection itself. Ask for the thing, not the plugin: "chart the 10-year Treasury yield from FRED", "make me a PDF of this memo", "connect me to my firm's research server at this address". The assistant first searches [Jaspers Hub](https://hub.jsprai.com) for a published plugin that does it and offers to install that. When Hub has none, it hands the request to its builder, a second model loop with the SDK documentation and four plugin templates in front of it. The builder researches the service's API, writes the data source and the views, fixes its own build errors, and tests each source with a real call. Then the chart lands on your grid.
+
+You approve before anything runs. One question in the answer box shows the plugin's envelope, every host it may reach, every key it may ask for, every capability and npm package it uses, with the files below it, and the app holds every line the builder writes afterwards to that list: an edit that reaches a new host or adds a package fails to build until you are asked again. Keys are never typed into the chat or written into code; the plugin declares one and the app asks for it in a secure field when a source first needs it. A build that stops partway, by Stop, a provider failing, or the app closing, keeps what it wrote and carries on when you ask again. The result is an ordinary plugin folder under `~/Jaspers/plugins/`, listed in Settings > Plugins as built by the assistant, yours to edit, remove, or publish to Hub. See [Asking the assistant for a plugin](docs/asking-for-a-plugin.md).
+
 ## Quick start
 
 Requires [Node 24](.nvmrc) (`nvm use`). Developed on macOS.
@@ -58,18 +64,19 @@ On first launch, sign in with Jaspers, or pick a language model provider and pas
 
 See [Getting started](docs/getting-started.md) for the commands, packaging, and how to reset.
 
-## Plugins on Jaspers Hub
+## Jaspers Hub
 
-The app ships no plugins. Its plugin directory, in setup's last step and in Settings > Plugins, is [Jaspers Hub](https://hub.jsprai.com)'s: the plugins Hub features first, in Hub's order, then every other plugin there, most starred first. Jaspers' own are published there as `jaspers` and marked official, with the Jaspers Screener and Jaspers Research featured. Each of them also lives in its own repo under [JaspersAI](https://github.com/JaspersAI), and those repos are the examples to read when writing your own.
+[Jaspers Hub](https://hub.jsprai.com) is where plugins and skills are found, published, and shared. The app ships no plugins: its plugin directory, in setup's last step and in Settings > Plugins, is Hub's, the plugins Hub features first, in Hub's order, then every other plugin there, most starred first. The assistant searches the same directory before it builds anything. Jaspers' own market data takes no private path: the Jaspers Screener and Jaspers Research are published there as `jaspers`, marked official, and install and run like any other plugin. Each of them also lives in its own repo under [JaspersAI](https://github.com/JaspersAI), and those repos are the examples to read when writing your own.
 
-A plugin or a skill of your own goes to Hub from Settings, a skill also by asking the assistant, and is listed once Hub has reviewed it: see [Publishing a plugin](docs/publishing-a-plugin.md).
+Publish your own from Settings, a plugin you wrote with the SDK, one the coding agent built for you, or a skill, which the assistant can also publish when you ask. Every version waits for Hub's review and is listed once approved; Settings shows where each one stands. See [Publishing a plugin](docs/publishing-a-plugin.md).
 
 ## Documentation
 
 | | |
 | --- | --- |
-| [Getting started](docs/getting-started.md) | Run it, first launch, commands, packaging a macOS app |
+| [Getting started](docs/getting-started.md) | Run it, first launch, commands, packaging the app |
 | [How it works](docs/architecture.md) | The processes, the state tree, how a plugin is wired in, project layout |
+| [Asking the assistant for a plugin](docs/asking-for-a-plugin.md) | The coding agent, the one question it asks, and the envelope a built plugin is held to |
 | [Writing a plugin](docs/writing-a-plugin.md) | Build a watchlist plugin from scratch: an MCP server, a source, and a view |
 | [SDK reference](docs/sdk-reference.md) | `definePlugin`, `defineSource`, `defineView`, `ctx`, the hooks, connections and secrets |
 | [Installing plugins](docs/installing-plugins.md) | From Jaspers Hub, a GitHub release, a link, or a file, and what to trust |
