@@ -5,6 +5,7 @@ import {
   NO_ROOM_TO_RESTORE,
   layoutOf,
   panelOf,
+  placeFrame,
   placeFramed,
   placeView,
   publishOutput,
@@ -784,7 +785,7 @@ function frameRequest(placement: Placement, loop?: string) {
  * before the user is asked to start the work, so they are not asked to start what cannot be placed.
  */
 export function roomForLoop(workspaceId: string, window: number, placement: Placement): void {
-  placeView(getGrid(workspaceId, window), frameRequest(placement))
+  placeFrame(getGrid(workspaceId, window), frameRequest(placement))
 }
 
 /** The loop an element on the workspace's grids belongs to, when it is there and has one. */
