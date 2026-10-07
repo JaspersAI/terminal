@@ -157,7 +157,7 @@ CI (`.github/workflows/ci.yml`) runs the format check, typecheck, and tests on e
 To release, in this order:
 
 1. Bump `version` in package.json and commit. The workflow refuses a tag that does not equal `v` + that version.
-2. `git tag v<version>` on that commit, then `git push origin main v<version>`. The tag push is what triggers `release.yml`; a push of main alone releases nothing.
+2. `git tag v<version>` on that commit, then `git push origin main v<version>`. The tag push is what triggers `release.yml`; a push of main alone releases nothing. Two repository rulesets guard this: only repository admins can create, move, or delete a `v*` tag, and `main` takes changes from anyone else only through a pull request whose `check` job passed. Admins bypass both, which is what lets this direct push work.
 3. Follow the run under Actions > Release. Windows takes about five minutes: Electron and NSIS downloads, the signing module install, four signatures, the upload. The Mac takes as long plus notarization, a few minutes as a rule and at times much longer. The run's summary holds the links, `https://pb2dfczv1ag1oogd.public.blob.vercel-storage.com/win/Jaspers-Terminal-Setup-<version>.exe` and `https://pb2dfczv1ag1oogd.public.blob.vercel-storage.com/mac/Jaspers-Terminal-<version>-arm64.dmg`.
 4. A failed run is re-run in place with `gh run rerun <run id> --failed` once the cause is fixed, which runs the failed job again and leaves the platform that shipped alone. Never delete and re-push the tag: secrets are read fresh on every run, and a build never ships until its last step, so nothing partial is out there.
 
