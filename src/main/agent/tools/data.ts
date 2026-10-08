@@ -1,4 +1,5 @@
 import { untilAborted } from '../../../shared/abort'
+import { readInput } from '../../../shared/data/arguments'
 import { asTable } from '../../../shared/data/datasets'
 import { QUERY_LIMIT_DEFAULT, QUERY_LIMIT_MAX } from '../../../shared/data/store'
 import { sourceParameters } from '../../../shared/data/tool-parameters'
@@ -92,7 +93,7 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
       async run(input, { workspaceId, signal, unread, loop }) {
         const id = asPathString(input.source).trim()
         const { plugin, connection } = find(id)
-        const args = input.input === undefined ? {} : parseObject(input.input)
+        const args = readInput(input.input, id)
         // A plugin's own code fails without a key it declares, where a connection's call asks for its
         // own. The wait ends with the run: no source is run for a run stopped while it was asking.
         if (ask && plugin !== null && connection === null) await untilAborted(ask(plugin), signal)
@@ -160,16 +161,4 @@ function nearest(wanted: string, known: string[]): string[] {
       )
     })
     .slice(0, 5)
-}
-
-function parseObject(value: unknown): Record<string, unknown> {
-  if (typeof value === 'string') {
-    try {
-      const parsed: unknown = JSON.parse(value)
-      return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {}
-    } catch {
-      return {}
-    }
-  }
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
 }

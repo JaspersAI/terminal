@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { z } from 'zod'
-import { dropEmptyOptionals, parseArguments } from './arguments.ts'
+import { dropEmptyOptionals, parseArguments, readInput } from './arguments.ts'
 
 const POST = z.object({ room: z.string(), text: z.string(), to: z.array(z.string()), last: z.number().optional() })
 
@@ -104,4 +104,25 @@ test('an empty string a schema lists, null it admits, a required property, and a
     },
   )
   assert.deepEqual(dropEmptyOptionals({ type: 'object' }, { anything: '' }), { anything: '' })
+})
+
+test('a source input sent as an object, or as that object in a JSON string once or twice, is read as the object', () => {
+  const args = { connection: 'jaspers-screener/server', tool: 'get_guide', args: { topic: 'fields' } }
+  assert.deepEqual(readInput(args, 'core/mcp'), args)
+  assert.deepEqual(readInput(JSON.stringify(args), 'core/mcp'), args)
+  assert.deepEqual(readInput(JSON.stringify(JSON.stringify(args)), 'core/mcp'), args)
+  assert.deepEqual(readInput(undefined, 'core/mcp'), {})
+  assert.deepEqual(readInput('', 'core/mcp'), {})
+})
+
+test('a source input string that is not valid JSON is refused with why, not run as no arguments', () => {
+  // Cut short, the way a long call with a list of codes arrived from the model.
+  const broken =
+    '{"args": {"filters": [{"field": "sic", "op": "in", "value": ["3720", "3721"]}]}, "connection": "jaspers-screener/server", "tool": "screen_companies"'
+  assert.throws(
+    () => readInput(broken, 'core/mcp'),
+    /^Error: input for core\/mcp is a string that is not valid JSON \(.+\)\. Send input as an object/,
+  )
+  assert.throws(() => readInput('[1, 2]', 'core/mcp'), /must be an object of the source's arguments; it was a list/)
+  assert.throws(() => readInput(42, 'core/mcp'), /it was number/)
 })

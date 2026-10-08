@@ -19,6 +19,30 @@ export function parseArguments(schema: ZodType, args: unknown, sourceId: string)
   throw new Error(`Invalid arguments for ${sourceId}: ${issues.join('; ')}.`)
 }
 
+/**
+ * A tool's `input` as the model sent it: an object, or the same object written as a JSON string, once
+ * or twice over. A string that does not read as an object is refused with what was wrong with it, where
+ * reading it as no arguments at all sent the source on and had it complain of fields the model did set.
+ */
+export function readInput(value: unknown, sourceId: string): Record<string, unknown> {
+  if (value === undefined || value === null || value === '') return {}
+  let read = value
+  for (let depth = 0; depth < 2 && typeof read === 'string'; depth++) {
+    try {
+      read = JSON.parse(read)
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `input for ${sourceId} is a string that is not valid JSON (${why}). Send input as an object of the source's arguments, not a string.`,
+      )
+    }
+  }
+  if (isRecord(read)) return read
+  throw new Error(
+    `input for ${sourceId} must be an object of the source's arguments; it was ${Array.isArray(read) ? 'a list' : typeof read}.`,
+  )
+}
+
 /** The arguments repaired against the input's JSON Schema; as they are when zod cannot write one. */
 function coerceToSchema(schema: ZodType, args: Record<string, unknown>): unknown {
   try {
