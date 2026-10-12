@@ -5,6 +5,7 @@
 
 // The extension is explicit because Node's test runner resolves this import at run time.
 import type { Grid, Panel } from './grid/grid.ts'
+import { loopName } from './loops/loops.ts'
 import { skillListing } from './skills/skills.ts'
 import type { AppState } from './state'
 
@@ -36,6 +37,8 @@ export interface PanelSummary {
   /** The window its element is in: 1 is the main window. */
   window: number
   view: string | null
+  /** The piece of work it is a tile of, by name, like loop_3; null for the docked chat. */
+  loop: string | null
   summary: string | null
   /** Characters in the text the view published, so a reader knows there is some to read; null when there is none. */
   textLength: number | null
@@ -86,14 +89,18 @@ export function readPath(state: AppState, workspaceId: string, path: StorePath):
   const grids = gridsOf(state, path.workspaceId ?? workspaceId)
   if (path.kind === 'panels') {
     return byWindow(grids).flatMap(([window, grid]) =>
-      grid.panels.map((p): PanelSummary => ({
-        id: p.id,
-        elementId: p.elementId,
-        window,
-        view: p.content.kind === 'view' ? p.content.view : null,
-        summary: p.summary,
-        textLength: p.text === null ? null : p.text.length,
-      })),
+      grid.panels.map((p): PanelSummary => {
+        const loop = grid.elements.find((e) => e.id === p.elementId)?.loop
+        return {
+          id: p.id,
+          elementId: p.elementId,
+          window,
+          view: p.content.kind === 'view' ? p.content.view : null,
+          loop: loop === undefined ? null : loopName(loop),
+          summary: p.summary,
+          textLength: p.text === null ? null : p.text.length,
+        }
+      }),
     )
   }
   const { panel } = panelIn(grids, path.panelId)
