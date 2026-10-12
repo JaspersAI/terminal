@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type ReactElement } from 'react'
+import { ErrorText } from '../composer/ErrorText'
 import { MarkdownText } from '../composer/MarkdownText'
 import { Trail } from '../composer/Transcript'
 import type { LiveExchange } from '../composer/live'
@@ -45,7 +46,7 @@ export function Progress({ live, onStop }: Props): ReactElement {
             />
           )}
           {row.error !== null ? (
-            <p className="text-sm break-words text-destructive">{row.error}</p>
+            <ErrorText text={row.error} />
           ) : (
             row.answer !== null && (
               <div data-reply className="font-prose text-sm">

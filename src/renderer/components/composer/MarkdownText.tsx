@@ -220,7 +220,7 @@ function renderInline(nodes: Inline[], marks: Marks): ReactNode[] {
 }
 
 /** A link out of the app. Main opens it in the browser, https only, and the window never follows it itself. */
-function ExternalLink({ href, children }: { href: string; children: ReactNode }): ReactElement {
+export function ExternalLink({ href, children }: { href: string; children: ReactNode }): ReactElement {
   return (
     <a
       href={href}
