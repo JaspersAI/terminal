@@ -11,6 +11,8 @@ import type { AppState } from './state'
 export type StorePath =
   | { kind: 'workspace'; workspaceId?: string }
   | { kind: 'panels'; workspaceId?: string }
+  /** One panel's entry in the listing, by its id or its element's. */
+  | { kind: 'panelEntry'; workspaceId?: string; panelId: string }
   | { kind: 'tasks'; workspaceId?: string }
   | { kind: 'views' }
   | { kind: 'sources' }
@@ -42,7 +44,7 @@ export interface PanelSummary {
 }
 
 const SHAPES =
-  'workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, and any of those under workspaces/<workspace id>/'
+  'workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, and any of those under workspaces/<workspace id>/'
 
 export function parsePath(raw: string): StorePath {
   const segments = raw.split('/')
@@ -62,6 +64,7 @@ export function parsePath(raw: string): StorePath {
   if (head === 'tasks' && panelId === undefined) return { kind: 'tasks', ...at }
   if (head !== 'panels') reject(raw)
   if (panelId === undefined) return { kind: 'panels', ...at }
+  if (field === undefined) return { kind: 'panelEntry', ...at, panelId }
   if ((field === 'summary' || field === 'text' || field === 'refreshedAt') && rest.length === 0)
     return { kind: 'panel', ...at, panelId, field, rest: [] }
   if (field === 'state' || field === 'output') return { kind: 'panel', ...at, panelId, field, rest }
@@ -85,18 +88,10 @@ export function readPath(state: AppState, workspaceId: string, path: StorePath):
   }
   const grids = gridsOf(state, path.workspaceId ?? workspaceId)
   if (path.kind === 'panels') {
-    return byWindow(grids).flatMap(([window, grid]) =>
-      grid.panels.map((p): PanelSummary => ({
-        id: p.id,
-        elementId: p.elementId,
-        window,
-        view: p.content.kind === 'view' ? p.content.view : null,
-        summary: p.summary,
-        textLength: p.text === null ? null : p.text.length,
-      })),
-    )
+    return byWindow(grids).flatMap(([window, grid]) => grid.panels.map((p) => panelSummary(window, p)))
   }
-  const { panel } = panelIn(grids, path.panelId)
+  const { window, panel } = panelIn(grids, path.panelId)
+  if (path.kind === 'panelEntry') return panelSummary(window, panel)
   if (path.field === 'summary') return panel.summary
   if (path.field === 'text') return panel.text
   if (path.field === 'refreshedAt') return panel.refreshedAt
@@ -121,6 +116,7 @@ export function formatPath(path: StorePath): string {
   if (path.kind === 'workspace') return `${prefix}workspace`
   if (path.kind === 'panels') return `${prefix}panels`
   if (path.kind === 'tasks') return `${prefix}tasks`
+  if (path.kind === 'panelEntry') return `${prefix}panels/${path.panelId}`
   return `${prefix}panels/${path.panelId}/${path.field}${path.rest.map((k) => `/${k}`).join('')}`
 }
 
@@ -142,6 +138,17 @@ export function panelIn(grids: Record<number, Grid>, id: string): { window: numb
     .map((p) => `${p.id} (${p.elementId})`)
     .join(', ')
   throw new Error(`No panel ${id}. ${ids ? `The workspace has ${ids}.` : 'The workspace has no panels.'}`)
+}
+
+function panelSummary(window: number, p: Panel): PanelSummary {
+  return {
+    id: p.id,
+    elementId: p.elementId,
+    window,
+    view: p.content.kind === 'view' ? p.content.view : null,
+    summary: p.summary,
+    textLength: p.text === null ? null : p.text.length,
+  }
 }
 
 /** A workspace's grids in window order. */

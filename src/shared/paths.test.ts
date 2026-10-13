@@ -120,6 +120,8 @@ test('a path parses to what it names', () => {
     rest: ['text'],
   })
   assert.deepEqual(parsePath(`workspaces/${WS}/panels`), { kind: 'panels', workspaceId: WS })
+  assert.deepEqual(parsePath('panels/e1'), { kind: 'panelEntry', panelId: 'e1' })
+  assert.deepEqual(parsePath(`workspaces/${WS}/panels/p1`), { kind: 'panelEntry', workspaceId: WS, panelId: 'p1' })
   assert.deepEqual(parsePath('workspace'), { kind: 'workspace' })
   assert.deepEqual(parsePath(`workspaces/${WS}/workspace`), { kind: 'workspace', workspaceId: WS })
 })
@@ -132,7 +134,6 @@ test('anything else is rejected, with the shapes that are not', () => {
   assert.throws(() => parsePath('skills/dcf'), /Cannot read "skills\/dcf"/)
   assert.throws(() => parsePath('panels/p1/nope'), /Cannot read "panels\/p1\/nope"/)
   assert.throws(() => parsePath('bogus'), /Cannot read "bogus"/)
-  assert.throws(() => parsePath('panels/p1'), /Cannot read/)
   assert.throws(() => parsePath('panels/p1/summary/x'), /Cannot read/)
   assert.throws(() => parsePath('panels/p1/text/0'), /Cannot read/)
   assert.throws(() => parsePath('workspace/name'), /Cannot read "workspace\/name"/)
@@ -148,6 +149,8 @@ test('a path formats back to what it was read from', () => {
     'plugins',
     'skills',
     'workspace',
+    'panels/e1',
+    `workspaces/${WS}/panels/p2`,
     'panels/p1/state',
     'panels/e1/text',
     `workspaces/${WS}/workspace`,
@@ -175,6 +178,26 @@ test('a panel reads its text whole, null until its view publishes one, and the l
     { id: 'p1', elementId: 'e1', window: 1, view: 'core/note', summary: null, textLength: 15 },
     { id: 'p2', elementId: 'e2', window: 2, view: null, summary: null, textLength: null },
   ])
+})
+
+test('one panel reads as its entry in the listing, by panel id or element id, in whichever window it is', () => {
+  assert.deepEqual(read('panels/e1'), {
+    id: 'p1',
+    elementId: 'e1',
+    window: 1,
+    view: 'core/note',
+    summary: null,
+    textLength: null,
+  })
+  assert.deepEqual(read('panels/p2'), {
+    id: 'p2',
+    elementId: 'e2',
+    window: 2,
+    view: null,
+    summary: null,
+    textLength: null,
+  })
+  assert.throws(() => read('panels/e9'), /No panel e9\. The workspace has p1 \(e1\), p2 \(e2\)\./)
 })
 
 test('a long text reads a part at a time, each saying where it sits and where the next one starts', () => {
