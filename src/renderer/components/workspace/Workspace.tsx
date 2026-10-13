@@ -21,7 +21,7 @@ export function Workspace(): ReactElement {
         {/* Keyed by id so the draft resets when the workspace changes. */}
         <WorkspaceTitle key={current.id} workspace={current} />
         <WorkspaceSwitcher workspaces={app.workspaces} currentId={current.id} />
-        {/* At the far end of the bar, away from the name and the menu: whether Eye is recording. */}
+        {/* At the far end of the bar, away from the name and the menu: whether live feedback sharing is on. */}
         <EyeDot />
       </header>
       <div className="relative min-h-0 flex-1">

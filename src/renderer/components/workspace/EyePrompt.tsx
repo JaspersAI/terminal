@@ -10,7 +10,7 @@ import { BUTTON } from '../settings/Row'
  * and that it goes to Jaspers so the team can learn from how the app is used.
  *
  * Either answer is an answer: both set `asked`, which persists, so the modal is not asked twice.
- * Start recording is the pre-selected action, and Not now leaves Eye off, which is how it ships.
+ * Start live feedback sharing is the pre-selected action, and Not now leaves Eye off, which is how it ships.
  */
 export function EyePrompt(): ReactElement {
   const start = useRef<HTMLButtonElement>(null)
@@ -54,12 +54,12 @@ export function EyePrompt(): ReactElement {
           <p>
             It is sent to Jaspers, so the team can see what people ask for, whether it worked, and where it is slow.
             Keys and passwords the app holds are masked out of everything it keeps. Keystrokes, cell contents, and what
-            other programs show are never recorded.
+            other programs show are never captured.
           </p>
           <p className="text-muted-foreground">
             A frame is never taken while a key field or an approval is on screen, so a password, an API key, or a
-            command waiting for your yes is not in one. You can stop recording at any time from the eye in the top
-            right, and delete everything recorded in Settings &gt; Eye.
+            command waiting for your yes is not in one. You can stop live feedback sharing at any time from the eye in
+            the top right, and delete everything captured in Settings &gt; Eye.
           </p>
         </div>
         <div className="mt-6 flex justify-end gap-2">
@@ -73,7 +73,7 @@ export function EyePrompt(): ReactElement {
             onClick={() => answer(true)}
             className="shrink-0 border border-foreground bg-foreground px-2.5 py-1 text-sm text-background"
           >
-            Start recording
+            Start live feedback sharing
           </button>
         </div>
       </div>
