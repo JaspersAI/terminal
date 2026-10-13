@@ -18,6 +18,11 @@ test('the file a draft makes reads back as the skill it was given', () => {
   assert.equal(parsed.body, draft.instructions)
 })
 
+test('a skill the assistant writes starts at a version, so it can be published to Hub as written', () => {
+  const parsed = parseSkill('morning-brief', skillFile('morning-brief', draft))
+  assert.equal(parsed.meta.metadata['version'], '1.0.0')
+})
+
 test('a description YAML would read as something else is written so that it reads back as given', () => {
   for (const description of [
     'Use when: the user says "DCF", or it\'s a valuation # not a comment',
