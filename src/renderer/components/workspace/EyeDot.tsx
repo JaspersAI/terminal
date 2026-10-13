@@ -138,7 +138,8 @@ export function EyeDot(): ReactElement {
             className="mt-1.5 h-24 w-full resize-none border border-border p-2 text-sm outline-none focus:border-foreground"
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            Goes to the Jaspers team with a picture of the Jaspers windows as they are when you press Send.
+            Goes to the Jaspers team with a picture of every open Jaspers window, not only this one, as they are when
+            you press Send.
           </p>
           {failed && (
             <p role="alert" className="mt-1 text-xs text-destructive">

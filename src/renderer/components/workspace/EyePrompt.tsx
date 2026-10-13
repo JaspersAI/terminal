@@ -46,7 +46,7 @@ export function EyePrompt(): ReactElement {
         </h2>
         <div id="eye-prompt-what" className="mt-3 space-y-2 text-sm">
           <p>
-            Eye takes a picture of the Jaspers window{' '}
+            Eye takes a picture of every open Jaspers window{' '}
             {INTERVAL_MINUTES === 1 ? 'every minute' : `every ${INTERVAL_MINUTES} minutes`} — this app only, never your
             desktop, your browser, or another program — and keeps each request you make to the assistant: what you
             asked, what it answered, the tools it ran with what they were given and what came back, and any error.
