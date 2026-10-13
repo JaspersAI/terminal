@@ -20,7 +20,7 @@ export const stateTools: Tool[] = [
     name: 'get',
     readsOnly: true,
     description:
-      "Read app state by path: panels (every panel), panels/<id>/state[/key…], panels/<id>/output[/key…], panels/<id>/summary, panels/<id>/text, tasks (this workspace's, with their last runs), views, sources, connections, plugins. <id> is an element id like e3 or a panel id like p3. A view's text is the whole of what it shows, like a transcript, and comes 20,000 characters at a time from offset. Other long values are cut, and say so.",
+      "Read app state by path: panels (every panel), panels/<id> (that one panel's entry: its window, view, and summary), panels/<id>/state[/key…], panels/<id>/output[/key…], panels/<id>/summary, panels/<id>/text, tasks (this workspace's, with their last runs), views, sources, connections, plugins. <id> is an element id like e3 or a panel id like p3. A view's text is the whole of what it shows, like a transcript, and comes 20,000 characters at a time from offset. Other long values are cut, and say so.",
     parameters: {
       type: 'object',
       properties: {
