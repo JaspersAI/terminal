@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-black"></a>
+  <a href="LICENSE"><img alt="BSL 1.1 license" src="https://img.shields.io/badge/license-BSL%201.1-black"></a>
   <a href="https://www.npmjs.com/package/@jaspers-ai/sdk"><img alt="@jaspers-ai/sdk on npm" src="https://img.shields.io/npm/v/@jaspers-ai/sdk?label=%40jaspers-ai%2Fsdk&color=black"></a>
   <img alt="Node 24" src="https://img.shields.io/badge/node-24-black">
   <img alt="macOS and Windows" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Windows-black">
@@ -27,7 +27,7 @@ Say what you want to see, by voice or by typing. In Jaspers, the assistant works
 
 ## What it is
 
-We are Jaspers, a team of quants, engineers, and investment professionals. We have built v0 of Jaspers Terminal, an open-source, free harness for agents to work with public markets.
+We are Jaspers, a team of quants, engineers, and investment professionals. We have built v0 of Jaspers Terminal, a free, source-available harness for agents to work with public markets.
 
 Today, traders and researchers face a fragmented research process, starting with discovering the right data, and continuing with integrating different interfaces, APIs, and formats.
 
@@ -41,9 +41,9 @@ You and your superagent arrange the Terminal's dynamic grid to fit your work, co
 
 **Download** Jaspers Terminal for macOS and Windows at [jsprai.com/terminal](https://jsprai.com/terminal/).
 
-## Open source
+## Source available
 
-MIT-licensed, and complete without a Jaspers subscription. Read how any source is queried, change any plugin, or write your own with `@jaspers-ai/sdk`, a small React API: define a source, define a view. The app uses open standards instead of inventing its own: the Model Context Protocol for data and interfaces, Agent Skills for workflows. Jaspers' own market data takes no private path: Jaspers Discover and Jaspers Research are plugins on [Jaspers Hub](https://hub.jsprai.com) like any other, hosted, metered, and optional.
+Free to use, at home or at work, under the [Business Source License 1.1](LICENSE): the whole source is public, and the one thing the license forbids is offering the Terminal itself, or a fork of it, to others as a product or service. Each version becomes MIT four years after its release. Complete without a Jaspers subscription. Read how any source is queried, change any plugin, or write your own with `@jaspers-ai/sdk`, a small React API under MIT: define a source, define a view. The app uses open standards instead of inventing its own: the Model Context Protocol for data and interfaces, Agent Skills for workflows. Jaspers' own market data takes no private path: Jaspers Discover and Jaspers Research are plugins on [Jaspers Hub](https://hub.jsprai.com) like any other, hosted, metered, and optional.
 
 ## You own your data
 
@@ -97,4 +97,4 @@ Contributor commands and architectural rules are in [CLAUDE.md](CLAUDE.md); impl
 
 ## License
 
-[MIT](LICENSE)
+[Business Source License 1.1](LICENSE) for the Terminal; [MIT](packages/sdk/LICENSE) for `@jaspers-ai/sdk`.

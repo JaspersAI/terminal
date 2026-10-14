@@ -1,6 +1,6 @@
 # Contributor guidance
 
-Jaspers Terminal is an open source Electron desktop terminal for financial research. The app owns the workspace and orchestrator; plugins supply views and data sources. Start with [README.md](README.md), [How it works](docs/architecture.md), and [Development](docs/development.md).
+Jaspers Terminal is a source-available Electron desktop terminal for financial research, under the Business Source License 1.1; the SDK in `packages/sdk/` is MIT. The app owns the workspace and orchestrator; plugins supply views and data sources. Start with [README.md](README.md), [How it works](docs/architecture.md), and [Development](docs/development.md).
 
 ## Commands
 

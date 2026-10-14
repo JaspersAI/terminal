@@ -55,5 +55,4 @@ execFileSync(
   ],
   { cwd: pkg, stdio: 'inherit' },
 )
-fs.copyFileSync(path.join(pkg, '..', '..', 'LICENSE'), path.join(pkg, 'LICENSE'))
 console.log(`built ${path.relative(process.cwd(), dist)}`)
