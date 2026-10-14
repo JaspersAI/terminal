@@ -2,7 +2,7 @@
   "name": "jaspers-terminal",
   "version": "0.5.10",
   "private": true,
-  "description": "An extensible desktop terminal for financial research.",
+  "description": "An open source, extensible desktop terminal for financial research.",
   "author": "Jaspers Inc.",
   "license": "BUSL-1.1",
   "main": "./out/main/index.js",

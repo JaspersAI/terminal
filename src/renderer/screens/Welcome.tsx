@@ -15,7 +15,7 @@ export function Welcome({ resume, onBegin }: Props): ReactElement {
         <img src={logo} alt="Jaspers" className="mx-auto h-20 w-20" />
         <div className="space-y-2">
           <h1 className="text-2xl font-semibold">Jaspers Terminal</h1>
-          <p className="text-muted-foreground">An extensible desktop terminal for financial research.</p>
+          <p className="text-muted-foreground">An open source, extensible desktop terminal for financial research.</p>
         </div>
         <p className="text-sm text-muted-foreground">
           Setup takes about a minute. Sign in with Jaspers, or pick a language model provider and paste an API key.
