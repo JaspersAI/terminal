@@ -4,7 +4,10 @@ import type { ProviderConfig } from '../../secrets'
 
 // The llm capability: a plugin's model calls, made by main with the configured provider, so the
 // token never leaves it. Each plugin gets its own limiter of four calls at once; a rate limit or a
-// server error is tried once more; the long timeout is for replies that take minutes to write.
+// server error is tried once more; the long timeout is for replies that take minutes to write. A
+// call with tools, or with a conversation behind it, is one round of the plugin's own loop: the
+// next round sends the same conversation again, so it is marked for the provider's cache as the
+// app's own rounds are. A single question is not: a cache is written at a premium nobody reads back.
 // Electron and the sealed token come in through `deps`, which is what lets a test drive this.
 
 export interface LlmDeps {
@@ -38,6 +41,7 @@ export function createLlm(deps: LlmDeps): { complete(raw: unknown, signal: Abort
           maxTokens: request.maxTokens === undefined ? undefined : Math.min(request.maxTokens, TOKENS_MAX),
           signal,
           timeoutMs: TIMEOUT_MS,
+          ...(request.tools.length > 0 || request.turns.length > 1 ? { loop: true } : {}),
         }
         const call = (): Promise<Completion> =>
           deps.complete(config, request.system, request.turns, request.tools, options)
