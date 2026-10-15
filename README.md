@@ -17,7 +17,7 @@
 
 ---
 
-Say what you want to see, by voice or by typing. In Jaspers, the assistant works the screen itself: it puts the right view on the grid, fills it with market and alternative data from MCP servers, reads what every view shows, and changes it as you ask. When nothing installed has the data, its coding agent writes the plugin that does. Everything on screen comes from plugins.
+The terminal is a persistent local runtime with local db. Say what you want to see, by voice or by typing. In the Terminal, the coding agent works the screen: it puts views from subagent processes on the grid, fills it with market and alternative data, reads what every view shows, and changes it as the user requests.
 
 <!-- Screenshot: replace with a capture of a workspace once one is ready.
 <p align="center">
