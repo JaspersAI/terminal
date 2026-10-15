@@ -12,11 +12,12 @@ import {
   skillsQuestion,
 } from '../../../shared/plugins/assistant-install'
 import { checkForm } from '../../../shared/plugins/connection-plugin'
-import { askUser } from '../../actions'
+import { askUserFor } from '../../actions'
 import { addConnection } from '../../plugins/connection-editor'
 import { cancelInstall, confirmInstall, prepareInstall } from '../../plugins/install'
 import { cancelSkills, confirmSkills, prepareSkills } from '../../skills/skill-install'
 import { getState } from '../../state'
+import { notApproved, type Asking } from '../utils/questions'
 import { askedBy } from '../utils/runs'
 import type { Tool, ToolContext } from './types'
 
@@ -50,16 +51,16 @@ export const installTools: Tool[] = [
       if (!prepared) throw new Error('Nothing was staged to install.')
       if ('upToDate' in prepared) return `${prepared.id} ${prepared.version} is already installed and up to date.`
       const question = pluginQuestion(prepared)
-      const answer = await askUser(
+      const asked = await askUserFor(
         question.text,
         [INSTALL, CANCEL],
         context.signal,
         question.code,
         askedBy(context.runId),
       )
-      if (!approvedInstall(answer)) {
+      if (!approvedInstall(asked.answer)) {
         await cancelInstall(prepared.token)
-        return declined(`the plugin ${prepared.id}`)
+        return declined(`the plugin ${prepared.id}`, asked)
       }
       await confirmInstall(prepared.token)
       return `Installed ${prepared.id} ${prepared.version} from ${prepared.source}. It is being built now; its views, sources, and connections are listed from the next round. If it asks for a key, use set_secret.`
@@ -105,16 +106,16 @@ export const installTools: Tool[] = [
         throw err
       }
       const question = skillsQuestion(prepared.source, chosen)
-      const answer = await askUser(
+      const asked = await askUserFor(
         question.text,
         [INSTALL, CANCEL],
         context.signal,
         question.code,
         askedBy(context.runId),
       )
-      if (!approvedInstall(answer)) {
+      if (!approvedInstall(asked.answer)) {
         await cancelSkills(prepared.token)
-        return declined(chosen.length === 1 ? `the skill ${chosen[0]!.name}` : 'those skills')
+        return declined(chosen.length === 1 ? `the skill ${chosen[0]!.name}` : 'those skills', asked)
       }
       const installed = await confirmSkills(
         prepared.token,
@@ -166,14 +167,14 @@ export const installTools: Tool[] = [
       const refusal = checkForm(form, Object.keys(getState().plugins))
       if (refusal) throw new Error(refusal)
       const question = connectionQuestion(form)
-      const answer = await askUser(
+      const asked = await askUserFor(
         question.text,
         [ADD_CONNECTION, CANCEL],
         context.signal,
         question.code,
         askedBy(context.runId),
       )
-      if (!approvedInstall(answer, ADD_CONNECTION)) return declined(`the connection ${form.id}`)
+      if (!approvedInstall(asked.answer, ADD_CONNECTION)) return declined(`the connection ${form.id}`, asked)
       const id = await addConnection(form)
       const key =
         form.auth === 'bearer'
@@ -194,6 +195,6 @@ function refuseUnattended(context: ToolContext, what: string): void {
   }
 }
 
-function declined(what: string): string {
-  return `The user did not approve installing ${what}, so nothing was installed. Leave it; do not ask again in other words.`
+function declined(what: string, asked: Asking): string {
+  return notApproved(`installing ${what}`, 'nothing was installed', asked)
 }
