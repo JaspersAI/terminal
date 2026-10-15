@@ -302,11 +302,11 @@ const INBOX: ViewDef = {
 const CHAT: ViewDef = {
   id: CHAT_VIEW,
   plugin: null,
-  title: 'Chat',
+  title: 'Central',
   state: z.object({}),
   output: z.object({ exchanges: z.number(), busy: z.boolean() }),
   instructions:
-    'The chat with you, docked on the grid: the conversation and the command line the user types in, in the place of the composer that floats at the bottom of the window. A window shows one or the other, so placing this docks the chat there and removing the element gives the window its floating composer back. It takes no state; the user docks and undocks it themselves, and asking for the chat on the grid, or in a particular spot, is the reason to place it.',
+    'Central, the chat with you, docked on the grid under a red bar: the conversation and the command line the user types in, in the place of the composer that floats at the bottom of the window. A window shows one or the other, so placing this docks the chat there and removing the element gives the window its floating composer back. It takes no state; the user docks and undocks it themselves, and asking for the chat on the grid, or in a particular spot, is the reason to place it.',
   summarize: (_state, output) => {
     const { exchanges, busy } = (output ?? {}) as { exchanges?: number; busy?: boolean }
     return busy ? 'the chat, a request in flight' : `the chat, ${exchanges ?? 0} exchanges shown`
