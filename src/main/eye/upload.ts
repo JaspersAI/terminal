@@ -4,7 +4,7 @@ import path from 'node:path'
 import { batchAccepted, EYE_ENDPOINT, EYE_TOKEN, eventsPart, retryDelay } from '../../shared/app/eye'
 import { eyeRoot } from '../home'
 import { getState, subscribe } from '../state'
-import { liveSession, onRecorded, ownSession, queuedBatches } from './eye'
+import { liveSession, onRecorded, ownSession, queuedBatches, record } from './eye'
 import { EVENTS_FILE } from './events'
 
 // Where what Eye recorded goes: the Jaspers endpoint, fixed in the app. A batch is one session's
@@ -37,6 +37,8 @@ let nudged = false
 let failures = 0
 /** How many lines of this run's telemetry file the endpoint has: the next part starts there. */
 let sentLines = 0
+/** The session `sentLines` counts for: a new one, after everything was deleted, starts from its first line. */
+let sentFor: string | null = null
 
 /** Starts the uploader: a pass soon after launch, one whenever something new is written, and one every few minutes regardless. */
 export function startUploads(): void {
@@ -80,13 +82,13 @@ async function pass(): Promise<void> {
     } else if (sent === 'empty') {
       schedule(IDLE_MS)
     } else {
-      failures++
+      failed({ status: sent.status })
       const wait = retryDelay(failures)
       console.warn(`[eye] upload failed; trying again in ${Math.round(wait / 1000)}s`)
       schedule(wait)
     }
   } catch (err) {
-    failures++
+    failed({ message: err instanceof Error ? err.message : String(err) })
     console.warn('[eye] upload failed:', err)
     schedule(retryDelay(failures))
   } finally {
@@ -98,15 +100,24 @@ async function pass(): Promise<void> {
   }
 }
 
+/** A failure: the first of a streak is a line, so the session says when its uploads stopped going. */
+function failed(why: { status: number } | { message: string }): void {
+  if (failures++ === 0) record({ kind: 'error', name: 'upload', data: why })
+}
+
 /**
  * One batch, or the next part of one: its frames and its runs, and the telemetry lines not yet sent.
  * The files that went are deleted when the endpoint has them, all but this run's telemetry file,
  * which only grows; an earlier run's folder goes once nothing is left in it.
  */
-async function send(session: string): Promise<'accepted' | 'refused' | 'empty'> {
+async function send(session: string): Promise<'accepted' | { status: number } | 'empty'> {
   const folder = path.join(eyeRoot(), session)
   const closed = liveSession() !== session
   const own = ownSession() === session
+  if (own && sentFor !== session) {
+    sentFor = session
+    sentLines = 0
+  }
   const names = (await fsp.readdir(folder)).sort()
   const frames = names.filter((name) => name.endsWith('.jpg')).slice(0, FRAMES_PER_REQUEST)
   const runs = names.filter((name) => name.endsWith('.run.json')).slice(0, RUNS_PER_REQUEST)
@@ -147,7 +158,7 @@ async function send(session: string): Promise<'accepted' | 'refused' | 'empty'> 
     headers: { authorization: `Bearer ${EYE_TOKEN}` },
     body: form,
   })
-  if (!batchAccepted(response.status)) return 'refused'
+  if (!batchAccepted(response.status)) return { status: response.status }
   console.log(
     `[eye] sent ${frames.length} frames, ${runs.length} runs, ${feedback.length} notes${events?.count ? `, and ${events.count} lines of telemetry` : ''} of ${session}`,
   )

@@ -12,6 +12,7 @@ import type { SkillFile } from '../shared/skills/skills'
 import type { Action, AppState } from '../shared/state'
 import type { QueryResult, StoreStats } from '../shared/data/store'
 import type { Exchange } from '../shared/agent/transcript'
+import type { Note } from '../shared/app/eye-events'
 import { MAIN_WINDOW, WINDOWS_MAX } from '../shared/grid/windows'
 
 // Everything the renderer may touch goes through this bridge.
@@ -224,6 +225,10 @@ const api = {
   showEyeFolder: (): Promise<void> => ipcRenderer.invoke('shell:show-eye-folder'),
   /** Deletes every frame and every line of telemetry Eye has kept, sent or not. */
   deleteEyeRecordings: (): Promise<void> => ipcRenderer.invoke('eye:delete-all'),
+  eye: {
+    /** What this window tells Eye while it records: a click, how much was typed into a field, an error. Never answered. */
+    note: (note: Note): void => ipcRenderer.send('eye:note', note),
+  },
   copyText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
   /** The menu bar's Settings…, which the window answers by opening Settings. */
   onOpenSettings: (listener: () => void): (() => void) => on('menu:settings', listener),
