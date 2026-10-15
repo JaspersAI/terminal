@@ -96,8 +96,13 @@ export interface Request {
   keep?: () => void
 }
 
+/** One run of the agent loop, for whoever asks: the user, a task, a loop, the builder. */
+export function agentLoop(request: Request): Promise<string> {
+  return loop(request)
+}
+
 /** Main agent loop, if you are editing the actual loop it goes here */
-export async function agentLoop({
+async function loop({
   label,
   config,
   history,
