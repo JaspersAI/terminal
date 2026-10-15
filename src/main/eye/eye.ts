@@ -16,7 +16,7 @@ import {
   type EyeFeedback,
   type QueuedBatch,
 } from '../../shared/app/eye'
-import { eyeLine, eyeTree, homeForms, type EyeEvent, type Masking } from '../../shared/app/eye-events'
+import { eyeLine, eyeTree, homeForms, writtenTexts, type EyeEvent, type Masking } from '../../shared/app/eye-events'
 import { diff } from '../../shared/app/patch'
 import { openWindows } from '../grid/windows'
 import { eyeRoot } from '../home'
@@ -299,16 +299,20 @@ let maskedFor: readonly unknown[] = []
 let masks: Masking = { secrets: [], homes: homeForms(os.homedir()) }
 
 /**
- * What every line is masked against: the keys the app holds and the email it is signed in as, and
- * the home folder. Worked out again only when one of the parts of the tree they come from changed.
+ * What every line is masked against: the keys the app holds, the email it is signed in as, what is
+ * written in notes, and the home folder. Worked out again only when one of the parts of the tree they
+ * come from changed.
  */
 function masking(): Masking {
   const state = getState()
-  const parts = [state.secrets, state.llm, state.voice, state.jaspers]
+  const parts = [state.secrets, state.llm, state.voice, state.jaspers, state.grids]
   if (parts.some((part, i) => part !== maskedFor[i])) {
     maskedFor = parts
     const email = state.jaspers.email
-    masks = { secrets: [...secretsOf(), ...(email ? [email] : [])], homes: homeForms(os.homedir()) }
+    masks = {
+      secrets: [...secretsOf(), ...(email ? [email] : []), ...writtenTexts(state.grids)],
+      homes: homeForms(os.homedir()),
+    }
   }
   return masks
 }

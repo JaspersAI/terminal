@@ -11,6 +11,7 @@ import {
   noteEvent,
   quietAction,
   readNote,
+  writtenTexts,
   type EyeEvent,
   type Masking,
 } from './eye-events.ts'
@@ -249,6 +250,18 @@ test('what is written in a note is hidden wherever the tree holds it, and typing
   const empty = { ...note, state: { text: '' }, output: null, summary: null, text: null }
   const blank = eyeTree(state({ w1: { 1: { ...grid, panels: [empty] } } })) as typeof tree
   assert.deepEqual(blank.grids.w1[1].panels[0], empty)
+})
+
+test('what is written in a note is masked like a key, so the assistant reading it back does not carry it out', () => {
+  const grids = { w1: { 1: { ...grid, panels: [...grid.panels, note] } } } as unknown as AppState['grids']
+  assert.deepEqual(writtenTexts(grids), ['my private plan'])
+  const line = parsed(
+    { kind: 'tool-end', at: 1, name: 'get', data: { output: '{"view":"core/note","summary":"my private plan"}' } },
+    { secrets: writtenTexts(grids), homes: [] },
+  )
+  assert.deepEqual(line['data'], { output: '{"view":"core/note","summary":"***"}' })
+  // Nothing written, nothing to mask.
+  assert.deepEqual(writtenTexts({ w1: { 1: grid } } as unknown as AppState['grids']), [])
 })
 
 test('a note from a window is read whole and capped, or not at all', () => {

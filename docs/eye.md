@@ -31,7 +31,7 @@ Feedback goes whether recording is on or off: pressing Send is your own act each
 
 - Anything outside Jaspers.
 - The characters you type, other than what you send the assistant and how you set a view: only how many, and into which field. A password field is not even counted.
-- What is written in cells and notes: that a cell or a note holds something, never what. The assistant's tools that read and write cells are kept without what they read or wrote.
+- What is written in cells and notes: that a cell or a note holds something, never what. A note's words are masked wherever they would appear, as a key is, and the assistant's tools that read and write cells are kept without what they read or wrote. What the assistant says about them in its own words is part of its answer.
 - Keys, passwords, and tokens the app holds, and the email you sign in with: every one is masked out of everything Eye writes. A key pasted into a key field is never in a frame. Your home folder's name is written as `~`.
 - What a view draws inside its own frame, beyond how it is set.
 - Anything at all while a key field or a question is on screen. A frame would show the API key you are pasting, or the exact command a Pro mode approval is waiting on, so that tick is skipped entirely and nothing of that screen is kept. The next frame comes at the next interval.

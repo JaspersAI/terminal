@@ -272,6 +272,28 @@ function written(panel: Panel): Panel {
   }))
 }
 
+/**
+ * Everything written in a note, as the tree holds it: what a line is masked against as it is against
+ * a key, so the assistant reading a note back (its summary in a `get`) does not carry it out either.
+ */
+export function writtenTexts(grids: AppState['grids']): string[] {
+  const texts = new Set<string>()
+  const gather = (value: unknown): void => {
+    if (typeof value === 'string' && value) texts.add(value)
+    else if (Array.isArray(value)) value.forEach(gather)
+    else if (isRecord(value)) Object.values(value).forEach(gather)
+  }
+  for (const windows of Object.values(grids)) {
+    for (const grid of Object.values(windows)) {
+      for (const panel of grid.panels) {
+        if (panel.content.kind !== 'view' || !WRITTEN_VIEWS.has(panel.content.view)) continue
+        for (const part of [panel.state, panel.output, panel.summary, panel.text]) gather(part)
+      }
+    }
+  }
+  return [...texts]
+}
+
 /** Every string with something in it replaced by `HIDDEN_NOTE`: what was written is gone, that something was is not. */
 function hidden<T>(value: T): T {
   if (typeof value === 'string') return (value ? HIDDEN_NOTE : value) as T
