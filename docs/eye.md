@@ -21,7 +21,7 @@ Feedback goes whether recording is on or off: pressing Send is your own act each
 - The Jaspers window as it looks on screen, every minute, scaled to 1280 pixels wide and saved as a JPEG. This app only: not your desktop, not your browser, not another program. Every open Jaspers window gets a frame, and recording carries on while the windows are closed to the menu bar. A window that has not changed since the last picture is not pictured again.
 - What you do in the app: each thing you ask of it (placing, moving, or closing a view, switching workspace, answering a question, changing a setting), the buttons and menu items you click by their labels, and how many characters you type into which field.
 - What the app looks like as you use it: when recording starts, the whole state of the workspaces (the views on each grid and how each is set, the loops, the questions and notices on screen, the plugins and connections installed), and from then on every change to it, with what caused it. That is what lets a session be read back as it happened.
-- Each request to the assistant, step by step as it happens: what you asked, every call to the model with how long it took and how many tokens it used or the error it met, every tool it ran with what the tool was given and what it gave back, what the model said between steps, and how the request ended, with its answer, its error, or that you stopped it. Long texts are cut short.
+- Each request to the assistant, step by step as it happens: every call to the model with how long it took and how many tokens it used or the error it met, every tool it ran with what the tool was given and what it gave back, what the model said between steps, and how the request ended, with what you asked, its answer, its error, or that you stopped it. What you asked, and anything you added while it worked, is written as the request ends, so a key you pasted into it and the assistant saved is masked out. Long texts are cut short.
 - What went wrong: notices the app raised for you with what they said, errors in a window or a view, a window that stopped answering, a plugin's process that stopped.
 - How the app performs, once a minute: the memory and processor time its processes use, and how long the app took to respond.
 - Your windows: when one is focused, shown, hidden, moved, or closed.
@@ -30,8 +30,8 @@ Feedback goes whether recording is on or off: pressing Send is your own act each
 ## What it never captures
 
 - Anything outside Jaspers.
-- The characters you type, other than what you send the assistant: only how many, and into which field. A password field is not even counted.
-- The contents of cells: that a cell holds something, never what.
+- The characters you type, other than what you send the assistant and how you set a view: only how many, and into which field. A password field is not even counted.
+- What is written in cells and notes: that a cell or a note holds something, never what. The assistant's tools that read and write cells are kept without what they read or wrote.
 - Keys, passwords, and tokens the app holds, and the email you sign in with: every one is masked out of everything Eye writes. A key pasted into a key field is never in a frame. Your home folder's name is written as `~`.
 - What a view draws inside its own frame, beyond how it is set.
 - Anything at all while a key field or a question is on screen. A frame would show the API key you are pasting, or the exact command a Pro mode approval is waiting on, so that tick is skipped entirely and nothing of that screen is kept. The next frame comes at the next interval.

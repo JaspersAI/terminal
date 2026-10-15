@@ -1,21 +1,32 @@
 import type { AgentEvent, AgentOrigin } from '../../../shared/agent/agent'
+import { clip, hidesCells, HIDDEN_CELLS } from '../../../shared/app/eye-events'
 import { withRun } from '../../eye/cause'
 import { record } from '../../eye/eye'
 import type { Tile } from './runs'
 
 // What Eye keeps of a run, as it happens: a line as it begins, one for each call to the model (each
 // attempt, a retry included), each tool call as it starts and as it ends, what the model said between
-// rounds, its status lines, what the user added, and how it ended with the rounds and tokens it took.
-// The builder runs under its user's run, so its lines are that run's, its loop named by its label.
+// rounds, its status lines, that the user added to it, and how it ended with the rounds and tokens it
+// took. The builder runs under its user's run, so its lines are that run's, its loop named by its label.
+//
+// What the user wrote, the request and what they added, is written when the run ends, not as it
+// begins: a key pasted into the chat is a secret only once the run has saved it (`set_secret`), and
+// the end is masked against it, as a run's record always was. The tools that read and write cells
+// are kept without their payloads, which are what is written in cells.
 
 /** What a run in flight has spent so far, summed from its calls to the model, and how many tool calls it has made. */
 interface Pending {
   at: number
+  request: string
+  added: { at: number; text: string }[]
   rounds: number
   input: number
   output: number
   calls: number
 }
+
+/** How much of what the user added mid-run is kept, each message. */
+const ADDED_MAX = 8000
 
 const pending = new Map<string, Pending>()
 /** Tool calls of a run whose start was not seen, numbered apart. */
@@ -28,18 +39,14 @@ export function noteRequest(
   request: string,
   where: { workspaceId: string; label: string; tile?: Tile },
 ): void {
-  pending.set(runId, { at: Date.now(), rounds: 0, input: 0, output: 0, calls: 0 })
+  pending.set(runId, { at: Date.now(), request, added: [], rounds: 0, input: 0, output: 0, calls: 0 })
   record({
     kind: 'run',
     run: runId,
     name: origin,
     workspace: where.workspaceId,
-    data: {
-      label: where.label.trim(),
-      loop: where.tile?.loop ?? null,
-      on: where.tile?.place.on ?? null,
-      request,
-    },
+    count: request.length,
+    data: { label: where.label.trim(), loop: where.tile?.loop ?? null, on: where.tile?.place.on ?? null },
   })
 }
 
@@ -54,7 +61,8 @@ export function noteRun(event: AgentEvent): void {
       if (!event.again) record({ kind: 'status', run: event.runId, data: { line: event.line } })
       return
     case 'steered':
-      record({ kind: 'added', run: event.runId, data: { text: event.text } })
+      pending.get(event.runId)?.added.push({ at: Date.now(), text: clip(event.text, ADDED_MAX) })
+      record({ kind: 'added', run: event.runId, count: event.text.length })
       return
     case 'done':
     case 'failed':
@@ -79,7 +87,14 @@ function ended(event: Extract<AgentEvent, { kind: 'done' | 'failed' | 'stopped' 
     name: outcome,
     ok: event.kind === 'done',
     ms: Date.now() - begun.at,
-    data: { ...said, rounds: begun.rounds, input: begun.input, output: begun.output },
+    data: {
+      request: begun.request,
+      ...(begun.added.length > 0 ? { added: begun.added } : {}),
+      ...said,
+      rounds: begun.rounds,
+      input: begun.input,
+      output: begun.output,
+    },
   })
 }
 
@@ -133,7 +148,8 @@ export function noteLlm(runId: string, call: LlmCall): void {
 export function noteToolStart(runId: string, call: { id: string; name: string; input: string }): string {
   const begun = pending.get(runId)
   const span = begun ? `t${++begun.calls}` : `s${++strays}`
-  record({ kind: 'tool', run: runId, span, name: call.name, data: { input: call.input, id: call.id } })
+  const input = hidesCells(call.name) ? HIDDEN_CELLS : call.input
+  record({ kind: 'tool', run: runId, span, name: call.name, data: { input, id: call.id } })
   return span
 }
 
@@ -144,6 +160,7 @@ export function noteToolEnd(
   name: string,
   end: { ms: number } & ({ ok: true; output: string } | { ok: false; error: string; stopped?: boolean }),
 ): void {
+  const said = (text: string): string => (hidesCells(name) ? HIDDEN_CELLS : text)
   record({
     kind: 'tool-end',
     run: runId,
@@ -151,7 +168,7 @@ export function noteToolEnd(
     name,
     ok: end.ok,
     ms: end.ms,
-    data: end.ok ? { output: end.output } : { error: end.error, ...(end.stopped ? { stopped: true } : {}) },
+    data: end.ok ? { output: said(end.output) } : { error: said(end.error), ...(end.stopped ? { stopped: true } : {}) },
   })
 }
 

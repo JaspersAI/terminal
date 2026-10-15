@@ -16,7 +16,7 @@ import {
   type EyeFeedback,
   type QueuedBatch,
 } from '../../shared/app/eye'
-import { eyeLine, eyeTree, type EyeEvent, type Masking } from '../../shared/app/eye-events'
+import { eyeLine, eyeTree, homeForms, type EyeEvent, type Masking } from '../../shared/app/eye-events'
 import { diff } from '../../shared/app/patch'
 import { openWindows } from '../grid/windows'
 import { eyeRoot } from '../home'
@@ -296,7 +296,7 @@ function write(event: EyeEvent): boolean {
 }
 
 let maskedFor: readonly unknown[] = []
-let masks: Masking = { secrets: [], home: os.homedir() }
+let masks: Masking = { secrets: [], homes: homeForms(os.homedir()) }
 
 /**
  * What every line is masked against: the keys the app holds and the email it is signed in as, and
@@ -308,7 +308,7 @@ function masking(): Masking {
   if (parts.some((part, i) => part !== maskedFor[i])) {
     maskedFor = parts
     const email = state.jaspers.email
-    masks = { secrets: [...secretsOf(), ...(email ? [email] : [])], home: os.homedir() }
+    masks = { secrets: [...secretsOf(), ...(email ? [email] : [])], homes: homeForms(os.homedir()) }
   }
   return masks
 }

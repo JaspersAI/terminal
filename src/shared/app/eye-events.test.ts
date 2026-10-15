@@ -5,16 +5,19 @@ import {
   actionData,
   eyeLine,
   eyeTree,
+  hidesCells,
+  homeForms,
   LINE_MAX,
   noteEvent,
+  quietAction,
   readNote,
   type EyeEvent,
   type Masking,
 } from './eye-events.ts'
 import { diff } from './patch.ts'
 
-const none: Masking = { secrets: [], home: '' }
-const masking: Masking = { secrets: ['sk-live-1234567890', 'ana@example.com'], home: '/Users/ana' }
+const none: Masking = { secrets: [], homes: [] }
+const masking: Masking = { secrets: ['sk-live-1234567890', 'ana@example.com'], homes: ['/Users/ana'] }
 
 /** A line read back the way the server reads it. */
 function parsed(event: EyeEvent & { at: number }, with_: Masking = none): Record<string, unknown> {
@@ -66,8 +69,25 @@ test('every string in a line is masked: the keys the app holds, the email it is 
   assert.equal(parsed({ kind: 'click', at: 1, name: 'Delete /Users/ana/x' }, masking)['name'], 'Delete ~/x')
 })
 
+test('a Windows home folder is masked as Windows writes it, and as a file URL writes it', () => {
+  assert.deepEqual(homeForms('C:\\Users\\Ana Lee'), ['C:\\Users\\Ana Lee', 'C:/Users/Ana Lee', 'C:/Users/Ana%20Lee'])
+  assert.deepEqual(homeForms('/Users/ana'), ['/Users/ana'])
+  assert.deepEqual(homeForms(''), [])
+  const line = parsed(
+    {
+      kind: 'error',
+      at: 1,
+      name: 'renderer',
+      data: { message: 'at C:\\Users\\Ana Lee\\x.js', stack: 'at file:///C:/Users/Ana%20Lee/AppData/app.js:1:2' },
+    },
+    { secrets: [], homes: homeForms('C:\\Users\\Ana Lee') },
+  )
+  assert.deepEqual(line['data'], { message: 'at ~\\x.js', stack: 'at file:///~/AppData/app.js:1:2' })
+})
+
 test('texts are cut at their kind’s cap, marked where they were cut', () => {
-  const run = parsed({ kind: 'run', at: 1, data: { request: 'x'.repeat(9000) } })
+  // What was asked is written when the run ends, masked against the keys it saved.
+  const run = parsed({ kind: 'run-end', at: 1, data: { request: 'x'.repeat(9000) } })
   assert.equal((run['data'] as { request: string }).request.length, 8000)
   assert.ok((run['data'] as { request: string }).request.endsWith('…'))
   const tool = parsed({ kind: 'tool-end', at: 1, data: { output: 'y'.repeat(5000), error: null } })
@@ -133,6 +153,29 @@ test('an action keeps what was asked, but never a key, a cell’s contents, or a
   })
   for (const bad of [undefined, 'cells.write', { type: 7 }, { kind: 'x' }])
     assert.deepEqual(actionData(bad), { name: '?', data: {} })
+  // What a view is placed with is in the tree, as Eye keeps it, and not repeated here.
+  assert.deepEqual(
+    actionData({
+      type: 'element.place',
+      workspaceId: 'w1',
+      content: { kind: 'view', view: 'core/note' },
+      state: { text: 'mine' },
+    }),
+    { name: 'element.place', data: { workspaceId: 'w1', content: { kind: 'view', view: 'core/note' } } },
+  )
+})
+
+test('a view’s own writes, and a window saying it drew a question, are not the user’s actions', () => {
+  for (const name of ['panel.setState', 'panel.publish', 'panel.publishText', 'question.seen'])
+    assert.equal(quietAction(name), true, name)
+  for (const name of ['panel.refresh', 'element.place', 'question.answer', 'cells.write'])
+    assert.equal(quietAction(name), false, name)
+})
+
+test('the tools that read and write cells are the ones whose payloads are cells', () => {
+  assert.equal(hidesCells('read_cells'), true)
+  assert.equal(hidesCells('write_cells'), true)
+  assert.equal(hidesCells('place_view'), false)
 })
 
 const grid = {
@@ -175,6 +218,37 @@ test('Eye’s own counters going up, or the same grids, are no change to the tre
   assert.deepEqual(diff(before, eyeTree(state(written))), [
     { op: 'add', path: '/grids/w1/1/cells/C3', value: '[cell]' },
   ])
+})
+
+const note = {
+  id: 'p2',
+  elementId: 'e2',
+  content: { kind: 'view', view: 'core/note' },
+  state: { text: 'my private plan' },
+  output: { text: 'my private plan' },
+  summary: 'my private plan',
+  text: 'my private plan',
+  refreshedAt: null,
+}
+
+test('what is written in a note is hidden wherever the tree holds it, and typing into one changes nothing Eye keeps', () => {
+  const grids = { w1: { 1: { ...grid, panels: [...grid.panels, note] } } }
+  const tree = eyeTree(state(grids)) as { grids: { w1: { 1: { panels: Record<string, unknown>[] } } } }
+  const kept = tree.grids.w1[1].panels[1]!
+  assert.deepEqual(kept['state'], { text: '[note]' })
+  assert.deepEqual(kept['output'], { text: '[note]' })
+  assert.equal(kept['summary'], '[note]')
+  assert.equal(kept['text'], '[note]')
+  assert.equal(JSON.stringify(tree).includes('private'), false)
+  // Another view's settings are kept as they are.
+  assert.deepEqual(tree.grids.w1[1].panels[0], grid.panels[0])
+  const typed = { ...note, state: { text: 'my private plan, longer' }, output: { text: 'my private plan, longer' } }
+  const after = eyeTree(state({ w1: { 1: { ...grid, panels: [...grid.panels, typed] } } }))
+  assert.deepEqual(diff(tree, after), [])
+  // An empty note is a note with nothing in it: that stays as it is.
+  const empty = { ...note, state: { text: '' }, output: null, summary: null, text: null }
+  const blank = eyeTree(state({ w1: { 1: { ...grid, panels: [empty] } } })) as typeof tree
+  assert.deepEqual(blank.grids.w1[1].panels[0], empty)
 })
 
 test('a note from a window is read whole and capped, or not at all', () => {

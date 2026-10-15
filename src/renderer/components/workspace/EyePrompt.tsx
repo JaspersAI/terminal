@@ -57,8 +57,9 @@ export function EyePrompt(): ReactElement {
           <p>
             It is sent to Jaspers, so the team can see what people ask for, whether it worked, where it is slow, and
             where it goes wrong. Keys and passwords the app holds, and the email you sign in with, are masked out of
-            everything it keeps. What you type is never recorded, only how much, except what you send the assistant.
-            Cell contents and what other programs show are never recorded.
+            everything it keeps. What you write in cells and notes is never recorded; for any other field only how much
+            you typed, except what you send the assistant and how you set a view. What other programs show is never
+            recorded.
           </p>
           <p className="text-muted-foreground">
             A frame is never taken while a key field or an approval is on screen, so a password, an API key, or a

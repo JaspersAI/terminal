@@ -1,4 +1,5 @@
 import { mask } from '../agent/transcript.ts'
+import type { Panel } from '../grid/grid.ts'
 import type { AppState } from '../state.ts'
 
 // What a line of Eye's telemetry is: one JSON object per thing that happened, appended to the
@@ -9,8 +10,9 @@ import type { AppState } from '../state.ts'
 // reads them, and the rules for what a line may hold are here, where both can be held to them.
 //
 // What a line never holds: a key, a token, or a password the app knows (masked, as is the email it
-// is signed in as); the contents of a cell (the tree keeps that a cell holds something, never what);
-// the characters typed into a field (a count); the user's home folder (written `~`).
+// is signed in as); what is written in a cell or a note (the tree keeps that one holds something,
+// never what, and the tools that read and write cells keep only that they did); the characters typed
+// into a field (a count); the user's home folder (written `~`).
 
 /** The line this build writes. A line with no `v` is from a build before lines had one. */
 export const LINE_VERSION = 2
@@ -64,10 +66,20 @@ export interface EyeEvent {
   data?: Record<string, unknown>
 }
 
-/** What a line is masked against: the secrets the app holds (and the email it is signed in as), and the home folder. */
+/** What a line is masked against: the secrets the app holds (and the email it is signed in as), and the home folder as it is written. */
 export interface Masking {
   secrets: readonly string[]
-  home: string
+  homes: readonly string[]
+}
+
+/**
+ * The home folder as a line may hold it: as the system writes it, and on Windows also as a file URL
+ * writes it, with forward slashes and its spaces escaped, the way a stack trace names a file.
+ */
+export function homeForms(home: string): string[] {
+  if (home.length <= 1) return []
+  const forward = home.replaceAll('\\', '/')
+  return [...new Set([home, forward, encodeURI(forward)])]
 }
 
 /**
@@ -83,8 +95,7 @@ const LABEL_MAX = 80
 
 /** How much of each text a kind keeps. A request or a reply is a page or two; a tool's arguments or result less. */
 const CAPS: Partial<Record<EyeKind, Record<string, number>>> = {
-  run: { request: 8000 },
-  'run-end': { reply: 8000, error: 4000 },
+  'run-end': { request: 8000, reply: 8000, error: 4000 },
   said: { text: 8000 },
   added: { text: 8000 },
   tool: { input: 4000 },
@@ -137,8 +148,9 @@ function fields(event: EyeEvent & { at: number }, masking: Masking, data: unknow
 /** Every string in a value masked and the home folder written `~`, the value given left as it was. Keys are the app's names and stay. */
 export function cleaned(value: unknown, masking: Masking): unknown {
   if (typeof value === 'string') {
-    const masked = mask(value, masking.secrets as string[])
-    return masking.home.length > 1 ? masked.split(masking.home).join('~') : masked
+    let masked = mask(value, masking.secrets as string[])
+    for (const home of masking.homes) if (home.length > 1) masked = masked.split(home).join('~')
+    return masked
   }
   if (Array.isArray(value)) return value.map((item) => cleaned(item, masking))
   if (isRecord(value))
@@ -146,15 +158,39 @@ export function cleaned(value: unknown, masking: Masking): unknown {
   return value
 }
 
-function cut(text: string, max: number): string {
+/** A text at most `max` long, marked where it was cut. */
+export function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`
+}
+
+const cut = clip
+
+/**
+ * The actions that are not the user's: a view writing its own state, output, or text, which it does
+ * as it is used (a note on every key pressed), and a window saying it has drawn a question. What
+ * they change is in the tree's changes; they are not lines of their own.
+ */
+const QUIET_ACTIONS = new Set(['panel.setState', 'panel.publish', 'panel.publishText', 'question.seen'])
+
+export function quietAction(name: string): boolean {
+  return QUIET_ACTIONS.has(name)
+}
+
+/** The assistant's tools whose input and output are what is written in cells. */
+const CELL_TOOLS = new Set(['read_cells', 'write_cells'])
+/** What such a tool's input, output, or error is kept as: that it was cells. */
+export const HIDDEN_CELLS = '[cells]'
+
+export function hidesCells(tool: string): boolean {
+  return CELL_TOOLS.has(tool)
 }
 
 /**
  * What a dispatched action is kept as: its type as the line's name, and the rest as its data, less
  * what must never be written: a provider's token, a plugin's secret, what was typed into cells (their
- * names stay), and a note's words (the `feedback` line has those). What the user answers the
- * assistant is what they sent it, and stays. Anything that is not an action is `?`.
+ * names stay), and a note's words (the `feedback` line has those). What a view is placed with is in
+ * the tree, as Eye keeps it, and is left out here. What the user answers the assistant is what they
+ * sent it, and stays. Anything that is not an action is `?`.
  */
 export function actionData(raw: unknown): { name: string; data: Record<string, unknown> } {
   if (!isRecord(raw) || typeof raw['type'] !== 'string') return { name: '?', data: {} }
@@ -171,23 +207,33 @@ export function actionData(raw: unknown): { name: string; data: Record<string, u
   if (name === 'cells.write' && isRecord(data['cells']))
     return { name, data: { ...data, cells: Object.keys(data['cells']) } }
   if (name === 'eye.feedback') return { name, data: {} }
+  if (name === 'element.place') {
+    const { state: _state, ...rest } = data
+    return { name, data: rest }
+  }
   return { name, data }
 }
 
 /** What a cell holds, as Eye keeps it: that it holds something. */
 export const HIDDEN_CELL = '[cell]'
+/** What a note holds, the same way. */
+export const HIDDEN_NOTE = '[note]'
 
-const hidden = new WeakMap<object, unknown>()
+/** The views whose state is what the user wrote in them. */
+const WRITTEN_VIEWS = new Set(['core/note'])
+
+const made = new WeakMap<object, unknown>()
 
 /** The same answer for the same object, so a tree made again of the parts that did not change is those same parts. */
 function once<T extends object, U>(key: T, make: () => U): U {
-  if (!hidden.has(key)) hidden.set(key, make())
-  return hidden.get(key) as U
+  if (!made.has(key)) made.set(key, make())
+  return made.get(key) as U
 }
 
 /**
- * The public tree as Eye keeps it: every cell's contents replaced by `HIDDEN_CELL`, and Eye's own
- * counters left out, so the recorder's bookkeeping is not a change every minute. Grids that did not
+ * The public tree as Eye keeps it: every cell's contents replaced by `HIDDEN_CELL`, every word of a
+ * note (its state, its output, its summary, its text) by `HIDDEN_NOTE`, and Eye's own counters left
+ * out, so the recorder's bookkeeping is not a change every minute. Grids and panels that did not
  * change come back as the same objects, so a diff passes over them.
  */
 export function eyeTree(state: AppState): Record<string, unknown> {
@@ -201,6 +247,7 @@ export function eyeTree(state: AppState): Record<string, unknown> {
               number,
               once(grid, () => ({
                 ...grid,
+                panels: grid.panels.map(written),
                 cells: Object.fromEntries(Object.keys(grid.cells).map((cell) => [cell, HIDDEN_CELL])),
               })),
             ]),
@@ -211,6 +258,26 @@ export function eyeTree(state: AppState): Record<string, unknown> {
   )
   const { recording, asked, install } = state.eye
   return { ...state, grids, eye: { recording, asked, install } }
+}
+
+/** A panel as Eye keeps it: a note's every word hidden, typing into it no change; any other view as it is. */
+function written(panel: Panel): Panel {
+  if (panel.content.kind !== 'view' || !WRITTEN_VIEWS.has(panel.content.view)) return panel
+  return once(panel, () => ({
+    ...panel,
+    state: hidden(panel.state),
+    output: hidden(panel.output),
+    summary: hidden(panel.summary),
+    text: hidden(panel.text),
+  }))
+}
+
+/** Every string with something in it replaced by `HIDDEN_NOTE`: what was written is gone, that something was is not. */
+function hidden<T>(value: T): T {
+  if (typeof value === 'string') return (value ? HIDDEN_NOTE : value) as T
+  if (Array.isArray(value)) return value.map(hidden) as T
+  if (isRecord(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, hidden(item)])) as T
+  return value
 }
 
 /** What a window may tell Eye: a click, how much was typed into a field, an error. Never the characters typed. */

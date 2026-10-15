@@ -1,5 +1,5 @@
 import { app, type BrowserWindow, type WebContents } from 'electron'
-import { actionData, noteEvent, readNote } from '../../shared/app/eye-events'
+import { actionData, noteEvent, quietAction, readNote } from '../../shared/app/eye-events'
 import { onNotice } from '../app/notices'
 import { openWindows, windowNumberOf } from '../grid/windows'
 import { withCause } from './cause'
@@ -17,11 +17,14 @@ let causes = 0
 /**
  * A window's action, handled under a cause id of its own: the line is written as it is dispatched,
  * so the changes it makes follow it, and a handler that refuses it adds an `error` line with the
- * same id. Whatever the handler answers or throws goes back to the window as it would have.
+ * same id. Whatever the handler answers or throws goes back to the window as it would have. A view's
+ * own writes (`quietAction`) are handled as they are, with no line.
  */
 export function recordAction<T>(sender: WebContents, raw: unknown, handle: () => T): T {
-  const cause = `a${++causes}`
   const { name, data } = actionData(raw)
+  // A view writing its own state is not the user's act: what it changes is a change of no one's.
+  if (quietAction(name)) return handle()
+  const cause = `a${++causes}`
   const where = windowOf(sender)
   record({ kind: 'action', name, span: cause, ...where, data })
   const refused = (err: unknown): void =>
