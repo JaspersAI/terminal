@@ -1,0 +1,164 @@
+name: User sim
+
+# A model plays a user through each pull request's use case in the built app, and a second model
+# judges whether it worked (tests/user-sim/, "User simulation" in docs/development.md). It reports as
+# the `user-sim` commit status on the pull request's head, with one comment holding the verdicts.
+#
+# It starts once CodeRabbit's review of a head succeeds, as the `CodeRabbit` commit status, so a
+# change is played only after it has been read. CodeRabbit skips pull requests a bot opened, so it
+# also runs by hand for any pull request: Actions > User sim > Run workflow, or
+# `gh workflow run user-sim.yml -f pr=<number>`.
+#
+# The run has ANTHROPIC_API_KEY and runs the pull request's own code, so it runs only for a pull
+# request whose branch is in this repository, whose authors can push here already: never for a fork.
+# A `status` workflow always runs as main has it, so a pull request cannot change these rules for itself.
+on:
+  status:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Which pull request, at which commit, and whether it may run at all.
+  resolve:
+    if: github.event_name == 'workflow_dispatch' || (github.event.context == 'CodeRabbit' && github.event.state == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.pr.outputs.pr }}
+      sha: ${{ steps.pr.outputs.sha }}
+    steps:
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PR: ${{ github.event.inputs.pr }}
+          SHA: ${{ github.event.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if ! [[ "$INPUT_PR" =~ ^[0-9]+$ ]]; then
+              echo "::error::pr must be a pull request number, not '$INPUT_PR'."
+              exit 1
+            fi
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$INPUT_PR")
+          else
+            # The open pull request this commit heads. A commit no open pull request heads is not run.
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" \
+              --jq "[.[] | select(.state == \"open\" and .head.sha == \"$SHA\")][0] // empty")
+            if [ -z "$pr" ]; then
+              echo "No open pull request has $SHA at its head."
+              exit 0
+            fi
+          fi
+          number=$(jq -r .number <<<"$pr")
+          head_repo=$(jq -r '.head.repo.full_name // ""' <<<"$pr")
+          if [ "$(jq -r .state <<<"$pr")" != open ]; then
+            echo "::notice::#$number is not open."
+            exit 0
+          fi
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "::notice::#$number comes from ${head_repo:-a deleted fork}: user-sim never runs a fork's code with the API key."
+            exit 0
+          fi
+          echo "pr=$number" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -r .head.sha <<<"$pr")" >> "$GITHUB_OUTPUT"
+
+  user-sim:
+    needs: resolve
+    if: needs.resolve.outputs.pr != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: write
+    # One run per pull request: a newer head cancels the run for the older one.
+    concurrency:
+      group: user-sim-pr-${{ needs.resolve.outputs.pr }}
+      cancel-in-progress: true
+    env:
+      PR: ${{ needs.resolve.outputs.pr }}
+      SHA: ${{ needs.resolve.outputs.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Mark the check as running
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state=pending -f context=user-sim \
+            -f description='A model is playing the user' -f target_url="$RUN_URL" > /dev/null
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # A display for Electron, and the libraries it loads.
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth libnss3 libgbm1 libgtk-3-0 libasound2t64 libxss1 libsecret-1-0 > /dev/null
+      # With Electron's binary, unlike CI: this job starts the app.
+      - run: npm ci
+      - run: npm run build
+      - name: List the pull request's files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate \
+            --jq '.[] | select(.status != "removed") | .filename' > "$RUNNER_TEMP/changed.txt"
+          cat "$RUNNER_TEMP/changed.txt"
+      # The scenarios the pull request adds or changes, and every core one. None of its own fails here.
+      - name: Play the scenarios
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          xvfb-run -a -s '-screen 0 1440x900x24' \
+            npm run test:user-sim -- --changed-files "$RUNNER_TEMP/changed.txt" --out "$RUNNER_TEMP/user-sim"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: user-sim
+          path: ${{ runner.temp }}/user-sim
+          if-no-files-found: ignore
+      # The status, the job's summary, and one comment on the pull request, edited on each run.
+      - name: Report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          marker='<!-- user-sim -->'
+          OUT="$RUNNER_TEMP/user-sim"
+          if [ -f "$OUT/results.json" ]; then
+            outcome=$(jq -r .outcome "$OUT/results.json")
+            description=$(jq -r .description "$OUT/results.json")
+            if [ "$outcome" = pass ]; then state=success; else state=failure; fi
+            summary=$(cat "$OUT/summary.md")
+          elif [ "$JOB_STATUS" = cancelled ]; then
+            state=error
+            description='Cancelled: a newer run took over'
+            summary="### User sim"$'\n\n'"Cancelled before it finished."
+          else
+            state=error
+            description='The run did not finish: see the log'
+            summary="### User sim"$'\n\n'"The run did not finish: see [the log]($RUN_URL)."
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$state" -f context=user-sim \
+            -f description="${description:0:140}" -f target_url="$RUN_URL" > /dev/null
+          printf '%s\n' "$summary" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n\nFor %s, [run %s](%s).\n%s\n' "$summary" "${SHA:0:7}" "$GITHUB_RUN_ID" "$RUN_URL" "$marker" > "$RUNNER_TEMP/comment.md"
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
+          fi

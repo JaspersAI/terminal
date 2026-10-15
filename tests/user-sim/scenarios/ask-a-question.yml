@@ -1,0 +1,10 @@
+name: Ask the assistant a question and read its answer
+tags: [core]
+max_steps: 15
+user: >
+  You have just set the app up. Ask the assistant, in the box where you type to it, what 17 times 23
+  is, and read its answer.
+expect:
+  - The question was sent to the assistant from the app's own request box.
+  - The assistant's answer is on screen and says 391.
+  - No error message or notice about a failed request is showing.

@@ -1,0 +1,18 @@
+name: Ask the assistant to change a note on the grid
+tags: [core]
+max_steps: 20
+# The assistant does not place notes of its own (`notPlaced`), so the note is put on the grid first,
+# as a user would have, and the user asks the assistant to change what it says.
+setup:
+  - type: element.place
+    workspaceId: ${workspaceId}
+    content: { kind: view, view: core/note }
+    state: { text: 'Groceries: milk' }
+    placement: { rect: { x: 0, y: 0, w: 8, h: 6 } }
+user: >
+  There is a note on your grid with a grocery list. Without typing into the note yourself, ask the
+  assistant to add eggs to the grocery list in that note, then check the note.
+expect:
+  - The note on the grid now mentions both milk and eggs.
+  - The change was made by the assistant after the user asked, not typed into the note by the user.
+  - No error message or notice about a failed request is showing.

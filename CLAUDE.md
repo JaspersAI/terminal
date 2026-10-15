@@ -12,11 +12,12 @@ Use Node 24 (`nvm use`) before running commands.
 | `npm run build` | Build main, preload, renderer, and the plugin view runtime into `out/` |
 | `npm start` | Run the existing build; run `npm run build` first |
 | `npm run typecheck` | Typecheck, including unused locals and parameters |
-| `npm test` | Node's test runner over `src/**/*.test.ts` |
+| `npm test` | Node's test runner over `src/**/*.test.ts` and the user-sim harness's own tests |
 | `npm run format` | Format code with Prettier |
 | `npm run format:check` | Check formatting without writing |
 | `npm run sdk:build` | Build the SDK and its declarations for publishing |
 | `npm run dist` | Build and package for this platform: a macOS arm64 app, signed with the Developer ID if the keychain has it, or a Windows installer |
+| `npm run test:user-sim` | A model plays each scenario in `tests/user-sim/scenarios/` in the built app and another judges it: needs a build, a display, and `ANTHROPIC_API_KEY`, or `-- --model-stub` |
 | `npm run test:packaged` | Open and use a packaged app with Playwright: `INSTALLER=<exe>` on Windows, `APP_BINARY=<executable>` elsewhere |
 
 Vite strips types without checking them. Before finishing code changes, run typecheck, relevant tests, and format checking. Build when changing entry points or process boundaries; build the SDK when changing its public types. Exercise UI changes in the app.

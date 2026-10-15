@@ -18,8 +18,9 @@
     "dist": "npm run build && electron-builder",
     "sdk:build": "npm run build --workspace @jaspers-ai/sdk",
     "typecheck": "tsc --noEmit",
-    "test": "node --conditions=jaspers-source --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test 'src/**/*.test.ts'",
+    "test": "node --conditions=jaspers-source --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test 'src/**/*.test.ts' 'tests/user-sim/*.test.ts'",
     "test:packaged": "node --conditions=jaspers-source --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/packaged.test.ts",
+    "test:user-sim": "node --conditions=jaspers-source --disable-warning=MODULE_TYPELESS_PACKAGE_JSON tests/user-sim/run.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

@@ -146,9 +146,36 @@ The server is [JaspersAI/jaspers-eye](https://github.com/JaspersAI/jaspers-eye):
 
 To publish the SDK, bump `packages/sdk/package.json`, build and check it, then publish from `packages/sdk` with `npm publish --access public`. Its `prepublishOnly` rebuilds the package. Publishing is a separate explicit action; a local SDK build does not publish anything.
 
-CI (`.github/workflows/ci.yml`) runs the format check, typecheck, and tests on every push to main and every pull request, on Linux without Electron's binary; nothing it runs may start Electron.
+CI (`.github/workflows/ci.yml`) runs the format check, typecheck, and tests on every push to main and every pull request, on Linux without Electron's binary; nothing it runs may start Electron. [User simulation](#user-simulation) is the job that does.
 
 `preview.yml` builds the DMG on a macOS runner for a pull request from a `ship/` branch, uploads it to a public Vercel Blob store with the `BLOB_READ_WRITE_TOKEN` secret, and links it in a comment on the pull request. It is the real app, ad-hoc signed, since the Developer ID certificate never meets a pull request's code: the first open needs Open Anyway in System Settings, it shares the installed app's data, and it refuses every update it downloads. Only Ship's branches build because a macOS minute counts as ten while the repo is private.
+
+## User simulation
+
+`tests/user-sim/` plays a pull request's use case in the built app. A driver model (`claude-sonnet-5`, or `USER_SIM_MODEL`) is the user: it sees the window through screenshots and the accessibility tree, clicks, types, presses keys, waits, and may read the state tree to check what it sees, until it calls `done` or runs out of steps. A judge model, which did not play, holds the end against the scenario's criteria from the last screenshots, the accessibility tree, the state, and the errors the app logged, and answers `{pass, reasons, evidence}`; anything else is no verdict and fails, and so does a crash. The app runs from `out/` with Electron from `node_modules`, in a sandbox per scenario (`--user-data-dir` and `JASPERS_HOME`, deleted afterwards since it holds the saved key), with Anthropic `claude-sonnet-5` as its own model on the same key, Eye declined, and setup finished.
+
+A scenario is a file in `tests/user-sim/scenarios/`, named for what it does:
+
+```yaml
+name: Ask the assistant to change a note on the grid
+tags: [core] # core runs on every pull request; leave it off for a feature's own scenario
+max_steps: 20 # tool calls the driver may make, 1 to 60 (default 25)
+setup: # optional: actions dispatched once setup is done; ${workspaceId} is the workspace on screen
+  - type: element.place
+    workspaceId: ${workspaceId}
+    content: { kind: view, view: core/note }
+    state: { text: 'Groceries: milk' }
+    placement: { rect: { x: 0, y: 0, w: 8, h: 6 } }
+user: > # the goal, as a user would say it
+  Ask the assistant to add eggs to the grocery list in that note, then check the note.
+expect: # what must be true at the end, each checked on its own
+  - The note on the grid now mentions both milk and eggs.
+  - No error message or notice about a failed request is showing.
+```
+
+Write `user` as the user's intent, not as clicks, and `expect` as what a person would see, so a scenario outlives a redesign. `npm run test:user-sim` needs `npm run build`, a display (`xvfb-run -a -s '-screen 0 1440x900x24'` on Linux), and `ANTHROPIC_API_KEY`; it runs every scenario, or the files named after `--`. `--model-stub` (or `USER_SIM_STUB=1`) puts scripted models in place of both, which look at the app and pass a run it survived: it checks the harness and the app's start, never a scenario. Results go to `--out` (default the OS temp dir's `jaspers-terminal/user-sim`): `results.json`, `summary.md`, and per scenario its steps, screenshots, and the app's log. The driver's spending is capped per scenario, `$3` or `USER_SIM_MAX_USD`; the app's own calls on the key are not counted. The harness's pure parts are tested in `npm test`.
+
+`.github/workflows/user-sim.yml` runs it once the `CodeRabbit` commit status of a pull request's head is `success`, or by hand with a pull request's number (`gh workflow run user-sim.yml -f pr=<number>`), which is the way for a pull request CodeRabbit skipped, such as a bot's. It runs only a pull request whose branch is in this repository, never a fork's, since it gives the pull request's code the `ANTHROPIC_API_KEY` secret. It runs the scenarios the pull request adds or changes and every `core` one; a pull request that adds none fails with "no use case scenario", which is the gate: every change says what it is for. It reports as the `user-sim` commit status on the head, the `user-sim` artifact, and one comment on the pull request, edited on each run.
 
 ## Releasing and updates
 
