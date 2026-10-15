@@ -199,17 +199,43 @@ export function batchAccepted(status: number): boolean {
 // hold is `eye-events.ts`. The file only grows, and goes up in parts.
 
 /**
- * The next part of the telemetry file to send: its whole lines after the `from` already sent, and
- * how many. The file is appended to while the app runs, so a last line without its newline is one
- * still being written, and waits for the next part. The endpoint files each line under its number,
- * which is why the count is what the uploader keeps and the file itself is never rewritten.
+ * How much of the telemetry file one request carries, in characters. A session that ran for days is
+ * sent in parts of this size rather than in one body the endpoint would refuse as too big; three
+ * bytes a character at most keeps a part well inside its limit of 64 MB.
  */
-export function eventsPart(text: string, from: number): { body: string; count: number } {
+export const PART_MAX_CHARS = 8 * 1024 * 1024
+
+/**
+ * The next part of the telemetry file to send: its whole lines after the `from` already sent, as
+ * many as fit `max` characters and at least one, how many, and how many whole lines are left after
+ * them. The file is appended to while the app runs, so a last line without its newline is one still
+ * being written, and waits for the next part. The endpoint files each line under its number, which
+ * is why the count is what the uploader keeps and the file itself is never rewritten.
+ */
+export function eventsPart(
+  text: string,
+  from: number,
+  max: number = PART_MAX_CHARS,
+): { body: string; count: number; rest: number } {
   const lines = text.split('\n')
   // The last piece is either empty, after a final newline, or a line not yet whole: neither goes.
   lines.pop()
   const next = lines.slice(Math.max(0, from))
-  return { body: next.map((line) => `${line}\n`).join(''), count: next.length }
+  let size = 0
+  let count = 0
+  for (const line of next) {
+    if (count > 0 && size + line.length + 1 > max) break
+    size += line.length + 1
+    count++
+  }
+  return {
+    body: next
+      .slice(0, count)
+      .map((line) => `${line}\n`)
+      .join(''),
+    count,
+    rest: next.length - count,
+  }
 }
 
 function cut(text: string, max: number): string {

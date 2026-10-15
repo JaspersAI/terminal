@@ -10,6 +10,7 @@ import {
   EYE_OFF,
   EYE_TOKEN,
   eventsPart,
+  PART_MAX_CHARS,
   FEEDBACK_TEXT_MAX,
   feedbackFileName,
   feedbackRecord,
@@ -165,14 +166,22 @@ test('a batch is done with when it was accepted or refused on its own terms, and
 })
 
 test('the next part of the telemetry file is its whole lines after the ones already sent', () => {
-  assert.deepEqual(eventsPart('a\nb\nc\n', 0), { body: 'a\nb\nc\n', count: 3 })
-  assert.deepEqual(eventsPart('a\nb\nc\n', 2), { body: 'c\n', count: 1 })
+  assert.deepEqual(eventsPart('a\nb\nc\n', 0), { body: 'a\nb\nc\n', count: 3, rest: 0 })
+  assert.deepEqual(eventsPart('a\nb\nc\n', 2), { body: 'c\n', count: 1, rest: 0 })
   // A line still being written has no newline yet, and waits for the next part.
-  assert.deepEqual(eventsPart('a\nb\nc', 1), { body: 'b\n', count: 1 })
-  assert.deepEqual(eventsPart('a\n', 1), { body: '', count: 0 })
-  assert.deepEqual(eventsPart('', 0), { body: '', count: 0 })
+  assert.deepEqual(eventsPart('a\nb\nc', 1), { body: 'b\n', count: 1, rest: 0 })
+  assert.deepEqual(eventsPart('a\n', 1), { body: '', count: 0, rest: 0 })
+  assert.deepEqual(eventsPart('', 0), { body: '', count: 0, rest: 0 })
   // Fewer lines than were sent, as after the file was deleted and written again: nothing to send.
-  assert.deepEqual(eventsPart('a\n', 5), { body: '', count: 0 })
+  assert.deepEqual(eventsPart('a\n', 5), { body: '', count: 0, rest: 0 })
+})
+
+test('a part is as many whole lines as fit its size, at least one, and says how many are left', () => {
+  assert.deepEqual(eventsPart('aaa\nbbb\nccc\n', 0, 8), { body: 'aaa\nbbb\n', count: 2, rest: 1 })
+  assert.deepEqual(eventsPart('aaa\nbbb\nccc\n', 2, 8), { body: 'ccc\n', count: 1, rest: 0 })
+  // A line longer than a part goes alone, so nothing is ever stuck behind it.
+  assert.deepEqual(eventsPart('aaaaaaaaaaaa\nb\n', 0, 4), { body: 'aaaaaaaaaaaa\n', count: 1, rest: 1 })
+  assert.ok(PART_MAX_CHARS >= 1024 * 1024 && PART_MAX_CHARS * 3 < 64 * 1024 * 1024)
 })
 
 const note: EyeFeedback = {
