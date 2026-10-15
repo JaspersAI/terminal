@@ -16,6 +16,7 @@ import { Answer } from './Answer'
 import { dockChat } from './dock'
 import { hears } from './hears'
 import { Orb } from './Orb'
+import { pasteLinks } from './paste'
 import { Peek } from './Peek'
 import { PHASE_TEXT } from './phase'
 import { useRequest } from './request'
@@ -349,6 +350,7 @@ export function Composer(): ReactElement {
               aria-activedescendant={menuOpen ? `slash-option-${active}` : undefined}
               aria-autocomplete="list"
               onKeyDown={menuKey}
+              onPaste={pasteLinks}
               onChange={(event) => {
                 setDraft(event.target.value)
                 setMenuIndex(0)
