@@ -4,9 +4,10 @@ name: User sim
 # judges whether it worked (tests/user-sim/, "User simulation" in docs/development.md). It reports as
 # the `user-sim` commit status on the pull request's head, with one comment holding the verdicts.
 #
-# It starts once CodeRabbit's review of a head succeeds, as the `CodeRabbit` commit status, so a
-# change is played only after it has been read. CodeRabbit skips pull requests a bot opened, so it
-# also runs by hand for any pull request: Actions > User sim > Run workflow, or
+# It starts once the `CodeRabbit` commit status of a head is success, so a change is played only
+# after it has been read. CodeRabbit sets that status to success when it skips a review too ("Review
+# skipped: bot user not eligible for review" on Ship's pull requests), so those run as well. It also
+# runs by hand for any pull request, to run one again: Actions > User sim > Run workflow, or
 # `gh workflow run user-sim.yml -f pr=<number>`.
 #
 # The run has ANTHROPIC_API_KEY and runs the pull request's own code, so it runs only for a pull
