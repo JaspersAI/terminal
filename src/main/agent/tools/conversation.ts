@@ -1,5 +1,6 @@
 import { cap } from '../../../shared/agent/prompt'
-import { askUser, requestSecret, setSecret, waitForSecret } from '../../actions'
+import { unanswered } from '../utils/questions'
+import { askUserFor, requestSecret, setSecret, waitForSecret } from '../../actions'
 import { askedBy } from '../utils/runs'
 import type { Tool } from './types'
 import { asPathString } from './input'
@@ -8,7 +9,7 @@ export const conversationTools: Tool[] = [
   {
     name: 'ask_user',
     description:
-      'Ask the user one short question and wait for the answer, when the request is ambiguous in a way you cannot settle by looking. Use it rather than guessing between two readings; do not use it for anything you can find out with get, query, or a source. Offer choices when there are a few obvious ones; they may write their own instead. Answers with what they said, or says they closed it.',
+      'Ask the user one short question and wait for the answer, when the request is ambiguous in a way you cannot settle by looking. Use it rather than guessing between two readings; do not use it for anything you can find out with get, query, or a source. Offer choices when there are a few obvious ones; they may write their own instead. Answers with what they said, or says they closed it or did not answer in time.',
     parameters: {
       type: 'object',
       properties: {
@@ -27,10 +28,8 @@ export const conversationTools: Tool[] = [
       const choices = Array.isArray(input.choices)
         ? input.choices.filter((one): one is string => typeof one === 'string' && one.trim() !== '').slice(0, 5)
         : []
-      const answer = await askUser(cap(question, 300), choices, signal, undefined, askedBy(runId))
-      return answer === null
-        ? 'The user closed the question without answering. Carry on with what you have, or say what you need.'
-        : answer
+      const asked = await askUserFor(cap(question, 300), choices, signal, undefined, askedBy(runId))
+      return asked.answer ?? unanswered(asked.ended)
     },
   },
   {

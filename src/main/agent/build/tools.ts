@@ -1,6 +1,6 @@
 import { describeFolder, sizeText } from '../../../shared/agent/build/files'
 import type { PluginInfo } from '../../../shared/state'
-import { askUser } from '../../actions'
+import { askUserFor } from '../../actions'
 import { jaspersHome } from '../../home'
 import { readBuildRecordFile } from '../../plugins/build-record'
 import { installPackages } from '../../plugins/packages'
@@ -158,7 +158,16 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
       async run(input) {
         const { folder, info } = await installPlugin(session.folder, input, session.request, {
           home: jaspersHome(),
-          ask: (question) => askUser(question.text, question.choices, context.signal, question.code),
+          ask: async (question) => {
+            const asked = await askUserFor(question.text, question.choices, context.signal, question.code)
+            // Ten minutes with nobody there is not a no: say so, rather than that the user refused.
+            if (asked.answer === null && asked.ended === 'timeout') {
+              throw new Error(
+                `Nobody answered the question to install ${session.folder.id} within ten minutes, so nothing was installed. The user did not refuse; they may be away. Say the plugin is written and waiting on their approval, and call install_plugin again when they ask.`,
+              )
+            }
+            return asked.answer
+          },
           land: landFolder,
           rebuild: rebuildPlugin,
           wait: (id) => {

@@ -44,7 +44,7 @@ import { readBudget } from '../shared/agent/budget'
 import { isTheme } from '../shared/app/theme'
 import { EYE_CONSENT, readEye, readFeedbackText } from '../shared/app/eye'
 import { sendFeedback } from './eye/eye'
-import { createQuestions } from './agent/utils/questions'
+import { createQuestions, type Asking } from './agent/utils/questions'
 import { knownSecrets } from './agent/utils/settings'
 import { readProMode } from '../shared/app/pro-mode'
 import { addNotice, setUnread } from './app/notices'
@@ -519,9 +519,20 @@ export function askUser(
   code?: string,
   about?: string,
 ): Promise<string | null> {
+  return askUserFor(text, choices, signal, code, about).then((one) => one.answer)
+}
+
+/** As `askUser`, and says why there is no answer when there is none: closed, timed out, or stopped. */
+export function askUserFor(
+  text: string,
+  choices: string[],
+  signal?: AbortSignal,
+  code?: string,
+  about?: string,
+): Promise<Asking> {
   const place = here()
   console.log(`[ask] ${text}`)
-  return questions.ask(
+  return questions.askFor(
     { text, choices, ...(code ? { code } : {}), ...(about ? { about } : {}), ...(place ? { place } : {}) },
     signal,
     // A run on a task's limits has nobody at it: its question does not wait to be looked at.
