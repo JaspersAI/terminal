@@ -8,6 +8,7 @@ import {
   type ReactElement,
 } from 'react'
 import {
+  CHAT_VIEW,
   layoutOf,
   type DragHandle,
   type Grid,
@@ -73,8 +74,8 @@ const HANGING = 1000
  * kept, conversation and views, and View loops in Settings reopens it. A minimized tile keeps its
  * menu, hung under its bar, since with no room to restore it the menu is the only way left to stop
  * or close what it holds. The docked chat has neither a name nor a box nor a menu: it is the global
- * conversation, its bar says so, and its cross closes it. A tile with no view in it yet is its box,
- * and the place its views will go.
+ * conversation, Central, its bar red so it never reads as one more loop, and its cross closes it. A
+ * tile with no view in it yet is its box, and the place its views will go.
  *
  * Under the box there are views and nothing else. A view whose plugin is waiting on the user, for a
  * key it declares or a sign-in to one of its connections, is not drawn until the plugin has it: the
@@ -122,6 +123,8 @@ export function ElementFrame({
   const { x, y, w, h } = rect
   const content = panel?.content
   const title = content?.kind === 'view' ? (views[content.view]?.title ?? content.view) : ''
+  // The docked chat, the workspace's own conversation: its bar is red, apart from every loop's.
+  const central = !loop && content?.kind === 'view' && content.view === CHAT_VIEW
   // A piece of work's tile holds no view itself: its views are the elements inside it, and what it is, is the work.
   const frame = content?.kind === 'frame'
   const plugins = useAppState((s) => s.plugins)
@@ -205,10 +208,14 @@ export function ElementFrame({
           if (minimized) toggleMinimized(workspaceId, element)
           else toggleMaximized(workspaceId, element)
         }}
-        className={`flex h-6 shrink-0 items-center border-b border-border ${maximized || minimized ? '' : 'cursor-grab'}`}
+        className={`flex h-6 shrink-0 items-center border-b ${
+          central ? 'border-central bg-central text-central-foreground' : 'border-border'
+        } ${maximized || minimized ? '' : 'cursor-grab'}`}
       >
         <span
-          className={`min-w-0 flex-1 truncate px-2 text-xs ${focused ? 'text-foreground' : 'text-muted-foreground'}`}
+          className={`min-w-0 flex-1 truncate px-2 text-xs ${
+            central ? 'font-medium' : focused ? 'text-foreground' : 'text-muted-foreground'
+          }`}
         >
           {loop ? `${called} · ${loop.desc}` : title}
         </span>
@@ -300,7 +307,11 @@ export function ElementFrame({
             )
           }
           // Above the corner that resizes, so a press on the cross always closes.
-          className="relative z-20 flex h-6 w-6 shrink-0 cursor-default items-center justify-center text-muted-foreground hover:text-foreground"
+          className={`relative z-20 flex h-6 w-6 shrink-0 cursor-default items-center justify-center ${
+            central
+              ? 'text-central-foreground/80 hover:text-central-foreground'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
         >
           <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
             <path d="M1 1 9 9M9 1 1 9" />
