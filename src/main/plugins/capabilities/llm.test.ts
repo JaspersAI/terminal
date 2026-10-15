@@ -101,3 +101,30 @@ test('at most four requests are with the provider at once', async () => {
   await Promise.all(Array.from({ length: 9 }, () => llm.complete(request, new AbortController().signal)))
   assert.equal(most, 4)
 })
+
+test("a request with tools, or with more than one turn, is a round of a loop: marked for the provider's cache", async () => {
+  const seen: CompleteOptions[] = []
+  const { d } = deps(async (options) => {
+    seen.push(options)
+    return REPLY
+  })
+  const llm = createLlm(d)
+  const signal = new AbortController().signal
+  await llm.complete({ ...request, tools: [{ name: 'search', description: 'Searches.', parameters: {} }] }, signal)
+  await llm.complete(
+    {
+      ...request,
+      turns: [
+        ...request.turns,
+        { role: 'assistant', text: 'Yes.', toolCalls: [], raw: null },
+        { role: 'user', text: 'More.' },
+      ],
+    },
+    signal,
+  )
+  await llm.complete(request, signal)
+  assert.deepEqual(
+    seen.map((one) => one.loop),
+    [true, true, undefined],
+  )
+})
