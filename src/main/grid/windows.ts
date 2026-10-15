@@ -223,7 +223,7 @@ export function windowSize(n: number): string | null {
 }
 
 /** Which window a page belongs to, or null for a page that is none of ours. */
-function windowNumberOf(contents: WebContents): number | null {
+export function windowNumberOf(contents: WebContents): number | null {
   for (const [n, win] of windows) if (!win.isDestroyed() && win.webContents === contents) return n
   return null
 }

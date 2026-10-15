@@ -7,6 +7,7 @@ import { recordUsage, spentToday } from '../data/store'
 import type { ProviderConfig } from '../secrets'
 import type { Tool, ToolContext } from './tools/types'
 import { runCalls } from './utils/calls'
+import { asRun } from './utils/record'
 import { request } from './utils/request'
 import { emit, Stopped, telling, type Live } from './utils/runs'
 import { budget } from './utils/settings'
@@ -98,7 +99,8 @@ export interface Request {
 
 /** One run of the agent loop, for whoever asks: the user, a task, a loop, the builder. */
 export function agentLoop(request: Request): Promise<string> {
-  return loop(request)
+  // What the run changes in the tree, Eye says the run changed: its loop runs as the run's.
+  return asRun(request.run.runId, () => loop(request))
 }
 
 /** Main agent loop, if you are editing the actual loop it goes here */
@@ -151,6 +153,7 @@ async function loop({
       try {
         reply = await request({
           round,
+          label,
           config,
           system: prompt.system(),
           history: sentOf(history, sending),
