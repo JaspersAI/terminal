@@ -5,7 +5,7 @@
 // closed question, a stopped run, a timeout, and anything typed instead are no. Pure.
 
 import { stringify } from 'yaml'
-import { SKILL_LIMITS } from './skills.ts'
+import { FIRST_SKILL_VERSION, SKILL_LIMITS } from './skills.ts'
 
 export const WRITE = 'Write it'
 export const DECLINE = 'No'
@@ -50,10 +50,14 @@ export function readSkillDraft(input: Record<string, unknown>): SkillDraft {
 /**
  * The SKILL.md a draft makes. The frontmatter is written by YAML's own rules, so a description with
  * a colon, a quote, or a word YAML reads as a value reads back as it was given, and it is closed
- * before the instructions begin, so nothing in them is read as a field.
+ * before the instructions begin, so nothing in them is read as a field. It starts at
+ * FIRST_SKILL_VERSION, so the skill can be published to Jaspers Hub as it was written.
  */
 export function skillFile(name: string, draft: SkillDraft): string {
-  const frontmatter = stringify({ name, description: draft.description }, { lineWidth: 0 })
+  const frontmatter = stringify(
+    { name, description: draft.description, metadata: { version: FIRST_SKILL_VERSION } },
+    { lineWidth: 0 },
+  )
   return `---\n${frontmatter}---\n\n${draft.instructions}\n`
 }
 
