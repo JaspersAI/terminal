@@ -49,6 +49,7 @@ export interface PanelSummary {
 const SHAPES =
   'workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, and any of those under workspaces/<workspace id>/'
 
+/** Parse a store path, preserving any workspace prefix; throw if its shape is unsupported. */
 export function parsePath(raw: string): StorePath {
   const segments = raw.split('/')
   if (segments.some((s) => s === '')) reject(raw)
@@ -143,6 +144,7 @@ export function panelIn(grids: Record<number, Grid>, id: string): { window: numb
   throw new Error(`No panel ${id}. ${ids ? `The workspace has ${ids}.` : 'The workspace has no panels.'}`)
 }
 
+/** Build the same summary for a panel listing and a single panel entry, including its window and loop. */
 function panelSummary(window: number, grid: Grid, p: Panel): PanelSummary {
   const loop = grid.elements.find((e) => e.id === p.elementId)?.loop
   return {
