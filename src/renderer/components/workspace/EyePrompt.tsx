@@ -47,7 +47,7 @@ export function EyePrompt(): ReactElement {
         </h2>
         <div id="eye-prompt-what" className="mt-3 space-y-2 text-sm">
           <p>
-            Eye takes a picture of the Jaspers window{' '}
+            Eye takes a picture of every open Jaspers window{' '}
             {INTERVAL_MINUTES === 1 ? 'every minute' : `every ${INTERVAL_MINUTES} minutes`} — this app only, never your
             desktop, your browser, or another program — and records what you do in the app: the buttons and menus you
             use, the views you place and how each is set, and what changes on the grid. It keeps each request you make
