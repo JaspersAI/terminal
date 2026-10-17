@@ -107,6 +107,11 @@ export function defineConnection(spec: ConnectionSpec): ConnectionDef {
 /** What the user is asked for once, under the plugin, and sealed. Connections refer to it as ${secret:KEY}. */
 export interface SecretSpec {
   label: string
+  /**
+   * Needed only by some calls, like a live account's key beside a paper one's. The app does not ask for
+   * it before every source runs; a call that fills it in while it is unset fails and names set_secret.
+   */
+  optional?: boolean
 }
 
 export interface ViewSpec<State extends ZodType = ZodType, Output extends ZodType = ZodType> {

@@ -113,7 +113,7 @@ export interface PluginInfo {
   /** The https origins its views may frame, as the definition declares. Its view frames get an origin of their own when there are any. */
   frames: string[]
   /** What the plugin asks the user for, and whether each is set. The value never crosses. */
-  secrets: { key: string; label: string; set: boolean }[]
+  secrets: { key: string; label: string; set: boolean; optional?: boolean }[]
   /** Its connections' ids, <plugin>/<name>. */
   connections: string[]
   /** Its skills' ids, <plugin>:<name>, from its skills/ folder. */
