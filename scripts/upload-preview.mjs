@@ -31,6 +31,11 @@ const { url } = await put(pathname, createReadStream(file), {
 })
 console.log(url)
 
+/**
+ * Report a GitHub Actions error and terminate the upload script with exit code 1.
+ * @param {string} message - Error message to write to stderr.
+ * @returns {never} Always exits the process.
+ */
 function fail(message) {
   console.error(`::error::${message}`)
   process.exit(1)
