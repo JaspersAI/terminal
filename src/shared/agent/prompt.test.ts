@@ -673,6 +673,37 @@ test('a ready connection lists only the tools no source reaches, since those nee
   assert.ok(lines.includes('- jaspers/sec: ready, tools without a source: get_company'), lines.join('\n'))
 })
 
+test('a tool no source reaches says what it takes, so it is not called bare to find out', () => {
+  const two: ConnectionInfo = {
+    ...READY,
+    tools: [
+      ...READY.tools,
+      {
+        name: 'get_guide',
+        description: '',
+        inputSchema: { type: 'object', properties: { topic: {} }, required: ['topic'] },
+      },
+      {
+        name: 'show_run',
+        description: '',
+        inputSchema: { type: 'object', properties: { run: {}, page: {} }, required: ['run'] },
+        app: 'ui://screener/run-view.html',
+      },
+    ],
+  }
+  const lines = describeContext(
+    tree(EMPTY_GRID, {}, { 'screener/screen': SCREEN }, { 'jaspers/sec': two }),
+    WS,
+    instructionsFor,
+  ).split('\n')
+  assert.ok(
+    lines.includes(
+      '- jaspers/sec: ready, tools without a source: get_guide (takes topic), show_run (takes run, [page]; has a view)',
+    ),
+    lines.join('\n'),
+  )
+})
+
 test('a tool whose server has a view of its own for it says so beside its name', () => {
   const two: ConnectionInfo = {
     ...READY,
