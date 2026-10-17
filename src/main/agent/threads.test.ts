@@ -12,20 +12,27 @@ test('a chat keeps its thread from one run to the next, and each chat has its ow
   assert.deepEqual(thread('w2', OPUS), [])
 })
 
-test('a thread starts over when the provider, base URL, or model it was held with changes', () => {
+const ASKED = { role: 'user' as const, text: 'Open a note.' }
+const THOUGHT = [
+  { type: 'thinking', thinking: 'A note.', signature: 's' },
+  { type: 'text', text: 'Opened.' },
+]
+const ANSWERED = { role: 'assistant' as const, text: 'Opened.', toolCalls: [], raw: THOUGHT }
+
+test('a thread goes on when the provider, base URL, or model changes, its assistant turns as their words and calls', () => {
   const thread = createThreads()
-  thread('w1', OPUS).push({ role: 'user', text: 'Open a note.' })
+  const first = thread('w1', OPUS)
+  first.push(ASKED, ANSWERED)
+  // The same model replays what its provider sent.
+  assert.equal(thread('w1', OPUS)[1], ANSWERED)
 
-  const sonnet = { ...OPUS, model: 'claude-sonnet-5' }
-  assert.deepEqual(thread('w1', sonnet), [])
-  thread('w1', sonnet).push({ role: 'user', text: 'Open a note.' })
-
-  const proxied = { ...sonnet, baseUrl: 'https://proxy.example/anthropic' }
-  assert.deepEqual(thread('w1', proxied), [])
-  thread('w1', proxied).push({ role: 'user', text: 'Open a note.' })
-
-  const openai = { provider: { id: 'openai' }, baseUrl: 'https://proxy.example/anthropic', model: 'claude-sonnet-5' }
-  assert.deepEqual(thread('w1', openai), [])
+  const openai = { provider: { id: 'openai' }, baseUrl: 'https://api.openai.com/v1', model: 'gpt-5' }
+  const after = thread('w1', openai)
+  // The same thread, in place, so a run at work on it still joins it.
+  assert.equal(after, first)
+  assert.deepEqual(after, [ASKED, { ...ANSWERED, raw: null }])
+  // Back on the first model, what it wrote before is words too: its payloads went with the change.
+  assert.deepEqual(thread('w1', OPUS), [ASKED, { ...ANSWERED, raw: null }])
 })
 
 test('a new key for the same model keeps the thread', () => {
@@ -36,19 +43,21 @@ test('a new key for the same model keeps the thread', () => {
   assert.equal(thread('w1', rekeyed), first)
 })
 
-test("a thread kept under a workspace's id is carried on by that id, on the model it was kept with", () => {
-  const kept = [{ role: 'user' as const, text: 'Open a note.' }]
+test("a thread kept under a workspace's id is carried on by that id, on whichever model the app is set to", () => {
+  const kept = [ASKED, ANSWERED]
   const asked: string[] = []
   const thread = createThreads({
-    load(chat, key) {
+    load(chat) {
       asked.push(chat)
-      return chat === 'w1' && key === threadKey(OPUS) ? kept : null
+      return chat === 'w1' || chat === 'w3' ? { key: threadKey(OPUS), turns: [...kept] } : null
     },
     save() {},
   })
-  assert.equal(thread('w1', OPUS), kept)
+  assert.deepEqual(thread('w1', OPUS), kept)
   assert.deepEqual(thread('w2', OPUS), [])
+  // Kept on another model, it goes on as that model's words and calls.
+  assert.deepEqual(thread('w3', { ...OPUS, model: 'claude-sonnet-5' }), [ASKED, { ...ANSWERED, raw: null }])
   // Asked once a chat: after that the thread in hand is the thread.
   thread('w1', OPUS)
-  assert.deepEqual(asked, ['w1', 'w2'])
+  assert.deepEqual(asked, ['w1', 'w2', 'w3'])
 })

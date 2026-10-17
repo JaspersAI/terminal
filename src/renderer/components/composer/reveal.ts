@@ -12,7 +12,7 @@ const POKE_MS = 4000
  * Anything that holds it — a hovering pointer, a run on screen, a half typed line — brings it
  * straight back and keeps it there; letting go tucks it away again after a short linger.
  */
-export function useReveal(held: boolean): { open: boolean; poke: () => void } {
+export function useReveal(held: boolean): { open: boolean; poke: () => void; tuck: () => void } {
   const [open, setOpen] = useState(true)
   const [nonce, setNonce] = useState(0)
   // How long the next unheld stretch waits before closing. The intro is the one long one.
@@ -38,6 +38,14 @@ export function useReveal(held: boolean): { open: boolean; poke: () => void } {
       grace.current = POKE_MS
       setOpen(true)
       setNonce((n) => n + 1)
+    },
+    /**
+     * Put it away now, even with the pointer resting on it: it comes back when what holds it lets go
+     * and takes hold again, as a pointer leaving and returning does.
+     */
+    tuck: () => {
+      grace.current = LINGER_MS
+      setOpen(false)
     },
   }
 }

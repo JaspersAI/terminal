@@ -51,6 +51,11 @@ export type AgentEvent =
    * message gave it. Every key the app holds is masked out of `text`.
    */
   | { kind: 'steered'; runId: string; text: string; ask?: string }
+  /**
+   * The run is ending on a round that only handed the request over to work that answers for itself in
+   * its own tile: its reply is what the handoff said, and there is nothing more to read in this box.
+   */
+  | { kind: 'handed'; runId: string }
   | { kind: 'done'; runId: string; text: string }
   | { kind: 'failed'; runId: string; message: string }
   | { kind: 'stopped'; runId: string }

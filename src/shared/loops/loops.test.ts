@@ -7,7 +7,8 @@ import {
   DESC_MAX,
   frameOf,
   LOOP_EXCLUDED_TOOLS,
-  ORCHESTRATOR_EXCLUDED_TOOLS,
+  ORCHESTRATOR_TOOLS,
+  VIEW_TOOLS,
   loopChat,
   loopName,
   gone,
@@ -470,10 +471,14 @@ test("a loop's agent may change its own tiles, by element or by panel, and no ot
 test('what a loop’s agent is not offered is the window’s', () => {
   assert.deepEqual([...LOOP_EXCLUDED_TOOLS].sort(), [
     'arrange',
+    'change_setting',
+    'clear_cells',
     'focus',
     'open_window',
+    'read_cells',
     'use_all_screens',
     'use_one_screen',
+    'write_cells',
   ])
 })
 
@@ -530,10 +535,13 @@ test('a loop the orchestrator asks for takes the next id and what it was told', 
   assert.deepEqual([made.loops.seq, made.loops.list.length], [5, 2])
 })
 
-test('what the orchestrator is not offered is what drives a view, and none of it is what a loop\u2019s agent lacks', () => {
-  assert.deepEqual([...ORCHESTRATOR_EXCLUDED_TOOLS].sort(), ['build_plugin', 'place_view', 'remove_element', 'set'])
+test('the orchestrator is offered nothing that drives a view, and a loop\u2019s agent lacks none of that', () => {
   assert.deepEqual(
-    ORCHESTRATOR_EXCLUDED_TOOLS.filter((tool) => LOOP_EXCLUDED_TOOLS.includes(tool)),
+    VIEW_TOOLS.filter((tool) => ORCHESTRATOR_TOOLS.includes(tool)),
+    [],
+  )
+  assert.deepEqual(
+    VIEW_TOOLS.filter((tool) => LOOP_EXCLUDED_TOOLS.includes(tool)),
     [],
   )
 })

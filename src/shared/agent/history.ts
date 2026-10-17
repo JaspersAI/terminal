@@ -23,6 +23,15 @@ export function withoutThinking(turns: Turn[]): Turn[] {
   })
 }
 
+/**
+ * The turns as another model reads them: each assistant turn as its words and its calls, without
+ * what only its own provider replays (thinking, reasoning items, a call's signature). A conversation
+ * goes on across a change of model this way, which costs the reasoning and keeps everything said.
+ */
+export function portable(turns: Turn[]): Turn[] {
+  return turns.map((turn) => (turn.role === 'assistant' && turn.raw !== null ? { ...turn, raw: null } : turn))
+}
+
 function isThinking(block: unknown): boolean {
   return typeof block === 'object' && block !== null && THINKING.has(String((block as { type?: unknown }).type))
 }

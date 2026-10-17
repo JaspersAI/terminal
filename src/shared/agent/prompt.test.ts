@@ -19,6 +19,7 @@ import {
   describeInstalled,
   describeInstalledFor,
   describeInstalledToRoute,
+  describeCatalog,
   describeOtherWork,
   describeOthers,
   describePlugin,
@@ -32,7 +33,7 @@ import {
   tilePrimer,
   toldOf,
 } from './prompt.ts'
-import { ORCHESTRATOR_EXCLUDED_TOOLS } from '../loops/loops.ts'
+import { VIEW_TOOLS } from '../loops/loops.ts'
 import { skill } from '../skills/skill-fixture.ts'
 import type { AppState, ConnectionInfo, PluginInfo, SkillInfo, SourceInfo, ViewInfo } from '../state.ts'
 import { EYE_OFF } from '../app/eye.ts'
@@ -530,9 +531,10 @@ test('a loop is told to look on Jaspers Hub before it builds a plugin', () => {
   }
 })
 
-test('a loop that shows no conversation is told its reply is folded behind its bar; one that shows it, as a conversation', () => {
+test('a loop whose conversation is folded is told it has one, folded behind its bar; one that shows it, as a conversation', () => {
   const quiet = loopRules(false)
-  assert.match(quiet, /stay folded behind a small status in the tile's bar/)
+  assert.match(quiet, /This work has a conversation of its own with the user, kept whole and sent to you whole/)
+  assert.match(quiet, /keeps it folded behind a small status in its bar/)
   assert.doesNotMatch(quiet, /Your reply is the conversation in your work's tile/)
   assert.match(LOOP_RULES, /Your reply is the conversation in your work's tile/)
   // Everything else is the same.
@@ -543,8 +545,8 @@ test('a loop that shows no conversation is told its reply is folded behind its b
 test('the rules say what calling a tool marked (has a view) does, to the agent that shows it and to the one that does not', () => {
   assert.match(LOOP_RULES, /marked \(has a view\) puts its server's own view of the answer on the grid/)
   assert.match(LOOP_RULES, /do not place a table or a document for the same result/)
-  assert.match(ROUTER_RULES, /marked \(has a view\) answers you in text/)
-  assert.doesNotMatch(ROUTER_RULES, /puts its server's own view of the answer on the grid/)
+  // The orchestrator calls no source, so it is told nothing of what calling one does.
+  assert.doesNotMatch(ROUTER_RULES, /has a view|run_source/)
 })
 
 test("a loop's agent is told how soon what it shows has to show, and to keep long waits out of it; the orchestrator, which shows nothing, is not", () => {
@@ -566,7 +568,7 @@ test('the orchestrator is told to route, by the tools that hold work, and of no 
   for (const tool of ['create_loop', 'update_loop', 'read_loop', 'delete_loop']) {
     assert.match(ROUTER_RULES, new RegExp(`\\b${tool}\\b`), tool)
   }
-  for (const tool of ORCHESTRATOR_EXCLUDED_TOOLS) {
+  for (const tool of VIEW_TOOLS) {
     assert.doesNotMatch(ROUTER_RULES, new RegExp(`\\b${tool}\\b`), tool)
   }
   assert.match(ROUTER_RULES, /^Rules: you route/)
@@ -576,7 +578,7 @@ test('the orchestrator is told to route, by the tools that hold work, and of no 
 test('the orchestrator is told a skill to write or publish is its own to do, as a task to schedule is, and not a piece of work', () => {
   assert.match(
     ROUTER_RULES,
-    /Answer in words yourself when words are the whole answer: [^.;]*a skill to write or publish;/,
+    /Answer in words yourself when words are the whole answer, and only about the app itself: [^.;]*a skill to write or publish\./,
   )
 })
 
@@ -584,11 +586,11 @@ test('the orchestrator is told create_loop asks the user first, and to ask which
   // The tool asks, so the model is told not to: one question, not two.
   assert.match(
     ROUTER_RULES,
-    /start one with create_loop[^.]*; it asks the user whether to start that work before anything is made, so do not ask that yourself\./,
+    /Start one with create_loop[^.]*\. It asks the user whether to start that work before anything is made, so do not ask that yourself\./,
   )
   assert.match(
     ROUTER_RULES,
-    /When it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them/,
+    /When the request is unclear, or it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them/,
   )
   assert.match(ROUTER_RULES, /never settle that yourself when it could go either way/)
   // A loop's agent routes nothing, and is told none of it.
@@ -598,16 +600,45 @@ test('the orchestrator is told create_loop asks the user first, and to ask which
   }
 })
 
-test('the orchestrator is told what each view is and renders, and not the state a piece of work places it with', () => {
-  const state = tree(EMPTY_GRID, { 'core/note': NOTE, 'tradingview/chart': TV }, { 'screener/screen': SCREEN })
-  const lines = describeInstalledToRoute(state).split('\n')
-  assert.equal(lines[0], 'Installed views, which a piece of work places:')
-  // The note is not one: no piece of work places it.
-  assert.equal(lines[1], '- tradingview/chart: Chart.')
-  assert.doesNotMatch(lines.slice(0, 2).join('\n'), /state:|place_view|core\/note/)
-  // Everything beside the views is told as it is to anyone.
-  assert.deepEqual(lines.slice(2), describeInstalled(state).split('\n').slice(2))
-  assert.equal(describeInstalledToRoute(tree(EMPTY_GRID, {})), 'No views are installed.')
+test('the orchestrator is told of the plugins and how their connections stand, and of no view or source', () => {
+  const needing: ConnectionInfo = {
+    ...READY,
+    id: 'jaspers/keyed',
+    status: 'needs-secret',
+    tools: [],
+    missing: ['token'],
+  }
+  const state = tree(
+    EMPTY_GRID,
+    { 'core/note': NOTE, 'tradingview/chart': TV },
+    { 'jaspers/screen': SCREEN },
+    { 'jaspers/sec': READY, 'jaspers/keyed': needing },
+    { jaspers: plugin('jaspers', { sources: ['jaspers/screen'], connections: ['jaspers/sec', 'jaspers/keyed'] }) },
+  )
+  const told = describeInstalledToRoute(state)
+  assert.match(told, /^Plugins:\n- jaspers: ready/)
+  assert.match(
+    told,
+    /\nConnections:\n- jaspers\/sec: ready\n- jaspers\/keyed: needs-secret \(needs a key: ask the user with set_secret/,
+  )
+  // No tool lists on a ready connection, no views, no sources.
+  assert.doesNotMatch(told, /tools without a source|tradingview\/chart|jaspers\/screen|run_source|state:/)
+  assert.equal(describeInstalledToRoute(tree(EMPTY_GRID, {})), 'No plugins are installed.')
+})
+
+test('the call that sets up work is told of every view with its state, every source, and the skills', () => {
+  const state = tree(
+    EMPTY_GRID,
+    { 'core/note': NOTE, 'tradingview/chart': TV },
+    { 'jaspers/screen': SCREEN },
+    { 'jaspers/sec': READY },
+    { jaspers: plugin('jaspers', { sources: ['jaspers/screen'], connections: ['jaspers/sec'] }) },
+  )
+  const catalog = describeCatalog(state)
+  assert.match(catalog, /- tradingview\/chart: Chart\. state: /)
+  assert.match(catalog, /- screener\/screen: Screen companies/)
+  assert.match(catalog, /\nPlugins:\n- jaspers: ready/)
+  assert.deepEqual(catalog.split('\n')[0], describeInstalled(state).split('\n')[0])
 })
 
 test('the orchestrator is told each loop on the workspace by its name: what it is doing, what it is, its tile, and the closed ones', () => {
@@ -893,11 +924,10 @@ test('the focused tile of a piece of work is said by the work it is, since that 
   )
 })
 
-test("the tile primer says a piece of work's views are laid out inside its tile, on cells of its own, cut to what is there", () => {
-  const [tile, cells, ...rest] = tilePrimer({ cols: 20, rows: 10 }).split('\n\n')
-  assert.equal(rest.length, 0)
-  assert.match(tile!, /^Your tile: /)
-  assert.match(tile!, /20 columns × 10 rows of its own/)
-  assert.match(tile!, /fitted to what is in it/)
-  assert.match(cells!, /^Cells: /)
+test("the tile primer says a piece of work's views are laid out inside its tile, on cells of its own, and says nothing of the window's cells", () => {
+  const tile = tilePrimer({ cols: 20, rows: 10 })
+  assert.match(tile, /^Your tile: /)
+  assert.match(tile, /20 columns × 10 rows of its own/)
+  assert.match(tile, /fitted to what is in it/)
+  assert.doesNotMatch(tile, /write_cells|Cells:/)
 })

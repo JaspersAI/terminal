@@ -45,7 +45,7 @@ const SENT = `You are sent only the last ${RECENT} exchanges of the conversation
 // What every run goes by, in three parts, since the middle one is said differently to an agent that
 // puts nothing on the grid.
 const SEEN =
-  "A view's output is what it is currently showing; read it with get when the user refers to what is on screen. When a tool result or a view's text gives citations, an id beside a quote, put [^id] right after each claim in your reply that rests on one, and the chat lists those sources under it; cite only ids you were given, never an id or a quote of your own. The marks show in the chat only: in a document, give the quote and link its url instead. When a connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the chat; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done; to bring a view's data up to date now, call refresh_element."
+  "A view's output is what it is currently showing; read it with get when the user refers to what is on screen. When a tool result or a view's text gives citations, an id beside a quote, put [^id] right after each claim in your reply that rests on one, and the conversation lists those sources under it; cite only ids you were given, never an id or a quote of your own. The marks show in the conversation only: in a document, give the quote and link its url instead. When a connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done; to bring a view's data up to date now, call refresh_element."
 const APP_SHOWN =
   "A connection's tool marked (has a view) puts its server's own view of the answer on the grid when you call it with run_source on core/mcp, and the answer names the element: do not place a table or a document for the same result."
 const SKILL_SAYS = 'A skill you load says how to go about a request; the plugins still do the work it describes.'
@@ -54,20 +54,21 @@ const BUILD =
   "When no installed plugin does what the user asks and a plugin could (a data source, a view, something that makes a document, a connection to a service), first call find_plugin to search Jaspers Hub, the library of published plugins. When it finds one that does it, do not build: tell the user its id and title, and install it with install_plugin when they say so; build only when they would rather have one built. When Hub has none that does it, call build_plugin with the whole request: it asks the user before writing anything and takes a few minutes. It has the SDK's documentation, so never search the web for the Jaspers SDK yourself."
 
 const ROUTE =
-  'Rules: you route, and the work is done in pieces. Answer in words yourself when words are the whole answer: a fact, a figure, a status, a change to the layout, a task to schedule, a skill to write or publish; look the data up with the sources and the store when the answer needs it. Anything to be shown, anything long, anything the user will come back to is a piece of work: start one with create_loop, naming the installed plugins that do it; it asks the user whether to start that work before anything is made, so do not ask that yourself. A request about work that already exists, which the state lists, goes to that work with update_loop, never to a second piece: more of the same, a change to what one of its views shows, a view of it to close, a follow-up to what it found. When it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them; never settle that yourself when it could go either way. read_loop says what a piece of work is doing or has found. Each piece of work is a loop, called by its number, like loop_3: name it that way to the tools and in replies. close_loop when the user asks for work to be closed: it is kept, the user can bring it back from View loops in Settings, and reopen_loop brings a closed one back. delete_loop only when the user asks for that work to be deleted. You never put a view on the grid or change what one shows: a piece of work does that, inside its own tile. When no installed plugin does what was asked, start the work with no plugins, and its agent builds what it needs. A research question goes to a piece of work with a research room when one is installed; never answer one from your own knowledge.'
+  'Rules: you route, and the work is done in pieces. First understand what the user wants. Answer in words yourself when words are the whole answer, and only about the app itself: a status, a change to the layout, a task to schedule, a setting, a plugin, a key, a skill to write or publish. You have no data tools: anything that needs data, a lookup, research, or a view, anything long, anything the user will come back to is a piece of work. Start one with create_loop, with a line saying what it is and a brief that says what its agent is to do and what done looks like; the plugins and skills it needs are chosen for it from what is installed. It asks the user whether to start that work before anything is made, so do not ask that yourself. A request about work that already exists, which the state lists, goes to that work with update_loop, never to a second piece: more of the same, a change to what one of its views shows, a view of it to close, a follow-up to what it found, a question about what it shows. When the request is unclear, or it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them; never settle that yourself when it could go either way. read_loop says what a piece of work is doing or has found. Each piece of work is a loop, called by its number, like loop_3: name it that way to the tools and in replies. close_loop when the user asks for work to be closed: it is kept, the user can bring it back from View loops in Settings, and reopen_loop brings a closed one back. delete_loop only when the user asks for that work to be deleted. You never put a view on the grid or change what one shows: a piece of work does that, inside its own tile. When no installed plugin does what was asked, start the work all the same, and its agent finds or builds what it needs. Never answer a research question or a market fact from your own knowledge: that is work.'
 const ROUTER_REPLY =
   'Your text reply appears in a small chat box that fades after a few seconds, so keep it short. When you start or send work, that is the whole of your part, and the user is told what the tool answered.'
-const APP_TOLD =
-  "A connection's tool marked (has a view) answers you in text when you call it with run_source on core/mcp; its server's own view is shown when a piece of work calls it."
+// The app is the orchestrator's: keys, tasks, and plugins it handles itself, in words and calls of its own.
+const APP_RUN =
+  'When a connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back.'
 
-/** What the orchestrator goes by: it routes, where its reply shows, how much of the conversation it is sent, and what every run shares, less what is about driving a view. */
-export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, SEEN, APP_TOLD, SKILL_SAYS].join(' ')
+/** What the orchestrator goes by: it routes, where its reply shows, how much of the conversation it is sent, and the app it runs. */
+export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, APP_RUN].join(' ')
 
-// A loop that is not a deep research one shows no conversation: its steps and its reply are folded
-// behind the label in its bar, and its views are what is seen. So the reply is short, and what is to
-// be looked at is a view.
+// A loop that is not a deep research one has its conversation all the same, folded behind the label
+// in its bar, and its views are what is seen first. So the reply is short, and what is to be looked at
+// is a view.
 const SAID_BRIEFLY =
-  "Your tile shows the user no conversation: under the command line they type in, your steps and your reply stay folded behind a small status in the tile's bar until they open it, and what they see is your views. So reply in one or two plain sentences that say what came of the request, and put what the user is to look at in a view: what the plugins show, never a note of your own words."
+  "This work has a conversation of its own with the user, kept whole and sent to you whole: what they type in your tile's command line, your steps, and your replies. Your tile keeps it folded behind a small status in its bar, and opened it shows the latest request with your steps and reply; what the user sees first is your views. So reply in one or two plain sentences that say what came of the request, and put what the user is to look at in a view: what the plugins show, never a note of your own words."
 
 /** The rules for a loop's agent: the plugins do the work, what it shows shows within seconds, and its reply is its conversation, shown in its tile when the loop shows its chat, and said briefly when not. */
 export function loopRules(chatShown: boolean): string {
@@ -102,14 +103,11 @@ export function gridPrimer({ cols, rows }: GridSize): string {
 
 /**
  * How a piece of work's agent reads its own tile, for the workspace's size, said once in its system
- * prompt: the views it places are inside the tile, on cells of the tile's own, and the cells of the
- * window behind the tiles are a different thing.
+ * prompt: the views it places are inside the tile, on cells of the tile's own. The window's cells
+ * behind the tiles are the orchestrator's, and never mentioned here.
  */
 export function tilePrimer({ cols, rows }: GridSize): string {
-  return [
-    `Your tile: your work has one tile on the user's grid, and the views you place are laid out inside it, on ${cols} columns × ${rows} rows of its own. Rects are [x,y w×h] in those cells from the top left, and tools take x, y, w, and h. The tile draws that layout fitted to what is in it: one view fills the tile whatever cells it has, two side by side take half each, so what matters is how your views sit against one another.`,
-    "Cells: the cells of the window's own grid, behind the tiles, take a number, a label, or a formula starting with = that reads other cells by name (=SUM(B2:B9), =VLOOKUP(A2, D1:E9, 2, FALSE), =IRR(B2:B9)), and the user types in them too. They are for a quick calculation beside the tiles, not a file to keep data in: write_cells, read_cells, and clear_cells work on them, by the names the user sees on screen, columns lettered and rows numbered like a spreadsheet.",
-  ].join('\n\n')
+  return `Your tile: your work has one tile on the user's grid, and the views you place are laid out inside it, on ${cols} columns × ${rows} rows of its own. Rects are [x,y w×h] in those cells from the top left, and tools take x, y, w, and h. The tile draws that layout fitted to what is in it: one view fills the tile whatever cells it has, two side by side take half each, so what matters is how your views sit against one another.`
 }
 
 /**
@@ -155,16 +153,37 @@ export function toldOf(state: AppState, plugins: readonly string[], skills: read
 }
 
 /**
- * What is installed, as the orchestrator is told: each view by what it is and renders, without the
- * state a piece of work places it with, then everything beside the views as anyone is told it.
+ * What is installed, as the orchestrator is told: the plugins and how their connections stand, which
+ * it manages, and what is remembered. No views, no sources, no skills: it does no work with them, and
+ * the work it starts is set up with them in a call of its own (`setup.ts`).
  */
 export function describeInstalledToRoute(state: AppState): string {
-  const views = placeable(state.views)
-  const named =
-    views.length === 0
-      ? 'No views are installed.'
-      : ['Installed views, which a piece of work places:', ...views.map(viewLine)].join('\n')
-  return [named, ...installedRest(state)].join('\n')
+  const list = Object.values(state.connections)
+  const connections =
+    list.length === 0 ? [] : ['Connections:', ...list.map((c) => `- ${c.id}: ${c.status}${connectionFix(c)}`)]
+  const plugins = describePlugins(state.plugins)
+  return [
+    ...(plugins.length === 0 ? ['No plugins are installed.'] : plugins),
+    ...connections,
+    ...describeMemories(state),
+  ].join('\n')
+}
+
+/**
+ * What is installed, as the call that sets up a piece of work reads it to choose: every view with its
+ * state, every source, the connections, the plugins, and the skills by id and what each is for.
+ */
+export function describeCatalog(state: AppState): string {
+  const skills = usableSkills(state, 'model')
+  return [
+    describeViews(state.views),
+    ...describeSources(state.sources, state.connections),
+    ...describeConnections(state.connections, state.sources),
+    ...describePlugins(state.plugins),
+    ...(skills.length === 0
+      ? []
+      : ['Skills:', ...skills.map((one) => `- ${one.id}: ${cap(firstSentence(one.description), SOURCE_MAX)}`)]),
+  ].join('\n')
 }
 
 /**
@@ -366,19 +385,19 @@ function describeConnections(
           .map((t) => (t.app ? `${t.name} (has a view)` : t.name))
         return `- ${c.id}: ready${loose.length > 0 ? `, tools without a source: ${loose.join(', ')}` : ''}`
       }
-      const fix =
-        c.status === 'needs-auth'
-          ? ' (authorize in Settings under Plugins)'
-          : c.status === 'needs-sign-in'
-            ? ' (the user signs in with Jaspers in Settings)'
-            : c.status === 'needs-secret'
-              ? ` (needs a key: ask the user with set_secret { plugin: "${c.plugin}", key: "${c.missing[0] ?? 'token'}" })`
-              : c.error
-                ? ` (${c.error})`
-                : ''
-      return `- ${c.id}: ${c.status}${fix}`
+      return `- ${c.id}: ${c.status}${connectionFix(c)}`
     }),
   ]
+}
+
+/** What puts a connection that is not ready right, in words after its status; nothing for one that is. */
+function connectionFix(c: ConnectionInfo): string {
+  if (c.status === 'ready') return ''
+  if (c.status === 'needs-auth') return ' (authorize in Settings under Plugins)'
+  if (c.status === 'needs-sign-in') return ' (the user signs in with Jaspers in Settings)'
+  if (c.status === 'needs-secret')
+    return ` (needs a key: ask the user with set_secret { plugin: "${c.plugin}", key: "${c.missing[0] ?? 'token'}" })`
+  return c.error ? ` (${c.error})` : ''
 }
 
 /** Where the views and sources came from, so a plugin that is not building says so itself. */

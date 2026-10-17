@@ -264,3 +264,17 @@ test('what the log now holds leaves the list', () => {
   )
   assert.equal(without(list, new Set()), list)
 })
+
+test('a run that handed its request over marks its exchange, and no other', () => {
+  let list = heard(two(), { kind: 'handed', runId: 'run2' })
+  list = answered(list, 'b', 'Started loop_1.')
+  assert.deepEqual(
+    list.map((one) => [one.question, one.handed, one.working]),
+    [
+      ['first', false, true],
+      ['second', true, false],
+    ],
+  )
+  // Said again, it changes nothing.
+  assert.equal(heard(list, { kind: 'handed', runId: 'run2' }), list)
+})

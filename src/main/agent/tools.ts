@@ -1,4 +1,4 @@
-import { LOOP_EXCLUDED_TOOLS, ORCHESTRATOR_EXCLUDED_TOOLS } from '../../shared/loops/loops'
+import { LOOP_EXCLUDED_TOOLS, ORCHESTRATOR_TOOLS } from '../../shared/loops/loops'
 import { askForUnsetKey } from '../actions'
 import { buildTools } from './tools/build'
 import { cellsTools } from './tools/cells'
@@ -9,6 +9,7 @@ import { gridTools } from './tools/grid'
 import { installTools } from './tools/installs'
 import { memoryTools } from './tools/memory'
 import { publishTools } from './tools/publish'
+import { settingsTools } from './tools/settings'
 import { shellTools } from './tools/shell'
 import { skillTools } from './tools/skills'
 import { stateTools } from './tools/state'
@@ -24,6 +25,7 @@ const TOOLS: Tool[] = [
   ...stateTools,
   ...installTools,
   ...publishTools,
+  ...settingsTools,
 ]
 
 /**
@@ -54,14 +56,14 @@ export function loopTools(context: ToolContext): Tool[] {
   return allTools(context).filter((tool) => !NOT_A_LOOPS.has(tool.name))
 }
 
-const NOT_THE_ORCHESTRATORS = new Set<string>(ORCHESTRATOR_EXCLUDED_TOOLS)
+const THE_ORCHESTRATORS = new Set<string>(ORCHESTRATOR_TOOLS)
 
 /**
- * What the orchestrator may call of the tool families: everything but what drives a view, which a
- * loop's agent does. The tools that hold loops are added where it is run (`router.ts`).
+ * What the orchestrator may call of the tool families, the ones named for it. The tools that hold
+ * loops are added where it is run (`router.ts`).
  */
 export function orchestratorTools(context: ToolContext): Tool[] {
-  return allTools(context).filter((tool) => !NOT_THE_ORCHESTRATORS.has(tool.name))
+  return allTools(context).filter((tool) => THE_ORCHESTRATORS.has(tool.name))
 }
 
 /** A tool by name, among both agents' tools: what a task's one call is made with. */

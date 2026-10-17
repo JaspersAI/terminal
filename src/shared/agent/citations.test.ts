@@ -120,7 +120,8 @@ test('a reply still being written loses the marker it stops in the middle of, an
 })
 
 test('the rules teach the model the marker the chat reads', () => {
-  assert.match(ROUTER_RULES, /\[\^id\]/)
+  // The orchestrator reads no source, so it has nothing to cite.
+  assert.doesNotMatch(ROUTER_RULES, /\[\^id\]/)
   const taught = /\[\^id\]/.exec(LOOP_RULES)?.[0]
   assert.equal(taught, '[^id]')
   assert.deepEqual(cited(`A claim.${taught}`, known({ id: 'id', title: 'A source' })), [

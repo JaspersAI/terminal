@@ -1,7 +1,7 @@
 import { ACTIVATE_SKILL, READ_SKILL_FILE, skillLoaded } from '@jaspers-ai/sdk/skills'
 import { callOf, cutFrom, makeRoom, sent, setAside, type Sending } from '../../../shared/agent/aside'
 import { cited, keptOn, type Citation } from '../../../shared/agent/citations'
-import { putBack, standing, type Fork } from '../../../shared/agent/fork'
+import { portableFork, putBack, standing, type Fork } from '../../../shared/agent/fork'
 import { RECENT, recent, withoutThinking } from '../../../shared/agent/history'
 import { keepTail, settle } from '../../../shared/agent/thread-store'
 import { CLOSED_NOTE, lastExchange, maskExchange, transcript, type Exchange } from '../../../shared/agent/transcript'
@@ -26,9 +26,9 @@ import { knownSecrets } from './settings'
 /** One thread per chat. A workspace's own is under the workspace's id: the elements a request is about are the ones on that workspace's grid. */
 export const threadFor = createThreads(threadFile)
 
-/** Which conversation a run on a chat's thread belongs to: the chat, and the model its thread is held on. */
-export function conversationOf(chat: string, model: ThreadModel): string {
-  return `${chat}:${threadKey(model)}`
+/** Which conversation a run on a chat's thread belongs to: the chat's, whatever model it goes on with. */
+export function conversationOf(chat: string): string {
+  return chat
 }
 
 /** Kept whole, so the next session carries on from exactly here. */
@@ -46,7 +46,13 @@ export function keep(chat: string, model: ThreadModel, history: Turn[]): void {
  * work of whichever kept last; each joins it whole as it ends.
  */
 export function keepOpen(chat: string, model: ThreadModel, thread: Turn[], fork: Fork, era: number): void {
-  if (stillOn(chat, thread, era)) keep(chat, model, standing(thread, fork, CLOSED_NOTE))
+  const now = stillOn(chat, thread, era)
+  if (now) keep(chat, now, standing(thread, fitted(fork, model, now), CLOSED_NOTE))
+}
+
+/** A run's copy as the thread now goes on: what it added, as another model reads it, when the app was set to another since it began. */
+function fitted(fork: Fork, model: ThreadModel, now: ThreadModel): Fork {
+  return threadKey(model) === threadKey(now) ? fork : portableFork(fork)
 }
 
 /** The thread started over, in place: what was kept of it goes with it. */
@@ -85,25 +91,27 @@ export function eraOf(thread: Turn[]): number {
 
 /**
  * A run's end, on its chat's thread. What the run added joins the thread, in one step, with whatever
- * it withheld or cut of the thread to make room, and the thread is kept. It does not join a conversation that
- * is gone: one started over since the run began (`era` is the thread's when it did), or one on a
- * language model the app is no longer set to. The chat's log is another matter: its exchange is filed
- * either way (`file`), since the chat showed it.
+ * it withheld or cut of the thread to make room, and the thread is kept. A run whose model the app is
+ * no longer set to joins as the next model reads it (`portableFork`). It does not join a conversation
+ * that is gone: one started over since the run began (`era` is the thread's when it did). The chat's
+ * log is another matter: its exchange is filed either way (`file`), since the chat showed it.
  */
 export function join(chat: string, model: ThreadModel, thread: Turn[], fork: Fork, era: number): void {
-  if (!stillOn(chat, thread, era)) return
-  putBack(thread, fork)
-  keep(chat, model, thread)
+  const now = stillOn(chat, thread, era)
+  if (!now) return
+  putBack(thread, fitted(fork, model, now))
+  keep(chat, now, thread)
 }
 
 /**
  * Whether a run's conversation is still its chat's: not started over since the run began (`era` is
- * the thread's when it did), and on the language model the app is still set to. A run whose
- * conversation is gone goes on and is shown, and nothing of it joins the one that took its place.
+ * the thread's when it did), and a language model set to go on with it. Answers that model, or null
+ * for a run whose conversation is gone, which goes on and is shown, and nothing of it joins the one
+ * that took its place.
  */
-export function stillOn(chat: string, thread: Turn[], era: number): boolean {
+export function stillOn(chat: string, thread: Turn[], era: number): ThreadModel | null {
   const now = getProviderConfig('llm')
-  return now !== null && threadFor(chat, now) === thread && eraOf(thread) === era
+  return now !== null && threadFor(chat, now) === thread && eraOf(thread) === era ? now : null
 }
 
 /**

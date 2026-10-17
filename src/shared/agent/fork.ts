@@ -8,7 +8,7 @@
 
 import type { Turn } from '../llm/llm'
 // The extension is explicit because Node's test runner resolves this import at run time.
-import { closeOff, withoutThinking } from './history.ts'
+import { closeOff, portable, withoutThinking } from './history.ts'
 
 export interface Fork {
   /** The run's own conversation: the thread as it stood, then everything the run adds. */
@@ -40,6 +40,11 @@ export function moved(thread: Turn[], fork: Fork): boolean {
 export function putBack(thread: Turn[], fork: Fork): void {
   if (moved(thread, fork)) thread.push(...withoutThinking(fork.turns.slice(fork.own)))
   else thread.splice(0, thread.length, ...fork.turns)
+}
+
+/** The run's copy with what it added as another model reads it: for a run whose model is no longer the one its thread goes on with. */
+export function portableFork(fork: Fork): Fork {
+  return { ...fork, turns: [...fork.turns.slice(0, fork.own), ...portable(fork.turns.slice(fork.own))] }
 }
 
 /**

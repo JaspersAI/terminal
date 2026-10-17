@@ -1,11 +1,10 @@
 import { sleep } from '../../../shared/abort'
 import { saidOf } from '../../../shared/agent/rounds'
 import { isRetryable, retryLine, retryWait } from '../../../shared/llm/limits'
-import type { Completion, Effort, Turn } from '../../../shared/llm/llm'
+import type { Completion, Effort, ToolDefinition, Turn } from '../../../shared/llm/llm'
 import { ProviderError } from '../../llm/http'
 import { complete } from '../../llm/llm'
 import type { ProviderConfig } from '../../secrets'
-import type { Tool } from '../tools/types'
 import { noteLlm } from './record'
 import { emit, type Live } from './runs'
 import { streamer, thinker, writer } from './stream'
@@ -25,7 +24,7 @@ export interface RoundRequest {
   config: ProviderConfig<'llm'>
   system: string[]
   history: Turn[]
-  tools: Tool[]
+  tools: ToolDefinition[]
   run: Live
   /** Says what happens to the run: to the log, and to whoever watches it. */
   tell: (line: string) => void

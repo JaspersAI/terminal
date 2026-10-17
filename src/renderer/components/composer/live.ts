@@ -38,6 +38,8 @@ export interface LiveExchange {
   working: boolean
   /** Why it failed. */
   error: string | null
+  /** Its run ended by handing the request to work in a tile, which answers there: the box has nothing to keep up. */
+  handed: boolean
   /**
    * Its box was dismissed from over it while it worked: it works on out of sight, where it does not
    * hold the composer up, and is in the conversation when that is brought up. It is back for good
@@ -64,6 +66,7 @@ export function sent(list: LiveExchange[], ask: string, workspaceId: string, que
       thinking: null,
       working: true,
       error: null,
+      handed: false,
       hidden: false,
     },
   ]
@@ -97,6 +100,7 @@ export function heard(list: LiveExchange[], event: AgentEvent): LiveExchange[] {
       if (event.kind === 'round') return same(one, { answer: null, steps, thinking })
       if (event.kind === 'text') return { ...one, answer: (one.answer ?? '') + event.delta }
       if (event.kind === 'citations') return { ...one, citations: event.citations }
+      if (event.kind === 'handed') return one.handed ? one : { ...one, handed: true }
       return same(one, { answer: one.answer, steps, thinking })
     },
   )

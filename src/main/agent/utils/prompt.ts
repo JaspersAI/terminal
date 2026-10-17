@@ -36,7 +36,7 @@ const SYSTEM =
 const LAYOUT =
   'You arrange the grid and put nothing on it. move_element and resize_element move and size the tile of any piece of work, and the views inside it keep their place in it; set_mode maximizes, minimizes, or floats one, arrange re-tiles a window, and free_space says where there is room. The grid never moves an element to make room, so when new work needs room, make it first or give create_loop a size or a spot that is free; if nothing fits, say the grid is full and ask whether to close something. Never delete work to make room for other work. When the user says "that" or "it" they mean the focused element, and the grid map names the work each tile belongs to, with the views inside it under it. The user may name a spot by its cells, like "at D3" or "J3 to N10": pass a spot or a size they asked for to create_loop.'
 const STATE =
-  "Each request, and each round of tool results, comes with the state of the workspace as it was at that moment, under workspace_state: the grid map of every window with each piece of work's tile and the views inside it, the pieces of work and what each is doing, the focused element, what is running, the time, this workspace's tasks, and the sources filed in the store so far. The newest one is what is true now; an older one is what was true then."
+  "Each request, and each round of tool results, comes with the state of the workspace as it was at that moment, under workspace_state: the grid map of every window with each piece of work's tile and the views inside it, the pieces of work and what each is doing, the focused element, what is running, the time, and this workspace's tasks. The newest one is what is true now; an older one is what was true then."
 
 /**
  * The system prompt, in two blocks, neither of which changes from round to round: what never changes,
@@ -54,7 +54,7 @@ function systemFor(workspaceId: string, preface: string[]): string[] {
 
 /**
  * What is true right now, which rides on the turn being sent: the grid, the work on it, the focused
- * element, the clock, the tasks, the sources filed. It used to be the end of the system prompt, rebuilt every
+ * element, the clock, the tasks. It used to be the end of the system prompt, rebuilt every
  * round, and a system prompt sits in front of the whole conversation: nothing after a change in it
  * can be reused, so every round paid full price for the whole thread again.
  */
@@ -65,7 +65,6 @@ export function stateNow(workspaceId: string): string {
     describeLoops(state, workspaceId, (loop) => statusNow(state, workspaceId, loop.id)),
     // What the focused element shows, without its view's instructions: those are for whoever drives it.
     describeRound(state, workspaceId, () => undefined, undefined, focusedWindow()),
-    describeFiled(sourcesSeen(), state.sources),
   ].join('\n')
 }
 
