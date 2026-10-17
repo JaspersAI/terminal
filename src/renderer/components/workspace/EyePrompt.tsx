@@ -11,7 +11,7 @@ import { BUTTON } from '../settings/Row'
  * Jaspers so the team can learn from how the app is used.
  *
  * Either answer is an answer: both set `asked`, which persists, so the modal is not asked twice.
- * Start recording is the pre-selected action, and Not now leaves Eye off, which is how it ships.
+ * Start Eye is the pre-selected action, and Not now leaves Eye off, which is how it ships.
  */
 export function EyePrompt(): ReactElement {
   const start = useRef<HTMLButtonElement>(null)
@@ -49,7 +49,7 @@ export function EyePrompt(): ReactElement {
           <p>
             Eye takes a picture of the Jaspers window{' '}
             {INTERVAL_MINUTES === 1 ? 'every minute' : `every ${INTERVAL_MINUTES} minutes`} — this app only, never your
-            desktop, your browser, or another program — and records what you do in the app: the buttons and menus you
+            desktop, your browser, or another program — and captures what you do in the app: the buttons and menus you
             use, the views you place and how each is set, and what changes on the grid. It keeps each request you make
             to the assistant with every step it took: what it asked the model, the tools it ran with what they were
             given and what came back, and any error. And it notes how the app performs.
@@ -57,14 +57,14 @@ export function EyePrompt(): ReactElement {
           <p>
             It is sent to Jaspers, so the team can see what people ask for, whether it worked, where it is slow, and
             where it goes wrong. Keys and passwords the app holds, and the email you sign in with, are masked out of
-            everything it keeps. What you write in cells and notes is never recorded; for any other field only how much
+            everything it keeps. What you write in cells and notes is never captured; for any other field only how much
             you typed, except what you send the assistant and how you set a view. What other programs show is never
-            recorded.
+            captured.
           </p>
           <p className="text-muted-foreground">
             A frame is never taken while a key field or an approval is on screen, so a password, an API key, or a
-            command waiting for your yes is not in one. You can stop recording at any time from the eye in the top
-            right, and delete everything recorded in Settings &gt; Eye.
+            command waiting for your yes is not in one. You can stop live feedback sharing at any time from the eye in
+            the top right, and delete everything captured in Settings &gt; Eye.
           </p>
         </div>
         <div className="mt-6 flex justify-end gap-2">
@@ -78,7 +78,7 @@ export function EyePrompt(): ReactElement {
             onClick={() => answer(true)}
             className="shrink-0 border border-foreground bg-foreground px-2.5 py-1 text-sm text-background"
           >
-            Start recording
+            Start Eye
           </button>
         </div>
       </div>

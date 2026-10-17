@@ -5,11 +5,12 @@ import { dispatch, useAppState } from '../../lib/state'
 import { BUTTON } from '../settings/Row'
 
 /**
- * The eye: a dot at the right end of the workspace bar that says whether Eye is recording. Recording,
- * it is filled and breathes slowly; off, it is a hollow ring and still. The label says which it is,
- * since the two must not be told apart by color alone.
+ * The eye: a dot at the right end of the workspace bar that says whether live feedback sharing (Eye's
+ * `recording`, in the code) is on. On, it is filled and breathes slowly; off, it is a hollow ring and
+ * still. The label says which it is, since the two must not be told apart by color alone.
  *
- * Pressed, it opens a popover under it: the switch for recording, and a box to write feedback in.
+ * Pressed, it opens a popover under it: the switch for live feedback sharing, and a box to write
+ * feedback in.
  * Send closes the popover first, so the picture main takes of every open window is of the screen
  * the user was writing about and not of the box they wrote in, then sends the note with it. A
  * moment of "Feedback sent" beside the dot says it went; a failure opens the popover again with the
@@ -51,7 +52,7 @@ export function EyeDot(): ReactElement {
     return () => clearTimeout(timer)
   }, [sent])
 
-  const label = `${recording ? 'Eye is recording' : 'Eye is off'}. Recording and feedback`
+  const label = `Eye is ${recording ? 'on' : 'off'}. Sharing and feedback`
 
   const toggle = (): void => {
     dispatch({ type: 'eye.set', eye: { recording: !recording } }).catch((err: unknown) => setFailed(errorMessage(err)))
@@ -94,7 +95,7 @@ export function EyeDot(): ReactElement {
         onClick={() => setOpen(!open)}
         className={`flex h-6 w-6 items-center justify-center ${open ? 'bg-muted' : 'hover:bg-muted'}`}
       >
-        {/* The iris, with the pupil inside it. Recording fills both; off leaves the ring alone. */}
+        {/* The iris, with the pupil inside it. Sharing fills both; off leaves the ring alone. */}
         <span
           className={`flex h-3 w-3 items-center justify-center rounded-full border ${
             recording
@@ -113,9 +114,9 @@ export function EyeDot(): ReactElement {
           className="absolute top-full right-0 z-20 mt-1 w-80 border border-border bg-background p-3 shadow-lg"
         >
           <div className="flex items-center justify-between gap-3">
-            <span className="text-sm">{recording ? 'Recording' : 'Not recording'}</span>
+            <span className="text-sm">{recording ? 'Eye is on' : 'Eye is off'}</span>
             <button type="button" id="eye-toggle" aria-pressed={recording} onClick={toggle} className={BUTTON}>
-              {recording ? 'Stop recording' : 'Start recording'}
+              {recording ? 'Stop Eye' : 'Start Eye'}
             </button>
           </div>
           <div className="my-3 border-t border-border" />
