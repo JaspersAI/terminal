@@ -17,16 +17,22 @@ export function UpdateButton(): ReactElement | null {
     dispatch({ type: 'updates.install' }).catch((err: unknown) => setFailed(errorMessage(err)))
   }
   return (
-    <button
-      type="button"
-      id="update-restart"
-      title={failed ?? `${offer}. It also installs when you quit.`}
-      onClick={install}
-      className={`shrink-0 border px-2 py-0.5 text-xs ${
-        failed ? 'border-destructive text-destructive' : 'border-primary text-primary hover:bg-muted'
-      }`}
-    >
-      {offer}
-    </button>
+    <>
+      <button
+        type="button"
+        id="update-restart"
+        title={failed ?? `${offer}. It also installs when you quit.`}
+        onClick={install}
+        className={`shrink-0 border px-2 py-0.5 text-xs ${
+          failed ? 'border-destructive text-destructive' : 'border-primary text-primary hover:bg-muted'
+        }`}
+      >
+        {offer}
+      </button>
+      {/* A tooltip is not read out, so a failed restart is also said to a screen reader. */}
+      <span className="sr-only" aria-live="polite">
+        {failed ?? ''}
+      </span>
+    </>
   )
 }
