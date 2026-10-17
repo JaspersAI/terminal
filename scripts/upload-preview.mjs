@@ -1,14 +1,13 @@
 // Uploads one preview build to the terminal-previews Blob store, for preview.yml, and prints its URL.
-// A path per commit, so a push never overwrites an older build and no cache can serve a stale one:
+// A path per commit, so a push never overwrites an older build:
 // pr-<n>/Jaspers-Terminal-pr<n>-<sha>.<ext> for a pull request, or the branch's name in place of
 // pr<n> for a build run by hand.
 //
 //   node upload-preview.mjs <file>
 //
-// It reads PR (empty when run by hand), SHA, and REF, and needs BLOB_READ_WRITE_TOKEN and
-// @vercel/blob installed beside it rather than in the repo: the SDK rather than `vercel blob put`,
-// since the CLI wants an account login even when it has the store's token, and an account token is
-// too much to show a pull request's code.
+// It reads PR (empty when run by hand), SHA, REF, GITHUB_RUN_ID, and GITHUB_RUN_ATTEMPT, and needs
+// BLOB_READ_WRITE_TOKEN. It uses the SDK installed by npm ci: `vercel blob put` wants an account
+// login even when it has the store's token, and an account token is too much to show a pull request's code.
 import { createReadStream } from 'node:fs'
 import path from 'node:path'
 import { put } from '@vercel/blob'
@@ -29,7 +28,10 @@ const { url } = await put(pathname, createReadStream(file), {
   // The same commit run again, or its pull request reopened, writes the same path.
   allowOverwrite: true,
 })
-console.log(url)
+// A rerun overwrites the same path; give its download link a fresh cache key.
+const downloadUrl = new URL(url)
+downloadUrl.searchParams.set('run', `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`)
+console.log(downloadUrl.href)
 
 /**
  * Report a GitHub Actions error and terminate the upload script with exit code 1.

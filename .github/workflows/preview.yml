@@ -58,11 +58,8 @@ jobs:
         env:
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
         run: |
-          mkdir "$RUNNER_TEMP/blob"
-          npm install --prefix "$RUNNER_TEMP/blob" --no-audit --no-fund @vercel/blob@2
-          cp scripts/upload-preview.mjs "$RUNNER_TEMP/blob/"
           # Assigned first: a failed upload inside echo's argument would not fail the step.
-          url=$(node "$RUNNER_TEMP/blob/upload-preview.mjs" dist/*.dmg)
+          url=$(node scripts/upload-preview.mjs dist/*.dmg)
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
   windows:
@@ -92,11 +89,8 @@ jobs:
         env:
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
         run: |
-          mkdir "$RUNNER_TEMP/blob"
-          npm install --prefix "$RUNNER_TEMP/blob" --no-audit --no-fund @vercel/blob@2
-          cp scripts/upload-preview.mjs "$RUNNER_TEMP/blob/"
           # Assigned first: a failed upload inside echo's argument would not fail the step.
-          url=$(node "$RUNNER_TEMP/blob/upload-preview.mjs" dist/Jaspers-Terminal-Setup-*.exe)
+          url=$(node scripts/upload-preview.mjs dist/Jaspers-Terminal-Setup-*.exe)
           echo "url=$url" >> "$GITHUB_OUTPUT"
       # The same smoke test a release passes: installed silently into a folder of its own, the app
       # has to open, get through setup, and put a view on the grid.
