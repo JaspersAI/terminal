@@ -6,6 +6,7 @@ import {
   FORMATS,
   formatted,
   isCartesian,
+  missingColumns,
   NEEDS,
   numberOf,
   SERIES_COLORS,
@@ -134,4 +135,15 @@ test('a tooltip reads the point under the pointer from the rows, whatever the ki
     tipOf('line', [{ dataIndex: 9, seriesName: 'gdp' }], rows, ['2020', '2021'], ['gdp'], plain, muted),
     null,
   )
+})
+
+test('a chart of fixed columns says one is missing only once rows have named the columns, not while loading', () => {
+  assert.equal(missingColumns('pie', [], []), null)
+  assert.equal(
+    missingColumns('pie', [], ['symbol', 'dollars']),
+    'A pie chart needs y as [the column to size the slices by].',
+  )
+  assert.equal(missingColumns('pie', ['dollars'], ['symbol', 'dollars']), null)
+  assert.match(missingColumns('candlestick', ['open', 'close'], ['date', 'open', 'close']) ?? '', /candlestick/)
+  assert.equal(missingColumns('line', [], ['date']), null)
 })

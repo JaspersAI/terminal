@@ -69,6 +69,16 @@ export const NEEDS: Partial<Record<ChartKind, { count: number; what: string }>> 
   pie: { count: 1, what: 'y as [the column to size the slices by]' },
 }
 
+/**
+ * What a chart that reads fixed columns says when `y` does not name enough of them, or null. Until rows
+ * have come back there are no columns to look for `y` in, so nothing is missing yet: it is loading.
+ */
+export function missingColumns(kind: ChartKind, yColumns: string[], columns: string[]): string | null {
+  const needs = NEEDS[kind]
+  if (!needs || columns.length === 0 || yColumns.length >= needs.count) return null
+  return `A ${kind} chart needs ${needs.what}.`
+}
+
 /** A number out of a cell, or null where there is nothing to plot. */
 export function numberOf(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
