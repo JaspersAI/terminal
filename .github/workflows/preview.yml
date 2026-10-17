@@ -61,7 +61,9 @@ jobs:
           mkdir "$RUNNER_TEMP/blob"
           npm install --prefix "$RUNNER_TEMP/blob" --no-audit --no-fund @vercel/blob@2
           cp scripts/upload-preview.mjs "$RUNNER_TEMP/blob/"
-          echo "url=$(node "$RUNNER_TEMP/blob/upload-preview.mjs" dist/*.dmg)" >> "$GITHUB_OUTPUT"
+          # Assigned first: a failed upload inside echo's argument would not fail the step.
+          url=$(node "$RUNNER_TEMP/blob/upload-preview.mjs" dist/*.dmg)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
 
   windows:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'ship/')
@@ -93,7 +95,9 @@ jobs:
           mkdir "$RUNNER_TEMP/blob"
           npm install --prefix "$RUNNER_TEMP/blob" --no-audit --no-fund @vercel/blob@2
           cp scripts/upload-preview.mjs "$RUNNER_TEMP/blob/"
-          echo "url=$(node "$RUNNER_TEMP/blob/upload-preview.mjs" dist/Jaspers-Terminal-Setup-*.exe)" >> "$GITHUB_OUTPUT"
+          # Assigned first: a failed upload inside echo's argument would not fail the step.
+          url=$(node "$RUNNER_TEMP/blob/upload-preview.mjs" dist/Jaspers-Terminal-Setup-*.exe)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
       # The same smoke test a release passes: installed silently into a folder of its own, the app
       # has to open, get through setup, and put a view on the grid.
       - name: The installed app runs
