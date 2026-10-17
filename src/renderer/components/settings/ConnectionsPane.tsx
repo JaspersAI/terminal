@@ -8,6 +8,7 @@ import {
   type Transport,
 } from '../../../shared/plugins/connection-plugin'
 import type { ConnectionInfo, PluginInfo } from '../../../shared/state'
+import { ErrorText } from '../composer/ErrorText'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
 import { BUTTON, FIELD, Row } from './Row'
@@ -185,7 +186,7 @@ function ConnectionSection({ connection, form, secrets, onRemoved }: SectionProp
           {STATUS[connection.status]}
         </span>
       </div>
-      {connection.error && <p className="mt-1 text-sm break-words text-destructive">{connection.error}</p>}
+      {connection.error && <ErrorText text={connection.error} className="mt-1" />}
       {failed && <p className="mt-1 text-sm break-words text-destructive">{failed}</p>}
 
       <div className="mt-3 border-t border-border">
