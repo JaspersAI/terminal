@@ -16,6 +16,7 @@ import { cellName, formatRect, gridMap, layoutOf, type GridSize, type Panel } fr
 import { frameOf, loopName, notPlaced, type Loop, type LoopStatus } from '../loops/loops.ts'
 import type { Exchange } from './transcript.ts'
 import { stateShape } from './view-state.ts'
+import { parameterNames } from '../data/tool-parameters.ts'
 
 /** The value of `state` and `output` is cut here: the whole prompt is rebuilt every round. */
 const STATE_MAX = 2048
@@ -337,9 +338,15 @@ function describeConnections(
     'Connections:',
     ...list.map((c) => {
       if (c.status === 'ready') {
+        // What each takes, as a source's line says it: with only the names, a model calls one with
+        // no arguments to learn them from the server's refusal, a failed call a tool.
         const loose = c.tools
           .filter((t) => !reached.has(`${c.id}/${t.name}`))
-          .map((t) => (t.app ? `${t.name} (has a view)` : t.name))
+          .map((t) => {
+            const takes = parameterNames(t.inputSchema)
+            const notes = [...(takes ? [`takes ${takes}`] : []), ...(t.app ? ['has a view'] : [])]
+            return notes.length > 0 ? `${t.name} (${notes.join('; ')})` : t.name
+          })
         return `- ${c.id}: ready${loose.length > 0 ? `, tools without a source: ${loose.join(', ')}` : ''}`
       }
       const fix =
