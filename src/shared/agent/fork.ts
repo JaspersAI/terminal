@@ -42,9 +42,12 @@ export function putBack(thread: Turn[], fork: Fork): void {
   else thread.splice(0, thread.length, ...fork.turns)
 }
 
-/** The run's copy with what it added as another model reads it: for a run whose model is no longer the one its thread goes on with. */
+/**
+ * The run's copy as another model reads it, all of it: for a run whose model is no longer the one its
+ * thread goes on with. What was before its own turns goes back too when the thread has not moved.
+ */
 export function portableFork(fork: Fork): Fork {
-  return { ...fork, turns: [...fork.turns.slice(0, fork.own), ...portable(fork.turns.slice(fork.own))] }
+  return { ...fork, turns: portable(fork.turns) }
 }
 
 /**

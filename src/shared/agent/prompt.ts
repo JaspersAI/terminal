@@ -7,7 +7,7 @@
 import { RECENT } from './history.ts'
 import { memoryIndex } from './memory.ts'
 import { skillsPrompt } from '@jaspers-ai/sdk/skills'
-import type { AppState, ConnectionInfo, PluginInfo, SourceInfo, ViewInfo } from '../state'
+import type { AppState, ConnectionInfo, PluginInfo, SkillInfo, SourceInfo, ViewInfo } from '../state'
 // The extensions are explicit because Node's test runner resolves these imports at run time.
 import { skillEntry, usableSkills } from '../skills/skills.ts'
 import { everyText, formatLocal, taskStatus, type Task } from '../tasks/tasks.ts'
@@ -154,20 +154,32 @@ export function toldOf(state: AppState, plugins: readonly string[], skills: read
 }
 
 /**
- * What is installed, as the orchestrator is told: the plugins and how their connections stand, which
- * it manages, and what is remembered. No views, no sources, no skills: it does no work with them, and
- * the work it starts is set up with them in a call of its own (`setup.ts`).
+ * What is installed, as the orchestrator is told: the plugins and how their connections stand, and the
+ * skills by id, which it manages, and what is remembered. No views, no sources, no skill to load: it
+ * does no work with them, and the work it starts is set up with them in a call of its own (`setup.ts`).
  */
 export function describeInstalledToRoute(state: AppState): string {
   const list = Object.values(state.connections)
   const connections =
     list.length === 0 ? [] : ['Connections:', ...list.map((c) => `- ${c.id}: ${c.status}${connectionFix(c)}`)]
   const plugins = describePlugins(state.plugins)
+  const skills = Object.values(state.skills).sort((a, b) => a.id.localeCompare(b.id))
   return [
     ...(plugins.length === 0 ? ['No plugins are installed.'] : plugins),
     ...connections,
+    ...(skills.length === 0
+      ? []
+      : [
+          'Skills, by id:',
+          ...skills.map((one) => `${skillLine(one)}${state.disabledSkills.includes(one.id) ? ' (turned off)' : ''}`),
+        ]),
     ...describeMemories(state),
   ].join('\n')
+}
+
+/** A skill by id and the first sentence of what it is for: one line, however long its description. */
+function skillLine(skill: SkillInfo): string {
+  return `- ${skill.id}: ${cap(firstSentence(skill.description), SOURCE_MAX)}`
 }
 
 /**
@@ -181,9 +193,7 @@ export function describeCatalog(state: AppState): string {
     ...describeSources(state.sources, state.connections),
     ...describeConnections(state.connections, state.sources),
     ...describePlugins(state.plugins),
-    ...(skills.length === 0
-      ? []
-      : ['Skills:', ...skills.map((one) => `- ${one.id}: ${cap(firstSentence(one.description), SOURCE_MAX)}`)]),
+    ...(skills.length === 0 ? [] : ['Skills:', ...skills.map(skillLine)]),
   ].join('\n')
 }
 

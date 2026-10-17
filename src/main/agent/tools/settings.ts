@@ -1,4 +1,12 @@
-import { APPLY, CANCEL, providerIds, SETTINGS, SETTINGS_TOOL, settingChange } from '../../../shared/agent/settings'
+import {
+  APPLY,
+  CANCEL,
+  providerIds,
+  SETTINGS,
+  SETTINGS_TOOL,
+  settingChange,
+  type SettingChange,
+} from '../../../shared/agent/settings'
 import { THEMES } from '../../../shared/app/theme'
 import { askUser, dispatch } from '../../actions'
 import { getState, toPublic } from '../../state'
@@ -31,16 +39,24 @@ export const settingsTools: Tool[] = [
       required: ['setting'],
     },
     async run(input, context) {
-      const state = toPublic(getState())
-      const change = settingChange(input, {
-        workspaceId: context.workspaceId,
-        providers: { llm: state.llm, voice: state.voice, search: state.search },
-      })
-      if (change.confirm !== null) {
+      const now = (): SettingChange => {
+        const state = toPublic(getState())
+        return settingChange(input, {
+          workspaceId: context.workspaceId,
+          providers: { llm: state.llm, voice: state.voice, search: state.search },
+        })
+      }
+      let change = now()
+      // The question can stand for minutes, and Settings can change what it is about meanwhile: the
+      // change is read again once it is answered, and only what the user approved is ever made.
+      while (change.confirm !== null) {
         if (context.task !== undefined)
           throw new Error('This change asks the user first, and a scheduled task has nobody to ask.')
         const answer = await askUser(change.confirm, [APPLY, CANCEL], context.signal, undefined, askedBy(context.runId))
         if (answer !== APPLY) return 'The user did not apply it; nothing changed.'
+        const after = now()
+        if (JSON.stringify(after.action) === JSON.stringify(change.action)) break
+        change = after
       }
       await dispatch(change.action)
       return change.done
