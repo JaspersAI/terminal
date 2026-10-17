@@ -83,10 +83,11 @@ async function build(id: string, dir: string): Promise<void> {
       errors: [],
       capabilities: validated.capabilities,
       frames: validated.frames,
-      secrets: Object.entries(validated.secrets).map(([key, { label }]) => ({
+      secrets: Object.entries(validated.secrets).map(([key, { label, optional }]) => ({
         key,
         label,
         set: values[key] !== undefined,
+        ...(optional ? { optional } : {}),
       })),
       connections: Object.keys(validated.connections).map((name) => `${id}/${name}`),
     })

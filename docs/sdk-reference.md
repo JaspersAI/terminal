@@ -148,6 +148,8 @@ export default definePlugin({
 
 A source's `mcp` names one of the plugin's own connections, or another plugin's as `<plugin>/<name>`. The first time something needs the key, the assistant asks for it in a secure field; Settings > Plugins takes it too. The key is sealed with the OS keychain and never reaches the plugin, the assistant, or the logs. An `oauth` connection to a server that signs its users in through Jaspers (its protected resource metadata names `https://account.jsprai.com`) takes the app's sign-in with Jaspers as its bearer, with nothing for the plugin to declare; any other `oauth` server is authorized from Settings under Plugins.
 
+Before one of the plugin's own sources runs, the app asks for every declared key that is not set yet. A key that only some calls need, such as a live account's beside a paper account's, is declared `{ label: "Live API key", optional: true }`: it is not asked for up front, and a `ctx.fetch` that fills it in while it is unset fails and names `set_secret`.
+
 ## Debugging
 
 `plugins.<id>` in the app state holds the build status and first error, and the assistant's prompt carries the same line. Main's terminal prints `plugins: watchlist ready (v2)` on each build, or the error.
