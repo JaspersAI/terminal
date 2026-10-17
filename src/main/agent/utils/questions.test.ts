@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Question } from '../../../shared/state'
-import { createQuestions, QUESTION_WAIT_MS } from './questions.ts'
+import { createQuestions, notApproved, QUESTION_WAIT_MS, unanswered } from './questions.ts'
 
 /** A queue whose screen is the last list it was told to show. Every test runs it on its own clock, so none leaves a real wait behind. */
 function queue() {
@@ -116,4 +116,33 @@ test('a question from a run nobody is at starts its wait as it is asked, drawn o
   await tick()
   // Nobody drew either: the one a task's work asked has run out, and the user's own still waits to be seen.
   assert.deepEqual(ended, ['unattended: null'])
+})
+
+test('a question with no answer says why: closed, timed out, or stopped', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { questions, id } = queue()
+  const closed = questions.askFor(asked('closed'))
+  questions.answer(id('closed'), '  ')
+  assert.deepEqual(await closed, { answer: null, ended: 'closed' })
+  const timedOut = questions.askFor(asked('nobody there'))
+  t.mock.timers.tick(QUESTION_WAIT_MS)
+  assert.deepEqual(await timedOut, { answer: null, ended: 'timeout' })
+  const run = new AbortController()
+  const stopped = questions.askFor(asked('stopped'), run.signal)
+  run.abort()
+  assert.deepEqual(await stopped, { answer: null, ended: 'stopped' })
+  const said = questions.askFor(asked('answered'))
+  questions.answer(id('answered'), ' yes ')
+  assert.deepEqual(await said, { answer: 'yes' })
+})
+
+test('a question nobody answered is not told to the model as closed or refused', () => {
+  assert.match(unanswered('closed'), /closed the question/)
+  assert.doesNotMatch(unanswered('timeout'), /closed the question/)
+  assert.match(unanswered('timeout'), /Nobody answered within ten minutes/)
+  const refused = notApproved('installing the plugin x', 'nothing was installed', { answer: 'Cancel' })
+  assert.match(refused, /did not approve/)
+  const away = notApproved('installing the plugin x', 'nothing was installed', { answer: null, ended: 'timeout' })
+  assert.doesNotMatch(away, /did not approve|do not ask again/)
+  assert.match(away, /did not refuse/)
 })

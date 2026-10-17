@@ -16,6 +16,7 @@ import { cellName, formatRect, gridMap, layoutOf, type GridSize, type Panel } fr
 import { frameOf, loopName, notPlaced, type Loop, type LoopStatus } from '../loops/loops.ts'
 import type { Exchange } from './transcript.ts'
 import { stateShape } from './view-state.ts'
+import { parameterNames } from '../data/tool-parameters.ts'
 
 /** The value of `state` and `output` is cut here: the whole prompt is rebuilt every round. */
 const STATE_MAX = 2048
@@ -193,6 +194,30 @@ export function describeLoops(state: AppState, workspaceId: string, statusOf: (l
   ].join('\n')
 }
 
+/**
+ * The other pieces of work on a workspace, for a loop's agent: each by name, what it is, and the ids of
+ * the views in its tile, so "the names in loop_2" is a get away. Nothing when there is no other.
+ */
+export function describeOtherWork(state: AppState, workspaceId: string, loopId: string): string[] {
+  const others = (state.loops[workspaceId] ?? []).filter((one) => one.id !== loopId)
+  if (others.length === 0) return []
+  const grids = state.grids[workspaceId] ?? {}
+  const views = (id: string): string => {
+    const frame = frameOf(grids, id)
+    if (!frame) return 'no tile'
+    const held = layoutOf(grids[frame.window]!, frame.element.id)
+      .panels.filter((panel) => panel.content.kind === 'view')
+      .map((panel) => panel.elementId)
+    return held.length === 0
+      ? `tile ${frame.element.id}, no view yet`
+      : `tile ${frame.element.id}, views ${held.join(', ')}`
+  }
+  return [
+    'Other work on this workspace, by the name the user calls it; read_loop reads one, get reads its views:',
+    ...others.map((one) => `- ${loopName(one.id)}: ${JSON.stringify(one.desc)}, ${views(one.id)}.`),
+  ]
+}
+
 /** The plugins a loop's agent is not told of, in one line that says how to be. Nothing when there are none. */
 export function describeOthers(state: AppState, plugins: readonly string[]): string[] {
   const others = Object.values(state.plugins).filter((one) => !plugins.includes(one.id))
@@ -337,9 +362,15 @@ function describeConnections(
     'Connections:',
     ...list.map((c) => {
       if (c.status === 'ready') {
+        // What each takes, as a source's line says it: with only the names, a model calls one with
+        // no arguments to learn them from the server's refusal, a failed call a tool.
         const loose = c.tools
           .filter((t) => !reached.has(`${c.id}/${t.name}`))
-          .map((t) => (t.app ? `${t.name} (has a view)` : t.name))
+          .map((t) => {
+            const takes = parameterNames(t.inputSchema)
+            const notes = [...(takes ? [`takes ${takes}`] : []), ...(t.app ? ['has a view'] : [])]
+            return notes.length > 0 ? `${t.name} (${notes.join('; ')})` : t.name
+          })
         return `- ${c.id}: ready${loose.length > 0 ? `, tools without a source: ${loose.join(', ')}` : ''}`
       }
       const fix =

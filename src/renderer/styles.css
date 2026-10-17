@@ -18,6 +18,8 @@
   --color-gridline: var(--app-gridline);
   --color-warning: var(--app-warning);
   --color-scrim: var(--app-scrim);
+  --color-central: var(--app-central);
+  --color-central-foreground: var(--app-central-foreground);
 
   --font-prose: var(--jaspers-font-prose);
 }
@@ -85,6 +87,9 @@
   --app-warning: #b45309;
   /* What a modal dims the screen behind it with. */
   --app-scrim: rgb(23 23 23 / 0.4);
+  /* The docked chat's bar, Central: the one element on a grid that is not a loop's tile. */
+  --app-central: #b91c1c;
+  --app-central-foreground: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -92,6 +97,8 @@
     --app-gridline: #161616;
     --app-warning: #fbbf24;
     --app-scrim: rgb(0 0 0 / 0.6);
+    --app-central: #991b1b;
+    --app-central-foreground: #fef2f2;
   }
 }
 

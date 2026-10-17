@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { parseSkill } from './skill-file.ts'
 import { skill } from './skill-fixture.ts'
 import {
   isSkillId,
@@ -143,6 +144,12 @@ test('a skill path is relative, stays inside, and names nothing hidden', () => {
 test('the template names the skill and leaves the description for the author', () => {
   const text = skillTemplate('morning-brief')
   assert.match(text, /^---\nname: morning-brief\n/)
-  assert.match(text, /\ndescription:\n---\n/)
+  assert.match(text, /\ndescription:\n/)
   assert.match(text, /\n# Morning brief\n/)
+})
+
+test('the template starts at a version, so the skill can be published to Hub', () => {
+  const parsed = parseSkill('morning-brief', skillTemplate('morning-brief'))
+  assert.equal(parsed.meta.metadata['version'], '1.0.0')
+  assert.equal(parsed.meta.description, '')
 })

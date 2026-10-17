@@ -40,3 +40,18 @@ export function parameterNames(parameters: Record<string, unknown>): string {
   const may = names.filter((name) => !required.includes(name))
   return [...must, ...(may.length > 0 ? [`[${may.join(', ')}]`] : [])].join(', ')
 }
+
+const SCHEMA_MAX = 3000
+
+/**
+ * A server's refusal of the arguments a tool was called with, with what the tool takes after it, so
+ * the next call can be right rather than another guess. Only a refusal of the arguments: any other
+ * failure is the server's to explain. The schema is cut when it is long, and says so.
+ */
+export function withParameters(message: string, tool: ConnectionTool | undefined): string {
+  if (!tool || !/validation error|invalid arguments|required property|-32602/i.test(message)) return message
+  const schema = JSON.stringify(tool.inputSchema)
+  const shown =
+    schema.length > SCHEMA_MAX ? `${schema.slice(0, SCHEMA_MAX)}… (cut; get connections has it whole)` : schema
+  return `${message}\n${tool.name} takes: ${shown}`
+}

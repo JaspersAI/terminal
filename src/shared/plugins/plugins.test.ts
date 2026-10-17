@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { qualifyConnection, validatePluginDefinition, viewPolicy, viewSandbox } from './plugins.ts'
+import { qualifyConnection, unsetRequiredSecret, validatePluginDefinition, viewPolicy, viewSandbox } from './plugins.ts'
 
 // The schemas are stubs: the check is that a schema is there and can parse, which is all main needs
 // before it hands the definition to the registry. Everything here is what a plugin's file exports.
@@ -323,6 +323,37 @@ test('a secret is a key in a shape an env var can hold, with a label', () => {
     /secret token needs a label/,
   )
   bad({ token: { label: '' } })
+})
+
+test('a secret may be optional, and only a needed one unset is asked for before a source runs', () => {
+  const validated = validatePluginDefinition(
+    {
+      kind: 'plugin',
+      id: 'hello',
+      secrets: {
+        paper: { label: 'Paper key' },
+        live: { label: 'Live key', optional: true },
+        off: { label: 'Off', optional: false },
+      },
+    },
+    'hello',
+  )
+  assert.deepEqual(validated.secrets, {
+    paper: { label: 'Paper key' },
+    live: { label: 'Live key', optional: true },
+    off: { label: 'Off' },
+  })
+  assert.throws(
+    () =>
+      validatePluginDefinition(
+        { kind: 'plugin', id: 'hello', secrets: { live: { label: 'L', optional: 'yes' } } },
+        'hello',
+      ),
+    /secret live has optional as true or false/,
+  )
+  const live = { key: 'live', set: false, optional: true }
+  assert.equal(unsetRequiredSecret([{ key: 'paper', set: true }, live]), undefined)
+  assert.deepEqual(unsetRequiredSecret([live, { key: 'paper', set: false }]), { key: 'paper', set: false })
 })
 
 test('a connection is checked by its rules, under its id, and may refer only to declared secrets', () => {

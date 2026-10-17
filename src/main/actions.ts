@@ -44,7 +44,7 @@ import { readBudget } from '../shared/agent/budget'
 import { isTheme } from '../shared/app/theme'
 import { EYE_CONSENT, readEye, readFeedbackText } from '../shared/app/eye'
 import { sendFeedback } from './eye/eye'
-import { createQuestions } from './agent/utils/questions'
+import { createQuestions, type Asking } from './agent/utils/questions'
 import { knownSecrets } from './agent/utils/settings'
 import { readProMode } from '../shared/app/pro-mode'
 import { addNotice, setUnread } from './app/notices'
@@ -70,6 +70,7 @@ import {
 import type { TaskCall, TaskInput } from '../shared/tasks/tasks'
 import { connectionsOf } from './plugins/connections'
 import { secretProgress, secretRefs, type SecretProgress } from '../shared/plugins/connections'
+import { unsetRequiredSecret } from '../shared/plugins/plugins'
 import { isOpenWindow, MAIN_WINDOW, WINDOWS_MAX, withWindows } from '../shared/grid/windows'
 import { loopsOf, tidied, withLoops } from './loops/loops'
 import {
@@ -436,7 +437,7 @@ export async function askForMissingSecret(id: string): Promise<void> {
 }
 
 /**
- * Before the assistant runs a plugin's own source: a key the plugin declares and has not been given is
+ * Before the assistant runs a plugin's own source: a key the plugin declares, not as optional, and has not been given is
  * asked for first, where the run is, and the run waits for it, as a call on a connection does. Run
  * without it the source fails on its first request, in words written for the assistant, and what it
  * began fails with it: a job, and the record of one that its view then shows. So the source is not run
@@ -444,7 +445,7 @@ export async function askForMissingSecret(id: string): Promise<void> {
  * it went unanswered, or nobody was there to answer one.
  */
 export async function askForUnsetKey(plugin: string): Promise<void> {
-  const unset = getState().plugins[plugin]?.secrets.find((secret) => !secret.set)
+  const unset = unsetRequiredSecret(getState().plugins[plugin]?.secrets ?? [])
   if (!unset) return
   const unmet = whyUnmet(plugin, unset.label, await askForKey(plugin, unset.key))
   if (unmet) throw new Error(unmet)
@@ -519,9 +520,20 @@ export function askUser(
   code?: string,
   about?: string,
 ): Promise<string | null> {
+  return askUserFor(text, choices, signal, code, about).then((one) => one.answer)
+}
+
+/** As `askUser`, and says why there is no answer when there is none: closed, timed out, or stopped. */
+export function askUserFor(
+  text: string,
+  choices: string[],
+  signal?: AbortSignal,
+  code?: string,
+  about?: string,
+): Promise<Asking> {
   const place = here()
   console.log(`[ask] ${text}`)
-  return questions.ask(
+  return questions.askFor(
     { text, choices, ...(code ? { code } : {}), ...(about ? { about } : {}), ...(place ? { place } : {}) },
     signal,
     // A run on a task's limits has nobody at it: its question does not wait to be looked at.

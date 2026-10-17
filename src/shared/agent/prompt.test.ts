@@ -19,6 +19,7 @@ import {
   describeInstalled,
   describeInstalledFor,
   describeInstalledToRoute,
+  describeOtherWork,
   describeOthers,
   describePlugin,
   describeRound,
@@ -672,6 +673,37 @@ test('a ready connection lists only the tools no source reaches, since those nee
   assert.ok(lines.includes('- jaspers/sec: ready, tools without a source: get_company'), lines.join('\n'))
 })
 
+test('a tool no source reaches says what it takes, so it is not called bare to find out', () => {
+  const two: ConnectionInfo = {
+    ...READY,
+    tools: [
+      ...READY.tools,
+      {
+        name: 'get_guide',
+        description: '',
+        inputSchema: { type: 'object', properties: { topic: {} }, required: ['topic'] },
+      },
+      {
+        name: 'show_run',
+        description: '',
+        inputSchema: { type: 'object', properties: { run: {}, page: {} }, required: ['run'] },
+        app: 'ui://screener/run-view.html',
+      },
+    ],
+  }
+  const lines = describeContext(
+    tree(EMPTY_GRID, {}, { 'screener/screen': SCREEN }, { 'jaspers/sec': two }),
+    WS,
+    instructionsFor,
+  ).split('\n')
+  assert.ok(
+    lines.includes(
+      '- jaspers/sec: ready, tools without a source: get_guide (takes topic), show_run (takes run, [page]; has a view)',
+    ),
+    lines.join('\n'),
+  )
+})
+
 test('a tool whose server has a view of its own for it says so beside its name', () => {
   const two: ConnectionInfo = {
     ...READY,
@@ -748,6 +780,22 @@ test("a loop's agent is told its tile, how the views inside it are laid out, and
       'output: null',
     ].join('\n'),
   )
+})
+
+test("a loop's agent is told the other work by name with its views' ids, so loop_2 is a get away", () => {
+  const frame = placeView(EMPTY_GRID, { content: { kind: 'frame' }, size: 'half', anchor: 'left', loop: 'f1' })
+  const other = placeView(layoutOf(frame.grid), { content: { kind: 'frame' }, loop: 'f2' })
+  const both = withLayout(frame.grid, undefined, other.grid)
+  const grid = inside(both, 'e2', { content: { kind: 'view', view: 'core/note' }, state: { text: 'a' }, loop: 'f2' })
+  const screener = { ...NOTE_LOOP, id: 'f2', desc: 'Screener: food and retail' }
+  const empty = { ...NOTE_LOOP, id: 'f3', desc: 'Not placed' }
+  const state = { ...tree(grid), loops: { [WS]: [NOTE_LOOP, screener, empty] } }
+  assert.deepEqual(describeOtherWork(state, WS, 'f1'), [
+    'Other work on this workspace, by the name the user calls it; read_loop reads one, get reads its views:',
+    '- loop_2: "Screener: food and retail", tile e2, views e3.',
+    '- loop_3: "Not placed", no tile.',
+  ])
+  assert.deepEqual(describeOtherWork({ ...state, loops: { [WS]: [NOTE_LOOP] } }, WS, 'f1'), [])
 })
 
 test('what is running, the time, and the tasks are said the same with or without a focus line', () => {

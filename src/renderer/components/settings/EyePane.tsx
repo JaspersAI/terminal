@@ -4,7 +4,7 @@ import { dispatch, useAppState } from '../../lib/state'
 import { size } from './DataPane'
 import { BUTTON, Row } from './Row'
 
-// Settings > Eye: the recorder, what it records, and what this machine has kept. On or off is the
+// Settings > Eye: live feedback sharing, what it captures, and what this machine has kept. On or off is the
 // one setting: where batches go and how often a picture is taken are the app's, not the user's. Off
 // until the user turns it on, here or with the dot in the workspace bar, and no tool can reach either.
 
@@ -35,14 +35,14 @@ export function EyePane(): ReactElement {
         Eye
       </h3>
       <p className="mt-1 text-sm text-muted-foreground">
-        Records how you use Jaspers — a picture of this app's windows every minute, and each request to the assistant
-        with what came of it — so the team can learn from it. Off until you turn it on.
+        Live feedback sharing shows the team how you use Jaspers — a picture of this app's windows every minute, and
+        each request to the assistant with what came of it — so they can learn from it. Off until you turn it on.
       </p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <div className="border border-border p-3 text-sm">
           <p className="font-medium">What it captures</p>
           <ul className="mt-1.5 space-y-1 text-muted-foreground">
-            <li>The Jaspers window as it looks on screen, this app only.</li>
+            <li>Every open Jaspers window as it looks on screen, not only the main one; this app only.</li>
             <li>What you ask the assistant, and what it answers.</li>
             <li>Each tool it runs: what it was given, what came back, or the error.</li>
             <li>Which views are on the grid, and when one is placed.</li>
@@ -61,8 +61,10 @@ export function EyePane(): ReactElement {
       {failed && <p className="mt-3 text-sm text-destructive">{failed}</p>}
       <div className="mt-5 border-t border-border">
         <Row
-          label="Eye"
-          hint={eye.recording ? 'Recording, and it keeps going while the window is closed.' : 'Nothing is recorded.'}
+          label="Live feedback sharing"
+          hint={
+            eye.recording ? 'On, and it keeps going while the window is closed.' : 'Off: nothing is captured or shared.'
+          }
         >
           <div className="flex">
             {[false, true].map((on) => (
@@ -83,7 +85,7 @@ export function EyePane(): ReactElement {
           </div>
         </Row>
         <Row
-          label="Recorded"
+          label="Captured"
           hint="Pictures taken and requests kept since Jaspers started, and what the folder holds now."
         >
           <p className="text-sm">
@@ -99,7 +101,7 @@ export function EyePane(): ReactElement {
         </Row>
         <Row
           label="This install"
-          hint="What is recorded here is filed under this id, so you can say which sessions are yours."
+          hint="What is captured here is filed under this id, so you can say which sessions are yours."
         >
           <p className="font-mono text-xs">{eye.install}</p>
         </Row>

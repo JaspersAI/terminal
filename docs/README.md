@@ -12,7 +12,7 @@
 | [Connections and data](connections-and-data.md) | Adding an MCP server, the built-in views, and the file everything is kept in |
 | [Publishing a plugin](publishing-a-plugin.md) | To Jaspers Hub from Settings, or as an archive on a GitHub release |
 | [Pro mode](pro-mode.md) | Letting the assistant run shell commands, and what that allows |
-| [Eye](eye.md) | Recording how the app is used: what is captured, what never is, where it goes |
+| [Eye](eye.md) | Live feedback sharing, how the app is used: what is captured, what never is, where it goes |
 | [Development](development.md) | Process boundaries, invariants, testing, and packaging |
 | [Roadmap](roadmap.md) | What would matter most next |
 

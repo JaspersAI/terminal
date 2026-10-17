@@ -28,7 +28,8 @@ export function stateShape(schema: Record<string, unknown>): string {
 /**
  * What a model sent for a view's state, in the shape the schema asks for where the difference is
  * spelling rather than meaning: a JSON string for an object or a list, one value where a list of
- * them belongs, and an option written in another case (`Volume` for `volume`). Anything else is
+ * them belongs, an option written in another case (`Volume` for `volume`), and a number or a
+ * boolean written as a string (`"0"` for a page, `"true"` for a flag). Anything else is
  * returned untouched for the schema to refuse, so the error still teaches the real options.
  */
 export function coerceViewState(schema: unknown, value: unknown): unknown {
@@ -69,6 +70,8 @@ function coerce(schema: unknown, value: unknown, root: unknown, depth: number): 
     return coerce(real[0], value, root, depth + 1)
   }
   if (Array.isArray(node['enum'])) return option(node['enum'], value)
+  const scalar = scalarOf(node['type'], value)
+  if (scalar !== undefined) return scalar
   if (node['type'] === 'array' || (node['type'] === undefined && node['items'] !== undefined)) {
     if (value === null || value === undefined) return value
     const parsed = fromJson(value)
@@ -123,6 +126,26 @@ function options(values: unknown[]): string {
   const shown = values.slice(0, ENUM_MAX).map((value) => (value === null ? 'null' : String(value)))
   return values.length > ENUM_MAX ? `${shown.join('|')}|…` : shown.join('|')
 }
+
+/**
+ * A number or a boolean a model wrote as a string, read as the one the schema's type asks for, or
+ * undefined when it is not one: a type that takes a string as well keeps the string, and a string
+ * that spells no number (or a fraction where an integer belongs) is left for the schema to refuse.
+ */
+function scalarOf(type: unknown, value: unknown): number | boolean | undefined {
+  if (typeof value !== 'string') return undefined
+  const types = Array.isArray(type) ? type : [type]
+  if (types.includes('string')) return undefined
+  const text = value.trim()
+  if ((types.includes('number') || types.includes('integer')) && NUMBER.test(text)) {
+    const number = Number(text)
+    if (Number.isFinite(number) && (types.includes('number') || Number.isInteger(number))) return number
+  }
+  if (types.includes('boolean') && (text === 'true' || text === 'false')) return text === 'true'
+  return undefined
+}
+
+const NUMBER = /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
 
 /** The option a string means when only its case or punctuation differs; otherwise the string itself. */
 function option(values: unknown[], value: unknown): unknown {

@@ -1,7 +1,8 @@
 import { z, type ZodType } from 'zod'
 import { CHAT_VIEW } from '../../shared/grid/grid'
 import type { SourceInfo, ViewInfo } from '../../shared/state'
-import { parameterNames, sourceParameters } from '../../shared/data/tool-parameters'
+import { parameterNames, sourceParameters, withParameters } from '../../shared/data/tool-parameters'
+import { mapToolResult } from '../../shared/data/datasets'
 import { APP_VIEW, appSummary } from '../../shared/plugins/apps'
 import { qualifyConnection } from '../../shared/plugins/plugins'
 import { isMcpSource, type SourceDef } from '@jaspers-ai/sdk/define'
@@ -149,7 +150,7 @@ export function registerBuiltins(): void {
 const MCP_SOURCE: SourceDef = {
   kind: 'source',
   description:
-    'Call one tool on one connection, for what no plugin does. connection is <plugin>/<name>, as listed under Connections; get connections shows the tools and their schemas.',
+    'Call one tool on one connection, for what no plugin does. connection is <plugin>/<name>, as listed under Connections with what each tool takes; get connections shows the tools and their schemas.',
   input: z.object({
     connection: z.string(),
     tool: z.string(),
@@ -161,7 +162,24 @@ const MCP_SOURCE: SourceDef = {
       tool,
       args: toolArgs,
     } = args as { connection: string; tool: string; args: Record<string, unknown> }
-    return call(connection, tool, toolArgs)
+    // A refusal of the arguments comes back with what the tool takes, from a thrown protocol error
+    // or from a result the server marked as an error, so the model's next call is not a guess.
+    const declared = getState().connections[connection]?.tools.find((t) => t.name === tool)
+    let result: unknown
+    try {
+      result = await call(connection, tool, toolArgs)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const told = withParameters(message, declared)
+      throw told === message ? error : new Error(told, { cause: error })
+    }
+    const answer = result as { content?: unknown[]; isError?: boolean } | null
+    if (answer && typeof answer === 'object' && answer.isError === true) {
+      const { text } = mapToolResult(answer)
+      const told = withParameters(text, declared)
+      if (told !== text) return { ...answer, content: [{ type: 'text', text: told }] }
+    }
+    return result
   },
 }
 
@@ -302,11 +320,11 @@ const INBOX: ViewDef = {
 const CHAT: ViewDef = {
   id: CHAT_VIEW,
   plugin: null,
-  title: 'Chat',
+  title: 'Central',
   state: z.object({}),
   output: z.object({ exchanges: z.number(), busy: z.boolean() }),
   instructions:
-    'The chat with you, docked on the grid: the conversation and the command line the user types in, in the place of the composer that floats at the bottom of the window. A window shows one or the other, so placing this docks the chat there and removing the element gives the window its floating composer back. It takes no state; the user docks and undocks it themselves, and asking for the chat on the grid, or in a particular spot, is the reason to place it.',
+    'Central, the chat with you, docked on the grid under a red bar: the conversation and the command line the user types in, in the place of the composer that floats at the bottom of the window. A window shows one or the other, so placing this docks the chat there and removing the element gives the window its floating composer back. It takes no state; the user docks and undocks it themselves, and asking for the chat on the grid, or in a particular spot, is the reason to place it.',
   summarize: (_state, output) => {
     const { exchanges, busy } = (output ?? {}) as { exchanges?: number; busy?: boolean }
     return busy ? 'the chat, a request in flight' : `the chat, ${exchanges ?? 0} exchanges shown`

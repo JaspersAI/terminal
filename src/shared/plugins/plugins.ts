@@ -187,7 +187,7 @@ export function qualifyConnection(plugin: string | null, mcp: string): string {
   return mcp.includes('/') || plugin === null ? mcp : `${plugin}/${mcp}`
 }
 
-/** The secrets as declared: a key an env var can hold, and a label to ask with. */
+/** The secrets as declared: a key an env var can hold, a label to ask with, and whether every call needs it. */
 function secretList(value: unknown, id: string): Record<string, SecretSpec> {
   if (value === undefined) return {}
   const record = asRecord(value)
@@ -202,7 +202,10 @@ function secretList(value: unknown, id: string): Record<string, SecretSpec> {
     const entry = asRecord(spec)
     if (!entry || typeof entry['label'] !== 'string' || entry['label'] === '')
       throw new Error(`Plugin ${id}: secret ${key} needs a label.`)
-    out[key] = { label: entry['label'] }
+    const optional = entry['optional']
+    if (optional !== undefined && typeof optional !== 'boolean')
+      throw new Error(`Plugin ${id}: secret ${key} has optional as true or false; ${show(optional)} is neither.`)
+    out[key] = optional ? { label: entry['label'], optional: true } : { label: entry['label'] }
   }
   return out
 }
@@ -273,4 +276,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 /** What was there instead, short enough for one line of a message. */
 function show(value: unknown): string {
   return typeof value === 'string' ? `"${value}"` : typeof value
+}
+
+/**
+ * The key to ask for before one of a plugin's own sources runs: the first it declares as needed and has
+ * not been given. An optional key is left to the call that fills it in, which fails naming set_secret.
+ */
+export function unsetRequiredSecret<T extends { set: boolean; optional?: boolean }>(secrets: T[]): T | undefined {
+  return secrets.find((secret) => !secret.set && !secret.optional)
 }
