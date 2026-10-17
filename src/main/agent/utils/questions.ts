@@ -6,6 +6,37 @@ import type { Question } from '../../../shared/state'
 export const QUESTION_WAIT_MS = 10 * 60 * 1000
 
 /**
+ * How a question ended: what the user said, or why nothing was: they closed it, its ten minutes ran
+ * out with nobody answering, or its run was stopped. A tool that asks tells the model which, since
+ * "you closed it" said of a question nobody looked at is a thing the user never did.
+ */
+export type Asking = { answer: string } | { answer: null; ended: 'closed' | 'timeout' | 'stopped' }
+
+/** What ask_user says when there is no answer. Ten minutes with nobody answering is not the user closing it. */
+export function unanswered(ended: Extract<Asking, { answer: null }>['ended']): string {
+  switch (ended) {
+    case 'closed':
+      return 'The user closed the question without answering. Carry on with what you have, or say what you need.'
+    case 'timeout':
+      return 'Nobody answered within ten minutes; the user may be away, and did not close it. Carry on with what you have, and in your reply say what you assumed, as the question still open, never as something the user chose.'
+    case 'stopped':
+      return 'The run was stopped while the question was up.'
+  }
+}
+
+/**
+ * What a tool says when what it asked to go ahead with was not approved: a no is final for the
+ * request, and a question nobody answered in ten minutes is not a no, so it says to tell the user
+ * it is waiting on them rather than that they refused.
+ */
+export function notApproved(what: string, outcome: string, asked: Asking): string {
+  if (asked.answer === null && asked.ended === 'timeout') {
+    return `Nobody answered the question about ${what} within ten minutes, so ${outcome}. The user did not refuse; they may be away. Say it is waiting on their approval and that they can ask for it again.`
+  }
+  return `The user did not approve ${what}, so ${outcome}. Leave it; do not ask again in other words.`
+}
+
+/**
  * The questions the assistant is waiting on. A question is asked in a place, a tile's box or the
  * global box, and the user reads one at a time in a place: the one that has waited longest there is
  * on screen and the rest wait behind it, each starting its ten minutes when it is shown. It ends
@@ -21,7 +52,7 @@ export const QUESTION_WAIT_MS = 10 * 60 * 1000
  */
 export function createQuestions(show: (heads: Question[]) => void, waitMs = QUESTION_WAIT_MS) {
   /** Answers waiting on a question, by its id. */
-  const answering = new Map<string, (answer: string | null) => void>()
+  const answering = new Map<string, (asked: Asking) => void>()
   /** The questions not yet answered, in the order asked, each with what begins its wait: once, whoever says so again. */
   const asking: { question: Question; wait: () => boolean }[] = []
   /** What is on screen now. */
@@ -41,6 +72,36 @@ export function createQuestions(show: (heads: Question[]) => void, waitMs = QUES
     }
   }
 
+  /** As `ask`, and says why there is no answer when there is none. */
+  function askFor(asked: Omit<Question, 'id'>, signal?: AbortSignal, unattended = false): Promise<Asking> {
+    const id = `q${++seq}`
+    const question: Question = { id, ...asked }
+    return new Promise((resolve) => {
+      let timer: NodeJS.Timeout | undefined
+      const finish = (ended: Asking): void => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', stopped)
+        answering.delete(id)
+        const at = asking.findIndex((one) => one.question.id === id)
+        if (at !== -1) asking.splice(at, 1)
+        showNext()
+        resolve(ended)
+      }
+      // A run the user stopped takes its question with it, rather than leaving it for nobody.
+      const stopped = (): void => finish({ answer: null, ended: 'stopped' })
+      signal?.addEventListener('abort', stopped, { once: true })
+      answering.set(id, finish)
+      const wait = (): boolean => {
+        if (timer !== undefined) return false
+        timer = setTimeout(() => finish({ answer: null, ended: 'timeout' }), waitMs)
+        return true
+      }
+      asking.push({ question, wait })
+      if (unattended) wait()
+      showNext()
+    })
+  }
+
   return {
     /**
      * Asks one and waits: its answer, or null when it was closed, its time ran out, or its run was
@@ -48,39 +109,17 @@ export function createQuestions(show: (heads: Question[]) => void, waitMs = QUES
      * tile nobody looks at would otherwise hold the run, and whatever waits behind it, for good.
      */
     ask(asked: Omit<Question, 'id'>, signal?: AbortSignal, unattended = false): Promise<string | null> {
-      const id = `q${++seq}`
-      const question: Question = { id, ...asked }
-      return new Promise((resolve) => {
-        let timer: NodeJS.Timeout | undefined
-        const finish = (answer: string | null): void => {
-          clearTimeout(timer)
-          signal?.removeEventListener('abort', stopped)
-          answering.delete(id)
-          const at = asking.findIndex((one) => one.question.id === id)
-          if (at !== -1) asking.splice(at, 1)
-          showNext()
-          resolve(answer)
-        }
-        // A run the user stopped takes its question with it, rather than leaving it for nobody.
-        const stopped = (): void => finish(null)
-        signal?.addEventListener('abort', stopped, { once: true })
-        answering.set(id, finish)
-        const wait = (): boolean => {
-          if (timer !== undefined) return false
-          timer = setTimeout(() => finish(null), waitMs)
-          return true
-        }
-        asking.push({ question, wait })
-        if (unattended) wait()
-        showNext()
-      })
+      return askFor(asked, signal, unattended).then((one) => one.answer)
     },
+
+    askFor,
 
     /** The user's answer to the one with that id, or nothing when they closed it. */
     answer(id: string, text: string): void {
       const waiting = answering.get(id)
       if (!waiting) return
-      waiting(text.trim() || null)
+      const said = text.trim()
+      waiting(said ? { answer: said } : { answer: null, ended: 'closed' })
     },
 
     /** A tile's box has drawn the question with that id: its wait begins. Answers whether it began now. */
