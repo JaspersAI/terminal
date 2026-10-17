@@ -1,58 +1,178 @@
 import type { AgentEvent, AgentOrigin } from '../../../shared/agent/agent'
-import type { EyeOutcome, EyeRun, EyeToolCall } from '../../../shared/app/eye'
-import { record, recordRun } from '../../eye/eye'
-import { knownSecrets } from './settings'
+import { clip, hidesCells, HIDDEN_CELLS } from '../../../shared/app/eye-events'
+import { withRun } from '../../eye/cause'
+import { record } from '../../eye/eye'
+import type { Tile } from './runs'
 
-// What Eye keeps of a run: a line as it begins and as it ends, and its record, written as it ends.
+// What Eye keeps of a run, as it happens: a line as it begins, one for each call to the model (each
+// attempt, a retry included), each tool call as it starts and as it ends, what the model said between
+// rounds, its status lines, that the user added to it, and how it ended with the rounds and tokens it
+// took. The builder runs under its user's run, so its lines are that run's, its loop named by its label.
+//
+// What the user wrote, the request and what they added, is written when the run ends, not as it
+// begins: a key pasted into the chat is a secret only once the run has saved it (`set_secret`), and
+// the end is masked against it, as a run's record always was. The tools that read and write cells
+// are kept without their payloads, which are what is written in cells.
 
-/** What a run in flight has said so far, for the record Eye keeps of it once it ends. */
+/** What a run in flight has spent so far, summed from its calls to the model, and how many tool calls it has made. */
 interface Pending {
-  origin: AgentOrigin
   at: number
   request: string
-  tools: EyeToolCall[]
+  added: { at: number; text: string }[]
+  rounds: number
+  input: number
+  output: number
+  calls: number
 }
+
+/** How much of what the user added mid-run is kept, each message. */
+const ADDED_MAX = 8000
 
 const pending = new Map<string, Pending>()
+/** Tool calls of a run whose start was not seen, numbered apart. */
+let strays = 0
 
-/** What a run was asked, as it begins, for the run's record. */
-export function noteRequest(runId: string, origin: AgentOrigin, request: string): void {
-  pending.set(runId, { origin, at: Date.now(), request, tools: [] })
+/** A run begins: what it was asked, whose it is, and where it shows. */
+export function noteRequest(
+  runId: string,
+  origin: AgentOrigin,
+  request: string,
+  where: { workspaceId: string; label: string; tile?: Tile },
+): void {
+  pending.set(runId, { at: Date.now(), request, added: [], rounds: 0, input: 0, output: 0, calls: 0 })
+  record({
+    kind: 'run',
+    run: runId,
+    name: origin,
+    workspace: where.workspaceId,
+    count: request.length,
+    data: { label: where.label.trim(), loop: where.tile?.loop ?? null, on: where.tile?.place.on ?? null },
+  })
 }
 
-/** One tool call of a run, as it finished, for the run's record. */
-export function noteTool(runId: string, call: EyeToolCall): void {
-  pending.get(runId)?.tools.push(call)
+/** Everything a run tells every window passes here: what it said, its status, what the user added, and its end. */
+export function noteRun(event: AgentEvent): void {
+  switch (event.kind) {
+    case 'said':
+      record({ kind: 'said', run: event.runId, data: { text: event.text } })
+      return
+    case 'status':
+      // A line that only says the one before it again, with a longer wait, is that line.
+      if (!event.again) record({ kind: 'status', run: event.runId, data: { line: event.line } })
+      return
+    case 'steered':
+      pending.get(event.runId)?.added.push({ at: Date.now(), text: clip(event.text, ADDED_MAX) })
+      record({ kind: 'added', run: event.runId, count: event.text.length })
+      return
+    case 'done':
+    case 'failed':
+    case 'stopped':
+      ended(event)
+      return
+    default:
+      return
+  }
+}
+
+function ended(event: Extract<AgentEvent, { kind: 'done' | 'failed' | 'stopped' }>): void {
+  const begun = pending.get(event.runId)
+  // An end told twice, or of a run that never began here, is said once or not at all.
+  if (!begun) return
+  pending.delete(event.runId)
+  const outcome = event.kind === 'done' ? 'answered' : event.kind
+  const said = event.kind === 'done' ? { reply: event.text } : event.kind === 'failed' ? { error: event.message } : {}
+  record({
+    kind: 'run-end',
+    run: event.runId,
+    name: outcome,
+    ok: event.kind === 'done',
+    ms: Date.now() - begun.at,
+    data: {
+      request: begun.request,
+      ...(begun.added.length > 0 ? { added: begun.added } : {}),
+      ...said,
+      rounds: begun.rounds,
+      input: begun.input,
+      output: begun.output,
+    },
+  })
+}
+
+/** One call to the model: how it went, what it cost, or why it failed, and which try of its round it was. */
+export type LlmCall = {
+  round: number
+  attempt: number
+  /** The loop's label, when it has one: a task's, the welcome's, the builder's. */
+  label: string
+  provider: string
+  model: string
+  ms: number
+} & (
+  | { ok: true; stop: string; input: number; output: number; cacheRead: number; cacheWrite: number }
+  | { ok: false; status: number | null; message: string; retryAfterMs: number | null }
+)
+
+export function noteLlm(runId: string, call: LlmCall): void {
+  const begun = pending.get(runId)
+  if (begun && call.ok) {
+    begun.rounds++
+    begun.input += call.input
+    begun.output += call.output
+  }
+  const label = call.label.trim()
+  const head = { provider: call.provider, attempt: call.attempt, ...(label ? { label } : {}) }
+  record({
+    kind: 'llm',
+    run: runId,
+    span: `r${call.round}`,
+    name: call.model,
+    ok: call.ok,
+    ms: call.ms,
+    data: call.ok
+      ? {
+          ...head,
+          stop: call.stop,
+          input: call.input,
+          output: call.output,
+          cacheRead: call.cacheRead,
+          cacheWrite: call.cacheWrite,
+        }
+      : { ...head, status: call.status, message: call.message, retryAfterMs: call.retryAfterMs },
+  })
 }
 
 /**
- * A run beginning and ending, for Eye, which every event already passes through. The line says that
- * a request ran, whose it was, how long it took, and whether it ended in an answer; the run's record,
- * written as it ends, holds the request, the reply or the error, and every tool call.
+ * A tool call begins. Answers the span its end is said under: numbered within the run, since a
+ * provider's own call ids are not always unique across rounds. The provider's id is kept beside it.
  */
-export function noteRun(event: AgentEvent): void {
-  if (event.kind === 'start') {
-    record({ kind: 'request', name: event.origin })
-    return
-  }
-  if (event.kind !== 'done' && event.kind !== 'failed' && event.kind !== 'stopped') return
-  const begun = pending.get(event.runId)
-  pending.delete(event.runId)
-  const ms = begun ? Date.now() - begun.at : undefined
-  record({ kind: 'request-end', ok: event.kind === 'done', ...(ms === undefined ? {} : { ms }) })
-  if (event.kind === 'failed') record({ kind: 'error', name: 'request' })
-  if (!begun) return
-  const outcome: EyeOutcome = event.kind === 'done' ? 'answered' : event.kind === 'failed' ? 'failed' : 'stopped'
-  const run: EyeRun = {
-    id: event.runId,
-    origin: begun.origin,
-    at: begun.at,
-    ms: ms ?? 0,
-    outcome,
-    request: begun.request,
-    reply: event.kind === 'done' ? event.text : null,
-    error: event.kind === 'failed' ? event.message : null,
-    tools: begun.tools,
-  }
-  recordRun(run, knownSecrets())
+export function noteToolStart(runId: string, call: { id: string; name: string; input: string }): string {
+  const begun = pending.get(runId)
+  const span = begun ? `t${++begun.calls}` : `s${++strays}`
+  const input = hidesCells(call.name) ? HIDDEN_CELLS : call.input
+  record({ kind: 'tool', run: runId, span, name: call.name, data: { input, id: call.id } })
+  return span
+}
+
+/** A tool call ends: what it gave back, or its error, or that the user stopped the run under it. */
+export function noteToolEnd(
+  runId: string,
+  span: string,
+  name: string,
+  end: { ms: number } & ({ ok: true; output: string } | { ok: false; error: string; stopped?: boolean }),
+): void {
+  const said = (text: string): string => (hidesCells(name) ? HIDDEN_CELLS : text)
+  record({
+    kind: 'tool-end',
+    run: runId,
+    span,
+    name,
+    ok: end.ok,
+    ms: end.ms,
+    data: end.ok ? { output: said(end.output) } : { error: said(end.error), ...(end.stopped ? { stopped: true } : {}) },
+  })
+}
+
+/** A run's loop, and whatever it starts, as that run's: what the tree's changes are said to come from. */
+export function asRun<T>(runId: string, fn: () => T): T {
+  return withRun(runId, fn)
 }

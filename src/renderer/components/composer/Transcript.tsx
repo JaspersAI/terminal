@@ -11,6 +11,7 @@ import { ADDED, THINKING } from '../../../shared/agent/agent'
 import type { Citation } from '../../../shared/agent/citations'
 import type { Exchange } from '../../../shared/agent/transcript'
 import { useAppState } from '../../lib/state'
+import { ErrorText } from './ErrorText'
 import type { LiveExchange } from './live'
 import { MarkdownText } from './MarkdownText'
 
@@ -211,7 +212,7 @@ const LiveRow = memo(function LiveRow({
           <div id={last ? 'agent-reply' : undefined} data-reply className="animate-appear font-prose text-prose">
             <MarkdownText source={answer} citations={citations} />
           </div>
-          {error && <p className="mt-1 text-sm break-words text-destructive">{error}</p>}
+          {error && <ErrorText text={error} className="mt-1" />}
         </>
       )}
     </div>
@@ -245,7 +246,7 @@ const EarlierExchange = memo(function EarlierExchange({ exchange }: { exchange: 
               <MarkdownText source={exchange.answer} citations={exchange.citations} />
             </div>
           )}
-          {exchange.error && <p className="mt-1 text-sm break-words text-destructive">{exchange.error}</p>}
+          {exchange.error && <ErrorText text={exchange.error} className="mt-1" />}
         </>
       )}
     </div>
@@ -346,7 +347,7 @@ export function Trail({
           </p>
         )
       })}
-      {error && <p className="mt-1 text-sm break-words text-destructive">{error}</p>}
+      {error && <ErrorText text={error} className="mt-1" />}
       {working && onStop && (
         <button
           type="button"

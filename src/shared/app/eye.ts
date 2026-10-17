@@ -1,7 +1,8 @@
 // Eye: what the app records about how it is used, so the team can learn from it. Two kinds of
-// record, both of this app and nothing else: a frame of the Jaspers window every few minutes, and a
-// line of telemetry for what the app did. Keep this file free of Node and DOM imports — it is the
-// rule for what Eye means, which main enforces and the renderer only shows.
+// record, both of this app and nothing else: a frame of each Jaspers window every minute, and a line
+// of telemetry for each thing that happened, whose rules are `eye-events.ts`. Keep this file free of
+// Node and DOM imports — it is the rule for what Eye means, which main enforces and the renderer only
+// shows.
 //
 import { mask } from '../agent/transcript.ts'
 
@@ -63,9 +64,11 @@ export const EYE_OFF: Eye = {
  * The wording the user is asked to agree to, by number. A change to what Eye records is a change to
  * the number, and a yes to an older wording is asked again, with recording off until the answer.
  * 1 was frames and app events only; 2 added requests, replies, tool calls, and errors; 3 took the
- * frame from every three minutes to every minute.
+ * frame from every three minutes to every minute; 4 added what the user does in the app (the buttons
+ * and menus used, how each view is set, what changes on the grid), every step of a request as it
+ * happens, and how the app performs.
  */
-export const EYE_CONSENT = 3
+export const EYE_CONSENT = 4
 
 /** What Eye keeps between runs: the setting, the wording agreed to, and the install's id; never the counters, which are of this session. */
 export interface StoredEye {
@@ -192,124 +195,51 @@ export function batchAccepted(status: number): boolean {
   return status >= 400 && status < 500
 }
 
-// Telemetry. One line of JSON per event, appended beside the frames. What goes in is what the app
-// did — a request started, a tool ran, an element was placed — and never what was said: no prompt
-// text, no reply, no keystroke, no cell, no path from the user's disk. A reviewer learns which parts
-// of the app are used and where they are slow, which is the whole point of it.
-
-/** What a telemetry line may say happened. */
-export type EyeEventKind =
-  'session' | 'request' | 'request-end' | 'tool' | 'element' | 'views' | 'error' | 'frame' | 'setting' | 'feedback'
-
-export interface EyeEvent {
-  kind: EyeEventKind
-  /** ms since the epoch. */
-  at: number
-  /** A tool's name, a view's id, a run's origin: a name the app itself chose, never the user's words. */
-  name?: string
-  /** How long it took, ms. */
-  ms?: number
-  /** Whether it went well; left out where the idea does not apply. */
-  ok?: boolean
-  /** A count: elements on the grid, views registered, bytes of a frame. */
-  count?: number
-}
+// Telemetry. The session's lines, one JSON object each, appended beside its frames: what a line may
+// hold is `eye-events.ts`. The file only grows, and goes up in parts.
 
 /**
- * The next part of the telemetry file to send: its whole lines after the `from` already sent, and
- * how many. The file is appended to while the app runs, so a last line without its newline is one
- * still being written, and waits for the next part. The endpoint files each line under its number,
- * which is why the count is what the uploader keeps and the file itself is never rewritten.
+ * How much of the telemetry file one request carries, in characters. A session that ran for days is
+ * sent in parts of this size rather than in one body the endpoint would refuse as too big; three
+ * bytes a character at most keeps a part well inside its limit of 64 MB.
  */
-export function eventsPart(text: string, from: number): { body: string; count: number } {
+export const PART_MAX_CHARS = 8 * 1024 * 1024
+
+/**
+ * The next part of the telemetry file to send: its whole lines after the `from` already sent, as
+ * many as fit `max` characters and at least one, how many, and how many whole lines are left after
+ * them. The file is appended to while the app runs, so a last line without its newline is one still
+ * being written, and waits for the next part. The endpoint files each line under its number, which
+ * is why the count is what the uploader keeps and the file itself is never rewritten.
+ */
+export function eventsPart(
+  text: string,
+  from: number,
+  max: number = PART_MAX_CHARS,
+): { body: string; count: number; rest: number } {
   const lines = text.split('\n')
   // The last piece is either empty, after a final newline, or a line not yet whole: neither goes.
   lines.pop()
   const next = lines.slice(Math.max(0, from))
-  return { body: next.map((line) => `${line}\n`).join(''), count: next.length }
-}
-
-/** The line as it is written. Only the fields Eye set: nothing else can ride along. */
-export function eyeLine(event: EyeEvent): string {
-  const line: Record<string, unknown> = { at: event.at, kind: event.kind }
-  if (event.name !== undefined) line['name'] = event.name
-  if (event.ms !== undefined) line['ms'] = Math.round(event.ms)
-  if (event.ok !== undefined) line['ok'] = event.ok
-  if (event.count !== undefined) line['count'] = event.count
-  return `${JSON.stringify(line)}\n`
-}
-
-// A run: one request to the assistant, kept whole once it has ended, in a file of its own beside the
-// frames, so it can go the moment it is complete. It holds the user's words and the reply, so every
-// secret the app knows is masked out of it first, and every text is capped.
-
-export type EyeOutcome = 'answered' | 'failed' | 'stopped'
-
-export interface EyeToolCall {
-  name: string
-  /** ms since the epoch. */
-  at: number
-  ms: number
-  ok: boolean
-  /** The arguments, as JSON. */
-  input: string
-  output: string | null
-  error: string | null
-}
-
-export interface EyeRun {
-  /** The run's id, unique within its session. */
-  id: string
-  /** Whose request: the user's, or a scheduled task's. */
-  origin: string
-  /** When it started, ms since the epoch. */
-  at: number
-  ms: number
-  outcome: EyeOutcome
-  request: string
-  reply: string | null
-  error: string | null
-  tools: EyeToolCall[]
-}
-
-/** How much of a text a run keeps. A request or a reply is a page or two; a tool's arguments or result less. */
-export const RUN_TEXT_MAX = 8000
-export const TOOL_TEXT_MAX = 4000
-
-const OUTCOMES: readonly string[] = ['answered', 'failed', 'stopped']
-
-/** The record as it is written: every secret masked, every text capped, the run given left as it was. */
-export function runRecord(run: EyeRun, secrets: string[]): EyeRun {
-  const text = (value: string | null, max: number): string | null =>
-    value === null ? null : cut(mask(value, secrets), max)
+  let size = 0
+  let count = 0
+  for (const line of next) {
+    if (count > 0 && size + line.length + 1 > max) break
+    size += line.length + 1
+    count++
+  }
   return {
-    id: run.id,
-    origin: run.origin,
-    at: run.at,
-    ms: run.ms,
-    outcome: run.outcome,
-    request: text(run.request, RUN_TEXT_MAX) ?? '',
-    reply: text(run.reply, RUN_TEXT_MAX),
-    error: text(run.error, TOOL_TEXT_MAX),
-    tools: run.tools.map((tool) => ({
-      name: tool.name,
-      at: tool.at,
-      ms: tool.ms,
-      ok: tool.ok,
-      input: text(tool.input, TOOL_TEXT_MAX) ?? '',
-      output: text(tool.output, TOOL_TEXT_MAX),
-      error: text(tool.error, TOOL_TEXT_MAX),
-    })),
+    body: next
+      .slice(0, count)
+      .map((line) => `${line}\n`)
+      .join(''),
+    count,
+    rest: next.length - count,
   }
 }
 
 function cut(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`
-}
-
-/** The file a run is written to: when it started, then its id, so a folder lists runs in order. */
-export function runFileName(run: EyeRun): string {
-  return `${stamp(run.at)}-${run.id}.run.json`
 }
 
 // Feedback: a note the user typed into the eye's popover and sent, with a picture of every open
@@ -370,34 +300,6 @@ export function readFeedback(raw: unknown): EyeFeedback | null {
 /** A folder or file name from a moment: the ISO time with the characters a file name cannot hold replaced. */
 export function stamp(ms: number): string {
   return new Date(ms).toISOString().replace(/[:.]/g, '-')
-}
-
-/** A run read back from its file: whole, with every field of the right kind, or null. */
-export function readRun(raw: unknown): EyeRun | null {
-  if (!isRecord(raw)) return null
-  const { id, origin, at, ms, outcome, request, reply, error, tools } = raw
-  if (typeof id !== 'string' || !id || typeof origin !== 'string' || !origin) return null
-  if (!isCount(at) || !isCount(ms)) return null
-  if (typeof outcome !== 'string' || !OUTCOMES.includes(outcome)) return null
-  if (typeof request !== 'string') return null
-  if (!isTextOrNull(reply) || !isTextOrNull(error) || !Array.isArray(tools)) return null
-  const calls: EyeToolCall[] = []
-  for (const tool of tools) {
-    if (!isRecord(tool)) return null
-    if (typeof tool['name'] !== 'string' || !tool['name'] || !isCount(tool['at']) || !isCount(tool['ms'])) return null
-    if (typeof tool['ok'] !== 'boolean' || typeof tool['input'] !== 'string') return null
-    if (!isTextOrNull(tool['output']) || !isTextOrNull(tool['error'])) return null
-    calls.push({
-      name: tool['name'],
-      at: tool['at'],
-      ms: tool['ms'],
-      ok: tool['ok'],
-      input: tool['input'],
-      output: tool['output'],
-      error: tool['error'],
-    })
-  }
-  return { id, origin, at, ms, outcome: outcome as EyeOutcome, request, reply, error, tools: calls }
 }
 
 function isCount(value: unknown): value is number {

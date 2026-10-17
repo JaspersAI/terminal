@@ -4,6 +4,7 @@ import {
   describeInstalledFor,
   describeInstalledToRoute,
   describeRound,
+  describeOtherWork,
   describeTiles,
   describeWork,
   loopRules,
@@ -69,7 +70,7 @@ export function stateNow(workspaceId: string): string {
 }
 
 const LOOP_STATE =
-  "Each request, and each round of tool results, comes with the state as it was at that moment, under workspace_state: your tile, how the views inside it are laid out, what each is showing, what is running, the time, this workspace's tasks, and the sources filed in the store so far. The newest one is what is true now; an older one is what was true then."
+  "Each request, and each round of tool results, comes with the state as it was at that moment, under workspace_state: your tile, how the views inside it are laid out, what each is showing, the other work on the workspace by name with its views' ids, what is running, the time, this workspace's tasks, and the sources filed in the store so far. The newest one is what is true now; an older one is what was true then."
 const LOOP_PLACEMENT =
   'Installed views are listed below with their state shape. Put a view in your tile with place_view { view, state }: size defaults to quarter and anchor to auto, and anchor {"beside": <a view of yours>} puts it next to that one. Change what a view shows with set, and lay your views out with move_element and resize_element. Nothing is moved to make room: when the cells run out, shrink or move your own views, or remove one the work no longer needs. The tile itself, whose id the state gives, is where the user put it: move it, size it, or change its mode only when they ask. Other work has a tile of its own: read what it shows with get when that helps, and leave it as it is. When the user says "this" or "it" of a view they mean the focused one, which the state marks.'
 
@@ -113,6 +114,7 @@ export function loopStateNow(workspaceId: string, loopId: string): string {
   const loop = loopsOf(workspaceId).list.find((one) => one.id === loopId)
   return [
     ...(loop ? [describeTiles(state, workspaceId, loop, (id) => getView(id)?.instructions)] : []),
+    ...describeOtherWork(state, workspaceId, loopId),
     describeWork(state, workspaceId),
     describeFiled(sourcesSeen(), state.sources),
   ].join('\n')

@@ -86,8 +86,7 @@ export function begin(
   }
   live.set(runId, entry)
   requests.set(runId, request)
-  // Before the start event, which is what tells Eye a run began.
-  noteRequest(runId, origin, request)
+  noteRequest(runId, origin, request, { workspaceId, label, ...(tile ? { tile } : {}) })
   emit({
     kind: 'start',
     runId,

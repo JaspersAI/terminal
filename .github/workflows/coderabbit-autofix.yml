@@ -1,0 +1,36 @@
+# Turns on CodeRabbit Autofix for every new PR by posting `@coderabbitai autopilot`.
+# Autofix then publishes fixes and keeps repairing unresolved CodeRabbit findings,
+# failing required CI checks, and merge conflicts.
+#
+# The command must come from an account with write access to the repo, so this
+# uses a personal access token (CODERABBIT_TRIGGER_TOKEN) instead of GITHUB_TOKEN.
+# Add the label `skip-autofix` to a PR to opt it out.
+
+name: CodeRabbit Autofix
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coderabbit-autofix-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  enable-autofix:
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-autofix') &&
+      !endsWith(github.event.pull_request.user.login, '[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask CodeRabbit to take the PR to completion
+        env:
+          GH_TOKEN: ${{ secrets.CODERABBIT_TRIGGER_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: gh pr comment "$PR" --repo "$REPO" --body "@coderabbitai autopilot"

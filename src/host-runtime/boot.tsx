@@ -13,6 +13,9 @@ interface PluginModule {
 }
 
 export async function boot(): Promise<void> {
+  // What goes wrong in the view is told to the page around it, which tells Eye while it records.
+  window.addEventListener('error', (event) => tell(event.error ?? event.message))
+  window.addEventListener('unhandledrejection', (event) => tell(event.reason))
   const query = new URLSearchParams(location.search)
   const view = query.get('view') ?? ''
   const panel: PanelRef = { id: query.get('panel') ?? '', workspaceId: query.get('workspace') ?? '' }
@@ -33,5 +36,12 @@ export async function boot(): Promise<void> {
     )
   } catch (err) {
     root.textContent = err instanceof Error ? err.message : String(err)
+    tell(err)
   }
+}
+
+function tell(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error)
+  const stack = error instanceof Error ? (error.stack ?? null) : null
+  window.parent.postMessage({ method: 'view.error', params: { message, stack } }, '*')
 }

@@ -27,7 +27,9 @@ import { startThreads } from './agent/thread-file'
 import { startInbox } from './app/notices'
 import { compact, notifications, query, startStore, stats, stopOnQuit, usageToday } from './data/store'
 import { startBackground, startsHidden } from './app/background'
-import { deleteRecordings, endSession, eyeFolder, startEye, startTelemetry } from './eye/eye'
+import { deleteRecordings, endSession, eyeFolder, startEye } from './eye/eye'
+import { recordAction, recordNote, startTelemetry } from './eye/taps'
+import { knownSecrets } from './agent/utils/settings'
 import { startUploads, stopUploads } from './eye/upload'
 import { startTheme } from './app/theme'
 import { installUpdate, startUpdates } from './app/updates'
@@ -107,7 +109,11 @@ app.whenReady().then(() => {
   // The renderer reads the tree once on load and hears every change after that over
   // state:changed. It changes nothing itself: it dispatches, and the result comes back by push.
   ipcMain.handle('state:get', () => toPublic(getState()))
-  ipcMain.handle('state:dispatch', (_event, action: unknown) => dispatch(action))
+  ipcMain.handle('state:dispatch', (event, action: unknown) =>
+    recordAction(event.sender, action, () => dispatch(action)),
+  )
+  // What a window tells Eye: a click, how much was typed into a field, an error. Nothing comes back.
+  ipcMain.on('eye:note', (event, note: unknown) => recordNote(event.sender, note))
 
   // A view runs a source and then reads its rows; the orchestrator reaches the same two functions
   // through its tools. Datasets stay in main: only the rows a view asked for cross.
@@ -194,7 +200,7 @@ app.whenReady().then(() => {
   // telemetry for what the app did. It records into a folder on this machine, and the uploader
   // sends each piece to Jaspers as soon as it is whole. Started here rather than with a window, so
   // recording carries on with the windows closed to the menu bar, as the tasks do.
-  startEye()
+  startEye({ secrets: knownSecrets })
   startTelemetry()
   startUploads()
   // A launch at login starts hidden: the windows load, so the views on screen keep working, and

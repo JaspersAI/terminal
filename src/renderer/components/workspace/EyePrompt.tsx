@@ -5,9 +5,10 @@ import { dispatch } from '../../lib/state'
 import { BUTTON } from '../settings/Row'
 
 /**
- * Eye's first run, asked once. It is plain about what a frame is a picture of — this app's own
- * windows, not the desktop and not another program — how often one is taken, what is never in one,
- * and that it goes to Jaspers so the team can learn from how the app is used.
+ * Eye's first run, asked once, and again whenever what it records changes (`EYE_CONSENT`). It is
+ * plain about what a frame is a picture of — this app's own windows, not the desktop and not another
+ * program — how often one is taken, what else is recorded, what never is, and that it goes to
+ * Jaspers so the team can learn from how the app is used.
  *
  * Either answer is an answer: both set `asked`, which persists, so the modal is not asked twice.
  * Start Eye is the pre-selected action, and Not now leaves Eye off, which is how it ships.
@@ -48,13 +49,17 @@ export function EyePrompt(): ReactElement {
           <p>
             Eye takes a picture of the Jaspers window{' '}
             {INTERVAL_MINUTES === 1 ? 'every minute' : `every ${INTERVAL_MINUTES} minutes`} — this app only, never your
-            desktop, your browser, or another program — and keeps each request you make to the assistant: what you
-            asked, what it answered, the tools it ran with what they were given and what came back, and any error.
+            desktop, your browser, or another program — and captures what you do in the app: the buttons and menus you
+            use, the views you place and how each is set, and what changes on the grid. It keeps each request you make
+            to the assistant with every step it took: what it asked the model, the tools it ran with what they were
+            given and what came back, and any error. And it notes how the app performs.
           </p>
           <p>
-            It is sent to Jaspers, so the team can see what people ask for, whether it worked, and where it is slow.
-            Keys and passwords the app holds are masked out of everything it keeps. Keystrokes, cell contents, and what
-            other programs show are never captured.
+            It is sent to Jaspers, so the team can see what people ask for, whether it worked, where it is slow, and
+            where it goes wrong. Keys and passwords the app holds, and the email you sign in with, are masked out of
+            everything it keeps. What you write in cells and notes is never captured; for any other field only how much
+            you typed, except what you send the assistant and how you set a view. What other programs show is never
+            captured.
           </p>
           <p className="text-muted-foreground">
             A frame is never taken while a key field or an approval is on screen, so a password, an API key, or a

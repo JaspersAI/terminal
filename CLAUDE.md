@@ -1,6 +1,6 @@
 # Contributor guidance
 
-Jaspers Terminal is an open source Electron desktop terminal for financial research. The app owns the workspace and orchestrator; plugins supply views and data sources. Start with [README.md](README.md), [How it works](docs/architecture.md), and [Development](docs/development.md).
+Jaspers Terminal is an open source Electron desktop terminal for financial research, under the Business Source License 1.1; the SDK in `packages/sdk/` is MIT. The app owns the workspace and orchestrator; plugins supply views and data sources. Start with [README.md](README.md), [How it works](docs/architecture.md), and [Development](docs/development.md).
 
 ## Commands
 
@@ -59,7 +59,7 @@ A pushed tag `v<version>` is a release: `release.yml` builds, signs, and uploads
 | Skills | `src/main/skills/`: `skills.ts` over `skill-registry.ts`, `skill-files.ts`, `skill-install.ts`; `skill-write.ts`, a skill the assistant writes, asked of the user first |
 | App shell | `src/main/app/`: `background.ts`, `tray-icon.ts`, `shell-path.ts`, `notices.ts`, `theme.ts`, `loopback.ts`, the port a browser flow comes back to |
 | Jaspers sign-in | `src/main/jaspers/`: `jaspers.ts` over `session.ts`, the flow with Account and the tokens, and the fetch that sends as the account; the rules in `src/shared/app/jaspers.ts`; `secrets.ts` gives the Jaspers provider that fetch, `plugins/mcp.ts` a server that signs in through Account, and `hub/hub-ipc.ts` Hub |
-| Eye | `src/main/eye/eye.ts` records, `upload.ts` sends; the rules and the fixed endpoint in `src/shared/app/eye.ts` |
+| Eye | `src/main/eye/eye.ts` records, over `taps.ts` (actions, a window's notes, windows, notices), `cause.ts`, and `metrics.ts`; `upload.ts` sends; the rules and the fixed endpoint in `src/shared/app/eye.ts`, what a line may hold in `eye-events.ts` |
 | Sources and store | `src/main/data/sources.ts`, `store.ts`, `src/store/` |
 | Renderer bridge and state mirror | `src/preload/index.ts`, `src/renderer/lib/` |
 | Composer | `Composer.tsx` composes `request.ts`, `conversation.ts`, `reveal.ts` in `src/renderer/components/composer/`; `Transcript.tsx` is the conversation itself and `dock.ts` the swap with the `core/chat` element (`views/Chat.tsx`) |

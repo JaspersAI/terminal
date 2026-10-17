@@ -45,5 +45,14 @@
   "peerDependencies": {
     "react": "^19.0.0",
     "zod": "^4.0.0"
+  },
+  "homepage": "https://jsprai.com/terminal/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JaspersAI/terminal.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/JaspersAI/terminal/issues"
   }
 }

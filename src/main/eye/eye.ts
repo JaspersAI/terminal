@@ -1,37 +1,41 @@
-import type { WebContents } from 'electron'
+import { app, screen, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import fsp from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import {
   batchesToDrop,
   captureBlocked,
-  eyeLine,
   feedbackFileName,
   feedbackRecord,
   frameChanged,
   FRAME_QUALITY,
   FRAME_WIDTH,
   INTERVAL_MINUTES,
-  runFileName,
-  runRecord,
   stamp,
-  type EyeEvent,
   type EyeFeedback,
-  type EyeRun,
   type QueuedBatch,
 } from '../../shared/app/eye'
-import { onNotice } from '../app/notices'
+import { eyeLine, eyeTree, homeForms, writtenTexts, type EyeEvent, type Masking } from '../../shared/app/eye-events'
+import { diff } from '../../shared/app/patch'
 import { openWindows } from '../grid/windows'
 import { eyeRoot } from '../home'
-import { getState, subscribe, update } from '../state'
+import { getState, subscribe, toPublic, update, type MainState, type StoredProvider } from '../state'
+import { currentCause } from './cause'
 import { appendEventLine } from './events'
+import { metricsData, startMetrics, stopMetrics } from './metrics'
 
 // Eye, recording. One folder per app run under `eyeRoot()`, holding that run's frames and its
 // telemetry; a timer takes a frame of every open window each minute while recording is on, and
 // nothing exists at all while it is off. A window that has not changed since the last tick gives the
 // same bytes, and that frame is not written: a copy a minute of the same screen says nothing new. The
 // rules it follows — how often, how wide, what blocks a frame, what the queue may hold — are in
-// `src/shared/app/eye.ts`, tested there; this file is the disk and the clock.
+// `src/shared/app/eye.ts`, and what a line may hold in `eye-events.ts`, tested there; this file is
+// the disk and the clock.
+//
+// The telemetry is enough to read a session back: when recording starts, the session's details and a
+// snapshot of the tree as Eye keeps it (`eyeTree`); then every change of that tree as JSON Patch, with
+// the action or the run it came from (`cause.ts`); and whatever else the app tells `record`.
 //
 // It runs in main and not in a window, the way the tray and the scheduler do: the windows can be
 // closed to the menu bar and the app is still running, so recording carries on. A hidden window's
@@ -41,84 +45,154 @@ import { appendEventLine } from './events'
 // or send feedback: the only ways in are the eye in the workspace bar and the Eye pane, which
 // dispatch the validated `eye.set` and `eye.feedback` actions.
 
-/** This run's session folder name, which is when the app started. */
+/** This run's session folder name, which is when the app started, or when everything was deleted. */
 let session: string | null = null
 /** Null once the session is closed, which is the app on its way out: the uploader may then send its telemetry. */
 let live: string | null = null
 let timer: NodeJS.Timeout | null = null
 /** True while a tick is in flight: a capture that takes longer than the interval must not pile up. */
 let capturing = false
-/** Writes runs one after another, so two of them never race the session's folder into place. */
-let appends: Promise<void> = Promise.resolve()
 /** The last frame written of each window, by window number, so an unchanged window is not written again. */
 const lastFrames = new Map<number, Buffer>()
 /** Who wants to know when a line has reached the disk: the uploader, which sends the file in parts. */
 const recorded = new Set<() => void>()
+/** The keys the app holds, as main knows them: handed in, so Eye depends on nothing of the agent's. */
+let secretsOf: () => string[] = () => []
+/** The tree as the last line had it, while recording: what the next change is told from. */
+let tree: Record<string, unknown> | null = null
+/** A change too big to be a line was left out since the last tick: the next tick writes the tree whole. */
+let snapshotDue = false
+/** Runs begun and not yet ended, as the lines say. */
+let inFlight = 0
 
 /**
- * Starts Eye: arms the timer if recording was on when the app last quit, and follows the setting
- * from there. Called once, after the app is ready.
+ * Starts Eye: begins recording if it was on when the app last quit, and follows the setting from
+ * there. `secrets` answers the keys the app holds, which every line is masked against. Called once,
+ * after the app is ready.
  */
-export function startEye(): void {
+export function startEye(options: { secrets: () => string[] }): void {
+  secretsOf = options.secrets
   session = stamp(Date.now())
   live = session
-  arm()
   subscribe((next, prev) => {
-    if (next.eye.recording !== prev.eye.recording) arm()
+    if (next.eye.recording !== prev.eye.recording) switched(next.eye.recording)
+    else if (next.eye.recording) changed(next)
   })
-  record({ kind: 'session', name: process.platform })
+  if (getState().eye.recording) begin()
   void applyRetention()
 }
 
-/** The timer, which exists only while recording is on. Turning Eye off clears it; nothing ticks after that. */
-function arm(): void {
-  if (!getState().eye.recording) {
-    if (timer) clearInterval(timer)
-    timer = null
+/** Recording turned on or off. Off, the last line says so, and nothing is written after it. */
+function switched(on: boolean): void {
+  write({ kind: 'setting', name: 'recording', ok: on })
+  if (on) {
+    begin()
     return
   }
-  if (timer) return
-  timer = setInterval(() => void tick(), INTERVAL_MINUTES * 60_000)
+  if (timer) clearInterval(timer)
+  timer = null
+  stopMetrics()
+  tree = null
+}
+
+/** Recording begins: the timer, the session's details, and the tree whole, which every change after is told from. */
+function begin(): void {
+  if (!timer) timer = setInterval(() => void tick(), INTERVAL_MINUTES * 60_000)
   console.log(`[eye] recording: a frame every ${INTERVAL_MINUTES} minutes`)
+  startMetrics()
+  record({ kind: 'session', data: sessionData() })
+  snapshot()
+}
+
+function snapshot(): void {
+  tree = eyeTree(toPublic(getState()))
+  snapshotDue = false
+  record({ kind: 'snapshot', data: { tree } })
+}
+
+/** The tree changed while recording: what changed, as JSON Patch, said with what it came from. */
+function changed(next: MainState): void {
+  if (tree === null) return
+  const now = eyeTree(toPublic(next))
+  const ops = diff(tree, now)
+  tree = now
+  if (ops.length === 0) return
+  const { cause, run } = currentCause()
+  const dropped = write({
+    kind: 'change',
+    ...(run === undefined ? {} : { run }),
+    ...(cause === undefined ? {} : { cause }),
+    data: { ops },
+  })
+  if (dropped) snapshotDue = true
+}
+
+/** What the session is running on, said when recording starts: the build, the machine, and what is installed. */
+function sessionData(): Record<string, unknown> {
+  const state = getState()
+  const provider = (stored: StoredProvider | null): { providerId: string; model: string } | null =>
+    stored ? { providerId: stored.providerId, model: stored.model } : null
+  return {
+    app: app.getVersion(),
+    electron: process.versions.electron,
+    platform: process.platform,
+    arch: process.arch,
+    locale: app.getLocale(),
+    tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    screens: screen
+      .getAllDisplays()
+      .map((display) => ({ width: display.size.width, height: display.size.height, scale: display.scaleFactor })),
+    plugins: Object.values(state.plugins).map((plugin) => ({ id: plugin.id, version: plugin.version })),
+    views: Object.keys(state.views),
+    providers: { llm: provider(state.llm), voice: provider(state.voice), search: provider(state.search) },
+    proMode: state.proMode.enabled,
+    workspaces: state.workspaces.length,
+  }
 }
 
 /**
- * One tick: a frame of every open window, or none at all. A key field or a question on screen skips
- * the whole tick — the user is typing a credential or reading the exact command a Pro mode approval
- * shows, and a frame of any window while one is up is a frame of that. The next tick comes at the
- * next interval; nothing of that screen is kept, and the tick is not made up later.
+ * One tick: a frame of every open window, or none at all; the tree whole if a change was left out;
+ * and how the app performs. A key field or a question on screen skips the frames — the user is
+ * typing a credential or reading the exact command a Pro mode approval shows, and a frame of any
+ * window while one is up is a frame of that. Nothing of that screen is kept, and the tick is not made
+ * up later.
  */
 async function tick(): Promise<void> {
   if (capturing || !getState().eye.recording) return
-  const blocked = captureBlocked(getState())
-  if (blocked) {
-    console.log(`[eye] frame skipped: ${blocked}`)
-    return
-  }
   capturing = true
   try {
-    const at = Date.now()
-    let frames = 0
-    let bytes = 0
-    for (const { number, win } of openWindows()) {
-      const written = await captureWindow(number, win.webContents, at)
-      if (written === null) continue
-      frames++
-      bytes += written.bytes
-    }
-    if (frames === 0) return
-    update((state) => ({
-      ...state,
-      eye: { ...state.eye, frames: state.eye.frames + frames, lastCaptureAt: at },
-    }))
-    record({ kind: 'frame', at, count: frames })
-    await applyRetention()
+    await frames(Date.now())
   } catch (err) {
     // A disk that will not take a frame is not a reason to stop recording: the next tick tries again.
     console.warn('[eye] frame failed:', err)
   } finally {
     capturing = false
   }
+  if (!getState().eye.recording) return
+  if (snapshotDue) snapshot()
+  record({ kind: 'metrics', data: metricsData(openWindows().length, inFlight) })
+  await applyRetention()
+}
+
+async function frames(at: number): Promise<void> {
+  const blocked = captureBlocked(getState())
+  if (blocked) {
+    console.log(`[eye] frame skipped: ${blocked}`)
+    record({ kind: 'frame', at, ok: false, data: { why: blocked } })
+    return
+  }
+  let taken = 0
+  for (const { number, win } of openWindows()) {
+    const written = await captureWindow(number, win.webContents, at)
+    if (written === null) continue
+    taken++
+    record({ kind: 'frame', at, window: number, name: written.name, count: written.bytes })
+  }
+  if (taken === 0) return
+  update((state) => ({
+    ...state,
+    eye: { ...state.eye, frames: state.eye.frames + taken, lastCaptureAt: at },
+  }))
 }
 
 /**
@@ -163,7 +237,9 @@ export async function sendFeedback(text: string, secrets: string[]): Promise<{ f
     for (const { number, win } of openWindows()) {
       try {
         const written = await captureWindow(number, win.webContents, at, true)
-        if (written) frames.push(written.name)
+        if (!written) continue
+        frames.push(written.name)
+        record({ kind: 'frame', at, window: number, name: written.name, count: written.bytes })
       } catch (err) {
         // A window that will not be pictured does not keep the note from going.
         console.warn(`[eye] feedback frame of window ${number} failed:`, err)
@@ -176,83 +252,74 @@ export async function sendFeedback(text: string, secrets: string[]): Promise<{ f
   if (frames.length > 0) {
     update((state) => ({ ...state, eye: { ...state.eye, frames: state.eye.frames + frames.length } }))
   }
-  record({ kind: 'feedback', at, count: frames.length })
+  record({
+    kind: 'feedback',
+    at,
+    name: feedback.id,
+    count: frames.length,
+    data: { text: feedback.text, skipped: feedback.skipped },
+  })
   for (const listener of recorded) listener()
   console.log(`[eye] feedback written with ${frames.length} frames${skipped ? ` (no frames: ${skipped})` : ''}`)
   return { frames: frames.length }
 }
 
-// Telemetry. One line of JSON per thing the app did, in the session's `events.jsonl` beside its
-// frames. `eyeLine` decides what a line may hold, and it holds no words of the user's: never a
-// prompt, a reply, a keystroke, a cell, or a path from their disk. The file only ever grows: the
-// uploader sends it in parts as it is written, by line number, and never rewrites it.
-
 /**
- * Appends one event, while recording. Off, it does nothing: Eye off means nothing is written.
+ * Appends one line, while recording. Off, it does nothing: Eye off means nothing is written.
  *
  * The line is on the disk before this returns, by `appendEventLine`. `endSession` records from
  * `before-quit`, and the app goes on that same turn: a line handed to a promise there would never be
  * written, and a session whose closing line is missing reads as one that crashed.
  */
-export function record(event: EyeEvent | (Omit<EyeEvent, 'at'> & { at?: number })): void {
+export function record(event: EyeEvent): void {
   if (!getState().eye.recording) return
-  const line = eyeLine({ ...event, at: event.at ?? Date.now() })
+  write(event)
+}
+
+/** Writes a line whatever the setting, masked and capped. Answers whether its data was too big to keep. */
+function write(event: EyeEvent): boolean {
+  const { text, dropped } = eyeLine({ ...event, at: event.at ?? Date.now() }, masking())
   try {
-    appendEventLine(sessionPath(), line)
+    appendEventLine(sessionPath(), text)
   } catch (err) {
     // Telemetry is a record, not a gate: a line that cannot be written is dropped and the app carries on.
     console.warn('[eye] could not write a telemetry line:', err)
-    return
+    return false
+  }
+  if (event.kind === 'run') inFlight++
+  if (event.kind === 'run-end') {
+    inFlight = Math.max(0, inFlight - 1)
+    update((state) => ({ ...state, eye: { ...state.eye, runs: state.eye.runs + 1 } }))
   }
   for (const listener of recorded) listener()
+  return dropped
+}
+
+let maskedFor: readonly unknown[] = []
+let masks: Masking = { secrets: [], homes: homeForms(os.homedir()) }
+
+/**
+ * What every line is masked against: the keys the app holds, the email it is signed in as, what is
+ * written in notes, and the home folder. Worked out again only when one of the parts of the tree they
+ * come from changed.
+ */
+function masking(): Masking {
+  const state = getState()
+  const parts = [state.secrets, state.llm, state.voice, state.jaspers, state.grids]
+  if (parts.some((part, i) => part !== maskedFor[i])) {
+    maskedFor = parts
+    const email = state.jaspers.email
+    masks = {
+      secrets: [...secretsOf(), ...(email ? [email] : []), ...writtenTexts(state.grids)],
+      homes: homeForms(os.homedir()),
+    }
+  }
+  return masks
 }
 
 /** Calls `listener` each time a telemetry line has reached the disk. */
 export function onRecorded(listener: () => void): void {
   recorded.add(listener)
-}
-
-/**
- * A run, once it has ended: the request, the reply or the error, and every tool call, in a file of
- * its own beside the frames, so it can go up the moment it is complete. Off, nothing is written. The
- * secrets the app holds are masked out first, and every text is capped, in `runRecord`.
- */
-export function recordRun(run: EyeRun, secrets: string[]): void {
-  if (!getState().eye.recording) return
-  const kept = runRecord(run, secrets)
-  appends = appends
-    .then(async () => {
-      const folder = await sessionFolder()
-      await fsp.writeFile(path.join(folder, runFileName(kept)), JSON.stringify(kept), 'utf8')
-      update((state) => ({ ...state, eye: { ...state.eye, runs: state.eye.runs + 1 } }))
-    })
-    .catch((err: unknown) => {
-      console.warn('[eye] could not write a run:', err)
-    })
-}
-
-/**
- * What the app shows of itself: an element placed, and a notice the user was told, which is how a
- * plugin or a task says something went wrong. The view's registry id and the plugin's id are names
- * the app chose; nothing of what either one says is recorded.
- */
-export function startTelemetry(): void {
-  onNotice((notice) => record({ kind: 'error', name: notice.plugin }))
-  subscribe((next, prev) => {
-    if (next.grids !== prev.grids) {
-      for (const [workspaceId, windows] of Object.entries(next.grids)) {
-        for (const [number, grid] of Object.entries(windows)) {
-          const before = prev.grids[workspaceId]?.[Number(number)]
-          if (!before || before.panels === grid.panels) continue
-          const had = new Set(before.panels.map((panel) => panel.id))
-          for (const panel of grid.panels) {
-            if (had.has(panel.id)) continue
-            record({ kind: 'element', name: panel.content.kind === 'view' ? panel.content.view : panel.content.kind })
-          }
-        }
-      }
-    }
-  })
 }
 
 /**
@@ -262,7 +329,7 @@ export function startTelemetry(): void {
  */
 export function endSession(): void {
   if (live === null) return
-  record({ kind: 'session', ok: true })
+  record({ kind: 'session-end', ok: true })
   live = null
   if (timer) clearInterval(timer)
   timer = null
@@ -356,10 +423,21 @@ async function applyRetention(): Promise<void> {
 /**
  * Deletes everything Eye has recorded, this session's folder included, and puts the counters back to
  * nothing. Recording is left as it was: a user who empties the folder while Eye is on keeps
- * recording, into a folder written again at the next frame.
+ * recording, into a new session's folder.
  */
 export async function deleteRecordings(): Promise<void> {
   await fsp.rm(eyeRoot(), { recursive: true, force: true })
   update((state) => ({ ...state, eye: { ...state.eye, frames: 0, runs: 0, bytes: 0, lastCaptureAt: null } }))
+  // The file this session was writing is gone, and its lines are numbered from its start: what is
+  // written from here is a session of its own, which begins the way every session does.
+  if (live !== null) {
+    session = stamp(Date.now())
+    live = session
+    lastFrames.clear()
+    if (getState().eye.recording) {
+      record({ kind: 'session', data: sessionData() })
+      snapshot()
+    }
+  }
   console.log('[eye] deleted everything recorded')
 }

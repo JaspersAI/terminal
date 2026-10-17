@@ -40,4 +40,4 @@ Plugins import the package root. `@jaspers-ai/sdk/define` (the definitions witho
 
 The official plugins are examples: `JaspersAI/plugin-screener-mcp`, `plugin-research`, `plugin-tradingview`, `plugin-fmp`, `plugin-earningscall`, `plugin-markdown`, `plugin-yfinance`.
 
-MIT licensed.
+MIT licensed. The Terminal itself is under the [Business Source License 1.1](https://github.com/JaspersAI/terminal/blob/main/LICENSE), which does not reach plugins built with the SDK.

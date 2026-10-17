@@ -8,6 +8,7 @@ import { subscribeLive } from '../../lib/live'
 import { useAppState } from '../../lib/state'
 import { BUILT_IN_VIEWS } from '../../views'
 import { send } from './send'
+import { noteError } from '../../lib/eye'
 
 interface Props {
   workspaceId: string
@@ -107,6 +108,12 @@ function PluginView({
       // Only this element's own frame. Its origin is opaque, or shared with every frame of its
       // plugin when the plugin frames a site, so the window is what identifies it.
       if (event.source !== iframe?.contentWindow) return
+      // An error in the view, told by the page the app put around it: for Eye, nothing to answer.
+      const told = event.data as { method?: unknown; params?: unknown } | null
+      if (told?.method === 'view.error') {
+        noteError('view', told.params, { view: `${plugin}/${name}`, plugin })
+        return
+      }
       const request = event.data as BridgeRequest
       if (typeof request?.id !== 'number' || typeof request.method !== 'string') return
       const params = (request.params ?? {}) as Record<string, unknown>

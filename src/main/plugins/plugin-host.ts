@@ -17,6 +17,7 @@ import { setPluginInfo } from './plugin-info'
 import { activateSkill, readSkillFile, skillCatalog } from '../skills/skills'
 import { getProviderConfig } from '../secrets'
 import { getState, toPublic } from '../state'
+import { record } from '../eye/eye'
 
 // Plugins' hosts, from main's side. A plugin with code of its own to run gets one utility process,
 // on its latest good build. A plugin that defines start gets it with each build, since start's work
@@ -261,6 +262,7 @@ async function stopHost(id: string, reason: string): Promise<void> {
 function exited(host: Host, code: number): void {
   if (host.stopping) return
   const message = `plugin host exited with code ${code}`
+  record({ kind: 'crash', name: 'plugin-host', data: { plugin: host.id, exitCode: code } })
   // A host that is no longer the plugin's leaves the one that is, and its live values, alone.
   if (hosts.get(host.id) !== host) {
     teardown(host, message, false)

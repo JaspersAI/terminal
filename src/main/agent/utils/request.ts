@@ -6,6 +6,7 @@ import { ProviderError } from '../../llm/http'
 import { complete } from '../../llm/llm'
 import type { ProviderConfig } from '../../secrets'
 import type { Tool } from '../tools/types'
+import { noteLlm } from './record'
 import { emit, type Live } from './runs'
 import { streamer, thinker, writer } from './stream'
 
@@ -19,6 +20,8 @@ export const EFFORT: Effort = 'high'
 /** What one round sends, and to whom the reply is shown. */
 export interface RoundRequest {
   round: number
+  /** The loop's label, for Eye: a task's, the welcome's, the builder's, or empty for the user's own. */
+  label: string
   config: ProviderConfig<'llm'>
   system: string[]
   history: Turn[]
@@ -41,6 +44,7 @@ export interface RoundRequest {
  */
 export async function request({
   round,
+  label,
   config,
   system,
   history,
@@ -57,8 +61,10 @@ export async function request({
     // Said only while the reply arrives: it ends the moment the reply is over, however that was, so
     // no call is still being written while a retry is waited for.
     const call = says.calls ? writer(entry.runId) : null
+    const began = Date.now()
+    const asked = { round, attempt, label, provider: config.provider.id, model: config.model }
     try {
-      return await complete(config, system, history, tools, {
+      const reply = await complete(config, system, history, tools, {
         signal,
         stream: true,
         loop: true,
@@ -68,9 +74,29 @@ export async function request({
         onThinking: says.thinking ? thinker(entry.runId) : undefined,
         onCall: call?.began,
       }).finally(() => call?.end())
+      const { input, output, cacheRead = 0, cacheWrite = 0 } = reply.usage
+      noteLlm(entry.runId, {
+        ...asked,
+        ms: Date.now() - began,
+        ok: true,
+        stop: reply.stopReason || '',
+        input,
+        output,
+        cacheRead,
+        cacheWrite,
+      })
+      return reply
     } catch (err) {
-      if (signal.aborted) throw err
       const message = err instanceof Error ? err.message : String(err)
+      noteLlm(entry.runId, {
+        ...asked,
+        ms: Date.now() - began,
+        ok: false,
+        status: err instanceof ProviderError ? err.status : null,
+        message,
+        retryAfterMs: err instanceof ProviderError ? err.retryAfterMs : null,
+      })
+      if (signal.aborted) throw err
       const wait = isRetryable(message)
         ? retryWait(attempt, err instanceof ProviderError ? err.retryAfterMs : null)
         : null

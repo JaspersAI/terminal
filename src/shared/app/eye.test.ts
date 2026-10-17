@@ -10,28 +10,22 @@ import {
   EYE_OFF,
   EYE_TOKEN,
   eventsPart,
+  PART_MAX_CHARS,
   FEEDBACK_TEXT_MAX,
   feedbackFileName,
   feedbackRecord,
   readFeedback,
   readFeedbackText,
-  eyeLine,
   frameChanged,
   INTERVAL_MINUTES,
   KEEP_DAYS,
   readEye,
   readInstall,
-  readRun,
   retryDelay,
   RETRY_BASE_MS,
   RETRY_MAX_MS,
-  RUN_TEXT_MAX,
-  runFileName,
-  runRecord,
   stamp,
-  TOOL_TEXT_MAX,
   type EyeFeedback,
-  type EyeRun,
   type QueuedBatch,
 } from './eye.ts'
 
@@ -53,78 +47,15 @@ test('consent is to a wording: a yes to an older one is asked again, and recordi
   assert.deepEqual(readEye({ recording: true, consent: 1 }), { recording: false, consent: 1, install: '' })
   // A yes to a frame every three minutes is not a yes to one every minute.
   assert.deepEqual(readEye({ recording: true, consent: 2 }), { recording: false, consent: 2, install: '' })
+  // Nor is a yes to frames and requests a yes to what the user does in the app and every step of a request.
+  assert.deepEqual(readEye({ recording: true, consent: 3 }), { recording: false, consent: 3, install: '' })
   assert.equal(readEye({ recording: true, consent: EYE_CONSENT }).recording, true)
   assert.equal(readEye({ recording: true, consent: EYE_CONSENT + 1 }).recording, false)
-  assert.equal(EYE_CONSENT, 3)
+  assert.equal(EYE_CONSENT, 4)
 })
 
-const run: EyeRun = {
-  id: 'run3',
-  origin: 'user',
-  at: Date.parse('2026-09-22T21:00:00.000Z'),
-  ms: 4200,
-  outcome: 'answered',
-  request: 'Chart AAPL, key sk-live-1234567890',
-  reply: 'Placed the chart. Your key sk-live-1234567890 is set.',
-  error: null,
-  tools: [
-    {
-      name: 'set_secret',
-      at: 1,
-      ms: 5,
-      ok: true,
-      input: '{"value":"sk-live-1234567890"}',
-      output: 'Saved.',
-      error: null,
-    },
-    { name: 'place_view', at: 2, ms: 30, ok: false, input: '{"view":"core/chart"}', output: null, error: 'No room.' },
-  ],
-}
-
-test('a run record has every secret masked and every text capped', () => {
-  const kept = runRecord(run, ['sk-live-1234567890'])
-  assert.equal(kept.request, 'Chart AAPL, key ***')
-  assert.equal(kept.reply, 'Placed the chart. Your key *** is set.')
-  assert.equal(kept.tools[0]?.input, '{"value":"***"}')
-  assert.deepEqual(
-    [kept.id, kept.origin, kept.at, kept.ms, kept.outcome, kept.error],
-    ['run3', 'user', run.at, 4200, 'answered', null],
-  )
-  assert.equal(kept.tools[1]?.error, 'No room.')
-  const long = runRecord(
-    {
-      ...run,
-      request: 'x'.repeat(RUN_TEXT_MAX + 100),
-      tools: [{ ...run.tools[0]!, output: 'y'.repeat(TOOL_TEXT_MAX + 1) }],
-    },
-    [],
-  )
-  assert.equal(long.request.length, RUN_TEXT_MAX)
-  assert.ok(long.request.endsWith('…'))
-  assert.equal(long.tools[0]?.output?.length, TOOL_TEXT_MAX)
-  // The record given is left as it was.
-  assert.equal(run.request, 'Chart AAPL, key sk-live-1234567890')
-})
-
-test('a run file is named by when it started and its id, so a folder lists them in order', () => {
-  assert.equal(runFileName(run), '2026-09-22T21-00-00-000Z-run3.run.json')
-  assert.equal(stamp(run.at), '2026-09-22T21-00-00-000Z')
-})
-
-test('a run read back is whole, or nothing', () => {
-  assert.deepEqual(readRun(JSON.parse(JSON.stringify(run))), run)
-  assert.deepEqual(readRun({ ...run, tools: [] }), { ...run, tools: [] })
-  for (const bad of [
-    undefined,
-    'text',
-    { ...run, request: 7 },
-    { ...run, outcome: 'maybe' },
-    { ...run, id: '' },
-    { ...run, tools: [{ name: 'x' }] },
-    { ...run, tools: 'none' },
-    { ...run, at: 'now' },
-  ])
-    assert.equal(readRun(bad), null, JSON.stringify(bad)?.slice(0, 40))
+test('a session or a file is named by the moment, the way a folder lists them in order', () => {
+  assert.equal(stamp(Date.parse('2026-09-22T21:00:00.000Z')), '2026-09-22T21-00-00-000Z')
 })
 
 test('an install is told apart by a UUID, and anything else is no id, so a fresh one is made', () => {
@@ -234,28 +165,23 @@ test('a batch is done with when it was accepted or refused on its own terms, and
   assert.equal(batchAccepted(0), false)
 })
 
-test('a telemetry line holds only the fields Eye set, and nothing the user typed', () => {
-  assert.equal(eyeLine({ kind: 'request', at: 5 }), '{"at":5,"kind":"request"}\n')
-  assert.equal(
-    eyeLine({ kind: 'tool', at: 7, name: 'place_view', ms: 12.6, ok: true }),
-    '{"at":7,"kind":"tool","name":"place_view","ms":13,"ok":true}\n',
-  )
-  assert.equal(eyeLine({ kind: 'views', at: 1, count: 9 }), '{"at":1,"kind":"views","count":9}\n')
-  // One line each, the newline last and nowhere else, so a reader that reads by line reads whole events.
-  const line = eyeLine({ kind: 'frame', at: 1, count: 2 })
-  assert.equal(line.endsWith('\n'), true)
-  assert.equal(line.indexOf('\n'), line.length - 1)
+test('the next part of the telemetry file is its whole lines after the ones already sent', () => {
+  assert.deepEqual(eventsPart('a\nb\nc\n', 0), { body: 'a\nb\nc\n', count: 3, rest: 0 })
+  assert.deepEqual(eventsPart('a\nb\nc\n', 2), { body: 'c\n', count: 1, rest: 0 })
+  // A line still being written has no newline yet, and waits for the next part.
+  assert.deepEqual(eventsPart('a\nb\nc', 1), { body: 'b\n', count: 1, rest: 0 })
+  assert.deepEqual(eventsPart('a\n', 1), { body: '', count: 0, rest: 0 })
+  assert.deepEqual(eventsPart('', 0), { body: '', count: 0, rest: 0 })
+  // Fewer lines than were sent, as after the file was deleted and written again: nothing to send.
+  assert.deepEqual(eventsPart('a\n', 5), { body: '', count: 0, rest: 0 })
 })
 
-test('the next part of the telemetry file is its whole lines after the ones already sent', () => {
-  assert.deepEqual(eventsPart('a\nb\nc\n', 0), { body: 'a\nb\nc\n', count: 3 })
-  assert.deepEqual(eventsPart('a\nb\nc\n', 2), { body: 'c\n', count: 1 })
-  // A line still being written has no newline yet, and waits for the next part.
-  assert.deepEqual(eventsPart('a\nb\nc', 1), { body: 'b\n', count: 1 })
-  assert.deepEqual(eventsPart('a\n', 1), { body: '', count: 0 })
-  assert.deepEqual(eventsPart('', 0), { body: '', count: 0 })
-  // Fewer lines than were sent, as after the file was deleted and written again: nothing to send.
-  assert.deepEqual(eventsPart('a\n', 5), { body: '', count: 0 })
+test('a part is as many whole lines as fit its size, at least one, and says how many are left', () => {
+  assert.deepEqual(eventsPart('aaa\nbbb\nccc\n', 0, 8), { body: 'aaa\nbbb\n', count: 2, rest: 1 })
+  assert.deepEqual(eventsPart('aaa\nbbb\nccc\n', 2, 8), { body: 'ccc\n', count: 1, rest: 0 })
+  // A line longer than a part goes alone, so nothing is ever stuck behind it.
+  assert.deepEqual(eventsPart('aaaaaaaaaaaa\nb\n', 0, 4), { body: 'aaaaaaaaaaaa\n', count: 1, rest: 1 })
+  assert.ok(PART_MAX_CHARS >= 1024 * 1024 && PART_MAX_CHARS * 3 < 64 * 1024 * 1024)
 })
 
 const note: EyeFeedback = {

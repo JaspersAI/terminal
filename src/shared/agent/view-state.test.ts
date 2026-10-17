@@ -105,6 +105,36 @@ test('what the schema does not describe passes through, and so does state for an
   assert.equal(coerceViewState(CHART, 42), 42)
 })
 
+// What Eye recorded: install 43e43772 set the screener's page to "0" and was refused with "page:
+// Invalid input: expected number, received string", a refused call and a second try.
+
+test('a number or a boolean written as a string is the number or the boolean it spells', () => {
+  const PAGED = z.toJSONSchema(
+    z.object({
+      page: z.number().int().min(0).default(0),
+      min: z.number().nullable().default(null),
+      wrap: z.boolean().default(false),
+    }),
+  ) as Record<string, unknown>
+  assert.equal(coerceViewState(schemaAt(PAGED, ['page']), '0'), 0)
+  assert.deepEqual(coerceViewState(PAGED, { page: ' 2 ', min: '-1.5e3', wrap: 'true' }), {
+    page: 2,
+    min: -1500,
+    wrap: true,
+  })
+  assert.deepEqual(coerceViewState(SCREENER, { filters: { ranges: { min: '300000000' } }, limit: '10' }), {
+    filters: { ranges: { min: 300000000 } },
+    limit: 10,
+  })
+})
+
+test('a string that spells no number, or a fraction where an integer belongs, is left for the schema', () => {
+  assert.deepEqual(coerceViewState(SCREENER, { limit: '1.5' }), { limit: '1.5' })
+  assert.deepEqual(coerceViewState(SCREENER, { limit: 'ten' }), { limit: 'ten' })
+  assert.deepEqual(coerceViewState(SCREENER, { limit: '' }), { limit: '' })
+  assert.deepEqual(coerceViewState(CHART, { stack: 'yes', x: '2024' }), { stack: 'yes', x: '2024' })
+})
+
 test('a key path picks the schema under it, and an undescribed path coerces nothing', () => {
   assert.deepEqual(coerceViewState(schemaAt(SCREENER, ['qualitative']), '{"question":"why"}'), { question: 'why' })
   assert.deepEqual(coerceViewState(schemaAt(SCREENER, ['filters', 'ranges']), { min: 1 }), { min: 1 })

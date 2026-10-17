@@ -4,9 +4,8 @@ import { capOutput } from '../../../shared/agent/history'
 import { cap } from '../../../shared/agent/prompt'
 import { batches, callLine } from '../../../shared/agent/rounds'
 import type { ToolCall, ToolResult } from '../../llm/llm'
-import { record } from '../../eye/eye'
 import type { Tool, ToolContext } from '../tools/types'
-import { noteTool } from './record'
+import { noteToolEnd, noteToolStart } from './record'
 import { emit, type Live } from './runs'
 
 const STOPPED_CALL = 'Stopped by the user before this finished.'
@@ -49,21 +48,13 @@ async function execute(
   log(`tool ${call.name} ${JSON.stringify(shown)}`)
   emit({ kind: 'tool', runId: entry.runId, name: call.name, summary: callLine(call.name, shown) })
   const began = Date.now()
-  // How a call ends, either way: Eye keeps its name, how long it took, whether it failed, and, in the
-  // run's record, its arguments as the log shows them and what came back. The status line is not told:
-  // a call that failed is the model's to read and put right, and a run that cannot go on says so itself.
+  // Eye keeps the call as it starts, with its arguments as the log shows them, and as it ends, with
+  // what came back. The status line is not told of an end: a call that failed is the model's to read
+  // and put right, and a run that cannot go on says so itself.
+  const span = noteToolStart(entry.runId, { id: call.id, name: call.name, input: JSON.stringify(shown) })
   const finish = (ok: boolean, answer: string): ToolResult => {
     const ms = Date.now() - began
-    record({ kind: 'tool', name: call.name, ms, ok })
-    noteTool(entry.runId, {
-      name: call.name,
-      at: began,
-      ms,
-      ok,
-      input: JSON.stringify(shown),
-      output: ok ? answer : null,
-      error: ok ? null : answer,
-    })
+    noteToolEnd(entry.runId, span, call.name, ok ? { ms, ok, output: answer } : { ms, ok, error: answer })
     return { callId: call.id, output: answer, isError: !ok }
   }
   try {
@@ -81,7 +72,15 @@ async function execute(
     log(`tool ${call.name} result: ${shownOutput}`)
     return finish(true, output)
   } catch (err) {
-    if (signal.aborted) return stopped
+    if (signal.aborted) {
+      noteToolEnd(entry.runId, span, call.name, {
+        ms: Date.now() - began,
+        ok: false,
+        error: STOPPED_CALL,
+        stopped: true,
+      })
+      return stopped
+    }
     const message = err instanceof Error ? err.message : String(err)
     log(`tool ${call.name} failed: ${message}`)
     return finish(false, message)

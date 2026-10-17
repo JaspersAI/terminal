@@ -4,7 +4,7 @@ import path from 'node:path'
 import { batchAccepted, EYE_ENDPOINT, EYE_TOKEN, eventsPart, retryDelay } from '../../shared/app/eye'
 import { eyeRoot } from '../home'
 import { getState, subscribe } from '../state'
-import { liveSession, onRecorded, ownSession, queuedBatches } from './eye'
+import { liveSession, onRecorded, ownSession, queuedBatches, record } from './eye'
 import { EVENTS_FILE } from './events'
 
 // Where what Eye recorded goes: the Jaspers endpoint, fixed in the app. A batch is one session's
@@ -13,13 +13,18 @@ import { EVENTS_FILE } from './events'
 // as "later" (408, 429, 5xx) leaves it on disk and backs off through `retryDelay`, from 30 seconds
 // to an hour.
 //
-// Everything goes as it is written, since each piece is whole the moment it is: a frame, a run, and
-// a note sent from the eye are files of their own, and the recorder's counters on the tree wake the uploader for them; the
-// telemetry file goes in parts, each the whole lines written since the last, with the number of the
-// line it starts at, and a line reaching the disk wakes the uploader too. The endpoint files each
-// line under its number, so this run's file is never rewritten and never deleted while the app
-// runs: a folder left by an earlier run, whether it quit or crashed, is sent whole from line zero,
-// and the lines the endpoint already has are nothing to it.
+// Everything goes as it is written, since each piece is whole the moment it is: a frame and a note
+// sent from the eye are files of their own (and so is a run, from a build before the telemetry held
+// runs), and the recorder's counters on the tree wake the uploader for them; the telemetry file goes
+// in parts, each the whole lines written since the last, up to `PART_MAX_CHARS`, with the number of
+// the line it starts at, and a line reaching the disk wakes the uploader too. The endpoint files each
+// line under its number, so this run's file is never rewritten and never deleted while the app runs:
+// a folder left by an earlier run, whether it quit or crashed, is sent from line zero, a part at a
+// time, and the lines the endpoint already has are nothing to it. A session is said to be closed only
+// with the part that ends its file, since the endpoint reads its last line to tell a crash from a quit.
+//
+// A server that asks for later is left alone until the wait is over: what is written meanwhile waits
+// with it, rather than every new line asking again.
 
 /** How many frames go in one request, so a long session is sent in parts rather than one huge body. */
 const FRAMES_PER_REQUEST = 40
@@ -37,6 +42,10 @@ let nudged = false
 let failures = 0
 /** How many lines of this run's telemetry file the endpoint has: the next part starts there. */
 let sentLines = 0
+/** The session `sentLines` counts for: a new one, after everything was deleted, starts from its first line. */
+let sentFor: string | null = null
+/** How many lines of an earlier run's file the endpoint has, by session, while it goes in parts. */
+const sentOf = new Map<string, number>()
 
 /** Starts the uploader: a pass soon after launch, one whenever something new is written, and one every few minutes regardless. */
 export function startUploads(): void {
@@ -53,6 +62,7 @@ export function stopUploads(): void {
 }
 
 function wake(): void {
+  if (failures > 0) return
   if (sending) nudged = true
   else schedule(NEXT_MS)
 }
@@ -80,22 +90,27 @@ async function pass(): Promise<void> {
     } else if (sent === 'empty') {
       schedule(IDLE_MS)
     } else {
-      failures++
+      failed({ status: sent.status })
       const wait = retryDelay(failures)
       console.warn(`[eye] upload failed; trying again in ${Math.round(wait / 1000)}s`)
       schedule(wait)
     }
   } catch (err) {
-    failures++
+    failed({ message: err instanceof Error ? err.message : String(err) })
     console.warn('[eye] upload failed:', err)
     schedule(retryDelay(failures))
   } finally {
     sending = false
     if (nudged) {
       nudged = false
-      schedule(NEXT_MS)
+      if (failures === 0) schedule(NEXT_MS)
     }
   }
+}
+
+/** A failure: the first of a streak is a line, so the session says when its uploads stopped going. */
+function failed(why: { status: number } | { message: string }): void {
+  if (failures++ === 0) record({ kind: 'error', name: 'upload', data: why })
 }
 
 /**
@@ -103,21 +118,26 @@ async function pass(): Promise<void> {
  * The files that went are deleted when the endpoint has them, all but this run's telemetry file,
  * which only grows; an earlier run's folder goes once nothing is left in it.
  */
-async function send(session: string): Promise<'accepted' | 'refused' | 'empty'> {
+async function send(session: string): Promise<'accepted' | { status: number } | 'empty'> {
   const folder = path.join(eyeRoot(), session)
   const closed = liveSession() !== session
   const own = ownSession() === session
+  if (own && sentFor !== session) {
+    sentFor = session
+    sentLines = 0
+  }
   const names = (await fsp.readdir(folder)).sort()
   const frames = names.filter((name) => name.endsWith('.jpg')).slice(0, FRAMES_PER_REQUEST)
   const runs = names.filter((name) => name.endsWith('.run.json')).slice(0, RUNS_PER_REQUEST)
   const feedback = names.filter((name) => name.endsWith('.feedback.json')).slice(0, RUNS_PER_REQUEST)
   const eventsFile = names.includes(EVENTS_FILE) ? path.join(folder, EVENTS_FILE) : null
-  const from = own ? sentLines : 0
+  const from = own ? sentLines : (sentOf.get(session) ?? 0)
   const events = eventsFile ? eventsPart(await fsp.readFile(eventsFile, 'utf8'), from) : null
   if (frames.length === 0 && runs.length === 0 && feedback.length === 0 && !events?.count) {
     // Nothing whole to send. An earlier run's file with nothing left in it is done with, and so is
     // its folder; this run's stays, since its next line is still to come.
     if (!own) {
+      sentOf.delete(session)
       if (eventsFile) await fsp.rm(eventsFile, { force: true })
       if ((await fsp.readdir(folder)).length === 0) await fsp.rm(folder, { recursive: true, force: true })
     }
@@ -128,7 +148,7 @@ async function send(session: string): Promise<'accepted' | 'refused' | 'empty'> 
   form.append('install', getState().eye.install)
   form.append('app', app.getVersion())
   form.append('platform', process.platform)
-  form.append('closed', closed ? 'true' : 'false')
+  form.append('closed', closed && !(events && events.rest > 0) ? 'true' : 'false')
   for (const name of frames) {
     form.append('frames', new Blob([await fsp.readFile(path.join(folder, name))], { type: 'image/jpeg' }), name)
   }
@@ -147,15 +167,19 @@ async function send(session: string): Promise<'accepted' | 'refused' | 'empty'> 
     headers: { authorization: `Bearer ${EYE_TOKEN}` },
     body: form,
   })
-  if (!batchAccepted(response.status)) return 'refused'
+  if (!batchAccepted(response.status)) return { status: response.status }
   console.log(
     `[eye] sent ${frames.length} frames, ${runs.length} runs, ${feedback.length} notes${events?.count ? `, and ${events.count} lines of telemetry` : ''} of ${session}`,
   )
   for (const name of [...frames, ...runs, ...feedback]) await fsp.rm(path.join(folder, name), { force: true })
   if (events?.count) {
     if (own) sentLines += events.count
-    // An earlier run's file went whole, and is done with.
-    else if (eventsFile) await fsp.rm(eventsFile, { force: true })
+    else if (events.rest > 0) sentOf.set(session, from + events.count)
+    // An earlier run's file has gone to its end, and is done with.
+    else {
+      sentOf.delete(session)
+      if (eventsFile) await fsp.rm(eventsFile, { force: true })
+    }
   }
   // An earlier run's folder with nothing left in it is done with; this run's keeps its folder for the next frame or line.
   if (!own && (await fsp.readdir(folder)).length === 0) await fsp.rm(folder, { recursive: true, force: true })
