@@ -193,6 +193,30 @@ export function describeLoops(state: AppState, workspaceId: string, statusOf: (l
   ].join('\n')
 }
 
+/**
+ * The other pieces of work on a workspace, for a loop's agent: each by name, what it is, and the ids of
+ * the views in its tile, so "the names in loop_2" is a get away. Nothing when there is no other.
+ */
+export function describeOtherWork(state: AppState, workspaceId: string, loopId: string): string[] {
+  const others = (state.loops[workspaceId] ?? []).filter((one) => one.id !== loopId)
+  if (others.length === 0) return []
+  const grids = state.grids[workspaceId] ?? {}
+  const views = (id: string): string => {
+    const frame = frameOf(grids, id)
+    if (!frame) return 'no tile'
+    const held = layoutOf(grids[frame.window]!, frame.element.id)
+      .panels.filter((panel) => panel.content.kind === 'view')
+      .map((panel) => panel.elementId)
+    return held.length === 0
+      ? `tile ${frame.element.id}, no view yet`
+      : `tile ${frame.element.id}, views ${held.join(', ')}`
+  }
+  return [
+    'Other work on this workspace, by the name the user calls it; read_loop reads one, get reads its views:',
+    ...others.map((one) => `- ${loopName(one.id)}: ${JSON.stringify(one.desc)}, ${views(one.id)}.`),
+  ]
+}
+
 /** The plugins a loop's agent is not told of, in one line that says how to be. Nothing when there are none. */
 export function describeOthers(state: AppState, plugins: readonly string[]): string[] {
   const others = Object.values(state.plugins).filter((one) => !plugins.includes(one.id))
