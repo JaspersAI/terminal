@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Turn } from '../llm/llm.ts'
-import { forkOf, moved, putBack, standing } from './fork.ts'
+import { forkOf, moved, portableFork, putBack, standing } from './fork.ts'
 
 const asked = (text: string): Turn => ({ role: 'user', text })
 const replied = (text: string, raw: unknown[] | null = null): Turn => ({ role: 'assistant', text, toolCalls: [], raw })
@@ -128,4 +128,16 @@ test('kept beside a thread another run joined meanwhile, what the run has added 
   )
   assert.deepEqual((kept[5] as Extract<Turn, { role: 'assistant' }>).raw, [WORDS])
   assert.equal(thread.length, 4)
+})
+
+test('a run begun on another model goes back with none of that model\u2019s payloads, before its own turns or after', () => {
+  // The thread ends on a user's turn, so going on with another model rewrites an earlier turn and not
+  // its tail: the thread has not moved, and the copy goes back whole.
+  const thread = [asked('one'), replied('1', [THOUGHT, WORDS]), asked('two')]
+  const fork = forkOf(thread)
+  fork.turns.push(replied('2', [THOUGHT, WORDS]))
+  thread.splice(1, 1, replied('1'))
+  assert.equal(moved(thread, fork), false)
+  putBack(thread, portableFork(fork))
+  assert.deepEqual(thread, [asked('one'), replied('1'), asked('two'), replied('2')])
 })

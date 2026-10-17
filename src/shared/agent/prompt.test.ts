@@ -626,6 +626,19 @@ test('the orchestrator is told of the plugins and how their connections stand, a
   assert.equal(describeInstalledToRoute(tree(EMPTY_GRID, {})), 'No plugins are installed.')
 })
 
+test('the orchestrator is told the skills by id, one line each, the ones turned off marked, and nothing on loading them', () => {
+  const state = {
+    ...tree(EMPTY_GRID, {}, {}, {}, {}, { dcf: skill('dcf'), 'research:memo': skill('research:memo') }),
+    disabledSkills: ['dcf'],
+  }
+  const told = describeInstalledToRoute(state)
+  assert.match(
+    told,
+    /\nSkills, by id:\n- dcf: What dcf does\. \(turned off\)\n- research:memo: What research:memo does\.$/,
+  )
+  assert.doesNotMatch(told, /activate_skill|read_skill_file/)
+})
+
 test('the call that sets up work is told of every view with its state, every source, and the skills', () => {
   const state = tree(
     EMPTY_GRID,

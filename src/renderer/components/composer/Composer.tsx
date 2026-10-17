@@ -140,6 +140,11 @@ export function Composer(): ReactElement {
       },
     })
 
+  // A question or a key asked for is answered here, so it brings the composer up, tucked away or not.
+  useEffect(() => {
+    if (question !== null || secretRequest !== null) poke()
+  }, [question, secretRequest])
+
   // The welcome is spoken to a field, not an orb: the words are read, and the answer is typed under them.
   useEffect(() => {
     if (welcoming) setMode('text')
@@ -152,6 +157,9 @@ export function Composer(): ReactElement {
       poke()
       return
     }
+    // Up before the recording starts: one tucked away with the pointer resting on it is held already,
+    // so the press changes nothing that would bring it back.
+    poke()
     request.press()
   }
 
