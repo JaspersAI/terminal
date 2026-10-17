@@ -52,7 +52,7 @@ export function EyeDot(): ReactElement {
     return () => clearTimeout(timer)
   }, [sent])
 
-  const label = `Live feedback sharing is ${recording ? 'on' : 'off'}. Sharing and feedback`
+  const label = `Eye is ${recording ? 'on' : 'off'}. Sharing and feedback`
 
   const toggle = (): void => {
     dispatch({ type: 'eye.set', eye: { recording: !recording } }).catch((err: unknown) => setFailed(errorMessage(err)))
@@ -114,9 +114,9 @@ export function EyeDot(): ReactElement {
           className="absolute top-full right-0 z-20 mt-1 w-80 border border-border bg-background p-3 shadow-lg"
         >
           <div className="flex items-center justify-between gap-3">
-            <span className="text-sm">Live feedback sharing {recording ? 'is on' : 'is off'}</span>
+            <span className="text-sm">{recording ? 'Eye is on' : 'Eye is off'}</span>
             <button type="button" id="eye-toggle" aria-pressed={recording} onClick={toggle} className={BUTTON}>
-              {recording ? 'Stop sharing' : 'Start sharing'}
+              {recording ? 'Stop Eye' : 'Start Eye'}
             </button>
           </div>
           <div className="my-3 border-t border-border" />

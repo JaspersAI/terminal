@@ -4,11 +4,11 @@ Eye's live feedback sharing shows the team how you use Jaspers, so they can lear
 
 ## The first time
 
-The first launch after Eye existed asks, once, in plain words: what a picture is of, how often one is taken, what is kept of a request, that it goes to Jaspers, and what is never in any of it. **Start live feedback sharing** turns it on; **Not now** leaves it off. Either answer is remembered, so the question is asked once and never again, unless what Eye records changes: then it is asked again, in the new words, and nothing is captured until you answer. You can change your mind at any time from the dot or from **Settings > Eye**.
+The first launch after Eye existed asks, once, in plain words: what a picture is of, how often one is taken, what is kept of a request, that it goes to Jaspers, and what is never in any of it. **Start Eye** turns it on; **Not now** leaves it off. Either answer is remembered, so the question is asked once and never again, unless what Eye records changes: then it is asked again, in the new words, and nothing is captured until you answer. You can change your mind at any time from the dot or from **Settings > Eye**.
 
 ## The dot
 
-The eye at the right end of the workspace bar is the indicator, and pressing it opens a small panel under it with the switch and a feedback box. The panel says whether **Live feedback sharing** is on or off, and **Start sharing** and **Stop sharing** turn it on and off. While it is on the dot is filled and breathes slowly; off, it is a hollow ring and still. With reduced motion turned on in your system settings it does not animate at all — the color and the label still say which it is.
+The eye at the right end of the workspace bar is the indicator, and pressing it opens a small panel under it with the switch and a feedback box. The panel says whether Eye is on or off, and **Start Eye** and **Stop Eye** turn it on and off. While it is on the dot is filled and breathes slowly; off, it is a hollow ring and still. With reduced motion turned on in your system settings it does not animate at all — the color and the label still say which it is.
 
 ## Feedback
 
@@ -51,4 +51,4 @@ What arrives is filed under this install's id, a random id made once and shown i
 
 ## Turning it off
 
-Press the dot and **Stop sharing**, or set **Live feedback sharing** to off in **Settings > Eye**. The timer is cleared the moment it goes off: no frame is taken and no line is written. What was already captured stays in the folder until you delete it, which **Delete all** does in one press; anything captured while it was on that had not gone yet still goes.
+Press the dot and **Stop Eye**, or set **Live feedback sharing** to off in **Settings > Eye**. The timer is cleared the moment it goes off: no frame is taken and no line is written. What was already captured stays in the folder until you delete it, which **Delete all** does in one press; anything captured while it was on that had not gone yet still goes.

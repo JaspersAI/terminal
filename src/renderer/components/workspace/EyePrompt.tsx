@@ -10,7 +10,7 @@ import { BUTTON } from '../settings/Row'
  * and that it goes to Jaspers so the team can learn from how the app is used.
  *
  * Either answer is an answer: both set `asked`, which persists, so the modal is not asked twice.
- * Start live feedback sharing is the pre-selected action, and Not now leaves Eye off, which is how it ships.
+ * Start Eye is the pre-selected action, and Not now leaves Eye off, which is how it ships.
  */
 export function EyePrompt(): ReactElement {
   const start = useRef<HTMLButtonElement>(null)
@@ -73,7 +73,7 @@ export function EyePrompt(): ReactElement {
             onClick={() => answer(true)}
             className="shrink-0 border border-foreground bg-foreground px-2.5 py-1 text-sm text-background"
           >
-            Start live feedback sharing
+            Start Eye
           </button>
         </div>
       </div>
