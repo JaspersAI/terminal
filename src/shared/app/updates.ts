@@ -47,3 +47,12 @@ function after(info: UpdateInfo, event: UpdateEvent): UpdateInfo {
       return { ...info, status: 'failed', error: event.message }
   }
 }
+
+/**
+ * The workspace bar's offer to restart, while a downloaded update waits: its words, or nothing when
+ * there is nothing to install. The notice that says an update is ready fades in seconds; this stays
+ * until the restart, so an update found while the user was away is still seen.
+ */
+export function restartOffer(info: UpdateInfo): string | null {
+  return info.status === 'ready' && info.available ? `Restart to update to ${info.available}` : null
+}
