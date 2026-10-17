@@ -194,6 +194,9 @@ export interface SkillFile {
   text: boolean
 }
 
+/** The version a skill the app makes starts at: Jaspers Hub publishes a skill only with metadata.version. */
+export const FIRST_SKILL_VERSION = '1.0.0'
+
 /** What New skill writes. The description is left empty, so the skill is not offered until its author says what it is for. */
 export function skillTemplate(name: string): string {
   const title = name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase())
@@ -204,6 +207,9 @@ export function skillTemplate(name: string): string {
     '# "Builds a DCF valuation. Use when the user asks for a DCF, an intrinsic value, or a fair value."',
     '# The assistant sees only this until it loads the skill, so the skill is not offered until it is written.',
     'description:',
+    '# Jaspers Hub publishes a skill by this version. Raise it before you publish a change.',
+    'metadata:',
+    `  version: ${FIRST_SKILL_VERSION}`,
     '---',
     '',
     `# ${title}`,
