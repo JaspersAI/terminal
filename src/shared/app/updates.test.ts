@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { updatesAfter, type UpdateInfo } from './updates.ts'
+import { restartOffer, updatesAfter, type UpdateInfo } from './updates.ts'
 
 const idle: UpdateInfo = { version: '0.1.0', supported: true, status: 'idle', available: null, error: null }
 
@@ -48,4 +48,11 @@ test('the same object comes back when nothing changed, so a listener can tell', 
   const current = updatesAfter(idle, { type: 'none' })
   assert.equal(updatesAfter(current, { type: 'none' }), current)
   assert.equal(updatesAfter(current, { type: 'checking' }) === current, false)
+})
+
+test('the bar offers a restart only while an update is ready', () => {
+  assert.equal(restartOffer({ ...idle, status: 'ready', available: '0.2.0' }), 'Restart to update to 0.2.0')
+  assert.equal(restartOffer({ ...idle, status: 'downloading', available: '0.2.0' }), null)
+  assert.equal(restartOffer({ ...idle, status: 'current' }), null)
+  assert.equal(restartOffer({ ...idle, status: 'failed', error: 'offline' }), null)
 })

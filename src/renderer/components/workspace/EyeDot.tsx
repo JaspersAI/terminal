@@ -79,7 +79,7 @@ export function EyeDot(): ReactElement {
   }
 
   return (
-    <div ref={root} data-owns-escape className="relative ml-auto flex shrink-0 items-center gap-2">
+    <div ref={root} data-owns-escape className="relative flex shrink-0 items-center gap-2">
       {sent && (
         <span role="status" className="text-xs text-muted-foreground">
           Feedback sent
