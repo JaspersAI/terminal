@@ -42,7 +42,7 @@ export function EyePane(): ReactElement {
         <div className="border border-border p-3 text-sm">
           <p className="font-medium">What it captures</p>
           <ul className="mt-1.5 space-y-1 text-muted-foreground">
-            <li>The Jaspers window as it looks on screen, this app only.</li>
+            <li>Every open Jaspers window as it looks on screen, not only the main one; this app only.</li>
             <li>What you ask the assistant, and what it answers.</li>
             <li>Each tool it runs: what it was given, what came back, or the error.</li>
             <li>Which views are on the grid, and when one is placed.</li>
