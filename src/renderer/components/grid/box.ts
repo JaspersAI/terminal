@@ -40,6 +40,7 @@ export function boxHeard(list: LiveExchange[], event: AgentEvent, place: Place):
         thinking: null,
         working: true,
         error: null,
+        handed: false,
         hidden: false,
       },
     ]

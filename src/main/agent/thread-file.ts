@@ -25,12 +25,11 @@ export async function startThreads(): Promise<void> {
 }
 
 export const threadFile: ThreadStore = {
-  load(chat, key) {
+  load(chat) {
     const one = kept.get(chat)
-    // A thread belongs to the model it was held on: another one cannot replay its assistant turns.
-    if (!one || one.model !== key) return null
+    if (!one) return null
     kept.delete(chat)
-    return one.turns
+    return { key: one.model, turns: one.turns }
   },
 
   save(chat, key, turns) {

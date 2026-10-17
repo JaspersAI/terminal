@@ -266,6 +266,8 @@ async function loop({
       if (handed !== null && !signal.aborted) {
         history.push({ role: 'assistant', text: handed, toolCalls: [], raw: null })
         log(`final: ${handed} [handed over]`)
+        // The box that asked has nothing more to show: the work answers in its own tile.
+        if (!quiet) emit({ kind: 'handed', runId: entry.runId })
         return handed
       }
     }

@@ -571,7 +571,8 @@ export function loopChat(workspaceId: string, loop: string): string {
 
 /**
  * What a loop's agent is not offered, of what the global assistant has: arranging the window and
- * what is focused in it, and opening and gathering windows.
+ * what is focused in it, opening and gathering windows, the window's cells behind the tiles, and the
+ * app's settings.
  */
 export const LOOP_EXCLUDED_TOOLS: readonly string[] = [
   'arrange',
@@ -579,13 +580,50 @@ export const LOOP_EXCLUDED_TOOLS: readonly string[] = [
   'open_window',
   'use_all_screens',
   'use_one_screen',
+  'write_cells',
+  'read_cells',
+  'clear_cells',
+  'change_setting',
 ]
 
 /**
- * What the orchestrator is not offered, of what a loop's agent has: what puts a view on the grid,
- * changes what one shows, takes a tile away, or builds a plugin. Work in a tile does those.
+ * What the orchestrator is offered of the tool families, by name: a tool not named here is a loop's.
+ * It runs the app: the grid and its windows, the cells, keys, plugins, skills, tasks, and memory, and
+ * it asks the user. It has no data tools and nothing that drives a view: work in a tile does those.
+ * The tools that hold loops are added where it is run.
  */
-export const ORCHESTRATOR_EXCLUDED_TOOLS: readonly string[] = ['place_view', 'set', 'remove_element', 'build_plugin']
+export const ORCHESTRATOR_TOOLS: readonly string[] = [
+  'move_element',
+  'resize_element',
+  'set_mode',
+  'arrange',
+  'free_space',
+  'focus',
+  'open_window',
+  'use_all_screens',
+  'use_one_screen',
+  'write_cells',
+  'read_cells',
+  'clear_cells',
+  'remember',
+  'recall',
+  'ask_user',
+  'set_secret',
+  'install_plugin',
+  'install_skill',
+  'add_connection',
+  'find_plugin',
+  'publish_skill',
+  'schedule_task',
+  'update_task',
+  'cancel_task',
+  'write_skill',
+  'change_setting',
+  'read_loop',
+]
+
+/** What drives a view or builds a plugin: a loop's agent's alone, never the orchestrator's. */
+export const VIEW_TOOLS: readonly string[] = ['place_view', 'set', 'remove_element', 'build_plugin']
 
 /** The built-in note: a text area on the grid. */
 export const NOTE_VIEW = 'core/note'

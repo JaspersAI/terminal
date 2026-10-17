@@ -111,7 +111,7 @@ export async function userRequest({
 }: Asked): Promise<string> {
   const config = configured()
   const thread = threadFor(chat, config)
-  const conversationId = conversationOf(chat, config)
+  const conversationId = conversationOf(chat)
   // A /name is the skill's instructions by the time the model reads the turn.
   const expanded = expandSlash(input)
   // /new starts the thread over, unless the user has a skill by that name, which is theirs to have.

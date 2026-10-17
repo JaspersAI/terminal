@@ -1,10 +1,10 @@
 import { handedBy } from '../../shared/agent/typed'
 import { loopName, named, NO, notStarted, START, startQuestion, type Loop } from '../../shared/loops/loops'
-import { usableSkills } from '../../shared/skills/skills'
 import { askUser, asWindow, closeLoop, createLoop, deleteLoop, reopenLoop, roomForLoop } from '../actions'
 import { gridSizeOf } from '../grid/grid'
 import { getState, toPublic } from '../state'
 import { handOver, sendToLoop } from './loop'
+import { setUpLoop } from './setup'
 import { findLoop } from './tools/loops'
 import { asAnchor, asRect, asSize, placementProperties } from './tools/grid'
 import { optional, WINDOW } from './tools/input'
@@ -103,7 +103,7 @@ function createLoopTool(context: ToolContext): Tool {
     name: 'create_loop',
     handoff: true,
     description:
-      "Starts a piece of work with a tile and an agent of its own: for anything to be shown, anything long, anything the user will come back to. The user is asked first whether to start it, shown desc and plugins, and nothing is made unless they press Start: do not ask that yourself, and when they say no or write something else the call says so. Give it one line saying what it is, a brief for its agent saying what to do and what done looks like, and the installed plugins and skills it will need, by id. Its agent starts at once on the user's request as they typed it, with message under it when you write one, and does the work in its tile, where every view it shows goes and where it tells the user what it found: do not also do the work yourself. A round in which you only started or sent work ends your part: the user is told what these calls answered, and you write nothing more.",
+      "Starts a piece of work with a tile and an agent of its own: for anything that needs data, anything to be shown, anything long, anything the user will come back to. Give it one line saying what it is and a brief for its agent saying what to do and what done looks like; the installed plugins and skills it needs are chosen for it from those two. The user is then asked whether to start it, shown desc and those plugins, and nothing is made unless they press Start: do not ask that yourself, and when they say no or write something else the call says so. Its agent starts at once on the user's request as they typed it, with message under it when you write one, and does the work in its tile, where every view it shows goes and where it tells the user what it found: do not also do the work yourself. A round in which you only started or sent work ends your part: the user is told what these calls answered, and you write nothing more.",
     parameters: {
       type: 'object',
       properties: {
@@ -113,43 +113,26 @@ function createLoopTool(context: ToolContext): Tool {
           description:
             'What its agent is to do, in words written for it. It says what it found in its own conversation, so ask it for views of what the plugins show and never for a note or a written summary on the grid.',
         },
-        plugins: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'The installed plugins its agent is told of, by id. Empty when none fits.',
-        },
-        skills: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'The skills named for it beyond its plugins own, by id. Usually empty.',
-        },
         message: MESSAGE,
         // The tile holds every view the work shows, so it starts at half a window.
         ...placementProperties(gridSizeOf(context.workspaceId), 'half'),
         window: WINDOW,
       },
-      required: ['desc', 'brief', 'plugins', 'skills'],
+      required: ['desc', 'brief'],
     },
     async run(input, ran) {
       const { workspaceId } = ran
-      const state = toPublic(getState())
       const desc = asWords(input.desc, 'desc')
       const brief = typeof input.brief === 'string' ? input.brief.trim() : ''
-      const plugins = known(asIds(input.plugins, 'plugins'), Object.keys(state.plugins), 'plugin', 'Installed')
-      const skills = known(
-        asIds(input.skills, 'skills'),
-        usableSkills(state, 'model').map((one) => one.id),
-        'skill',
-        'The ones you may load',
-      )
       const placement = {
         size: optional(input.size, asSize),
         anchor: optional(input.anchor, asAnchor),
         rect: optional(input.rect, asRect),
       }
       const window = asWindow(input.window)
-      // A tile with no room is refused here, before the user is asked to start it.
+      // A tile with no room is refused here, before the work is set up or the user asked to start it.
       roomForLoop(workspaceId, window, placement)
+      const { plugins, skills } = await setUpLoop(desc, brief, ran)
       // No work goes on the grid unasked: the user is shown what it is and which plugins, and only
       // Start starts it. A task's run is not asked, since nobody is at it and its instructions are
       // the user's own words, written when they scheduled it. A refusal is a failed call, so the round
@@ -177,19 +160,4 @@ function asWords(value: unknown, what: string): string {
   const text = typeof value === 'string' ? value.trim() : ''
   if (text) return text
   throw new Error(`${what} must say something.`)
-}
-
-/** A list of ids as a model writes one: a list, or one id alone. */
-function asIds(value: unknown, what: string): string[] {
-  if (value === undefined || value === null) return []
-  const list: unknown[] = Array.isArray(value) ? value : [value]
-  if (list.every((one): one is string => typeof one === 'string')) return list.map((one) => one.trim()).filter(Boolean)
-  throw new Error(`${what} must be a list of ids.`)
-}
-
-/** The ids, once each is one that is there; else the error names the ones that are not, and what there is. */
-function known(ids: string[], have: string[], what: string, lead: string): string[] {
-  const missing = ids.filter((id) => !have.includes(id))
-  if (missing.length === 0) return ids
-  throw new Error(`Unknown ${what} ${missing.join(', ')}. ${lead}: ${have.join(', ') || 'none'}.`)
 }

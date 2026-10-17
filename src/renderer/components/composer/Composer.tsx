@@ -114,7 +114,7 @@ export function Composer(): ReactElement {
   // A task's reply on the workspace on screen is in its chat, and shows there rather than as a line.
   const noticeInChat = notice?.chat === workspaceId
   // What holds the composer up: a pointer on it, a run on screen, a line already started.
-  const { open, poke } = useReveal(
+  const { open, poke, tuck } = useReveal(
     busy ||
       watching ||
       nearby ||
@@ -134,6 +134,10 @@ export function Composer(): ReactElement {
       noticeInChat,
       blocked: secretRequest !== null || question !== null,
       welcome,
+      // Not from under a line being typed, a question, a key, a recording, or the welcome.
+      tuck: () => {
+        if (draft === '' && secretRequest === null && question === null && !busy && !welcoming) tuck()
+      },
     })
 
   // The welcome is spoken to a field, not an orb: the words are read, and the answer is typed under them.

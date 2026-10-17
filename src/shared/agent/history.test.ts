@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { capOutput, closeOff, recent, withoutThinking } from './history.ts'
+import { capOutput, closeOff, portable, recent, withoutThinking } from './history.ts'
 import type { Turn } from '../llm/llm.ts'
 import { taskNote } from './transcript.ts'
 
@@ -167,4 +167,18 @@ test('a run that ended early is closed off on an assistant turn, whatever it was
   const done: Turn[] = [asked, note]
   closeOff(done, '(again)')
   assert.deepEqual(done, [asked, note])
+})
+
+test('a thread as another model reads it keeps every word and call, and none of what only its provider replays', () => {
+  const call = { id: 'c1', name: 'get', input: { elementId: 'e1' } }
+  const turns: Turn[] = [
+    { role: 'user', text: 'What is on screen?' },
+    { role: 'assistant', text: '', toolCalls: [call], raw: [{ type: 'reasoning', id: 'r1' }] },
+    { role: 'tool', results: [{ callId: 'c1', output: 'A chart.', isError: false }] },
+    { role: 'assistant', text: 'A chart.', toolCalls: [], raw: null },
+  ]
+  const read = portable(turns)
+  assert.deepEqual(read[1], { role: 'assistant', text: '', toolCalls: [call], raw: null })
+  // What had nothing of its provider's is the same turn.
+  for (const at of [0, 2, 3]) assert.equal(read[at], turns[at])
 })

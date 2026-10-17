@@ -16,6 +16,7 @@ export function useConversation({
   noticeInChat,
   blocked,
   welcome,
+  tuck,
 }: {
   open: boolean
   request: ComposerRequest
@@ -27,6 +28,8 @@ export function useConversation({
   blocked: boolean
   /** How many messages of the welcome after setup this chat holds, while it is being said; null otherwise. */
   welcome: number | null
+  /** Puts the composer away, when nothing the user is in the middle of holds it. */
+  tuck: () => void
 }) {
   const { shown, away, earlier, sequence, dismiss, setEarlier } = request
   // Every request on screen answered: what is up has landed. One working out of sight does not hold
@@ -92,11 +95,19 @@ export function useConversation({
   // still works, a line said before a tool call, and waiting on that took the box, its trail and its
   // Stop from under a run that went on for longer than the wait. With several requests up, the wait
   // starts when the last of them is over: the box stays while anything in it works.
+  // Work handed to a tile answers there: a box that holds only handoffs goes at once, with the
+  // composer, rather than sitting out the wait. They are in the chat's log like any other exchange.
+  const handed = landed && shown.every((one) => one.handed)
   useEffect(() => {
-    if (!landed) return
+    if (!handed) return
+    close()
+    tuck()
+  }, [handed])
+  useEffect(() => {
+    if (!landed || handed) return
     const timer = setTimeout(() => setFadeSequence(sequence), ANSWER_MS)
     return () => clearTimeout(timer)
-  }, [landed, sequence])
+  }, [landed, handed, sequence])
   // Once they have sat, they join the conversation above them. With the composer up the box is
   // wanted, so that happens where it stands; away, the box fades out first.
   useEffect(() => {

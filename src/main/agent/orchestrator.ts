@@ -24,8 +24,8 @@ import { citedBy, cutToRecent, exchanges, file, keep, threadFor, threadReads } f
 
 // The orchestrator's requests: who asks the agent loop (agent.ts), on which thread, and when. The user's
 // request continues its workspace's thread, one per workspace, so follow-up questions work and
-// switching workspaces switches threads; a change of language model in settings starts it over, and
-// so does /new, and its end is kept between sessions. A task's request starts a thread of its own and
+// switching workspaces switches threads; a change of language model goes on with it (`portable`), /new
+// starts it over, and its end is kept between sessions. A task's request starts a thread of its own and
 // keeps nothing, since its instructions have to stand alone; its reply joins its workspace's thread,
 // where the chat shows it and a follow-up can refer to it. A run acts on the workspace it started on.
 // A request that starts with /name carries that skill's instructions by the time the model reads it,
