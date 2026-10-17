@@ -69,7 +69,7 @@ export function Chart({ panel }: ViewProps): ReactElement {
     const grouped = !isYearColumn(found.rows, xColumn)
     return found.rows.map((row) => label(row[xColumn], xAs, grouped))
   }, [found.rows, xColumn, xAs])
-  const short = missingColumns(shape, yColumns, found.columns)
+  const short = found.loading ? null : missingColumns(shape, yColumns, found.columns)
   const ready = found.rows.length > 0 && yColumns.length > 0 && !short
 
   const option = useMemo(
