@@ -76,7 +76,7 @@ npm run dev
 
 On first launch, sign in with Jaspers, or pick a language model provider and paste its key. A voice provider is optional. The last step is the plugin directory, which is Jaspers Hub's: the featured plugins first, then the rest of Hub. Signing in with Jaspers installs Jaspers Discover and Jaspers Research by themselves; nothing else installs until you press its Install, and Settings > Plugins keeps the same list, with a search. Finish, and the assistant welcomes you in the chat, with an example of something to ask for with what you installed.
 
-See [Getting started](docs/getting-started.md) for the commands, packaging, and how to reset.
+Run tests with `npm test`. See [Getting started](docs/getting-started.md) for the commands, packaging, and how to reset.
 
 ## Documentation
 
