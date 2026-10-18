@@ -38,7 +38,7 @@ Main checks the whole resulting panel state against the view schema. Views use `
 
 A panel holds a view and nothing else: no line of text, no stand-in, no message of the app's. What a view's plugin is waiting on the user for is asked in the box of the tile that holds the view (`Need`, from `waitingViews` in `shared/plugins/needs.ts`): the first key the plugin declares and has no value for, then a connection that is `needs-auth`. Until the plugin has it the view is not mounted, and a tile whose views all wait is its box alone. A key goes to main with `plugin.setSecret`, as it does from the field a run asks with; the view mounts once the tree says it is set. Before the assistant runs a plugin's own source, a key the plugin declares and lacks is asked for where the run is, and the run waits for it (`askForUnsetKey`), as a call on a connection does (`askForMissingSecret`); the source is not run without it. The builder's own `run_source` does not ask: a missing key is an answer it reports. The message a missing key fails a call with (`secret-fetch.ts`) is written for the assistant and is not what the user is left reading.
 
-A plugin's `notify` is kept in the inbox and sent to the system's notifications while no window is in front (`fileNotice` in `app/notices.ts`); only a task's notices and the app's own are said in the answer box.
+A plugin's `notify` is kept in the inbox and sent to the system's notifications while no window is in front (`fileNotice` in `app/notices.ts`); only a task's notices and the app's own are said in the answer box, where the same line said again by the same speaker takes the place of the one still up (`withNotice` in `src/shared/app/notices.ts`).
 
 ## Requests, tools, and scheduling
 
