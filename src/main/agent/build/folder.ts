@@ -114,9 +114,29 @@ export async function writeBuildFile(folder: BuildFolder, raw: unknown, content:
   if (!existing.some((f) => f.path === rel) && existing.length >= BUILD_LIMITS.files) {
     throw new Error(`A plugin folder holds at most ${BUILD_LIMITS.files} files; this one is full.`)
   }
+  const written = rel === 'package.json' ? await preserveDependencies(file, text) : text
   await fsp.mkdir(path.dirname(file), { recursive: true })
-  await fsp.writeFile(file, text, { encoding: 'utf8', mode: 0o644 })
-  return { path: rel, size: Buffer.byteLength(text, 'utf8') }
+  await fsp.writeFile(file, written, { encoding: 'utf8', mode: 0o644 })
+  return { path: rel, size: Buffer.byteLength(written, 'utf8') }
+}
+
+/** Keeps package.json's dependencies when the builder writes package.json after install_plugin installed packages. */
+async function preserveDependencies(file: string, text: string): Promise<string> {
+  try {
+    const prev: unknown = JSON.parse(await fsp.readFile(file, 'utf8'))
+    const next: unknown = JSON.parse(text)
+    if (!isObject(prev) || !isObject(next) || !isObject(prev['dependencies'])) return text
+    if ('dependencies' in next && (!isObject(next['dependencies']) || Object.keys(next['dependencies']).length > 0)) {
+      return text
+    }
+    return `${JSON.stringify({ ...next, dependencies: prev['dependencies'] }, null, 2)}\n`
+  } catch {
+    return text
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Replaces one passage of a file, the rest left as it is, held to the rules a write is, and answers what was written. */
