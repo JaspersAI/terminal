@@ -149,10 +149,11 @@ export function EyePane(): ReactElement {
             errors, plus app performance metrics.
           </p>
           <p>
-            To keep your work private, keys, passwords, and your sign-in email are masked out of everything kept, cell
-            contents and notes are never recorded, and snapshots are skipped whenever a key field or an approval prompt
-            is on screen. Completed batches are sent to Jaspers oldest first and removed locally once received, with the
-            local folder capped at 500 MB or seven days.
+            Keys, passwords, and your sign-in email are masked out of recorded text, and cell contents and notes are
+            excluded from recorded text. Saved snapshots may include visible app text such as your sign-in email, cell
+            contents, and notes. Snapshots are skipped whenever a key field or an approval prompt is on screen.
+            Completed batches are sent to Jaspers oldest first and removed locally once received, with the local folder
+            capped at 500 MB or seven days.
           </p>
         </div>
       )}
