@@ -9,7 +9,7 @@ import { BUTTON } from '../settings/Row'
  * Settings > Eye.
  *
  * Either answer is an answer: both set `asked`, which persists, so the modal is not asked twice.
- * Start Eye is the pre-selected action, and Not now leaves Eye off, which is how it ships.
+ * Agree is the pre-selected action, and Not now leaves Eye off, which is how it ships.
  */
 export function EyePrompt(): ReactElement {
   const start = useRef<HTMLButtonElement>(null)
@@ -63,7 +63,7 @@ export function EyePrompt(): ReactElement {
             onClick={() => answer(true)}
             className="shrink-0 border border-foreground bg-foreground px-2.5 py-1 text-sm text-background"
           >
-            Start Eye
+            Agree
           </button>
         </div>
       </div>
