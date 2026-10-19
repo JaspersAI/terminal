@@ -67,6 +67,6 @@ rm -rf ~/Library/Application\ Support/jaspers-terminal
 
 ## Updates
 
-Jaspers checks for a newer version after it starts and every few hours, downloads it in the background, and installs it when you quit. It never restarts on its own, since a task may be running: a notice says an update is ready, and Restart to update stays at the right end of the workspace bar until you restart; the tray menu and Settings > About offer it too. Settings > About also shows which version you have and checks on demand. A Mac app installed before Jaspers was signed does not update itself: install the new DMG over it once.
+Jaspers checks for a newer version after it starts and every few hours, downloads it in the background, and installs it when you quit. It never restarts on its own, since a task may be running: a notice says an update is ready, and Restart to update stays at the right end of the workspace bar until you restart; the tray menu and Settings > About offer it too. Settings > About also shows which version you have and checks on demand. A Mac app that macOS will not update, such as one installed before Jaspers was signed, does not update itself: Settings > About says so and links the current DMG, which you install over it once.
 
 Plugins are not part of the package. The ones picked during setup download then; the rest install from Settings > Plugins once the app is running.
