@@ -23,6 +23,12 @@ export type UpdateEvent =
   | { type: 'found'; version: string }
   | { type: 'downloaded'; version: string }
   | { type: 'failed'; message: string }
+  /**
+   * The OS's installer would not take the downloaded file: on a Mac, Squirrel.Mac checks who signed
+   * it only after electron-updater has it. Unlike a failed check, this undoes a ready update, since
+   * nothing would install on quit.
+   */
+  | { type: 'refused'; message: string }
 
 /** The tree after an updater event. The same object comes back when nothing changed. */
 export function updatesAfter(info: UpdateInfo, event: UpdateEvent): UpdateInfo {
@@ -33,7 +39,8 @@ export function updatesAfter(info: UpdateInfo, event: UpdateEvent): UpdateInfo {
 function after(info: UpdateInfo, event: UpdateEvent): UpdateInfo {
   // A downloaded update installs when the app quits whatever a later check says: only a newer
   // version takes its place.
-  if (info.status === 'ready' && !('version' in event && event.version !== info.available)) return info
+  if (info.status === 'ready' && event.type !== 'refused' && !('version' in event && event.version !== info.available))
+    return info
   switch (event.type) {
     case 'checking':
       return { ...info, status: 'checking', error: null }
@@ -45,7 +52,22 @@ function after(info: UpdateInfo, event: UpdateEvent): UpdateInfo {
       return { ...info, status: 'ready', available: event.version, error: null }
     case 'failed':
       return { ...info, status: 'failed', error: event.message }
+    case 'refused':
+      return { ...info, status: 'failed', error: refusedMessage(event.message) }
   }
+}
+
+/** Where a Mac app that cannot update itself gets the current version by hand. */
+export const MAC_DOWNLOAD_URL = 'https://account.jsprai.com/download/mac'
+
+/**
+ * What Settings > About says when macOS refused a downloaded update: why, and what to do, since the
+ * app would otherwise find, download, and be refused the same update on every launch.
+ */
+export function refusedMessage(reason: string): string {
+  // What to do comes first: Squirrel's reason names a long path, and a notice keeps 300 characters.
+  const why = reason.replace(/\s+/g, ' ').trim()
+  return `macOS would not install the downloaded update. Download the current version from ${MAC_DOWNLOAD_URL} and install it over this one, once; it updates itself after that.${why ? ` macOS said: ${why}` : ''}`
 }
 
 /**
