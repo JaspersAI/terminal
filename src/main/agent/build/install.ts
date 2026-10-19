@@ -1,6 +1,7 @@
 import {
   ALLOW,
   APPROVE,
+  approvalNotice,
   isApproved,
   trustQuestion,
   widenQuestion,
@@ -31,6 +32,8 @@ export interface InstallDeps {
   home: string
   /** Puts the question to the user and answers with what they chose, or null when nobody answered. */
   ask(question: TrustQuestion): Promise<string | null>
+  /** Surfaces a notice when the build is waiting for approval. */
+  notice?(text: string): void
   land(folder: BuildFolder): Promise<BuildFolder>
   rebuild(id: string): void
   /** Waits for the plugin's build to settle and answers its entry. */
@@ -44,16 +47,17 @@ export async function installPlugin(
   input: Record<string, unknown>,
   request: string,
   deps: InstallDeps,
-): Promise<{ folder: BuildFolder; info: PluginInfo }> {
+): Promise<{ folder: BuildFolder; info: PluginInfo | null }> {
   const purpose = typeof input['purpose'] === 'string' ? input['purpose'].trim() : ''
   if (!purpose || purpose.length > PURPOSE_MAX) {
     throw new Error(`purpose is one line, up to ${PURPOSE_MAX} characters, saying what the plugin is for.`)
   }
   const { envelope, packageSpecs } = envelopeFromInput(input)
   const files = await fileContents(folder)
-  if (!files.some((file) => file.path === 'plugin.tsx')) throw new Error('Write plugin.tsx first: nothing to install.')
+  const hasEntry = files.some((file) => file.path === 'plugin.tsx')
 
   if (!folder.live) {
+    deps.notice?.(approvalNotice(folder.id, purpose))
     const answer = await deps.ask(trustQuestion({ id: folder.id, purpose, envelope, files, home: deps.home }))
     if (!isApproved(answer, APPROVE)) {
       throw new Error(`The user did not approve building ${folder.id}. Say what you wanted to build and stop.`)
@@ -62,12 +66,13 @@ export async function installPlugin(
     writeBuildRecordFile(folder.dir, record)
     if (packageSpecs.length > 0) await deps.installPackages(folder.dir, packageSpecs)
     const live = await deps.land(folder)
-    return { folder: live, info: await deps.wait(live.id) }
+    return { folder: live, info: hasEntry ? await deps.wait(live.id) : null }
   }
 
   const record = readBuildRecordFile(folder.dir) ?? { purpose, request, at: deps.now(), approved: EMPTY_ENVELOPE }
   const lines = widened(envelope, record.approved)
   if (lines.length > 0) {
+    deps.notice?.(approvalNotice(folder.id, purpose))
     const answer = await deps.ask(widenQuestion(folder.id, lines))
     if (!isApproved(answer, ALLOW)) {
       throw new Error(
@@ -78,6 +83,7 @@ export async function installPlugin(
     const fresh = packageSpecs.filter((spec) => !record.approved.packages.includes(nameOf(spec)))
     if (fresh.length > 0) await deps.installPackages(folder.dir, fresh)
   }
+  if (!hasEntry) return { folder, info: null }
   deps.rebuild(folder.id)
   return { folder, info: await deps.wait(folder.id) }
 }
@@ -92,6 +98,7 @@ function union(approved: Envelope, wanted: Envelope): Envelope {
     connections: merge(approved.connections, wanted.connections),
     packages: merge(approved.packages, wanted.packages),
     frames: merge(approved.frames, wanted.frames),
+    ...(approved.shell || wanted.shell ? { shell: true } : {}),
   }
 }
 

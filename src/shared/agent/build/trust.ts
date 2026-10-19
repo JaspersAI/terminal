@@ -69,3 +69,11 @@ export function widenQuestion(id: string, lines: string[]): TrustQuestion {
     choices: [ALLOW, DECLINE],
   }
 }
+
+/** One line for the inbox and answer box when a plugin build pauses on the user's approval. */
+export function approvalNotice(id: string, purpose?: string): string {
+  const summary = purpose?.trim()
+  return summary
+    ? `Plugin ${id} (${summary}) is waiting for your approval.`
+    : `Plugin ${id} is waiting for your approval.`
+}

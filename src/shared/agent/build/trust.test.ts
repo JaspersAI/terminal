@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_ENVELOPE } from '../../plugins/build-record.ts'
 import { BUILD_LIMITS } from './files.ts'
-import { ALLOW, APPROVE, DECLINE, isApproved, trustQuestion, widenQuestion } from './trust.ts'
+import { ALLOW, APPROVE, approvalNotice, DECLINE, isApproved, trustQuestion, widenQuestion } from './trust.ts'
 
 const input = {
   id: 'fred',
@@ -66,4 +66,12 @@ test('requesting the shared shell folder clearly indicates read-only access in t
   })
   assert.match(question.text, /read-only access to \/Users\/me\/Jaspers\/shell/)
   assert.match(question.code, /Shell folder: +read-only \(~\/Jaspers\/shell\)/)
+})
+
+test('approvalNotice names the plugin waiting for approval', () => {
+  const text = approvalNotice('fred', 'FRED economic series')
+  assert.match(text, /fred/)
+  assert.match(text, /FRED economic series/)
+  assert.match(text, /waiting for your approval/i)
+  assert.match(approvalNotice('fred'), /fred.*waiting for your approval/i)
 })

@@ -242,7 +242,8 @@ function readable(session: BuildSession, plugin: unknown): BuildFolder {
 }
 
 /** The build's outcome for the builder: the line, and every error when there are several. */
-function describeBuild(info: PluginInfo, id: string): string {
+function describeBuild(info: PluginInfo | null, id: string): string {
+  if (!info) return `${id}: approved; write its files, ending with plugin.tsx.`
   const line = pluginLine(info, id)
   if (info.status === 'error' && info.errors.length > 1) return `${line}\n${info.errors.slice(1).join('\n')}`
   return line

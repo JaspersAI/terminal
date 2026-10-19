@@ -28,14 +28,15 @@ export function onNotice(listener: (notice: Notice) => void): void {
  * holds what the notice says, when one does. Such a notice stands for the chat, so it takes the place
  * of one before it for the same chat: the chat holds both, and one box shows them.
  */
-export function addNotice(plugin: string, raw: string, chat?: string): void {
+export function addNotice(plugin: string, raw: string, chat?: string): string | null {
   const notice = noticeOf(plugin, raw, chat)
-  if (!notice) return
+  if (!notice) return null
   update((state) => ({
     ...state,
     notices: [...state.notices.filter((n) => chat === undefined || n.chat !== chat), notice].slice(-NOTICES_MAX),
   }))
   tell(notice)
+  return notice.id
 }
 
 /** Keeps a line a plugin has for the user, without saying it in the answer box. */
