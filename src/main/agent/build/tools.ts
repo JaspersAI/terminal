@@ -1,7 +1,11 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describeFolder, sizeText } from '../../../shared/agent/build/files'
+import { isPluginId } from '../../../shared/plugins/id'
 import type { PluginInfo } from '../../../shared/state'
 import { askUserFor } from '../../actions'
-import { jaspersHome } from '../../home'
+import { addNotice, dismissNotice } from '../../app/notices'
+import { homePluginsRoot, jaspersHome } from '../../home'
 import { readBuildRecordFile } from '../../plugins/build-record'
 import { installPackages } from '../../plugins/packages'
 import { rebuildPlugin } from '../../plugins/plugins'
@@ -37,9 +41,14 @@ export interface BuildSession {
 const watch = { read: getState, subscribe: (listener: () => void) => subscribe(listener) }
 
 export function builderTools(session: BuildSession, context: ToolContext): Tool[] {
-  const rebuildNote = 'The app is rebuilding it: call check_plugin to read the result.'
   // What the build is waiting on is said under the run that asked for it, as the log has it.
   const tell = telling(context.runId, (line) => console.log(`[build] ${session.id}: ${line}`))
+  const afterSave = async (line: string): Promise<string> => {
+    if (!session.folder.live || !fs.existsSync(path.join(session.folder.dir, 'plugin.tsx'))) return line
+    rebuildPlugin(session.id)
+    const info = await waitForBuild(session.id, watch, context.signal)
+    return `${line}\n${describeBuild(info, session.id)}`
+  }
   return [
     ...(searchAvailable() ? [searchTool] : []),
     fetchTool,
@@ -75,7 +84,7 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
     {
       name: 'write_file',
       description:
-        "Writes one file of the plugin folder, whole, creating or replacing it. Files are ts, tsx, js, json, css, md, or txt, relative to the folder; node_modules and names starting with a dot are the app's.",
+        "Writes one file of the plugin folder, whole, creating or replacing it; once installed and plugin.tsx is written, rebuilds the plugin and answers with the build's result. Files are ts, tsx, js, json, css, md, or txt, relative to the folder; node_modules and names starting with a dot are the app's.",
       parameters: {
         type: 'object',
         properties: {
@@ -86,14 +95,13 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
       },
       async run(input) {
         const written = await writeBuildFile(session.folder, input.path, input.content)
-        const line = `Wrote ${written.path} (${sizeText(written.size)}).`
-        return session.folder.live ? `${line} ${rebuildNote}` : line
+        return afterSave(`Wrote ${written.path} (${sizeText(written.size)}).`)
       },
     },
     {
       name: 'edit_file',
       description:
-        "Replaces one passage of a file in the plugin folder and leaves the rest as it is: for filling in a shell's body, adding a function, fixing the lines an error names. The passage has to be in the file exactly once.",
+        "Replaces one passage of a file in the plugin folder and leaves the rest as it is, then rebuilds the plugin and answers with the build's result. The passage has to be in the file exactly once.",
       parameters: {
         type: 'object',
         properties: {
@@ -109,14 +117,13 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
       },
       async run(input) {
         const edited = await editBuildFile(session.folder, input.path, input.old, input.new)
-        const line = `Edited ${edited.path} (${sizeText(edited.size)}).`
-        return session.folder.live ? `${line} ${rebuildNote}` : line
+        return afterSave(`Edited ${edited.path} (${sizeText(edited.size)}).`)
       },
     },
     {
       name: 'install_plugin',
       description:
-        "Puts the plugin in front of the user with what it reaches, then installs it and waits for the app to build it; answers with the build's result. Call it once the shell is written, with everything the finished plugin will reach, and again only when the plugin has to reach more than was approved (a new host, capability, secret, connection, package, or frame). Everything the code reaches has to be listed here: a build that reaches more than approved fails.",
+        "Puts the plugin in front of the user with what it reaches, then installs its packages and lands its folder; when plugin.tsx is already written, builds it and answers with the build's result. Call it before writing code, with everything the finished plugin will reach, and again only when the plugin has to reach more than was approved (a new host, capability, secret, connection, package, frame, or shell folder access). Everything the code reaches has to be listed here: a build that reaches more than approved fails.",
       parameters: {
         type: 'object',
         properties: {
@@ -152,21 +159,37 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
             items: { type: 'string' },
             description: 'The https origins the views frame, if any.',
           },
+          shell: {
+            type: 'boolean',
+            description:
+              'True when the plugin reads files prepared in the shared shell folder (~/Jaspers/shell) through ctx.files with shell: paths (read-only).',
+          },
         },
         required: ['purpose'],
       },
       async run(input) {
+        let noticeId: string | null = null
         const { folder, info } = await installPlugin(session.folder, input, session.request, {
           home: jaspersHome(),
+          notice: (text) => {
+            noticeId = addNotice('plugins', text)
+          },
           ask: async (question) => {
-            const asked = await askUserFor(question.text, question.choices, context.signal, question.code)
-            // Ten minutes with nobody there is not a no: say so, rather than that the user refused.
-            if (asked.answer === null && asked.ended === 'timeout') {
-              throw new Error(
-                `Nobody answered the question to install ${session.folder.id} within ten minutes, so nothing was installed. The user did not refuse; they may be away. Say the plugin is written and waiting on their approval, and call install_plugin again when they ask.`,
-              )
+            try {
+              const asked = await askUserFor(question.text, question.choices, context.signal, question.code)
+              // Ten minutes with nobody there is not a no: say so, rather than that the user refused.
+              if (asked.answer === null && asked.ended === 'timeout') {
+                throw new Error(
+                  `Nobody answered the question to install ${session.folder.id} within ten minutes, so nothing was installed. The user did not refuse; they may be away. Say the plugin is waiting on their approval, and call install_plugin again when they ask.`,
+                )
+              }
+              return asked.answer
+            } finally {
+              if (noticeId) {
+                dismissNotice(noticeId)
+                noticeId = null
+              }
             }
-            return asked.answer
           },
           land: landFolder,
           rebuild: rebuildPlugin,
@@ -196,8 +219,8 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
         'Waits for the build the last write started and answers its result: ready with what it offers, or the error.',
       parameters: { type: 'object', properties: {} },
       async run() {
-        if (!session.folder.live)
-          return `${session.id} is not installed yet: call install_plugin once the files are written.`
+        if (!session.folder.live) return `${session.id} is not installed yet: call install_plugin first.`
+        if (!fs.existsSync(path.join(session.folder.dir, 'plugin.tsx'))) return describeBuild(null, session.id)
         return describeBuild(await waitForBuild(session.id, watch, context.signal), session.id)
       },
     },
@@ -224,7 +247,11 @@ const OTHER = {
 /** Who holds an id in the tree: nobody, a plugin the assistant built, which has a build record, or one of another kind. */
 export function ownerOf(id: string): Owner {
   const plugin = getState().plugins[id]
-  return plugin ? (readBuildRecordFile(plugin.dir) ? 'built' : 'other') : 'free'
+  if (plugin) return readBuildRecordFile(plugin.dir) ? 'built' : 'other'
+  if (!isPluginId(id)) return 'free'
+  const dir = path.join(homePluginsRoot(), id)
+  if (readBuildRecordFile(dir)) return 'built'
+  return fs.existsSync(dir) ? 'other' : 'free'
 }
 
 /** The plugins built here other than `id`, with what each is for: the ones its builder may read. */
