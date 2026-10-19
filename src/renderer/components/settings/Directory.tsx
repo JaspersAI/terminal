@@ -153,7 +153,7 @@ function Others({ directory, entry, search }: PartProps & { search: boolean }): 
       ) : (
         others.more && (
           <button type="button" onClick={more} className={`${BUTTON} mt-3`}>
-            More
+            Show more
           </button>
         )
       )}

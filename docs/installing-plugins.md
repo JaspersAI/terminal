@@ -19,7 +19,7 @@ You can also ask the assistant: "install github.com/owner/repo", or "install jas
 
 ## From Jaspers Hub
 
-The directory, in setup's last step and in Settings > Plugins, lists what Jaspers Hub lists: the plugins Hub features, in Hub's order, then every other plugin there, most starred first, with **More** for the next page. Settings also searches Hub. Each entry shows who published it, marked official when it is Jaspers' own, the version Hub shows, and whether Hub reviewed that version. When Hub cannot be reached, each part of the list says so, with **Retry**, and **From a link** still works.
+The directory, in setup's last step and in Settings > Plugins, lists what Jaspers Hub lists: the plugins Hub features, in Hub's order, then every other plugin there, most starred first, with **Show more** for the next page. Settings also searches Hub. Each entry shows who published it, marked official when it is Jaspers' own, the version Hub shows, and whether Hub reviewed that version. When Hub cannot be reached, each part of the list says so, with **Retry**, and **From a link** still works.
 
 An install from Hub downloads the version Hub shows and refuses it, before anything is unpacked, unless its SHA-256 is the one Hub sent with it. Its `package.json` has to name the item and the version Hub served. The question then also says who published it, whether Hub reviewed this version, and links its page on Hub. An entry in the directory reads **Update** when the plugin of its name was installed from that very item and Hub shows another version.
 
