@@ -7,6 +7,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import * as tar from 'tar'
+import { cacheFileName } from '../../shared/plugins/packages.ts'
+import { packageCacheRoot } from '../home.ts'
 import { installPackages } from './packages.ts'
 
 // A registry of our own on the loopback, serving abbreviated listings and tarballs made here, so
@@ -192,4 +194,62 @@ test('a tree past the package limit, an unknown package, and a range nothing mat
 test('a registry that is not on the loopback has to be https', async () => {
   const dir = await plugin()
   await assert.rejects(installPackages(dir, ['a'], { registry: 'http://registry.example.com' }), /https/)
+})
+
+test('a repeated install unpacks cached tarballs with zero tarball downloads and keeps nested node_modules intact', async () => {
+  const reg = await registry(CATALOG)
+  const dir = await plugin()
+  try {
+    await installPackages(dir, ['b@2', 'a'], { registry: reg.url })
+    reg.requests.length = 0
+    const second = path.join(path.dirname(dir), 'other')
+    await fsp.mkdir(second, { recursive: true })
+    await installPackages(second, ['b@2', 'a'], { registry: reg.url })
+    assert.deepEqual(
+      reg.requests.filter((r) => r.endsWith('.tgz')),
+      [],
+    )
+    assert.equal(read(second, 'node_modules', 'b').version, '2.0.0')
+    assert.equal(read(second, 'node_modules', 'a').version, '1.0.0')
+    assert.equal(read(second, 'node_modules', 'a', 'node_modules', 'b').version, '1.0.0')
+  } finally {
+    await reg.close()
+  }
+})
+
+test('a corrupted cached tarball is evicted and re-downloaded on the next install', async () => {
+  const reg = await registry(CATALOG)
+  const dir = await plugin()
+  try {
+    await installPackages(dir, ['a@^1.0.0'], { registry: reg.url })
+    await fsp.writeFile(path.join(packageCacheRoot(), cacheFileName({ name: 'a', version: '1.0.0' })), 'corrupted')
+    reg.requests.length = 0
+    const second = path.join(path.dirname(dir), 'other')
+    await fsp.mkdir(second, { recursive: true })
+    await installPackages(second, ['a@^1.0.0'], { registry: reg.url })
+    assert.deepEqual(
+      reg.requests.filter((r) => r.endsWith('.tgz')),
+      ['/a/-/a-1.0.0.tgz'],
+    )
+    assert.deepEqual(read(second, 'node_modules', 'a'), { name: 'a', version: '1.0.0' })
+    assert.deepEqual(read(second, 'node_modules', 'b'), { name: 'b', version: '1.0.0' })
+  } finally {
+    await reg.close()
+  }
+})
+
+test('the oldest cached tarballs are evicted when limits.cacheBytes is exceeded', async () => {
+  const reg = await registry(CATALOG)
+  const dir = await plugin()
+  try {
+    await installPackages(dir, ['b@1.0.0'], { registry: reg.url })
+    const first = path.join(packageCacheRoot(), cacheFileName({ name: 'b', version: '1.0.0' }))
+    const stat = await fsp.stat(first)
+    const old = new Date(Date.now() - 60_000)
+    await fsp.utimes(first, old, old)
+    await installPackages(dir, ['b@2.0.0'], { registry: reg.url, limits: { cacheBytes: stat.size + 10 } })
+    assert.deepEqual(await fsp.readdir(packageCacheRoot()), [cacheFileName({ name: 'b', version: '2.0.0' })])
+  } finally {
+    await reg.close()
+  }
 })

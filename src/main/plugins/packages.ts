@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -6,15 +6,19 @@ import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
 import { LIMITS } from '../../shared/plugins/install.ts'
 import {
+  cacheFileName,
   chooseVersion,
   PACKAGE_LIMITS,
   packageKey,
+  packagesToDrop,
   placePackages,
   readPackument,
+  type CachedPackage,
   type Packument,
   type Resolved,
 } from '../../shared/plugins/packages.ts'
 import { parseSpec } from '../../shared/plugins/semver.ts'
+import { packageCacheRoot } from '../home.ts'
 import { extract } from './archive.ts'
 import { makeStage, removeDir } from './archive-fetch.ts'
 
@@ -59,35 +63,50 @@ export async function installPackages(
   const modules = path.join(dir, 'node_modules')
   const hadModules = fs.existsSync(modules)
   const stage = await makeStage()
+  const cacheDir = packageCacheRoot()
   const written: string[] = []
   try {
     const unpacked = new Map<string, string>()
-    let remaining = limits.unpackedBytes
-    for (const entry of placed) {
-      const key = packageKey(entry.name, entry.version)
-      let source = unpacked.get(key)
-      if (!source) {
-        const item = resolved.get(key)!
-        log(`Fetching ${key}`)
-        const file = path.join(stage, `${unpacked.size}.tgz`)
-        await downloadTarball(item, file, limits.requestMs, options.signal)
-        const into = path.join(stage, `${unpacked.size}`)
-        const files = await extract(file, into, { entries: LIMITS.entries, unpackedBytes: remaining })
-        remaining -= files.length > 0 ? sizeOf(into) : 0
-        source = await packageRoot(into, files)
+    let totalUnpacked = 0
+    await Promise.all(
+      [...resolved.entries()].map(async ([key, item], index) => {
+        const into = path.join(stage, `${index}`)
+        const source = await unpackPackage(item, key, into, index, stage, cacheDir, limits, log, options.signal)
+        totalUnpacked += sizeOf(into)
+        if (totalUnpacked > limits.unpackedBytes) {
+          const cap =
+            limits.unpackedBytes >= 1024 * 1024
+              ? `${Math.round(limits.unpackedBytes / 1024 / 1024)} MB`
+              : `${Math.round(limits.unpackedBytes / 1024)} KB`
+          throw new Error(`The archive unpacks to more than ${cap}.`)
+        }
         unpacked.set(key, source)
-      }
-      const target = path.join(dir, ...entry.dir)
-      await fsp.rm(target, { recursive: true, force: true })
-      await fsp.mkdir(path.dirname(target), { recursive: true })
-      await fsp.cp(source, target, { recursive: true })
-      written.push(target)
+      }),
+    )
+    await pruneCache(cacheDir, limits.cacheBytes)
+    const byDepth = new Map<number, typeof placed>()
+    for (const entry of placed) {
+      const group = byDepth.get(entry.dir.length) ?? []
+      group.push(entry)
+      byDepth.set(entry.dir.length, group)
+    }
+    for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
+      await Promise.all(
+        byDepth.get(depth)!.map(async (entry) => {
+          const source = unpacked.get(packageKey(entry.name, entry.version))!
+          const target = path.join(dir, ...entry.dir)
+          await fsp.rm(target, { recursive: true, force: true })
+          await fsp.mkdir(path.dirname(target), { recursive: true })
+          await fsp.cp(source, target, { recursive: true })
+          written.push(target)
+        }),
+      )
     }
     await recordDependencies(dir, roots)
   } catch (err) {
     // What this call put there goes; what was there before stays.
     if (!hadModules) await removeDir(modules)
-    else for (const target of written) await removeDir(target)
+    else for (const target of [...written].reverse()) await removeDir(target)
     throw err
   } finally {
     await removeDir(stage)
@@ -147,15 +166,106 @@ async function resolveAll(
     return key
   }
   const queue: string[] = []
+  await Promise.all(roots.map((root) => listing(root.name)))
   for (const root of roots) await resolve(root.name, root.range)
   while (queue.length > 0) {
-    const key = queue.shift()!
-    const entry = resolved.get(key)!
-    const children: string[] = []
-    for (const [name, range] of Object.entries(entry.dependencies)) children.push(await resolve(name, range))
-    edges.set(key, children)
+    const level = queue.splice(0, queue.length)
+    await Promise.all(level.flatMap((key) => Object.keys(resolved.get(key)!.dependencies).map((name) => listing(name))))
+    for (const key of level) {
+      const entry = resolved.get(key)!
+      const children: string[] = []
+      for (const [name, range] of Object.entries(entry.dependencies)) children.push(await resolve(name, range))
+      edges.set(key, children)
+    }
   }
   return { resolved, edges }
+}
+
+/** Unpacks one package from the disk cache when valid, or downloads, caches, and unpacks it. */
+async function unpackPackage(
+  item: Resolved,
+  key: string,
+  into: string,
+  index: number,
+  stage: string,
+  cacheDir: string,
+  limits: typeof PACKAGE_LIMITS,
+  log: (line: string) => void,
+  signal?: AbortSignal,
+): Promise<string> {
+  const cached = path.join(cacheDir, cacheFileName(item))
+  if (await verifyIntegrity(cached, item.integrity)) {
+    const now = new Date()
+    await fsp.utimes(cached, now, now).catch(() => undefined)
+    try {
+      const files = await extract(cached, into, { entries: LIMITS.entries, unpackedBytes: limits.unpackedBytes })
+      return await packageRoot(into, files)
+    } catch {
+      await fsp.rm(into, { recursive: true, force: true }).catch(() => undefined)
+      await fsp.rm(cached, { force: true }).catch(() => undefined)
+    }
+  } else {
+    await fsp.rm(cached, { force: true }).catch(() => undefined)
+  }
+  log(`Fetching ${key}`)
+  const file = path.join(stage, `${index}.tgz`)
+  await downloadTarball(item, file, limits.requestMs, signal)
+  await writeCacheFile(file, cached, cacheDir)
+  const files = await extract(file, into, { entries: LIMITS.entries, unpackedBytes: limits.unpackedBytes })
+  return packageRoot(into, files)
+}
+
+async function verifyIntegrity(file: string, integrity: string | null): Promise<boolean> {
+  let stat: fs.Stats
+  try {
+    stat = await fsp.stat(file)
+  } catch {
+    return false
+  }
+  if (!stat.isFile() || stat.size === 0 || stat.size > LIMITS.downloadBytes) return false
+  if (!integrity) return true
+  const [algorithm, expected] = integrity.split('-', 2)
+  if (algorithm !== 'sha512' && algorithm !== 'sha1') return true
+  try {
+    const hash = createHash(algorithm)
+    await pipeline(fs.createReadStream(file), hash)
+    return hash.digest('base64') === expected
+  } catch {
+    return false
+  }
+}
+
+async function writeCacheFile(source: string, cached: string, cacheDir: string): Promise<void> {
+  const tmp = path.join(cacheDir, `.${path.basename(cached)}.${randomBytes(6).toString('hex')}.tmp`)
+  try {
+    await fsp.mkdir(cacheDir, { recursive: true, mode: 0o700 })
+    await fsp.copyFile(source, tmp)
+    await fsp.rename(tmp, cached)
+  } catch {
+    await fsp.rm(tmp, { force: true }).catch(() => undefined)
+  }
+}
+
+async function pruneCache(cacheDir: string, maxBytes: number): Promise<void> {
+  let names: string[]
+  try {
+    names = await fsp.readdir(cacheDir)
+  } catch {
+    return
+  }
+  const cached: CachedPackage[] = []
+  for (const name of names) {
+    if (!name.endsWith('.tgz') || name.startsWith('.')) continue
+    try {
+      const stat = await fsp.stat(path.join(cacheDir, name))
+      if (stat.isFile()) cached.push({ name, bytes: stat.size, mtimeMs: stat.mtimeMs })
+    } catch {
+      continue
+    }
+  }
+  for (const drop of packagesToDrop(cached, maxBytes)) {
+    await fsp.rm(path.join(cacheDir, drop.name), { force: true }).catch(() => undefined)
+  }
 }
 
 async function fetchListing(
