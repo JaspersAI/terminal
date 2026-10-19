@@ -4,14 +4,16 @@ import { dispatch, useAppState } from '../../lib/state'
 import { size } from './DataPane'
 import { BUTTON, Row } from './Row'
 
-// Settings > Eye: live feedback sharing, what it captures, and what this machine has kept. On or off is the
-// one setting: where batches go and how often a picture is taken are the app's, not the user's. Off
-// until the user turns it on, here or with the dot in the workspace bar, and no tool can reach either.
+// Settings > Eye: live feedback sharing, what this machine has kept, and a toggle for the full usage
+// breakdown. On or off is the one setting: where batches go and how often a picture is taken are the
+// app's, not the user's. Off until the user turns it on, here or with the dot in the workspace bar,
+// and no tool can reach either.
 
 export function EyePane(): ReactElement {
   const eye = useAppState((s) => s.eye)
   const [failed, setFailed] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
 
   const setRecording = (recording: boolean): void => {
     setFailed(null)
@@ -35,29 +37,9 @@ export function EyePane(): ReactElement {
         Eye
       </h3>
       <p className="mt-1 text-sm text-muted-foreground">
-        Live feedback sharing shows the team how you use Jaspers — a picture of this app's windows every minute, and
-        each request to the assistant with what came of it — so they can learn from it. Off until you turn it on.
+        Live feedback sharing helps the Jaspers team understand how the terminal performs and where to improve it. Off
+        until you turn it on.
       </p>
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <div className="border border-border p-3 text-sm">
-          <p className="font-medium">What it captures</p>
-          <ul className="mt-1.5 space-y-1 text-muted-foreground">
-            <li>Every open Jaspers window as it looks on screen, not only the main one; this app only.</li>
-            <li>What you ask the assistant, and what it answers.</li>
-            <li>Each tool it runs: what it was given, what came back, or the error.</li>
-            <li>Which views are on the grid, and when one is placed.</li>
-          </ul>
-        </div>
-        <div className="border border-border p-3 text-sm">
-          <p className="font-medium">What it never captures</p>
-          <ul className="mt-1.5 space-y-1 text-muted-foreground">
-            <li>Your desktop, your browser, or any other program.</li>
-            <li>Keystrokes, cell contents, or a view's data.</li>
-            <li>Keys and passwords the app holds: they are masked out of everything kept.</li>
-            <li>Anything at all while a key field or an approval is on screen.</li>
-          </ul>
-        </div>
-      </div>
       {failed && <p className="mt-3 text-sm text-destructive">{failed}</p>}
       <div className="mt-5 border-t border-border">
         <Row
@@ -132,10 +114,48 @@ export function EyePane(): ReactElement {
           )}
         </Row>
       </div>
-      <p className="mt-4 text-xs text-muted-foreground">
-        Batches go to Jaspers as they are finished, oldest first, and are deleted here once it has them. Until then they
-        stay in the folder on this computer, and the oldest goes when it passes 500 MB or seven days.
-      </p>
+      <button
+        id="eye-details-toggle"
+        type="button"
+        aria-expanded={detailsOpen}
+        aria-controls="eye-usage-details"
+        onClick={() => setDetailsOpen(!detailsOpen)}
+        className="mt-4 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"
+      >
+        <svg
+          viewBox="0 0 6 10"
+          fill="none"
+          aria-hidden
+          className={`h-2.5 w-1.5 stroke-current stroke-[1.5] ${detailsOpen ? 'rotate-90' : ''}`}
+        >
+          <path d="M1 1 5 5 1 9" />
+        </svg>
+        Usage details
+      </button>
+      {detailsOpen && (
+        <div
+          id="eye-usage-details"
+          onCopy={(event) => event.preventDefault()}
+          className="mt-2 space-y-2 border border-border p-3 text-xs leading-relaxed text-muted-foreground select-none"
+        >
+          <p>
+            Eye is designed to help the Jaspers team spot rough edges, slowdowns, and broken workflows from real use
+            without getting in the way of your work.
+          </p>
+          <p>
+            When enabled, it periodically saves a lightweight snapshot of open Jaspers windows every minute — this app
+            only, never your desktop, browser, or other programs — along with general interface activity (buttons and
+            menus used, views placed on the grid and their settings), assistant requests, replies, tool runs, and
+            errors, plus app performance metrics.
+          </p>
+          <p>
+            To keep your work private, keys, passwords, and your sign-in email are masked out of everything kept, cell
+            contents and notes are never recorded, and snapshots are skipped whenever a key field or an approval prompt
+            is on screen. Completed batches are sent to Jaspers oldest first and removed locally once received, with the
+            local folder capped at 500 MB or seven days.
+          </p>
+        </div>
+      )}
     </section>
   )
 }
