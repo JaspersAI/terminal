@@ -1,12 +1,13 @@
 import { useEffect, useRef, type ReactElement } from 'react'
 import { errorMessage } from '../../lib/errors'
+import { INTERVAL_MINUTES } from '../../../shared/app/eye'
 import { dispatch } from '../../lib/state'
 import { BUTTON } from '../settings/Row'
 
 /**
  * Eye's first run, asked once, and again whenever what it records changes (`EYE_CONSENT`). It gives
- * a brief overview of usage sharing and how to turn it off, while the full breakdown lives in
- * Settings > Eye.
+ * a concise upfront overview of what Eye captures, masks, and sends to Jaspers and how to turn it
+ * off, while the full breakdown and controls live in Settings > Eye.
  *
  * Either answer is an answer: both set `asked`, which persists, so the modal is not asked twice.
  * Start Eye is the pre-selected action, and Not now leaves Eye off, which is how it ships.
@@ -45,11 +46,16 @@ export function EyePrompt(): ReactElement {
         </h2>
         <div id="eye-prompt-what" className="mt-3 space-y-2 text-sm">
           <p>
-            Eye shares general usage feedback and app activity with the Jaspers team to help improve the terminal and
-            keep it reliable, while keeping keys, passwords, and other programs out.
+            Eye sends usage activity to Jaspers to help improve the terminal: a picture of every open Jaspers window{' '}
+            {INTERVAL_MINUTES === 1 ? 'every minute' : `every ${INTERVAL_MINUTES} minutes`} (this app only, never your
+            desktop, browser, or other programs), UI actions, view settings, and grid changes, performance metrics, and
+            each assistant request, reply, and tool call with its inputs, outputs, and errors.
           </p>
           <p className="text-muted-foreground">
-            You can turn sharing off at any time from the eye in the top right or in Settings &gt; Eye.
+            Keys, passwords, and your sign-in email are masked, cell contents, notes, and field text (beyond character
+            counts, assistant prompts, and view settings) are excluded, and pictures are skipped while a key field or
+            approval is on screen. You can turn sharing off at any time from the eye in the top right, or view details
+            and delete captured data in Settings &gt; Eye.
           </p>
         </div>
         <div className="mt-6 flex justify-end gap-2">
