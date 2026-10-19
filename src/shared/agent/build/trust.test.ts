@@ -58,3 +58,12 @@ test('a widening asks to allow only what is new', () => {
   assert.equal(question.code, '+ host api.example.com\n+ package pdf-lib')
   assert.deepEqual(question.choices, [ALLOW, DECLINE])
 })
+
+test('requesting the shared shell folder clearly indicates read-only access in the prompt and envelope', () => {
+  const question = trustQuestion({
+    ...input,
+    envelope: { ...input.envelope, capabilities: ['files'], shell: true },
+  })
+  assert.match(question.text, /read-only access to \/Users\/me\/Jaspers\/shell/)
+  assert.match(question.code, /Shell folder: +read-only \(~\/Jaspers\/shell\)/)
+})

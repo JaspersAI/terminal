@@ -6,6 +6,7 @@ import { createRpc, type Rpc } from '../../shared/rpc'
 import { createFiles, type FilesService } from './capabilities/files'
 import { createLlm } from './capabilities/llm'
 import { askForMissingSecret } from '../actions'
+import { readBuildRecordFile } from './build-record'
 import { createTools } from './capabilities/tools'
 import { jaspersHome } from '../home'
 import { call as callTool } from './mcp'
@@ -181,6 +182,7 @@ function spawn(id: string, build: HostBuild): Host {
   const files = createFiles({
     dataRoot: path.join(jaspersHome(), id),
     pluginRoot: build.dir,
+    shellRoot: readBuildRecordFile(build.dir)?.approved.shell ? path.join(jaspersHome(), 'shell') : null,
     openPath: (file) => shell.openPath(file),
     showItemInFolder: (file) => shell.showItemInFolder(file),
   })

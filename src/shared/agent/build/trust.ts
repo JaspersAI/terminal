@@ -53,8 +53,9 @@ export function trustQuestion(input: TrustInput): TrustQuestion {
     }
     code += block
   }
+  const shellNote = input.envelope.shell ? ` It asks for read-only access to ${input.home}/shell.` : ''
   return {
-    text: `Build the plugin ${input.id}? It is written to ${input.home}/plugins/${input.id} and runs in the app. The app holds it to what is listed below, and the builder may go on writing its files after you approve.`,
+    text: `Build the plugin ${input.id}? It is written to ${input.home}/plugins/${input.id} and runs in the app.${shellNote} The app holds it to what is listed below, and the builder may go on writing its files after you approve.`,
     code: cut ? `${code.trimEnd()}\n… (cut)` : code.trimEnd(),
     choices: [APPROVE, DECLINE],
   }
