@@ -72,7 +72,7 @@ test('a refusal carries its status and how long the provider asked to be left al
       res.end(JSON.stringify({ error: { message: 'slow down' } }))
     },
     async (url) => {
-      for (const refused of [post(WIRE, url, {}, '{}'), read(url, 1000)]) {
+      for (const refused of [() => post(WIRE, url, {}, '{}'), () => read(url, 1000)]) {
         await assert.rejects(refused, (err: unknown) => {
           assert.ok(err instanceof ProviderError)
           assert.equal(err.message, 'Test returned 429: slow down')
