@@ -115,19 +115,23 @@ function failed(why: { status: number } | { message: string }): void {
 
 /**
  * One batch, or the next part of one: its frames and its runs, and the telemetry lines not yet sent,
- * posted to `EYE_ENDPOINT` as `multipart/form-data` (see the `POST /batches` section of the
- * `JaspersAI/jaspers-eye` README at https://github.com/JaspersAI/jaspers-eye#post-batches):
+ * posted to `EYE_ENDPOINT` (`POST /batches`) as `multipart/form-data` (see the `POST /batches`
+ * section in `JaspersAI/jaspers-eye`'s `README.md#post-batches` at
+ * https://github.com/JaspersAI/jaspers-eye/blob/main/README.md#post-batches):
  *
- * - `session`: the session folder's stamp.
+ * - `session`: the session folder's timestamp stamp.
  * - `install`: this install's UUID (`state.eye.install`).
  * - `app`: the app version (`app.getVersion()`).
  * - `platform`: `process.platform`.
- * - `closed`: `'true'` when the session is over and no unsent telemetry lines remain, else `'false'`.
- * - `frames`: up to `FRAMES_PER_REQUEST` `.jpg` window captures.
- * - `runs`: up to `RUNS_PER_REQUEST` `.run.json` records from earlier builds.
- * - `feedback`: up to `RUNS_PER_REQUEST` `.feedback.json` notes sent from the eye popover.
- * - `events` and `from` (when telemetry lines are present): the next slice of `events.jsonl` as
- *   `${session}.jsonl` and the 0-based line offset it starts at.
+ * - `closed`: `'true'` only when the session is no longer live and no unsent `events.jsonl` lines
+ *   remain after this part, `'false'` otherwise.
+ * - `frames`: up to `FRAMES_PER_REQUEST` (40) `<stamp>-w<window>.jpg` JPEG blobs.
+ * - `runs`: up to `RUNS_PER_REQUEST` (50) legacy `*.run.json` blobs from earlier builds.
+ * - `feedback`: up to `RUNS_PER_REQUEST` (50) `<stamp>-<id>.feedback.json` notes sent from the eye
+ *   popover.
+ * - `events`: when new whole telemetry lines exist, the slice of `events.jsonl` as
+ *   `<session>.jsonl` (`application/x-ndjson`).
+ * - `from`: when `events` is present, the 0-based starting line number of that slice.
  *
  * The files that went are deleted when the endpoint has them, all but this run's telemetry file,
  * which only grows; an earlier run's folder goes once nothing is left in it.
