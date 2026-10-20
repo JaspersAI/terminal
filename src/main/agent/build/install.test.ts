@@ -108,12 +108,22 @@ test('an approved first install writes the record, installs packages, lands the 
   }
 })
 
-test('a refusal, a closed question, and any other wording write nothing and stop the build', async () => {
-  for (const answer of ['No', null, 'build it', 'yes']) {
+test('a refusal, a closed question, and any other wording write nothing; only the first two stop the build', async () => {
+  const cases: [string | null, RegExp][] = [
+    ['No', /did not approve building rates\. Say what you wanted to build and stop\./],
+    [null, /did not approve building rates/],
+    ['build it', /Nothing was installed: in place of an answer the user wrote "build it"\. Do as it says/],
+    ['yes', /the user wrote "yes"/],
+    [
+      'call it rates_v2',
+      /the user wrote "call it rates_v2"\. Do as it says if you can, then call install_plugin again/,
+    ],
+  ]
+  for (const [answer, said] of cases) {
     const { home, folder } = await stagedFolder()
     try {
       const h = harness(home, answer)
-      await assert.rejects(installPlugin(folder, input, 'rates please', h.deps), /did not approve building rates/)
+      await assert.rejects(installPlugin(folder, input, 'rates please', h.deps), said)
       assert.equal(h.landed.length, 0)
       assert.equal(h.installed.length, 0)
       assert.equal(readBuildRecordFile(folder.dir), null)
@@ -171,6 +181,13 @@ test('a live plugin within its envelope rebuilds without a question; one reachin
     await assert.rejects(
       installPlugin(live, { ...input, capabilities: ['llm'] }, 'r', refused.deps),
       /did not allow rates to reach more/,
+    )
+    assert.deepEqual(readBuildRecordFile(live.dir)?.approved.capabilities, [])
+
+    const typed = harness(home, 'only if it stays read-only')
+    await assert.rejects(
+      installPlugin(live, { ...input, capabilities: ['llm'] }, 'r', typed.deps),
+      /Nothing was installed: in place of an answer the user wrote "only if it stays read-only"/,
     )
     assert.deepEqual(readBuildRecordFile(live.dir)?.approved.capabilities, [])
   } finally {
