@@ -135,6 +135,7 @@ async function preserveDependencies(file: string, text: string): Promise<string>
   }
 }
 
+/** Narrows manifest values to non-null objects, excluding arrays. */
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

@@ -41,6 +41,7 @@ const READ_MAX = 20 * 1024 * 1024
 /** A save lands as several events; wait for them to stop before saying what changed. */
 const WATCH_DELAY_MS = 200
 
+/** Creates file operations confined to data, plugin, and approved shell roots, with writes limited to data. */
 export function createFiles(deps: FilesDeps): FilesService {
   const watches = new Set<() => void>()
   let closed = false
@@ -131,6 +132,7 @@ export function createFiles(deps: FilesDeps): FilesService {
       return entries
     },
 
+    /** Removes a data path recursively, unlinking a symbolic link itself rather than its target. */
     async remove(raw) {
       const parsed = parsePluginPath(raw)
       if (parsed.root === 'plugin')

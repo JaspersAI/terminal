@@ -96,6 +96,7 @@ export function readBuildRecord(raw: unknown): BuildRecord | null {
   return envelope ? { purpose, request, at, approved: envelope } : null
 }
 
+/** Validates stored envelope lists and optional shell access, normalizing the lists or returning null. */
 function readEnvelope(raw: unknown): Envelope | null {
   if (!isRecord(raw)) return null
   const envelope: Envelope = { ...EMPTY_ENVELOPE }

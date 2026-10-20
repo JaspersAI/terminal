@@ -32,6 +32,7 @@ export interface TrustQuestion {
   choices: string[]
 }
 
+/** Builds the approval question with the requested envelope, optional shell access, and a capped file preview. */
 export function trustQuestion(input: TrustInput): TrustQuestion {
   const files = input.files.map((file) => `${file.path} ${sizeText(file.size)}`).join(' · ')
   const head = [

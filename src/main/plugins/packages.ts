@@ -215,6 +215,10 @@ async function unpackPackage(
   return packageRoot(into, files)
 }
 
+/**
+ * Checks a cached file's size and sha512 or sha1 digest. Missing or unsupported integrity metadata
+ * skips the digest check; a missing, empty, oversized, or mismatched file returns false.
+ */
 async function verifyIntegrity(file: string, integrity: string | null): Promise<boolean> {
   let stat: fs.Stats
   try {
@@ -235,6 +239,7 @@ async function verifyIntegrity(file: string, integrity: string | null): Promise<
   }
 }
 
+/** Publishes a cached tarball by temporary copy and rename, ignoring cache write and cleanup failures. */
 async function writeCacheFile(source: string, cached: string, cacheDir: string): Promise<void> {
   const tmp = path.join(cacheDir, `.${path.basename(cached)}.${randomBytes(6).toString('hex')}.tmp`)
   try {
@@ -246,6 +251,7 @@ async function writeCacheFile(source: string, cached: string, cacheDir: string):
   }
 }
 
+/** Tries to remove the oldest tarballs to meet the byte limit, ignoring cache read and removal failures. */
 async function pruneCache(cacheDir: string, maxBytes: number): Promise<void> {
   let names: string[]
   try {

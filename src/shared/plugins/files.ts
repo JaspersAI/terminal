@@ -15,6 +15,7 @@ export interface PluginPath {
 const PLUGIN = 'plugin:'
 const SHELL = 'shell:'
 
+/** Selects the data, plugin:, or shell: root and normalizes a relative path, rejecting absolute paths and traversal. */
 export function parsePluginPath(raw: unknown): PluginPath {
   if (typeof raw !== 'string') throw new Error('A path is a string, like analysts/credit.md.')
   const root: FileRoot = raw.startsWith(PLUGIN) ? 'plugin' : raw.startsWith(SHELL) ? 'shell' : 'data'

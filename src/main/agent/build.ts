@@ -42,6 +42,7 @@ function buildChat(id: string): string {
   return `build/${id}`
 }
 
+/** Runs or resumes a plugin's builder, keeping unfinished work and returning its status and reply on completion. */
 export async function runBuild(request: string, id: string, parent: ToolContext): Promise<string> {
   if (!isPluginId(id)) {
     throw new Error(`Give the plugin an id: lower-case letters, digits, and dashes, like fred or sec-filings.`)

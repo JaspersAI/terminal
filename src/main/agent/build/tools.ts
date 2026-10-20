@@ -40,9 +40,11 @@ export interface BuildSession {
 /** The tree, as a build wait reads it. */
 const watch = { read: getState, subscribe: (listener: () => void) => subscribe(listener) }
 
+/** The builder's file, approval, and build tools, bound to its current folder and the parent run's cancellation. */
 export function builderTools(session: BuildSession, context: ToolContext): Tool[] {
   // What the build is waiting on is said under the run that asked for it, as the log has it.
   const tell = telling(context.runId, (line) => console.log(`[build] ${session.id}: ${line}`))
+  /** Adds the rebuild result to a save's reply once the live folder has a plugin entry point. */
   const afterSave = async (line: string): Promise<string> => {
     if (!session.folder.live || !fs.existsSync(path.join(session.folder.dir, 'plugin.tsx'))) return line
     rebuildPlugin(session.id)
@@ -93,6 +95,7 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
         },
         required: ['path', 'content'],
       },
+      /** Writes a complete file and reports the build when the plugin is ready to rebuild. */
       async run(input) {
         const written = await writeBuildFile(session.folder, input.path, input.content)
         return afterSave(`Wrote ${written.path} (${sizeText(written.size)}).`)
@@ -115,6 +118,7 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
         },
         required: ['path', 'old', 'new'],
       },
+      /** Replaces one passage and reports the build when the plugin is ready to rebuild. */
       async run(input) {
         const edited = await editBuildFile(session.folder, input.path, input.old, input.new)
         return afterSave(`Edited ${edited.path} (${sizeText(edited.size)}).`)
@@ -167,13 +171,16 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
         },
         required: ['purpose'],
       },
+      /** Requests approval, surfaces a notice while waiting, and keeps the session's installed folder. */
       async run(input) {
         let noticeId: string | null = null
         const { folder, info } = await installPlugin(session.folder, input, session.request, {
           home: jaspersHome(),
+          /** Remembers the approval notice so it can be dismissed when the question ends. */
           notice: (text) => {
             noticeId = addNotice('plugins', text)
           },
+          /** Waits for approval, reports an unanswered timeout, and dismisses the notice on every exit. */
           ask: async (question) => {
             try {
               const asked = await askUserFor(question.text, question.choices, context.signal, question.code)
@@ -218,6 +225,7 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
       description:
         'Waits for the build the last write started and answers its result: ready with what it offers, or the error.',
       parameters: { type: 'object', properties: {} },
+      /** Reports whether installation or an entry point is still needed, otherwise waits for the build. */
       async run() {
         if (!session.folder.live) return `${session.id} is not installed yet: call install_plugin first.`
         if (!fs.existsSync(path.join(session.folder.dir, 'plugin.tsx'))) return describeBuild(null, session.id)

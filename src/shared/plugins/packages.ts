@@ -88,6 +88,7 @@ export function packageKey(name: string, version: string): string {
 
 /** A single file name under the package cache for a resolved package: scoped names have no slash. */
 export function cacheFileName(item: { name: string; version: string }): string {
+  /** Flattens a name or version into a filename component without leading dots. */
   const safe = (text: string): string => text.replace(/[^a-zA-Z0-9._@-]+/g, '_').replace(/^\.+/, '_')
   return `${safe(item.name)}-${safe(item.version)}.tgz`
 }

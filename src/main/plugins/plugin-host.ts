@@ -157,6 +157,7 @@ async function hostFor(id: string): Promise<Host> {
   return spawn(id, build)
 }
 
+/** Returns the registered host, or starts one with RPC and capability services and tracks its initialization. */
 function spawn(id: string, build: HostBuild): Host {
   // Never a second host over one that is still registered.
   const existing = hosts.get(id)

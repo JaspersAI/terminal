@@ -42,6 +42,10 @@ export interface InstallDeps {
   now(): string
 }
 
+/**
+ * Approves and lands a staged plugin, or approves a wider envelope for a live one. Installs requested
+ * packages and returns the build result, or null when plugin.tsx has not been written yet.
+ */
 export async function installPlugin(
   folder: BuildFolder,
   input: Record<string, unknown>,
