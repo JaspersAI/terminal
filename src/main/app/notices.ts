@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { update } from '../state'
 import type { Notice } from '../../shared/state'
 import { notify, unreadCount } from '../data/store'
+import { withNotice } from '../../shared/app/notices'
 
 // Notices: one line the user is told, like "Credit Analyst finished". Whoever says one, it is
 // written down in the store, which is the inbox, and handed to whoever listens for them: the system's
@@ -13,7 +14,6 @@ import { notify, unreadCount } from '../data/store'
 // A plugin's is not (`fileNotice`): the box is the user's conversation with the assistant, and what a
 // plugin has to say about its work shows in the views of the work that runs it.
 
-const NOTICES_MAX = 5
 const TEXT_MAX = 300
 
 const listeners = new Set<(notice: Notice) => void>()
@@ -25,16 +25,12 @@ export function onNotice(listener: (notice: Notice) => void): void {
 
 /**
  * Says a line in the answer box, and keeps it. `chat` is the workspace whose conversation already
- * holds what the notice says, when one does. Such a notice stands for the chat, so it takes the place
- * of one before it for the same chat: the chat holds both, and one box shows them.
+ * holds what the notice says, when one does. What it replaces on screen is `withNotice`'s to say.
  */
 export function addNotice(plugin: string, raw: string, chat?: string): void {
   const notice = noticeOf(plugin, raw, chat)
   if (!notice) return
-  update((state) => ({
-    ...state,
-    notices: [...state.notices.filter((n) => chat === undefined || n.chat !== chat), notice].slice(-NOTICES_MAX),
-  }))
+  update((state) => ({ ...state, notices: withNotice(state.notices, notice) }))
   tell(notice)
 }
 
