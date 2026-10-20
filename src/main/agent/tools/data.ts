@@ -1,11 +1,11 @@
 import { untilAborted } from '../../../shared/abort'
-import { readInput } from '../../../shared/data/arguments'
+import { readInput, readMcpCall } from '../../../shared/data/arguments'
 import { asTable } from '../../../shared/data/datasets'
 import { QUERY_LIMIT_DEFAULT, QUERY_LIMIT_MAX } from '../../../shared/data/store'
-import { sourceParameters } from '../../../shared/data/tool-parameters'
+import { findConnectionTool, resolveConnectionSource, sourceParameters } from '../../../shared/data/tool-parameters'
 import { MCP_SOURCE } from '../../../shared/plugins/apps'
 import { appOf, showApp } from '../../plugins/apps'
-import { allSources, type RegisteredSource } from '../../plugins/registry'
+import { allSources, getSource, type RegisteredSource } from '../../plugins/registry'
 import { runSource } from '../../data/sources'
 import { getState } from '../../state'
 import { query } from '../../data/store'
@@ -53,14 +53,26 @@ export function storeTools(): Tool[] {
  * runs a source it is still writing, and there a missing key is an answer it reports.
  */
 export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
-  const state = getState()
-  const named = (): string[] =>
-    Object.values(state.sources)
-      .filter((one) => !one.internal)
-      .map((one) => one.id)
+  const named = (): string[] => {
+    const state = getState()
+    const sources = allSources()
+    const ids = new Set(
+      Object.values(state.sources)
+        .filter((one) => !one.internal)
+        .map((one) => one.id),
+    )
+    for (const conn of Object.values(state.connections)) {
+      if (conn.status !== 'ready') continue
+      for (const tool of conn.tools) {
+        const ref = `${conn.id}/${tool.name}`
+        if (resolveConnectionSource(ref, sources, state.connections)) ids.add(ref)
+      }
+    }
+    return [...ids]
+  }
   const find = (id: string): RegisteredSource => {
-    const source = allSources().find((one) => one.id === id && !one.def.internal)
-    if (!source) {
+    const source = getSource(id)
+    if (!source || source.def.internal) {
       const known = named()
       throw new Error(
         `No source called "${id}". The sources block of your instructions lists every one; the closest are ${nearest(id, known).join(', ') || 'none'}.`,
@@ -92,17 +104,29 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
       },
       async run(input, { workspaceId, signal, unread, loop }) {
         const id = asPathString(input.source).trim()
-        const { plugin, connection } = find(id)
-        const args = readInput(input.input, id)
+        const source = find(id)
+        const { plugin, connection } = source
+        const state = getState()
+        const { source: _source, input: rawInput, ...topLevel } = input
+        const parsedInput =
+          rawInput !== undefined
+            ? readInput(rawInput, source.id, state.connections)
+            : Object.keys(topLevel).length > 0
+              ? readInput(topLevel, source.id, state.connections)
+              : {}
+        const args =
+          rawInput !== undefined && Object.keys(topLevel).length > 0
+            ? readInput({ ...topLevel, ...parsedInput }, source.id, state.connections)
+            : parsedInput
         // A plugin's own code fails without a key it declares, where a connection's call asks for its
         // own. The wait ends with the run: no source is run for a run stopped while it was asking.
         if (ask && plugin !== null && connection === null) await untilAborted(ask(plugin), signal)
         // A connection's tool whose server has a page for it, called by a loop's agent: the call is
         // made fresh, so there is a result of its own to show, and the page is put in the work's tiles
         // with it. The orchestrator's call, and a task's own, answer in text and show nothing.
-        const page = id === MCP_SOURCE && loop !== undefined ? appOf(args) : null
+        const page = source.id === MCP_SOURCE && loop !== undefined ? appOf(args) : null
         let answer: unknown
-        const result = await runSource(id, args, {
+        const result = await runSource(source.id, args, {
           workspaceId,
           signal,
           ...(page ? { fresh: true, raw: (raw: unknown) => (answer = raw) } : {}),
@@ -135,7 +159,23 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
       },
       async run(input) {
         const id = asPathString(input.source).trim()
+        const state = getState()
         const { def, connection } = find(id)
+        if (id === MCP_SOURCE) {
+          const { source: _source, input: rawInput, ...topLevel } = input
+          const mcpCall = readMcpCall(rawInput ?? topLevel, state.connections)
+          if (mcpCall.tool) {
+            const target = mcpCall.connection ? `${mcpCall.connection}/${mcpCall.tool}` : mcpCall.tool
+            const found = findConnectionTool(target, state.connections, allSources())
+            if (found) {
+              return JSON.stringify({
+                source: `${found.connection}/${found.tool.name}`,
+                description: found.tool.description,
+                parameters: found.tool.inputSchema,
+              })
+            }
+          }
+        }
         const tool =
           connection && 'mcp' in def
             ? state.connections[connection]?.tools.find((one) => one.name === def.tool)

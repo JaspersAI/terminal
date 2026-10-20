@@ -2,11 +2,14 @@ import { extractRows, mapToolResult, type Dataset, type RunResult } from '../../
 import { stableStringify } from '../../shared/data/hash'
 import type { RunRecord } from '../../shared/data/store'
 import { isMcpSource, type BackendContext, type FunctionSourceSpec } from '@jaspers-ai/sdk/define'
-import { parseArguments } from '../../shared/data/arguments'
+import { parseArguments, prepareMcpArguments } from '../../shared/data/arguments'
+import { withParameters } from '../../shared/data/tool-parameters'
 import { guardedFetch } from '../../shared/plugins/guarded-fetch'
+import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { call } from '../plugins/mcp'
 import { runInHost } from '../plugins/plugin-host'
 import { getSource, type RegisteredSource } from '../plugins/registry'
+import { getState } from '../state'
 import { keepCitations } from './citations'
 import { record } from './store'
 
@@ -51,8 +54,18 @@ export async function runSource(
   if (!source) throw new Error(`Unknown source ${id}.`)
   const def = source.def
   const workspaceId = options.workspaceId ?? null
+  const declared =
+    source.connection && isMcpSource(def)
+      ? currentConnections()[source.connection]?.tools.find((one) => one.name === def.tool)
+      : undefined
+  const mcpArgs = isMcpSource(def)
+    ? declared
+      ? prepareMcpArguments(declared.inputSchema, asArgs(args))
+      : asArgs(args)
+    : null
+  const preparedArgs: unknown = mcpArgs ?? args
   // A server answers the same whoever asks; a plugin's code may answer each workspace its own way.
-  const key = stableStringify(isMcpSource(def) ? [id, args] : [id, args, workspaceId])
+  const key = stableStringify(isMcpSource(def) ? [source.id, mcpArgs] : [source.id, preparedArgs, workspaceId])
   const cached = options.fresh ? null : stillGood(key)
   if (cached) {
     // A server's answer is shared between workspaces, and its citations sit in what was around the rows.
@@ -70,17 +83,19 @@ export async function runSource(
   let text: string
   try {
     ;({ value, text } = isMcpSource(def)
-      ? mapped(await call(source.connection!, def.tool, asArgs(args), { signal: options.signal }), options.raw)
-      : await runFunction(source, args, workspaceId, options.raw))
+      ? mapped(await call(source.connection!, def.tool, mcpArgs!, { signal: options.signal }), options.raw, declared)
+      : await runFunction(source, preparedArgs, workspaceId, options.raw))
   } catch (error) {
+    const rawMessage = error instanceof Error ? error.message : String(error)
+    const message = isMcpSource(def) ? withParameters(rawMessage, declared) : rawMessage
     // A run that failed is worth keeping: what a source stopped answering is half of what changed.
-    file(id, args, key, workspaceId, {
+    file(source.id, preparedArgs, key, workspaceId, {
       rows: null,
       meta: null,
       text: null,
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
     })
-    throw error
+    throw message === rawMessage ? error : new Error(message, { cause: error })
   }
 
   keepCitations(workspaceId, value)
@@ -91,16 +106,24 @@ export async function runSource(
     const resultId = `r${++seq}`
     texts.set(resultId, text)
     expires.set(resultId, now + KEEP_MS)
-    file(id, args, key, workspaceId, { rows: null, meta: null, text, error: null })
+    file(source.id, preparedArgs, key, workspaceId, { rows: null, meta: null, text, error: null })
     return { kind: 'text', resultId, text }
   }
   const datasetId = `d${++seq}`
   const ttlMs = def.ttlMs ?? DEFAULT_TTL_MS
-  datasets.set(datasetId, { id: datasetId, source: id, args, rows: found.rows, meta: found.meta, at: now, ttlMs })
+  datasets.set(datasetId, {
+    id: datasetId,
+    source: source.id,
+    args: preparedArgs,
+    rows: found.rows,
+    meta: found.meta,
+    at: now,
+    ttlMs,
+  })
   texts.set(datasetId, text)
   expires.set(datasetId, now + Math.max(0, ttlMs) + KEEP_MS)
   cache.set(key, datasetId)
-  file(id, args, key, workspaceId, { rows: found.rows, meta: found.meta, text, error: null })
+  file(source.id, preparedArgs, key, workspaceId, { rows: found.rows, meta: found.meta, text, error: null })
   return { kind: 'dataset', datasetId, rowCount: found.rows.length, meta: found.meta, text }
 }
 
@@ -132,11 +155,15 @@ export function resultText(resultId: string): string {
 }
 
 /** An MCP result: what came back, and whether the server was answering or complaining. `raw` sees it first, a complaint included. */
-function mapped(result: unknown, raw?: (result: unknown) => void): { value: unknown; text: string } {
+function mapped(
+  result: unknown,
+  raw?: (result: unknown) => void,
+  tool?: ConnectionTool,
+): { value: unknown; text: string } {
   raw?.(result)
   const answer = result as { content?: unknown[]; structuredContent?: unknown; isError?: boolean }
   const { value, text } = mapToolResult(answer)
-  if (answer.isError) throw new Error(text || 'The server refused the call.')
+  if (answer.isError) throw new Error(withParameters(text || 'The server refused the call.', tool))
   return { value, text }
 }
 
@@ -214,4 +241,12 @@ function asArgs(args: unknown): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function currentConnections(): Record<string, ConnectionInfo> {
+  try {
+    return getState().connections
+  } catch {
+    return {}
+  }
 }

@@ -2,7 +2,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import path from 'node:path'
 import { untilAborted } from '../../shared/abort'
 import { accountBacked } from '../../shared/app/jaspers'
-import { dropEmptyOptionals } from '../../shared/data/arguments'
+import { prepareMcpArguments } from '../../shared/data/arguments'
+import { mapToolResult } from '../../shared/data/datasets'
+import { withParameters } from '../../shared/data/tool-parameters'
 import { discoverOAuthProtectedResourceMetadata, UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -317,9 +319,10 @@ export async function call(
         : `tool_unavailable: ${tool} on ${id} is for its server's own view.`,
     )
   }
-  // A model's empty value for an optional field means leave it out; the server would refuse it instead.
+  // A model's empty value for an optional field means leave it out, and spelling mismatches are
+  // repaired against the tool's schema before the server sees them.
   const declared = getState().connections[id]?.tools.find((t) => t.name === tool)
-  const sent = declared ? dropEmptyOptionals(declared.inputSchema, args) : args
+  const sent = declared ? prepareMcpArguments(declared.inputSchema, args) : args
   // A server that reports progress is working: each report starts the wait over, so a long call is
   // held to its silences rather than to its whole length, the way a streamed reply is.
   const send = (): Promise<unknown> =>
@@ -329,7 +332,26 @@ export async function call(
       resetTimeoutOnProgress: true,
       onprogress: () => {},
     })
-  return asked(id, live, entry.spec, send)
+  let result: unknown
+  try {
+    result = await asked(id, live, entry.spec, send)
+  } catch (error) {
+    if (from === 'model') {
+      const message = error instanceof Error ? error.message : String(error)
+      const told = withParameters(message, declared)
+      if (told !== message) throw new Error(told, { cause: error })
+    }
+    throw error
+  }
+  if (from === 'model') {
+    const answer = result as { content?: unknown[]; isError?: boolean } | null
+    if (answer && typeof answer === 'object' && answer.isError === true) {
+      const { text } = mapToolResult(answer)
+      const told = withParameters(text, declared)
+      if (told !== text) return { ...answer, content: [{ type: 'text', text: told }] }
+    }
+  }
+  return result
 }
 
 /**
