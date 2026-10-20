@@ -331,18 +331,32 @@ export function isWatch(task: Pick<Task, 'speak' | 'call'>): boolean {
 }
 
 /**
+ * A task that runs at least this often has its next run soon enough to wait for: its first failure
+ * is often the network a moment after the computer wakes, and the next run, which works, says that.
+ */
+export const FAILURE_WAIT_MAX_MS = 15 * 60_000
+
+/**
  * What a finished run tells the user, or null for nothing. A model's answer is told, and an empty one
  * is the model having nothing to tell, which is how a run with no outcome answers: nobody needs to
  * hear that a job ran. A call that went well is quiet, except a watch's that found a change, since
- * that is what a watch is for. A failure is told once, the first of a streak, so a task failing every
- * few seconds says so once.
+ * that is what a watch is for. A failure is told once a streak, so a task failing every few seconds
+ * says so once: at its first failure, or, for a task that runs every few minutes, at its second, so a
+ * single failure the next run recovers from (every refresh as the computer wakes, before the network
+ * is back) says nothing.
  */
 export function runNotice(
   label: string,
-  task: Pick<Task, 'call' | 'lastRun'>,
+  task: Pick<Task, 'call' | 'lastRun' | 'history' | 'every'>,
   run: Pick<TaskRun, 'ok' | 'result'> & { changed: boolean },
 ): string | null {
-  if (!run.ok) return task.lastRun === null || task.lastRun.ok ? `${label} failed: ${run.result}` : null
+  if (!run.ok) {
+    const before = [task.lastRun, ...task.history]
+    const failedBefore = before.findIndex((one) => one === null || one.ok)
+    const streak = failedBefore === -1 ? before.length : failedBefore
+    const waits = task.every !== null && task.every <= FAILURE_WAIT_MAX_MS
+    return streak === (waits ? 1 : 0) ? `${label} failed: ${run.result}` : null
+  }
   const said = run.result.trim()
   return said && (!task.call || run.changed) ? `${label}: ${said}` : null
 }
