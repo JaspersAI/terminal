@@ -114,7 +114,21 @@ function failed(why: { status: number } | { message: string }): void {
 }
 
 /**
- * One batch, or the next part of one: its frames and its runs, and the telemetry lines not yet sent.
+ * One batch, or the next part of one: its frames and its runs, and the telemetry lines not yet sent,
+ * posted to `EYE_ENDPOINT` as `multipart/form-data` (see the `POST /batches` section of the
+ * `JaspersAI/jaspers-eye` README at https://github.com/JaspersAI/jaspers-eye#post-batches):
+ *
+ * - `session`: the session folder's stamp.
+ * - `install`: this install's UUID (`state.eye.install`).
+ * - `app`: the app version (`app.getVersion()`).
+ * - `platform`: `process.platform`.
+ * - `closed`: `'true'` when the session is over and no unsent telemetry lines remain, else `'false'`.
+ * - `frames`: up to `FRAMES_PER_REQUEST` `.jpg` window captures.
+ * - `runs`: up to `RUNS_PER_REQUEST` `.run.json` records from earlier builds.
+ * - `feedback`: up to `RUNS_PER_REQUEST` `.feedback.json` notes sent from the eye popover.
+ * - `events` and `from` (when telemetry lines are present): the next slice of `events.jsonl` as
+ *   `${session}.jsonl` and the 0-based line offset it starts at.
+ *
  * The files that went are deleted when the endpoint has them, all but this run's telemetry file,
  * which only grows; an earlier run's folder goes once nothing is left in it.
  */
