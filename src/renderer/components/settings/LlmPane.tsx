@@ -4,7 +4,7 @@ import type { ProviderKind } from '../../../shared/state'
 import { errorMessage } from '../../lib/errors'
 import { useProviderForm } from '../../lib/provider-form'
 import { dispatch, useAppState } from '../../lib/state'
-import { FIELD, Row } from './Row'
+import { BUTTON, FIELD, Row } from './Row'
 
 /** The models the app runs on: the language model, then voice. Each section saves on its own. */
 export function LlmPane(): ReactElement {
@@ -219,9 +219,16 @@ function ProviderSection({ kind, title, blurb, onSaved }: SectionProps): ReactEl
               </Row>
             )}
             <Row label="Account" hint={jaspers.reason ?? 'The sign-in is the credential: nothing to paste.'}>
-              <span className="text-right text-sm">
-                {jaspers.signedIn ? `Signed in as ${jaspers.email ?? 'a Jaspers account'}` : 'Not signed in'}
-              </span>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <span className="text-right text-sm">
+                  {jaspers.signedIn ? `Signed in as ${jaspers.email ?? 'a Jaspers account'}` : 'Not signed in'}
+                </span>
+                {jaspers.signedIn && (
+                  <button type="button" onClick={() => void dispatch({ type: 'jaspers.signOut' })} className={BUTTON}>
+                    Sign out
+                  </button>
+                )}
+              </div>
             </Row>
           </>
         )}
@@ -231,7 +238,7 @@ function ProviderSection({ kind, title, blurb, onSaved }: SectionProps): ReactEl
         <div className="mt-3 flex items-center gap-4">
           {error && <p className="min-w-0 text-sm text-destructive">{error}</p>}
           <div className="ml-auto flex items-center gap-3">
-            {saved && !form.changed && <span className="text-sm text-muted-foreground">Saved</span>}
+            {saved && !form.changed && !needsSignIn && <span className="text-sm text-muted-foreground">Saved</span>}
             {needsSignIn ? (
               <button
                 type="button"
