@@ -1,7 +1,13 @@
 import { z, type ZodType } from 'zod'
 import { CHAT_VIEW } from '../../shared/grid/grid'
-import type { SourceInfo, ViewInfo } from '../../shared/state'
-import { parameterNames, sourceParameters, withParameters } from '../../shared/data/tool-parameters'
+import type { ConnectionInfo, SourceInfo, ViewInfo } from '../../shared/state'
+import { prepareMcpArguments, readMcpCall } from '../../shared/data/arguments'
+import {
+  parameterNames,
+  resolveConnectionSource,
+  sourceParameters,
+  withParameters,
+} from '../../shared/data/tool-parameters'
 import { mapToolResult } from '../../shared/data/datasets'
 import { APP_VIEW, appSummary } from '../../shared/plugins/apps'
 import { qualifyConnection } from '../../shared/plugins/plugins'
@@ -88,7 +94,7 @@ export function getView(id: string): ViewDef | undefined {
 }
 
 export function getSource(id: string): RegisteredSource | undefined {
-  return sources.get(id)
+  return sources.get(id) ?? resolveConnectionSource(id, sources.values(), currentConnections())
 }
 
 export function allSources(): RegisteredSource[] {
@@ -113,12 +119,13 @@ export function viewInfos(): Record<string, ViewInfo> {
 /** The same for sources: what they are called, what they do, and where they run. */
 export function sourceInfos(): Record<string, SourceInfo> {
   const infos: Record<string, SourceInfo> = {}
+  const connections = currentConnections()
   for (const { id, plugin, def, connection } of sources.values()) {
     // An MCP source's parameters are its server's, which it only has once connected; a function
     // source's are its own schema and are known as soon as it is registered.
     const tool =
       connection && isMcpSource(def)
-        ? getState().connections[connection]?.tools.find((one: { name: string }) => one.name === def.tool)
+        ? connections[connection]?.tools.find((one: { name: string }) => one.name === def.tool)
         : undefined
     infos[id] = {
       id,
@@ -151,23 +158,23 @@ const MCP_SOURCE: SourceDef = {
   kind: 'source',
   description:
     'Call one tool on one connection, for what no plugin does. connection is <plugin>/<name>, as listed under Connections with what each tool takes; get connections shows the tools and their schemas.',
-  input: z.object({
-    connection: z.string(),
-    tool: z.string(),
-    args: z.record(z.string(), z.unknown()).default({}),
-  }),
+  input: z
+    .object({
+      connection: z.string(),
+      tool: z.string(),
+      args: z.record(z.string(), z.unknown()).default({}),
+    })
+    .passthrough(),
   run: async (args) => {
-    const {
-      connection,
-      tool,
-      args: toolArgs,
-    } = args as { connection: string; tool: string; args: Record<string, unknown> }
+    const connections = currentConnections()
+    const { connection, tool, args: toolArgs } = readMcpCall(args, connections)
     // A refusal of the arguments comes back with what the tool takes, from a thrown protocol error
     // or from a result the server marked as an error, so the model's next call is not a guess.
-    const declared = getState().connections[connection]?.tools.find((t) => t.name === tool)
+    const declared = connections[connection]?.tools.find((t) => t.name === tool)
+    const prepared = declared ? prepareMcpArguments(declared.inputSchema, toolArgs) : toolArgs
     let result: unknown
     try {
-      result = await call(connection, tool, toolArgs)
+      result = await call(connection, tool, prepared)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const told = withParameters(message, declared)
@@ -417,4 +424,12 @@ function dropSources(plugin: string | null): void {
 
 function project(): void {
   update((state) => ({ ...state, views: viewInfos(), sources: sourceInfos() }))
+}
+
+function currentConnections(): Record<string, ConnectionInfo> {
+  try {
+    return getState().connections
+  } catch {
+    return {}
+  }
 }
