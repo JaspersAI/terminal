@@ -14,6 +14,7 @@ import {
   SIGNED_OUT,
   emailOf,
   nearExpiry,
+  needsSubscription,
   readTokens,
   refusalMessage,
   tokensOf,
@@ -51,8 +52,10 @@ export interface Session {
   signedIn(): boolean
   /** The access token for a request made now, renewed first when it is about to run out. Rejects with `SignedOutError` when there is no sign-in. */
   token(): Promise<string>
-  /** A fetch that goes out as the account: the bearer added, a 401 renewed once and sent again, a refusal thrown in the service's own words. */
+  /** A fetch that goes out as the account: the bearer added, a 401, 402, or 403 renewed once and sent again, a refusal thrown in the service's own words. */
   fetch: FetchLike
+  /** Runs a call made as the account, renewing the sign-in once and trying again when the result says a subscription is needed. */
+  call<T>(send: () => Promise<T>): Promise<T>
 }
 
 /** A request that needed the sign-in when there was none: never signed in, signed out, or signed out by Account, which the message says. */
@@ -226,9 +229,14 @@ export function createSession(deps: SessionDeps): Session {
         refreshToken: held.refresh,
         fetchFn: deps.fetch,
       })
+      const after = current()
+      if (!after) return null
+      if (after.refresh !== held.refresh) return after
       return keep(client, answer)
     } catch (err) {
       if (!(err instanceof OAuthError && GRANT_OVER.has(err.errorCode))) throw err
+      const after = current()
+      if (!after || after.refresh !== held.refresh) return after
       end(`Jaspers signed you out: ${sentence(err.message || err.errorCode)} Sign in again.`)
       return null
     }
@@ -258,7 +266,7 @@ export function createSession(deps: SessionDeps): Session {
   const asAccount: FetchLike = async (url, init) => {
     const first = await token()
     const response = await deps.fetch(url, withBearer(init, first))
-    if (response.status !== 401) return refusedOr(response)
+    if (response.status !== 401 && response.status !== 402 && response.status !== 403) return response
     await response.body?.cancel()
     const again = await renewed(first)
     if (again === null) throw signedOut()
@@ -270,6 +278,21 @@ export function createSession(deps: SessionDeps): Session {
       throw new RefusedError(401, `${new URL(String(url)).host} refused the Jaspers sign-in: ${words}`)
     }
     return refusedOr(retried)
+  }
+
+  async function call<T>(send: () => Promise<T>): Promise<T> {
+    const held = current()
+    const before = held && !nearExpiry(held, deps.now()) ? held.access : await token().catch(() => null)
+    const result = await send()
+    if (!before || !needsSubscription(result)) return result
+    let again: string | null
+    try {
+      again = await renewed(before)
+    } catch {
+      return result
+    }
+    if (again === null) throw signedOut()
+    return send()
   }
 
   async function signOut(): Promise<void> {
@@ -305,6 +328,7 @@ export function createSession(deps: SessionDeps): Session {
     signedIn: () => deps.read().tokens !== null,
     token,
     fetch: asAccount,
+    call,
   }
 }
 

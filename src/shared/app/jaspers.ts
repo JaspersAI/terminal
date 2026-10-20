@@ -181,3 +181,68 @@ export function refusalMessage(status: number, body: string): string {
   const text = body.trim().slice(0, 200)
   return text || `HTTP ${status}`
 }
+
+const SUBSCRIPTION_SIGNAL =
+  /\b(?:NEEDS_SUBSCRIPTION|SUBSCRIPTION_REQUIRED|ENTITLEMENT_REQUIRED|insufficient_scope)\b|\/auth\/account\b/i
+
+const SUBSCRIPTION_REFUSAL =
+  /\b(?:(?:needs?|requires?|missing|no|without|upgrade)\s+(?:a\s+|an\s+|your\s+|active\s+)?(?:jaspers\s+)?(?:subscription|entitlement|account\s+access)|(?:subscription|entitlement|account\s+access)\s+(?:is\s+)?(?:required|needed|missing|inactive)|(?:this|your)\s+account\s+does\s+not\s+(?:include|have)|not\s+entitled\b|allowance\s+is\s+used\s+up)/i
+
+/**
+ * Whether a tool result or error payload says the account needs a subscription, entitlement, or
+ * account access: a code or link only a Jaspers refusal carries (`NEEDS_SUBSCRIPTION`,
+ * `/auth/account`), or an error stating the account does not include or needs a subscription.
+ * Normal dataset rows and filing prose mentioning subscriptions are ignored.
+ */
+export function needsSubscription(result: unknown): boolean {
+  if (typeof result === 'string') return subscriptionInString(result, true)
+  if (result instanceof Error) return subscriptionInString(result.message, true)
+  if (!isRecord(result)) return false
+  if (Array.isArray(result['content']) || 'structuredContent' in result || 'isError' in result) {
+    const failed = result['isError'] === true
+    if (subscriptionInPayload(result['structuredContent'], failed)) return true
+    const content = Array.isArray(result['content']) ? result['content'] : []
+    return content.some(
+      (block) => isRecord(block) && typeof block['text'] === 'string' && subscriptionInString(block['text'], failed),
+    )
+  }
+  return subscriptionInPayload(result, false)
+}
+
+function subscriptionInString(text: string, asError: boolean): boolean {
+  const trimmed = text.trim()
+  if (!trimmed) return false
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      return subscriptionInPayload(JSON.parse(trimmed), asError)
+    } catch {
+      // Plain text that only began with a brace.
+    }
+  }
+  return SUBSCRIPTION_SIGNAL.test(trimmed) || (asError && SUBSCRIPTION_REFUSAL.test(trimmed))
+}
+
+function subscriptionInPayload(value: unknown, asError: boolean): boolean {
+  if (typeof value === 'string') return subscriptionInString(value, asError)
+  if (!isRecord(value)) return false
+  for (const key of ['code', 'status'] as const) {
+    if (typeof value[key] === 'string' && SUBSCRIPTION_SIGNAL.test(value[key])) return true
+  }
+  const errorPayload =
+    asError ||
+    'error' in value ||
+    'error_description' in value ||
+    value['isError'] === true ||
+    value['status'] === 'error'
+  if (errorPayload) {
+    if (subscriptionInPayload(value['error'], true)) return true
+    for (const key of ['error_description', 'message'] as const) {
+      if (typeof value[key] === 'string' && subscriptionInString(value[key], true)) return true
+    }
+  }
+  return false
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
