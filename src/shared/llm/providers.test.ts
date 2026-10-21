@@ -68,7 +68,7 @@ test('Amazon Bedrock is the Messages endpoint, with the region in its base URL',
 const JASPERS_LLM = {
   providerId: 'jaspers',
   baseUrl: 'https://account.jsprai.com/v1',
-  model: 'anthropic/claude-opus-5.5',
+  model: 'gemini-3.8-flash',
   token: 'sealed-key',
 }
 
@@ -99,6 +99,7 @@ test('voice on another provider stays, and any other language model leaves voice
 })
 
 test('Jaspers is one address for both kinds, takes no key, and needs the sign-in', () => {
+  assert.equal(findProvider('llm', 'jaspers')!.model, 'gemini-3.8-flash')
   assert.equal(findProvider('llm', 'jaspers')!.baseUrl, findProvider('voice', 'jaspers')!.baseUrl)
   assert.equal(signsIn(findProvider('llm', 'jaspers')!), true)
   assert.equal(signsIn(ANTHROPIC), false)
@@ -120,7 +121,7 @@ test('signing in sets Jaspers up wherever the user has no provider, and leaves e
     llm: {
       providerId: 'jaspers',
       baseUrl: 'https://account.jsprai.com/v1',
-      model: 'anthropic/claude-opus-5.5',
+      model: 'gemini-3.8-flash',
       token: null,
     },
     voice: {
@@ -145,8 +146,8 @@ test('signing in sets Jaspers up wherever the user has no provider, and leaves e
 })
 
 test('a request through OpenRouter marks its prompt for caching; the other providers cache on their own or not at all', () => {
-  assert.equal(marksCache(findProvider('llm', 'jaspers')!), true)
   assert.equal(marksCache(findProvider('llm', 'openrouter')!), true)
+  assert.equal(marksCache(findProvider('llm', 'jaspers')!), false)
   assert.equal(marksCache(OLLAMA), false)
   assert.equal(marksCache(findProvider('llm', 'google')!), false)
   assert.equal(marksCache(ANTHROPIC), false)
