@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { batchAccepted, EYE_ENDPOINT, EYE_TOKEN, eventsPart, retryDelay } from '../../shared/app/eye'
+import { batchAccepted, EYE_TOKEN, eventsPart, eyeEndpoint, retryDelay } from '../../shared/app/eye'
 import { eyeRoot } from '../home'
 import { getState, subscribe } from '../state'
 import { liveSession, onRecorded, ownSession, queuedBatches, record } from './eye'
@@ -26,6 +26,12 @@ import { EVENTS_FILE } from './events'
 // A server that asks for later is left alone until the wait is over: what is written meanwhile waits
 // with it, rather than every new line asking again.
 
+/**
+ * Where batches go: the environment's, for development against a local run, null when turned off,
+ * else the public one. Read once, as main loads: a wrong value stops the app here rather than
+ * sending somewhere else.
+ */
+const ENDPOINT = eyeEndpoint(process.env['JASPERS_EYE_URL'])
 /** How many frames go in one request, so a long session is sent in parts rather than one huge body. */
 const FRAMES_PER_REQUEST = 40
 /** How many runs, the same way. */
@@ -49,6 +55,10 @@ const sentOf = new Map<string, number>()
 
 /** Starts the uploader: a pass soon after launch, one whenever something new is written, and one every few minutes regardless. */
 export function startUploads(): void {
+  if (ENDPOINT === null) {
+    console.log('[eye] uploads off (JASPERS_EYE_URL=off)')
+    return
+  }
   schedule(NEXT_MS)
   subscribe((next, prev) => {
     if (next.eye.frames !== prev.eye.frames || next.eye.runs !== prev.eye.runs) wake()
@@ -137,6 +147,7 @@ function failed(why: { status: number } | { message: string }): void {
  * which only grows; an earlier run's folder goes once nothing is left in it.
  */
 async function send(session: string): Promise<'accepted' | { status: number } | 'empty'> {
+  if (!ENDPOINT) return 'empty'
   const folder = path.join(eyeRoot(), session)
   const closed = liveSession() !== session
   const own = ownSession() === session
@@ -180,7 +191,7 @@ async function send(session: string): Promise<'accepted' | { status: number } | 
     form.append('events', new Blob([events.body], { type: 'application/x-ndjson' }), `${session}.jsonl`)
     form.append('from', String(from))
   }
-  const response = await fetch(EYE_ENDPOINT, {
+  const response = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { authorization: `Bearer ${EYE_TOKEN}` },
     body: form,
