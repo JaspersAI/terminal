@@ -1,5 +1,30 @@
 import { z, type ZodType } from 'zod'
 import { coerceViewState } from '../agent/view-state.ts'
+import { MCP_SOURCE } from '../plugins/apps.ts'
+
+export interface ConnectionEntry {
+  id?: string
+  plugin?: string
+  status?: string
+  tools?: readonly (string | { name: string })[] | null
+}
+
+export type ConnectionLookup =
+  Record<string, ConnectionEntry | undefined> | Iterable<ConnectionEntry | null | undefined>
+
+interface NormalizedConnection {
+  id: string
+  plugin: string
+  status?: string
+  tools: string[]
+}
+
+const DEFAULT_CONNECTIONS: Record<string, string> = {
+  'jaspers-screener': 'jaspers-screener/server',
+  'jaspers-research': 'jaspers-research/server',
+  'screener-mcp': 'screener-mcp/server',
+  research: 'research/server',
+}
 
 // A source's arguments as a model sent them, read against the source's zod input. Small models send
 // a list or an object as a JSON string, and one value where a list of them belongs (`to: "risk"` for
@@ -20,11 +45,86 @@ export function parseArguments(schema: ZodType, args: unknown, sourceId: string)
 }
 
 /**
+ * Resolves a plugin or short connection name against the known connections, preferring a ready
+ * connection whose tool list includes `tool`, then the first ready connection, then the first
+ * declared connection. A full `<plugin>/<name>` path is returned as written.
+ */
+export function qualifyMcpConnection(connection: string, connections?: ConnectionLookup, tool = ''): string {
+  const clean = connection.trim()
+  if (!clean || clean.includes('/')) return clean
+  const wantedTool = tool.trim()
+  const list = connectionList(connections)
+  const byPlugin = list.filter((one) => one.plugin === clean || one.id.startsWith(`${clean}/`))
+  const found = byPlugin.length > 0 ? byPlugin : list.filter((one) => one.id.endsWith(`/${clean}`))
+  if (wantedTool) {
+    const withTool = found.find((one) => one.status === 'ready' && one.tools.includes(wantedTool))
+    if (withTool) return withTool.id
+  }
+  const ready = found.find((one) => one.status === 'ready')
+  if (ready) return ready.id
+  return found[0]?.id ?? DEFAULT_CONNECTIONS[clean] ?? clean
+}
+
+/**
+ * Normalizes a `core/mcp` input into `{ connection, tool, args }`: unwraps JSON-stringified payloads,
+ * folds top-level parameters into `args`, strips any `<plugin>/<connection>/` or `<plugin>/` prefix
+ * from `tool`, and qualifies `connection` with the bare tool name.
+ */
+export function readMcpCall(
+  value: unknown,
+  connections?: ConnectionLookup,
+): { connection: string; tool: string; args: Record<string, unknown> } {
+  let current = value
+  for (let depth = 0; depth < 2 && typeof current === 'string'; depth++) {
+    try {
+      current = JSON.parse(current)
+    } catch {
+      break
+    }
+  }
+  const raw = isRecord(current) ? current : {}
+  let connection = typeof raw['connection'] === 'string' ? raw['connection'].trim() : ''
+  let tool = typeof raw['tool'] === 'string' ? raw['tool'].trim() : ''
+  let rawArgs: unknown = raw['args']
+  for (let depth = 0; depth < 2 && typeof rawArgs === 'string'; depth++) {
+    try {
+      rawArgs = JSON.parse(rawArgs)
+    } catch {
+      break
+    }
+  }
+  const topLevel: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(raw)) {
+    if (key === 'connection' || key === 'tool' || key === 'args' || entry === undefined) continue
+    topLevel[key] = entry
+  }
+  const args: Record<string, unknown> = isRecord(rawArgs) ? { ...topLevel, ...rawArgs } : topLevel
+  if (tool.includes('/')) {
+    const parts = tool
+      .split('/')
+      .map((part) => part.trim())
+      .filter(Boolean)
+    if (parts.length >= 3) {
+      if (!connection.includes('/')) connection = `${parts[0]}/${parts[1]}`
+      tool = parts.slice(2).join('/')
+    } else if (parts.length === 2) {
+      if (!connection.includes('/')) connection = connection || parts[0]!
+      tool = parts[1]!
+    }
+  }
+  return {
+    connection: qualifyMcpConnection(connection, connections, tool),
+    tool,
+    args,
+  }
+}
+
+/**
  * A tool's `input` as the model sent it: an object, or the same object written as a JSON string, once
  * or twice over. A string that does not read as an object is refused with what was wrong with it, where
  * reading it as no arguments at all sent the source on and had it complain of fields the model did set.
  */
-export function readInput(value: unknown, sourceId: string): Record<string, unknown> {
+export function readInput(value: unknown, sourceId: string, connections?: ConnectionLookup): Record<string, unknown> {
   if (value === undefined || value === null || value === '') return {}
   let read = value
   for (let depth = 0; depth < 2 && typeof read === 'string'; depth++) {
@@ -37,10 +137,46 @@ export function readInput(value: unknown, sourceId: string): Record<string, unkn
       )
     }
   }
-  if (isRecord(read)) return read
+  if (isRecord(read)) {
+    if (sourceId === MCP_SOURCE && Object.keys(read).length > 0) return readMcpCall(read, connections)
+    return read
+  }
   throw new Error(
     `input for ${sourceId} must be an object of the source's arguments; it was ${Array.isArray(read) ? 'a list' : typeof read}.`,
   )
+}
+
+function connectionList(connections?: ConnectionLookup): NormalizedConnection[] {
+  if (!connections) return []
+  const entries: [string, unknown][] =
+    Symbol.iterator in Object(connections)
+      ? Array.from(connections as Iterable<unknown>, (item) =>
+          Array.isArray(item) && typeof item[0] === 'string' ? [item[0], item[1]] : ['', item],
+        )
+      : isRecord(connections)
+        ? Object.entries(connections)
+        : []
+  const list: NormalizedConnection[] = []
+  for (const [key, raw] of entries) {
+    if (!isRecord(raw)) continue
+    const id = typeof raw['id'] === 'string' && raw['id'].trim() ? raw['id'].trim() : key.trim()
+    if (!id) continue
+    const plugin =
+      typeof raw['plugin'] === 'string' && raw['plugin'].trim() ? raw['plugin'].trim() : (id.split('/')[0] ?? '')
+    const status = typeof raw['status'] === 'string' ? raw['status'] : undefined
+    list.push({ id, plugin, status, tools: toolNames(raw['tools']) })
+  }
+  return list
+}
+
+function toolNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const names: string[] = []
+  for (const item of value) {
+    if (typeof item === 'string' && item.trim()) names.push(item.trim())
+    else if (isRecord(item) && typeof item['name'] === 'string' && item['name'].trim()) names.push(item['name'].trim())
+  }
+  return names
 }
 
 /** The arguments repaired against the input's JSON Schema; as they are when zod cannot write one. */

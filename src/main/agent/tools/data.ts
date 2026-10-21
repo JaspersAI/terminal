@@ -93,7 +93,7 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
       async run(input, { workspaceId, signal, unread, loop }) {
         const id = asPathString(input.source).trim()
         const { plugin, connection } = find(id)
-        const args = readInput(input.input, id)
+        const args = readInput(input.input, id, getState().connections)
         // A plugin's own code fails without a key it declares, where a connection's call asks for its
         // own. The wait ends with the run: no source is run for a run stopped while it was asking.
         if (ask && plugin !== null && connection === null) await untilAborted(ask(plugin), signal)
