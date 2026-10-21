@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_GRID, type Grid, type GridElement, type Panel, type PanelContent } from '../grid/grid.ts'
+import { SHELL_TOOL, TASK_EXCLUDED_TOOLS } from '../tasks/tasks.ts'
 import {
   addressed,
   adopt,
@@ -549,6 +550,13 @@ test('the orchestrator is offered nothing that drives a view, and a loop\u2019s 
   assert.equal(LOOP_EXCLUDED_TOOLS.includes('refresh_element'), false)
   assert.equal(ORCHESTRATOR_TOOLS.includes('run_shell'), true)
   assert.equal(LOOP_EXCLUDED_TOOLS.includes('run_shell'), false)
+})
+
+test('the orchestrator, a loop, and a scheduled task are all offered run_shell when Pro mode is on', () => {
+  assert.equal(SHELL_TOOL, 'run_shell')
+  assert.equal(ORCHESTRATOR_TOOLS.includes('run_shell'), true)
+  assert.equal(LOOP_EXCLUDED_TOOLS.includes('run_shell'), false)
+  assert.equal(TASK_EXCLUDED_TOOLS.includes('run_shell'), false)
 })
 
 test('a name a file saved from before loops were numbered is left behind: a loop is called by its number', () => {

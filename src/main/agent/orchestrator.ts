@@ -131,7 +131,9 @@ export function runTask(task: TaskRequest): Promise<string> {
           config,
           history,
           context,
-          prompt: orchestratorPrompt(task.workspaceId, [taskPreface(task.id, task.commands)]),
+          prompt: orchestratorPrompt(task.workspaceId, [
+            taskPreface(task.id, getState().proMode.enabled ? task.commands : undefined),
+          ]),
           tools: () => tools(context).filter((t) => !EXCLUDED.has(t.name)),
           quiet: false,
         }),
