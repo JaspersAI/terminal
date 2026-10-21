@@ -544,6 +544,8 @@ test('the orchestrator is offered nothing that drives a view, and a loop\u2019s 
     VIEW_TOOLS.filter((tool) => LOOP_EXCLUDED_TOOLS.includes(tool)),
     [],
   )
+  assert.equal(ORCHESTRATOR_TOOLS.includes('refresh_element'), true)
+  assert.equal(LOOP_EXCLUDED_TOOLS.includes('refresh_element'), false)
   assert.equal(ORCHESTRATOR_TOOLS.includes('run_shell'), true)
   assert.equal(LOOP_EXCLUDED_TOOLS.includes('run_shell'), false)
 })
