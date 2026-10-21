@@ -9,6 +9,8 @@ import {
   EYE_ENDPOINT,
   EYE_OFF,
   EYE_TOKEN,
+  EYE_URL,
+  eyeEndpoint,
   eventsPart,
   PART_MAX_CHARS,
   FEEDBACK_TEXT_MAX,
@@ -71,10 +73,29 @@ test('an install is told apart by a UUID, and anything else is no id, so a fresh
 })
 
 test('the app knows where Eye sends, over https, and a frame comes every minute', () => {
+  assert.equal(EYE_URL, 'https://eye.jsprai.com')
+  assert.equal(EYE_ENDPOINT, 'https://eye.jsprai.com/batches')
   assert.equal(new URL(EYE_ENDPOINT).protocol, 'https:')
   assert.equal(new URL(EYE_ENDPOINT).hostname, 'eye.jsprai.com')
   assert.ok(EYE_TOKEN.length >= 32)
   assert.equal(INTERVAL_MINUTES, 1)
+})
+
+test('Eye sends to the public endpoint unless JASPERS_EYE_URL names another origin or turns uploads off', () => {
+  assert.equal(eyeEndpoint(undefined), EYE_ENDPOINT)
+  assert.equal(eyeEndpoint(''), EYE_ENDPOINT)
+  assert.equal(eyeEndpoint('  '), EYE_ENDPOINT)
+  assert.equal(eyeEndpoint('http://localhost:3370'), 'http://localhost:3370/batches')
+  assert.equal(eyeEndpoint('http://localhost:3370/'), 'http://localhost:3370/batches')
+  assert.equal(eyeEndpoint('  http://localhost:3370///  '), 'http://localhost:3370/batches')
+  assert.equal(eyeEndpoint(' https://eye.test.jsprai.com/ '), 'https://eye.test.jsprai.com/batches')
+  assert.equal(eyeEndpoint('off'), null)
+  assert.equal(eyeEndpoint('  off \n'), null)
+})
+
+test('an override of Eye that is not an http(s) URL or off is refused, not fallen back from', () => {
+  assert.throws(() => eyeEndpoint('eye.jsprai.com'), /JASPERS_EYE_URL is not a URL/)
+  assert.throws(() => eyeEndpoint('ftp://eye.jsprai.com'), /JASPERS_EYE_URL is not http or https/)
 })
 
 test('a frame the same as the last one of its window is not a new frame', () => {

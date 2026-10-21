@@ -5,6 +5,7 @@
 // shows.
 //
 import { mask } from '../agent/transcript.ts'
+import { serviceUrl } from './jaspers.ts'
 
 // Off unless the user turns it on. The first-run modal is the only thing that turns it on without a
 // press on the dot, and it turns it on only when the user chooses to; "Not now" leaves it off and is
@@ -14,13 +15,20 @@ import { mask } from '../agent/transcript.ts'
 export const INTERVAL_MINUTES = 1
 
 /**
- * Where a batch goes, and the token every copy of the app sends with it. The token ships in the
- * app, so it is not a secret and cannot be one: it keeps strays and scanners out, nothing more. An
- * install is told apart by `install`, a random id made once and kept, which its sessions are filed
- * under: no name, email, or account goes with them.
+ * Where a batch goes, unless `JASPERS_EYE_URL` says otherwise, and the token every copy of the app
+ * sends with it. The token ships in the app, so it is not a secret and cannot be one: it keeps strays
+ * and scanners out, nothing more. An install is told apart by `install`, a random id made once and
+ * kept, which its sessions are filed under: no name, email, or account goes with them.
  */
-export const EYE_ENDPOINT = 'https://eye.jsprai.com/batches'
+export const EYE_URL = 'https://eye.jsprai.com'
+export const EYE_ENDPOINT = `${EYE_URL}/batches`
 export const EYE_TOKEN = '81b1bfc3a7f960a46c996773fad2e494b19f00bcc1d2035c'
+
+/** Where batches go: `<origin>/batches` for `JASPERS_EYE_URL` or the public Eye, or null when `JASPERS_EYE_URL=off` turns uploads off. */
+export function eyeEndpoint(env: string | undefined): string | null {
+  if (env?.trim() === 'off') return null
+  return `${serviceUrl('JASPERS_EYE_URL', env, EYE_URL)}/batches`
+}
 
 /** How wide a frame is written, in pixels. Enough to read a view's title, small enough to send. */
 export const FRAME_WIDTH = 1280
