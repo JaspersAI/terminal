@@ -7,7 +7,15 @@
 // step left: a drag is one reference being chosen, so each cell it reaches replaces the whole of what
 // the drag put in, and nothing typed before the press is ever read back as the drag's own.
 
-import { parseRange, rangeName, type GridSize, type Rect } from '../../../shared/grid/grid.ts'
+import {
+  cellName,
+  onGrid,
+  parseCellName,
+  parseRange,
+  rangeName,
+  type GridSize,
+  type Rect,
+} from '../../../shared/grid/grid.ts'
 import { insertReference } from '../../../shared/grid/reference.ts'
 
 /** A drag in flight: the draft and caret from before the press, where it started, and the cell it last reached. */
@@ -39,6 +47,53 @@ export function moveTo(pointing: Pointing, to: string, size: GridSize): Pointed 
   return pointTo({ ...pointing, end: to }, to, size)
 }
 
+/** The one-cell step an arrow key asks for, or null for any other key. */
+export function arrowStep(key: string): { dx: number; dy: number } | null {
+  switch (key) {
+    case 'ArrowUp':
+      return { dx: 0, dy: -1 }
+    case 'ArrowDown':
+      return { dx: 0, dy: 1 }
+    case 'ArrowLeft':
+      return { dx: -1, dy: 0 }
+    case 'ArrowRight':
+      return { dx: 1, dy: 0 }
+    default:
+      return null
+  }
+}
+
+/** The cell one step from `name`, or null at the grid's edge so stepping stops rather than wraps. */
+export function stepCell(name: string, dx: number, dy: number, size: GridSize): string | null {
+  const cell = parseCellName(name)
+  if (!cell) return null
+  const next = { x: cell.x + dx, y: cell.y + dy }
+  return onGrid(next, size) ? cellName(next.x, next.y) : null
+}
+
+/**
+ * One arrow-key step while pointing at cells for a formula. The first press steps from the range start
+ * before a typed colon (`=SUM(B2:`) when on the grid, or from the cell being edited, and anchors there;
+ * further presses step from `pointing.end`, moving the single cell or, with Shift held, growing and
+ * shrinking the rectangle from `pointing.anchor`. Null at the grid's edge.
+ */
+export function stepPointing(
+  pointing: Pointing | null,
+  origin: string,
+  text: string,
+  caret: number,
+  dx: number,
+  dy: number,
+  shift: boolean,
+  size: GridSize,
+): Pointed | null {
+  const from = pointing ? pointing.end : (colonStart(text, caret, size) ?? origin)
+  const to = stepCell(from, dx, dy, size)
+  if (!to) return null
+  if (!pointing) return pressAt(text, caret, to, size)
+  return shift ? moveTo(pointing, to, size) : pressAt(pointing.text, pointing.caret, to, size)
+}
+
 function pointTo(pointing: Pointing, to: string, size: GridSize): Pointed {
   // A range the user began typing — `=SUM(A1:` — has its start already: the pointer gives only the
   // end, so pressing B5 and dragging to C6 leaves `A1:C6`. Otherwise the drag is the whole reference.
@@ -50,6 +105,14 @@ function pointTo(pointing: Pointing, to: string, size: GridSize): Pointed {
 /** Whether the text before the caret ends with the colon of a range, trailing spaces ignored. */
 function typedColon(text: string, caret: number): boolean {
   return text.slice(0, caret).trimEnd().endsWith(':')
+}
+
+/** The cell before a trailing colon at the caret (`=SUM(B2:`), when it is on the grid. */
+function colonStart(text: string, caret: number, size: GridSize): string | null {
+  const match = /(?:^|[^A-Za-z0-9_.])([A-Za-z]+[0-9]+)\s*:\s*$/.exec(text.slice(0, caret))
+  if (!match) return null
+  const cell = parseCellName(match[1]!)
+  return cell && onGrid(cell, size) ? cellName(cell.x, cell.y) : null
 }
 
 /** The name of what a drag covers: one cell where it started and ended there, the range otherwise. */

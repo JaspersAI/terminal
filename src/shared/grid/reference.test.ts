@@ -29,6 +29,22 @@ test('it is not a reference position after a name, a number, a bracket that clos
   assert.equal(expectsReference('=SUM', 4), false)
 })
 
+test('a caret before an existing operand or mid-operator is navigating text, while an empty slot takes a reference', () => {
+  assert.equal(expectsReference('=A1+B2', 1), false)
+  assert.equal(expectsReference('=A1+B2', 4), false)
+  assert.equal(expectsReference('=1+2', 3), false)
+  assert.equal(expectsReference('=SUM(A1:B2)', 5), false)
+  assert.equal(expectsReference('=SUM(A1:B2)', 8), false)
+  assert.equal(expectsReference('=A1<=B2', 4), false)
+  assert.equal(expectsReference('=A1*(B2+C2)', 4), false)
+
+  assert.equal(expectsReference('=SUM()', 5), true)
+  assert.equal(expectsReference('=IF(A1>0,,0)', 9), true)
+  assert.equal(expectsReference('=1+*2', 3), true)
+  assert.equal(expectsReference('=(+A1)', 2), true)
+  assert.equal(expectsReference('=SUM(:B2)', 5), true)
+})
+
 test('a cell that is not holding a formula never takes a reference, wherever the caret is', () => {
   assert.equal(expectsReference('12+', 3), false)
   assert.equal(expectsReference('Revenue', 7), false)

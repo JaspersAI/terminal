@@ -21,6 +21,14 @@ import { isFormula } from './formula.ts'
 const AFTER = ['=', '+', '-', '*', '/', '^', '&', '(', ',', ':', '<', '>']
 
 /**
+ * What may already sit in front of the caret when a reference is put into an empty slot mid-formula,
+ * like `=SUM(|)` or `=1+|*2`. An existing operand (`=A1+|B2`), a bracketed sub-expression, or the
+ * second half of `<=` is not among them, so moving the text cursor across an expression with the
+ * arrow keys does not start pointing at cells.
+ */
+const FOLLOW = ['+', '-', '*', '/', '^', '%', '&', ')', ',', ':']
+
+/**
  * A reference, or a range of them, at the very end of the text before the caret. There are no `$`
  * absolute references in this spreadsheet — formula.ts reads a bare word as a cell — so neither are
  * there here.
@@ -31,19 +39,22 @@ const REFERENCE = /([A-Za-z]+[0-9]+)(:[A-Za-z]+[0-9]+)?$/
  * Whether a press on a cell should put that cell's name at the caret rather than move the cursor to
  * it. Two things have to hold: what is being typed is a formula, and the caret sits where a reference
  * could go — right after the `=`, after an operator, after an open bracket or a comma, or after the
- * colon of a range, trailing spaces ignored. Anywhere else the press means what it has always meant,
- * which is why this answers false for a caret after a name, a number, a closing bracket, or inside a
- * quoted string, where a cell name is text.
+ * colon of a range, trailing spaces ignored, with nothing after it that is already that slot's operand.
+ * Anywhere else the press means what it has always meant, which is why this answers false for a caret
+ * after a name, a number, a closing bracket, or inside a quoted string, where a cell name is text.
  */
 export function expectsReference(text: string, caret: number): boolean {
   if (!isFormula(text)) return false
-  const before = text.slice(0, clamp(caret, text.length))
+  const at = clamp(caret, text.length)
+  const before = text.slice(0, at)
   // The `=` has to be behind the caret: in front of it there is no formula yet, only text.
   if (!before.includes('=')) return false
   if (insideQuotes(before)) return false
   const trimmed = before.trimEnd()
   const last = trimmed[trimmed.length - 1]
-  return last !== undefined && AFTER.includes(last)
+  if (last === undefined || !AFTER.includes(last)) return false
+  const next = text.slice(at).trimStart()[0]
+  return next === undefined || FOLLOW.includes(next)
 }
 
 /**
