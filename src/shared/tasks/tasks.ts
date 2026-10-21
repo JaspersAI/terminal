@@ -47,7 +47,7 @@ export const TASK_EXCLUDED_TOOLS: readonly string[] = [
  * letter, one the user allowed the task (`Task.commands`). It is not a call, though: a call is made
  * with no run around it to say what it is for.
  */
-const SHELL_TOOL = 'run_shell'
+export const SHELL_TOOL = 'run_shell'
 
 /**
  * The first tool a run does not have that these instructions name, or nothing. Instructions are a
@@ -57,6 +57,14 @@ const SHELL_TOOL = 'run_shell'
  */
 export function missingInRun(instructions: string): string | undefined {
   return TASK_EXCLUDED_TOOLS.find((tool) => new RegExp(`\\b${tool}\\b`).test(instructions))
+}
+
+/**
+ * Whether these instructions name `run_shell`: a task may call it while Pro mode is on, and while Pro
+ * mode is off it is refused with where to turn Pro mode on rather than as a tool no task has.
+ */
+export function needsShellInRun(instructions: string): boolean {
+  return new RegExp(`\\b${SHELL_TOOL}\\b`).test(instructions)
 }
 
 export interface TaskCall {

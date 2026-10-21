@@ -10,6 +10,7 @@ import {
   loopRules,
   gridPrimer,
   ROUTER_RULES,
+  taskPreface as buildTaskPreface,
   tilePrimer,
 } from '../../../shared/agent/prompt'
 import { standingText } from '../../../shared/agent/standing'
@@ -120,15 +121,5 @@ export function loopStateNow(workspaceId: string, loopId: string): string {
 }
 
 export function taskPreface(id: string, commands: readonly string[] = []): string {
-  return `${taskRun(id)}${commands.length ? ` ${allowedCommands(commands)}` : ''}`
-}
-
-/** The scripts a task's run may run unasked, as they must be passed: one character off and the user is asked. */
-function allowedCommands(commands: readonly string[]): string {
-  const scripts = commands.map((command) => `<command>\n${command}\n</command>`).join('\n')
-  return `The user allowed this task the commands below. Pass one to run_shell exactly as it is written, whole, and it runs without asking; anything else asks the user, who may not be there, and an unanswered question is a refusal.\n${scripts}`
-}
-
-function taskRun(id: string): string {
-  return `This request is scheduled task ${id}, running on its own at its time: it is not the user typing, and the user may not be looking. Do what the instructions say, against the workspace described with them. Then answer only when there is something the user needs to hear: what the instructions ask to be told, something you found that matters to them, or a problem they have to act on. Say it in one or two sentences; the answer is shown to the user in the chat. A run with nothing like that, such as a refresh that went through, a check that found nothing, or a case the instructions say to stay silent in, answers with nothing at all, not a sentence saying so: an empty answer says nothing in the chat. Do not ask questions, do not ask for keys (a connection that is not ready stays so for this run), and do not schedule, change, or cancel tasks.`
+  return buildTaskPreface(id, commands, getState().proMode.enabled)
 }

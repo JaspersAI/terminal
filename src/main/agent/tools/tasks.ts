@@ -3,6 +3,7 @@ import {
   checkCommands,
   formatLocal,
   missingInRun,
+  needsShellInRun,
   parseAt,
   scheduleText,
   taskStatus,
@@ -225,6 +226,11 @@ function asTaskInstructions(value: unknown, context: ToolContext): string {
   if (missing) {
     throw new Error(
       `A task's run does not have ${missing}: it works on its own, with nobody there to answer or approve, and it cannot schedule, change, or cancel a task. Schedule only what a run can do without it; if the work needs it, tell the user it cannot be scheduled and why.`,
+    )
+  }
+  if (!getState().proMode.enabled && needsShellInRun(instructions)) {
+    throw new Error(
+      'Pro mode is off, so a task cannot run anything on this computer. Tell the user it is in Settings > Pro mode, and that turning it on is theirs to do.',
     )
   }
   const slash = parseSlash(instructions)
