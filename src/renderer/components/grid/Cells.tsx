@@ -284,6 +284,7 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
                   event.stopPropagation()
                 }}
                 onKeyDown={(event) => {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return
                   // Every key that means something here is answered here: the grid's own shortcuts
                   // and the composer's listen on the window, and a cell being typed in is not them.
                   if (event.key === 'Enter') {
