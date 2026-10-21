@@ -582,6 +582,17 @@ test('the orchestrator is told a skill to write or publish is its own to do, as 
   )
 })
 
+test('the rules tell the assistant to run shell commands with run_shell when offered, and to point to Settings > Pro mode when not', () => {
+  assert.match(
+    ROUTER_RULES,
+    /Answer in words yourself when words are the whole answer, and only about the app itself: [^.;]*a command to run, a skill to write or publish\./,
+  )
+  assert.match(ROUTER_RULES, /call run_shell\b[^.]*rather than starting a loop or scheduling a task/)
+  for (const rules of [ROUTER_RULES, LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /when run_shell is not in your tools[^.]*Settings > Pro mode/)
+  }
+})
+
 test('the orchestrator is told create_loop asks the user first, and to ask which place a request belongs in when that is not certain', () => {
   // The tool asks, so the model is told not to: one question, not two.
   assert.match(
