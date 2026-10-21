@@ -18,6 +18,7 @@ export type ConnectionLookup =
   | Record<string, { id?: string; plugin?: string; status?: string }>
   | Iterable<string | { id: string; plugin?: string; status?: string }>
 
+/** Parses source arguments with Zod, retries schema coercion and JSON fields, then reports invalid field paths. */
 export function parseArguments(schema: ZodType, args: unknown, sourceId: string): unknown {
   const first = schema.safeParse(args)
   if (first.success) return first.data
@@ -117,6 +118,7 @@ export function readMcpCall(
   return { connection, tool, args }
 }
 
+/** Expands a short plugin or connection name, preferring ready matches before falling back to known defaults. */
 function qualifyMcpConnection(connection: string, connections?: ConnectionLookup): string {
   const clean = connection.trim()
   if (!clean || clean.includes('/')) return clean
@@ -132,6 +134,7 @@ function qualifyMcpConnection(connection: string, connections?: ConnectionLookup
   return DEFAULT_CONNECTIONS[clean] ?? clean
 }
 
+/** Normalizes connection maps and iterables into entries with ids, inferred plugins, and optional statuses. */
 function connectionList(connections?: ConnectionLookup): { id: string; plugin?: string; status?: string }[] {
   if (!connections) return []
   if (Symbol.iterator in Object(connections)) {
@@ -196,6 +199,7 @@ export function dropEmptyOptionals(schema: unknown, args: Record<string, unknown
   return prepareMcpArguments(schema, args)
 }
 
+/** Recursively removes disallowed empty optionals and prepares JSON containers without discarding required fields. */
 function withoutEmpty(schema: unknown, value: unknown, root: unknown): unknown {
   const node = resolveRef(schema, root)
   if (expectsString(node, root)) {
@@ -250,6 +254,7 @@ function expectsString(schema: unknown, root: unknown): boolean {
   return false
 }
 
+/** Checks whether a resolved schema declares only null through its type or const. */
 function isNullOnly(schema: unknown, root: unknown): boolean {
   const node = resolveRef(schema, root)
   if (!isRecord(node)) return false
@@ -313,6 +318,7 @@ function objectSchema(schema: unknown, root: unknown): Record<string, unknown> |
   return null
 }
 
+/** Checks for an object type in a resolved schema or any of its anyOf or oneOf branches. */
 function isObjectType(schema: unknown, root: unknown): boolean {
   const node = resolveRef(schema, root)
   if (!isRecord(node)) return false
@@ -339,6 +345,7 @@ function resolveRef(schema: unknown, root: unknown): unknown {
   return node
 }
 
+/** Parses strings that look like JSON objects or arrays, preserving other values and malformed JSON. */
 function fromJson(value: unknown): unknown {
   if (typeof value !== 'string' || !/^\s*[[{]/.test(value)) return value
   try {
@@ -348,6 +355,7 @@ function fromJson(value: unknown): unknown {
   }
 }
 
+/** Parses top-level JSON object and array strings, leaving malformed JSON and other fields unchanged. */
 function unstringFields(args: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(args)) {

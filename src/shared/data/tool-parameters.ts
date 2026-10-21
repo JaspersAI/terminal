@@ -45,6 +45,7 @@ export function parameterNames(parameters: Record<string, unknown>): string {
   const required = Array.isArray(parameters['required'])
     ? (parameters['required'] as unknown[]).filter((one): one is string => typeof one === 'string')
     : []
+  /** Adds a schema hint to one parameter name when choices or numeric bounds are available. */
   const format = (name: string): string => {
     const hint = parameterHint(properties[name], parameters)
     return hint ? `${name}: ${hint}` : name
@@ -54,6 +55,7 @@ export function parameterNames(parameters: Record<string, unknown>): string {
   return [...must, ...(may.length > 0 ? [`[${may.join(', ')}]`] : [])].join(', ')
 }
 
+/** Finds a compact choice or bounds hint through local references, nullable unions, and array items. */
 function parameterHint(schema: unknown, root: unknown): string | null {
   const node = resolveRef(schema, root)
   if (!isRecord(node)) return null
@@ -77,6 +79,7 @@ function parameterHint(schema: unknown, root: unknown): string | null {
   return boundsOf(node)
 }
 
+/** Extracts enum or const choices for display, omitting null and empty strings. */
 function choicesOf(node: unknown): unknown[] | null {
   if (!isRecord(node)) return null
   if (Array.isArray(node['enum'])) {
@@ -89,12 +92,14 @@ function choicesOf(node: unknown): unknown[] | null {
   return null
 }
 
+/** Formats distinct choices with pipes, truncating lists beyond ENUM_MAX with an ellipsis. */
 function options(values: unknown[]): string {
   const unique = [...new Set(values.map((value) => String(value)))]
   const shown = unique.slice(0, ENUM_MAX)
   return unique.length > ENUM_MAX ? `${shown.join('|')}|…` : shown.join('|')
 }
 
+/** Formats numeric minimum and maximum constraints, preserving inclusive and exclusive bounds. */
 function boundsOf(node: Record<string, unknown>): string | null {
   const min = typeof node['minimum'] === 'number' ? node['minimum'] : undefined
   const max = typeof node['maximum'] === 'number' ? node['maximum'] : undefined
@@ -111,10 +116,12 @@ function boundsOf(node: Record<string, unknown>): string | null {
   return null
 }
 
+/** Collects the schema branches declared by anyOf and oneOf. */
 function branchesOf(node: Record<string, unknown>): unknown[] {
   return ['anyOf', 'oneOf'].flatMap((key) => (Array.isArray(node[key]) ? (node[key] as unknown[]) : []))
 }
 
+/** Checks whether a resolved schema declares only null through its type or const. */
 function isNull(schema: unknown, root: unknown): boolean {
   const node = resolveRef(schema, root)
   if (!isRecord(node)) return false
@@ -125,6 +132,7 @@ function isNull(schema: unknown, root: unknown): boolean {
   )
 }
 
+/** Follows local JSON Pointer references for up to ten hops, leaving external references untouched. */
 function resolveRef(schema: unknown, root: unknown): unknown {
   let node = schema
   for (
@@ -271,6 +279,7 @@ export function resolveConnectionSource(
   }
 }
 
+/** Collects internal source ids and their connection and plugin tool aliases so lookup can exclude them. */
 function internalTools(sources: SourceEntry[]): Set<string> {
   const set = new Set<string>()
   for (const source of sources) {
@@ -284,6 +293,7 @@ function internalTools(sources: SourceEntry[]): Set<string> {
   return set
 }
 
+/** Narrows a value to a non-null object that is not an array. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

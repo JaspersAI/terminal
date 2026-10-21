@@ -243,6 +243,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** Reads current connections, returning an empty map before application state is available. */
 function currentConnections(): Record<string, ConnectionInfo> {
   try {
     return getState().connections
