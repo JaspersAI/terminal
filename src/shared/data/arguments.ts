@@ -14,9 +14,18 @@ const DEFAULT_CONNECTIONS: Record<string, string> = {
   'jaspers-screener': 'jaspers-screener/server',
 }
 
+type ConnectionLookupTool = { name: string; inputSchema?: unknown }
+
+type ConnectionLookupEntry = {
+  id: string
+  plugin?: string
+  status?: string
+  tools?: readonly ConnectionLookupTool[]
+}
+
 export type ConnectionLookup =
-  | Record<string, { id?: string; plugin?: string; status?: string }>
-  | Iterable<string | { id: string; plugin?: string; status?: string }>
+  | Record<string, { id?: string; plugin?: string; status?: string; tools?: readonly ConnectionLookupTool[] }>
+  | Iterable<string | ConnectionLookupEntry>
 
 /** Parses source arguments with Zod, retries schema coercion and JSON fields, then reports invalid field paths. */
 export function parseArguments(schema: ZodType, args: unknown, sourceId: string): unknown {
@@ -114,38 +123,56 @@ export function readMcpCall(
       }
     }
   }
-  connection = qualifyMcpConnection(connection, connections)
-  return { connection, tool, args }
+  const list = connectionList(connections)
+  connection = qualifyMcpConnection(connection, list, tool)
+  const schema = tool
+    ? list.find((one) => one.id === connection)?.tools?.find((one) => one.name === tool)?.inputSchema
+    : undefined
+  const preparedArgs = isRecord(schema) ? prepareMcpArguments(schema, args) : args
+  return { connection, tool, args: preparedArgs }
 }
 
-/** Expands a short plugin or connection name, preferring ready matches before falling back to known defaults. */
-function qualifyMcpConnection(connection: string, connections?: ConnectionLookup): string {
+/** Expands a short plugin or connection name, preferring ready matches offering the requested tool before falling back to known defaults. */
+function qualifyMcpConnection(connection: string, connections?: ConnectionLookup, tool?: string): string {
   const clean = connection.trim()
   if (!clean || clean.includes('/')) return clean
   const list = connectionList(connections)
   const byPlugin = list.filter((one) => one.plugin === clean || one.id.startsWith(`${clean}/`))
   if (byPlugin.length > 0) {
-    return (byPlugin.find((one) => one.status === 'ready') ?? byPlugin[0])!.id
+    return pickConnection(byPlugin, tool).id
   }
   const byName = list.filter((one) => one.id.endsWith(`/${clean}`))
   if (byName.length > 0) {
-    return (byName.find((one) => one.status === 'ready') ?? byName[0])!.id
+    return pickConnection(byName, tool).id
   }
   return DEFAULT_CONNECTIONS[clean] ?? clean
 }
 
-/** Normalizes connection maps and iterables into entries with ids, inferred plugins, and optional statuses. */
-function connectionList(connections?: ConnectionLookup): { id: string; plugin?: string; status?: string }[] {
+/** Selects the best connection candidate for an optional tool name, preferring ready connections that offer the tool. */
+function pickConnection(candidates: ConnectionLookupEntry[], tool?: string): ConnectionLookupEntry {
+  const hasTool = (one: ConnectionLookupEntry): boolean =>
+    Boolean(tool && one.tools?.some((declared) => declared.name === tool))
+  return (
+    candidates.find((one) => one.status === 'ready' && hasTool(one)) ??
+    candidates.find((one) => one.status === 'ready') ??
+    candidates.find((one) => hasTool(one)) ??
+    candidates[0]!
+  )
+}
+
+/** Normalizes connection maps and iterables into entries with ids, inferred plugins, optional statuses, and tool schemas. */
+function connectionList(connections?: ConnectionLookup): ConnectionLookupEntry[] {
   if (!connections) return []
   if (Symbol.iterator in Object(connections)) {
-    const out: { id: string; plugin?: string; status?: string }[] = []
-    for (const item of connections as Iterable<string | { id: string; plugin?: string; status?: string }>) {
+    const out: ConnectionLookupEntry[] = []
+    for (const item of connections as Iterable<string | ConnectionLookupEntry>) {
       if (typeof item === 'string') out.push({ id: item, plugin: item.split('/')[0] })
       else if (isRecord(item) && typeof item['id'] === 'string') {
         out.push({
           id: item['id'],
           plugin: typeof item['plugin'] === 'string' ? item['plugin'] : item['id'].split('/')[0],
           status: typeof item['status'] === 'string' ? item['status'] : undefined,
+          tools: normalizeTools(item['tools']),
         })
       }
     }
@@ -159,10 +186,27 @@ function connectionList(connections?: ConnectionLookup): { id: string; plugin?: 
         id,
         plugin: typeof rec['plugin'] === 'string' ? rec['plugin'] : id.split('/')[0],
         status: typeof rec['status'] === 'string' ? rec['status'] : undefined,
+        tools: normalizeTools(rec['tools']),
       }
     })
   }
   return []
+}
+
+/** Normalizes a connection's declared tools list, keeping each tool's name and object input schema. */
+function normalizeTools(value: unknown): ConnectionLookupTool[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: ConnectionLookupTool[] = []
+  for (const item of value) {
+    if (typeof item === 'string') out.push({ name: item })
+    else if (isRecord(item) && typeof item['name'] === 'string') {
+      out.push({
+        name: item['name'],
+        inputSchema: isRecord(item['inputSchema']) ? item['inputSchema'] : undefined,
+      })
+    }
+  }
+  return out
 }
 
 /** The arguments repaired against the input's JSON Schema; as they are when zod cannot write one. */
