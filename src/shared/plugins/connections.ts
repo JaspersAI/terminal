@@ -5,7 +5,9 @@
 // secret request stands. Holding them, sealing the values, and connecting are main's. No Node or DOM
 // imports.
 
+import { serviceUrl } from '../app/jaspers.ts'
 import type { ConnectionInfo } from '../state'
+import { isPluginId } from './id.ts'
 
 /** An MCP server as a plugin declares it, checked. Its id and its secrets are the plugin's, not its own. */
 export interface Connection {
@@ -26,6 +28,54 @@ export interface Connection {
 
 const REFERENCE = /\$\{secret:([^}]*)\}/g
 const AUTHS = ['none', 'bearer', 'oauth'] as const
+
+/**
+ * Local connection URL overrides from `JASPERS_CONNECTION_URLS`: a JSON object mapping `<plugin>/<name>`
+ * connection ids to `http:` or `https:` URLs without trailing slashes. Empty when unset. Anything
+ * malformed is refused at startup rather than ignored.
+ */
+export function connectionUrls(env: string | undefined): Record<string, string> {
+  const given = env?.trim()
+  if (!given) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(given)
+  } catch {
+    throw new Error(`JASPERS_CONNECTION_URLS is not valid JSON: ${given}`)
+  }
+  if (!isRecord(parsed)) throw new Error(`JASPERS_CONNECTION_URLS is not a JSON object: ${given}`)
+  const out: Record<string, string> = {}
+  for (const [id, raw] of Object.entries(parsed)) {
+    const parts = id.split('/')
+    const [plugin, name] = parts
+    if (parts.length !== 2 || !plugin || !name || !isPluginId(plugin) || !isPluginId(name)) {
+      throw new Error(`JASPERS_CONNECTION_URLS key ${id} is not <plugin>/<name>`)
+    }
+    if (typeof raw !== 'string' || !raw.trim()) {
+      throw new Error(`JASPERS_CONNECTION_URLS[${id}] is not a URL: ${String(raw)}`)
+    }
+    out[id] = serviceUrl(`JASPERS_CONNECTION_URLS[${id}]`, raw, '')
+  }
+  return out
+}
+
+/**
+ * A connection with its URL swapped when `JASPERS_CONNECTION_URLS` names its `<plugin>/<name>` id,
+ * and the startup log line for the swap.
+ */
+export function withConnectionUrl(
+  id: string,
+  spec: Connection,
+  urls: Record<string, string>,
+): { spec: Connection; log: string | null } {
+  if (!Object.hasOwn(urls, id)) return { spec, log: null }
+  const url = urls[id]!
+  const { command: _command, cwd: _cwd, ...rest } = spec
+  return {
+    spec: { ...rest, url },
+    log: `[connections] ${id} -> ${url} (JASPERS_CONNECTION_URLS)`,
+  }
+}
 
 /**
  * One declaration into one connection, or a throw naming the connection and the rule it broke. The

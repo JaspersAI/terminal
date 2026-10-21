@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { checkConnection, offeredTools, offersTool, resolveSecrets, secretProgress, secretRefs } from './connections.ts'
+import {
+  checkConnection,
+  connectionUrls,
+  offeredTools,
+  offersTool,
+  resolveSecrets,
+  secretProgress,
+  secretRefs,
+  withConnectionUrl,
+} from './connections.ts'
 import type { ConnectionInfo } from '../state.ts'
 
 const STDIO = { kind: 'connection', command: ['node', 'server/main.ts'] }
@@ -220,5 +229,80 @@ test('a secret the assistant asked for is waited on until the user answers and e
   // The plugin went away.
   assert.deepEqual(secretProgress({ requestOpen: true, saved: false, connections: null }, 'token'), {
     kind: 'cancelled',
+  })
+})
+
+test('JASPERS_CONNECTION_URLS reads a mapping of <plugin>/<name> ids to http(s) URLs without trailing slashes', () => {
+  assert.deepEqual(connectionUrls(undefined), {})
+  assert.deepEqual(connectionUrls(''), {})
+  assert.deepEqual(connectionUrls('   \n '), {})
+  assert.deepEqual(connectionUrls('{}'), {})
+  assert.deepEqual(
+    connectionUrls(
+      JSON.stringify({
+        'screener-mcp/screener': 'http://localhost:3380/mcp/',
+        'research/api': '  https://research.test.jsprai.com/mcp/// ',
+      }),
+    ),
+    {
+      'screener-mcp/screener': 'http://localhost:3380/mcp',
+      'research/api': 'https://research.test.jsprai.com/mcp',
+    },
+  )
+})
+
+test('an invalid JASPERS_CONNECTION_URLS value is refused, naming the variable', () => {
+  for (const bad of [
+    '{not json',
+    'null',
+    '[]',
+    '"http://localhost:3380"',
+    '42',
+    'true',
+    JSON.stringify({ screener: 'http://localhost:3380/mcp' }),
+    JSON.stringify({ 'screener/mcp/extra': 'http://localhost:3380/mcp' }),
+    JSON.stringify({ 'Screener/mcp': 'http://localhost:3380/mcp' }),
+    JSON.stringify({ 'screener/Mcp': 'http://localhost:3380/mcp' }),
+    JSON.stringify({ '-screener/mcp': 'http://localhost:3380/mcp' }),
+    JSON.stringify({ 'screener/-mcp': 'http://localhost:3380/mcp' }),
+    JSON.stringify({ '/mcp': 'http://localhost:3380/mcp' }),
+    JSON.stringify({ 'screener/': 'http://localhost:3380/mcp' }),
+    JSON.stringify({ 'screener/mcp': 123 }),
+    JSON.stringify({ 'screener/mcp': null }),
+    JSON.stringify({ 'screener/mcp': '' }),
+    JSON.stringify({ 'screener/mcp': '   ' }),
+    JSON.stringify({ 'screener/mcp': 'not a url' }),
+    JSON.stringify({ 'screener/mcp': 'ftp://localhost:3380/mcp' }),
+  ]) {
+    assert.throws(() => connectionUrls(bad), /JASPERS_CONNECTION_URLS/, bad)
+  }
+})
+
+test('withConnectionUrl swaps the URL of a mapped connection and logs it, leaving others and prototype keys alone', () => {
+  const urls = connectionUrls(JSON.stringify({ 'jaspers/sec': 'http://localhost:3380/mcp/' }))
+  const http = checkConnection(HTTP, 'jaspers/sec')
+  assert.deepEqual(withConnectionUrl('jaspers/sec', http, urls), {
+    spec: { ...http, url: 'http://localhost:3380/mcp' },
+    log: '[connections] jaspers/sec -> http://localhost:3380/mcp (JASPERS_CONNECTION_URLS)',
+  })
+  const stdio = checkConnection({ ...STDIO, cwd: 'server' }, 'earningscall/server')
+  assert.deepEqual(
+    withConnectionUrl('earningscall/server', stdio, { 'earningscall/server': 'http://localhost:3390' }),
+    {
+      spec: { auth: 'none', headers: {}, env: {}, url: 'http://localhost:3390' },
+      log: '[connections] earningscall/server -> http://localhost:3390 (JASPERS_CONNECTION_URLS)',
+    },
+  )
+  assert.deepEqual(withConnectionUrl('other/server', http, urls), {
+    spec: http,
+    log: null,
+  })
+  assert.deepEqual(withConnectionUrl('toString', http, urls), {
+    spec: http,
+    log: null,
+  })
+  assert.deepEqual(withConnectionUrl('constructor', http, urls), {
+    spec: http,
+    log: null,
   })
 })
