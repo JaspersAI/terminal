@@ -1,11 +1,19 @@
 # Writing a plugin
 
-A plugin adds views and data sources to Jaspers Terminal.
+A plugin adds views and data sources to Jaspers Terminal using [`@jaspers-ai/sdk`](../packages/sdk/README.md) (**Advantage #3: TypeScript End-to-End**).
 
 - A **view** is a React component that lives in a grid element. The assistant places it, changes what it shows by writing its state, and reads back what it shows.
-- A **source** is a named data call, usually one tool on an MCP server. Views and the assistant both run sources.
+- A **source** is a named data call, usually one tool on an MCP server or a TypeScript function (`defineSource`). Views and the assistant both run sources.
 
-[`plugin-screener-mcp`](https://github.com/JaspersAI/plugin-screener-mcp) is the full example, every one of [Jaspers' own plugins](../README.md#plugins-on-jaspers-hub) is a template for one, and [`docs/templates/`](templates/README.md) holds four small ones to copy: a feed, a feed with a table, a document producer, and a connection. [How it works](architecture.md#how-a-plugin-connects-to-the-app) explains how a plugin is wired into the app. This page builds a smaller one from scratch. When it is done, see [Publishing a plugin](publishing-a-plugin.md) to share it and the [SDK reference](sdk-reference.md) for everything a plugin can declare.
+### How `@jaspers-ai/sdk` reduces complexity for developers and the coding agent
+
+`@jaspers-ai/sdk` ([MIT](../packages/sdk/LICENSE)) and the Terminal's zero-install host runtime (`jaspers-host://runtime/`) strip out the bundler setup, IPC plumbing, credential management, and state-synchronization boilerplate that normally make desktop extensions difficult for humans to maintain and brittle for local or cloud coding agents to synthesize:
+
+1. **Zero-install host runtime (`jaspers-host://runtime/`):** The app provides `@jaspers-ai/sdk`, `react`, `react-dom`, and `zod` at runtime inside every view iframe (`src/host-runtime/runtime.ts`), and compiles `~/Jaspers/plugins/<id>` with esbuild on every file save. A plugin that uses only those libraries needs no `node_modules` at all to run in the Terminal.
+2. **Small, declarative TypeScript surface:** Four definitions (`definePlugin`, `defineConnection`, `defineSource`, `defineView`) and four React hooks (`useData`, `usePanelState`, `usePublish`, `usePublishText`) cover the entire contract. Main validates every `state` write and 4 KB `output` against the view's Zod schemas, indexes source rows into `~/Jaspers/data/jaspers.db`, and injects OS keychain credentials at request time via `'${secret:<name>}'` placeholders.
+3. **Single-source-of-truth builder reference (`src/main/agent/build/reference.ts`):** This guide (`docs/writing-a-plugin.md?raw`) and the [SDK reference](sdk-reference.md) (`docs/sdk-reference.md?raw`) are bundled verbatim alongside `packages/sdk/src/context.ts?raw`, `packages/sdk/src/llm.ts?raw`, and the four starter templates in [`docs/templates/`](templates/README.md) directly into the built-in coding agent's (`build_plugin`) system prompt. Human developers and the coding agent read and target the exact same TypeScript signatures.
+
+[`plugin-screener-mcp`](https://github.com/JaspersAI/plugin-screener-mcp) is the full example, every one of [Jaspers' own plugins](../README.md#plugins-on-jaspers-hub) is a template for one, and [`docs/templates/`](templates/README.md) holds four small ones to copy: a feed, a feed with a table, a document producer, and a connection. [How it works](architecture.md#how-a-plugin-connects-to-the-app) explains how a plugin is wired into the app. This page builds a smaller one from scratch. When it is done, see [Publishing a plugin](publishing-a-plugin.md) to share it on [Jaspers Hub](https://hub.jsprai.com) and the [SDK reference](sdk-reference.md) for everything a plugin can declare.
 
 The plugin here is a watchlist, with each part a plugin can have: its own MCP server, a connection that runs it, a source on that connection, and a view the assistant places and drives. It needs nothing else installed. The server answers from a few sample rows; swapping in a real data API is the last step.
 
