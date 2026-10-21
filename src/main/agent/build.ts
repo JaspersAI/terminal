@@ -42,6 +42,7 @@ function buildChat(id: string): string {
   return `build/${id}`
 }
 
+/** Runs or resumes a plugin's builder, keeping unfinished work and returning its status and reply on completion. */
 export async function runBuild(request: string, id: string, parent: ToolContext): Promise<string> {
   if (!isPluginId(id)) {
     throw new Error(`Give the plugin an id: lower-case letters, digits, and dashes, like fred or sec-filings.`)
@@ -121,14 +122,17 @@ export async function runBuild(request: string, id: string, parent: ToolContext)
   }
   // The orchestrator reads the plugin's state before the builder's words: a build that is not over
   // finished nothing, whatever it said, and is told so as an error. What it wrote and said stays.
-  if (!session.folder.live || ranOut) {
+  const builtPlugin = getState().plugins[id]
+  if (!session.folder.live || !builtPlugin || ranOut) {
     join(chat, config, thread, fork, era)
-    const state = session.folder.live
-      ? `${id} is installed but not finished: the builder used all its rounds.`
-      : `${id} was not installed: the builder stopped before install_plugin.`
+    const state = !session.folder.live
+      ? `${id} was not installed: the builder stopped before install_plugin.`
+      : !builtPlugin
+        ? `${id} was approved but not finished: the builder stopped before writing plugin.tsx.`
+        : `${id} is installed but not finished: the builder used all its rounds.`
     throw new Error(`${state} It said: ${text || '(nothing)'}\n${CARRIES_ON}`)
   }
   // Over: its conversation goes with it.
   startOver(chat, config, thread)
-  return `${pluginLine(getState().plugins[id], id)}\n\n${text}`
+  return `${pluginLine(builtPlugin, id)}\n\n${text}`
 }

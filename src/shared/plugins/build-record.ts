@@ -22,6 +22,8 @@ export interface Envelope {
   packages: string[]
   /** The https origins its views may frame. */
   frames: string[]
+  /** Read-only access to the shared shell folder (`~/Jaspers/shell`), when approved. */
+  shell?: boolean
 }
 
 export const EMPTY_ENVELOPE: Envelope = {
@@ -41,9 +43,11 @@ export interface BuildRecord {
   approved: Envelope
 }
 
-const FIELDS: (keyof Envelope)[] = ['hosts', 'capabilities', 'secrets', 'connections', 'packages', 'frames']
+type ListField = 'hosts' | 'capabilities' | 'secrets' | 'connections' | 'packages' | 'frames'
+
+const FIELDS: ListField[] = ['hosts', 'capabilities', 'secrets', 'connections', 'packages', 'frames']
 /** The word for one entry of each field, in the lines `widened` answers with. */
-const WORDS: Record<keyof Envelope, string> = {
+const WORDS: Record<ListField, string> = {
   hosts: 'host',
   capabilities: 'capability',
   secrets: 'secret',
@@ -80,6 +84,7 @@ export function widened(declared: Envelope, approved: Envelope): string[] {
     const had = new Set(approved[field])
     for (const entry of declared[field]) if (!had.has(entry)) lines.push(`${WORDS[field]} ${entry}`)
   }
+  if (declared.shell && !approved.shell) lines.push('shell folder (read-only)')
   return lines
 }
 
@@ -91,14 +96,17 @@ export function readBuildRecord(raw: unknown): BuildRecord | null {
   return envelope ? { purpose, request, at, approved: envelope } : null
 }
 
+/** Validates stored envelope lists and optional shell access, normalizing the lists or returning null. */
 function readEnvelope(raw: unknown): Envelope | null {
   if (!isRecord(raw)) return null
-  const envelope = { ...EMPTY_ENVELOPE }
+  const envelope: Envelope = { ...EMPTY_ENVELOPE }
   for (const field of FIELDS) {
     const list = raw[field]
     if (!Array.isArray(list) || !list.every((entry) => typeof entry === 'string')) return null
     envelope[field] = tidy(list as string[])
   }
+  if (raw['shell'] !== undefined && typeof raw['shell'] !== 'boolean') return null
+  if (raw['shell'] === true) envelope.shell = true
   return envelope
 }
 
@@ -133,20 +141,25 @@ export function envelopeFromInput(raw: Record<string, unknown>): { envelope: Env
     return name
   })
   const frames = list(raw['frames'], 'frames is a list of https origins.')
+  const shellRaw = raw['shell']
+  if (shellRaw !== undefined && typeof shellRaw !== 'boolean')
+    throw new Error('shell is a boolean, true when the plugin reads files from ~/Jaspers/shell.')
+  const shell = shellRaw === true
   return {
     envelope: {
       hosts: tidy(hosts),
-      capabilities: tidy(capabilities),
+      capabilities: tidy(shell ? [...capabilities, 'files'] : capabilities),
       secrets: tidy(secrets),
       connections: tidy(connections),
       packages: tidy(packages),
       frames: tidy(frames),
+      ...(shell ? { shell: true } : {}),
     },
     packageSpecs: tidy(packageSpecs),
   }
 }
 
-const LABELS: Record<keyof Envelope, string> = {
+const LABELS: Record<ListField, string> = {
   hosts: 'Reaches:      ',
   capabilities: 'Capabilities: ',
   secrets: 'Keys asked:   ',
@@ -157,11 +170,13 @@ const LABELS: Record<keyof Envelope, string> = {
 
 /** A line a field, for the trust prompt: what the code may reach, in the words the user reads. */
 export function describeEnvelope(envelope: Envelope): string {
-  return FIELDS.map((field) => {
+  const lines = FIELDS.map((field) => {
     const entries = envelope[field]
     const joined = entries.length === 0 ? 'none' : entries.join(field === 'connections' ? '; ' : ', ')
     return `${LABELS[field]} ${joined}`
-  }).join('\n')
+  })
+  if (envelope.shell) lines.push('Shell folder:  read-only (~/Jaspers/shell)')
+  return lines.join('\n')
 }
 
 function list(raw: unknown, message: string): string[] {

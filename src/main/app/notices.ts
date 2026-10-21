@@ -27,11 +27,12 @@ export function onNotice(listener: (notice: Notice) => void): void {
  * Says a line in the answer box, and keeps it. `chat` is the workspace whose conversation already
  * holds what the notice says, when one does. What it replaces on screen is `withNotice`'s to say.
  */
-export function addNotice(plugin: string, raw: string, chat?: string): void {
+export function addNotice(plugin: string, raw: string, chat?: string): string | null {
   const notice = noticeOf(plugin, raw, chat)
-  if (!notice) return
+  if (!notice) return null
   update((state) => ({ ...state, notices: withNotice(state.notices, notice) }))
   tell(notice)
+  return notice.id
 }
 
 /** Keeps a line a plugin has for the user, without saying it in the answer box. */

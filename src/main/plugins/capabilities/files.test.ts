@@ -6,13 +6,16 @@ import { test, type TestContext } from 'node:test'
 import { createFiles } from './files.ts'
 
 /** A plugin folder with one preset, a data folder that does not exist yet, and a secret beside both. */
-function setup(t: TestContext) {
+function setup(t: TestContext, withShell = false) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'jaspers-files-'))
   t.after(() => fs.rmSync(base, { recursive: true, force: true }))
   const dataRoot = path.join(base, 'home', 'research')
   const pluginRoot = path.join(base, 'plugin')
+  const shellRoot = path.join(base, 'home', 'shell')
   fs.mkdirSync(path.join(pluginRoot, 'analysts'), { recursive: true })
   fs.writeFileSync(path.join(pluginRoot, 'analysts', 'credit.md'), 'credit')
+  fs.mkdirSync(path.join(shellRoot, 'datasets'), { recursive: true })
+  fs.writeFileSync(path.join(shellRoot, 'datasets', 'rates.csv'), 'date,rate\n2026-01-01,4.2')
   fs.mkdirSync(path.join(base, 'outside'))
   fs.writeFileSync(path.join(base, 'outside', 'secret.txt'), 'secret')
   const opened: string[] = []
@@ -20,6 +23,7 @@ function setup(t: TestContext) {
   const files = createFiles({
     dataRoot,
     pluginRoot,
+    shellRoot: withShell ? shellRoot : null,
     openPath: async (file) => {
       opened.push(file)
       return file.endsWith('broken.pdf') ? 'No application knows how to open it.' : ''
@@ -27,7 +31,7 @@ function setup(t: TestContext) {
     showItemInFolder: (file) => void revealed.push(file),
   })
   t.after(() => files.close())
-  return { base, dataRoot, files, opened, revealed }
+  return { base, dataRoot, shellRoot, files, opened, revealed }
 }
 
 test('write makes the folders it needs, and read gives back what was written', async (t) => {
@@ -170,4 +174,42 @@ test('a watch that finishes starting after close is stopped at once', async (t) 
   await files.write('analysts/late.md', 'x')
   await new Promise((resolve) => setTimeout(resolve, 400))
   stop()
+})
+
+test('the shared shell folder is refused unless approved, and when approved reads, lists, watches, opens, and reveals read-only', async (t) => {
+  const unapproved = setup(t, false)
+  await assert.rejects(unapproved.files.read('shell:datasets/rates.csv'), /not approved/)
+  await assert.rejects(unapproved.files.list('shell:'), /not approved/)
+
+  const { base, shellRoot, files, opened, revealed } = setup(t, true)
+  assert.equal(await files.read('shell:datasets/rates.csv'), 'date,rate\n2026-01-01,4.2')
+  assert.deepEqual(
+    (await files.list('shell:datasets')).map((e) => [e.path, e.size]),
+    [['shell:datasets/rates.csv', 24]],
+  )
+  await files.open('shell:datasets/rates.csv')
+  assert.deepEqual(opened, [path.join(shellRoot, 'datasets', 'rates.csv')])
+  await files.reveal('shell:datasets/rates.csv')
+  assert.deepEqual(revealed, [path.join(shellRoot, 'datasets', 'rates.csv')])
+
+  await assert.rejects(files.write('shell:datasets/rates.csv', 'x'), /read only/)
+  await assert.rejects(files.remove('shell:datasets/rates.csv'), /read only/)
+
+  fs.symlinkSync(path.join(base, 'outside'), path.join(shellRoot, 'escape'))
+  await assert.rejects(files.read('shell:escape/secret.txt'), /leads out of it/)
+
+  const heard = new Promise<string[]>((resolve) => {
+    void files.watch('shell:datasets', resolve).then((stop) => t.after(stop))
+  })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  fs.writeFileSync(path.join(shellRoot, 'datasets', 'yields.csv'), 'y')
+  const paths = await Promise.race([
+    heard,
+    new Promise<string[]>((_, reject) => setTimeout(() => reject(new Error('no shell change heard')), 3000)),
+  ])
+  assert.equal(
+    paths.some((p) => p.startsWith('shell:datasets/') && p.includes('yields.csv')),
+    true,
+    paths.join(', '),
+  )
 })

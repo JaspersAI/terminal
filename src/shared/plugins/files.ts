@@ -1,9 +1,10 @@
-// Where a plugin's file calls may reach. Two roots: the plugin's data folder, read and write, named
-// by plain paths, and the plugin's own folder, read only, named by paths that start plugin:. This is
+// Where a plugin's file calls may reach. Three roots: the plugin's data folder, read and write, named
+// by plain paths, the plugin's own folder, read only, named by paths that start plugin:, and the shared
+// shell folder, read only when approved, named by paths that start shell:. This is
 // the arithmetic on the path as written, pure so it can be read in a test; main checks the result
 // again once symlinks are resolved, which a string cannot show.
 
-export type FileRoot = 'data' | 'plugin'
+export type FileRoot = 'data' | 'plugin' | 'shell'
 
 export interface PluginPath {
   root: FileRoot
@@ -12,11 +13,13 @@ export interface PluginPath {
 }
 
 const PLUGIN = 'plugin:'
+const SHELL = 'shell:'
 
+/** Selects the data, plugin:, or shell: root and normalizes a relative path, rejecting absolute paths and traversal. */
 export function parsePluginPath(raw: unknown): PluginPath {
   if (typeof raw !== 'string') throw new Error('A path is a string, like analysts/credit.md.')
-  const root: FileRoot = raw.startsWith(PLUGIN) ? 'plugin' : 'data'
-  const rest = root === 'plugin' ? raw.slice(PLUGIN.length) : raw
+  const root: FileRoot = raw.startsWith(PLUGIN) ? 'plugin' : raw.startsWith(SHELL) ? 'shell' : 'data'
+  const rest = root === 'plugin' ? raw.slice(PLUGIN.length) : root === 'shell' ? raw.slice(SHELL.length) : raw
   if (rest.includes('\0') || rest.includes('\\')) throw new Error(`${JSON.stringify(raw)} is not a path.`)
   if (rest.startsWith('/') || /^[A-Za-z]:/.test(rest)) {
     throw new Error(`Paths are relative to the plugin's folder; ${JSON.stringify(raw)} is absolute.`)
@@ -29,7 +32,8 @@ export function parsePluginPath(raw: unknown): PluginPath {
 
 /** The path written back the way a plugin names it. */
 export function formatPluginPath(path: PluginPath): string {
-  return `${path.root === 'plugin' ? PLUGIN : ''}${path.segments.join('/')}`
+  const prefix = path.root === 'plugin' ? PLUGIN : path.root === 'shell' ? SHELL : ''
+  return `${prefix}${path.segments.join('/')}`
 }
 
 /**

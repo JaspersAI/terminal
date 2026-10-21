@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { canOpen, formatPluginPath, parsePluginPath } from './files.ts'
 
-test('a plain path is in the data folder and plugin: is in the plugin folder', () => {
+test('a plain path is in the data folder, plugin: in the plugin folder, and shell: in the shell folder', () => {
   assert.deepEqual(parsePluginPath('analysts/credit.md'), { root: 'data', segments: ['analysts', 'credit.md'] })
   assert.deepEqual(parsePluginPath('plugin:analysts/credit.md'), {
     root: 'plugin',
     segments: ['analysts', 'credit.md'],
+  })
+  assert.deepEqual(parsePluginPath('shell:datasets/rates.csv'), {
+    root: 'shell',
+    segments: ['datasets', 'rates.csv'],
   })
 })
 
@@ -14,13 +18,16 @@ test('empty and dot names fold away, and nothing at all names the root', () => {
   assert.deepEqual(parsePluginPath('rooms/./r1//room.json'), { root: 'data', segments: ['rooms', 'r1', 'room.json'] })
   assert.deepEqual(parsePluginPath(''), { root: 'data', segments: [] })
   assert.deepEqual(parsePluginPath('plugin:'), { root: 'plugin', segments: [] })
+  assert.deepEqual(parsePluginPath('shell:'), { root: 'shell', segments: [] })
 })
 
 test('a path that leaves the folder, starts at the top, or is not a path is refused', () => {
   assert.throws(() => parsePluginPath('../secrets'), /leaves it/)
   assert.throws(() => parsePluginPath('rooms/../../x'), /leaves it/)
   assert.throws(() => parsePluginPath('plugin:../other/plugin.tsx'), /leaves it/)
+  assert.throws(() => parsePluginPath('shell:../other/secret.csv'), /leaves it/)
   assert.throws(() => parsePluginPath('/etc/passwd'), /is absolute/)
+  assert.throws(() => parsePluginPath('shell:/etc/passwd'), /is absolute/)
   assert.throws(() => parsePluginPath('C:/Windows'), /is absolute/)
   assert.throws(() => parsePluginPath('a\\b'), /is not a path/)
   assert.throws(() => parsePluginPath('a\0b'), /is not a path/)
@@ -29,6 +36,7 @@ test('a path that leaves the folder, starts at the top, or is not a path is refu
 
 test('a path formats back the way a plugin names it', () => {
   assert.equal(formatPluginPath(parsePluginPath('plugin:./skills//pdf')), 'plugin:skills/pdf')
+  assert.equal(formatPluginPath(parsePluginPath('shell:./datasets//rates.csv')), 'shell:datasets/rates.csv')
   assert.equal(formatPluginPath(parsePluginPath('rooms/r1')), 'rooms/r1')
 })
 

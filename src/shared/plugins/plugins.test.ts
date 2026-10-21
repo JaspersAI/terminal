@@ -179,14 +179,15 @@ test('start is a function, and gives the plugin a backend', () => {
 })
 
 test('a plugin named like the Jaspers plugins folder cannot write files there', () => {
-  assert.throws(
-    () => validatePluginDefinition({ kind: 'plugin', id: 'plugins', capabilities: ['files'] }, 'plugins'),
-    /cannot declare files or sandbox/,
-  )
-  assert.throws(
-    () => validatePluginDefinition({ kind: 'plugin', id: 'skills', capabilities: ['files'] }, 'skills'),
-    /cannot declare files or sandbox/,
-  )
+  for (const id of ['plugins', 'skills', 'shell']) {
+    for (const capability of ['files', 'sandbox']) {
+      assert.throws(
+        () => validatePluginDefinition({ kind: 'plugin', id, capabilities: [capability] }, id),
+        /cannot declare files or sandbox/,
+      )
+    }
+    assert.deepEqual(validatePluginDefinition({ kind: 'plugin', id, capabilities: ['llm'] }, id).capabilities, ['llm'])
+  }
   assert.deepEqual(
     validatePluginDefinition({ kind: 'plugin', id: 'connections', capabilities: ['files'] }, 'connections')
       .capabilities,

@@ -36,6 +36,11 @@ export function buildRoot(): string {
   return path.join(jaspersHome(), '.build')
 }
 
+/** Where downloaded npm package tarballs are cached between plugin builds. */
+export function packageCacheRoot(): string {
+  return path.join(jaspersHome(), '.packages')
+}
+
 /** Where plugin folders are read from. Created on demand so the folder is findable. */
 export function pluginRoots(): string[] {
   const home = homePluginsRoot()

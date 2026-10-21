@@ -67,37 +67,38 @@ test("the fixed block carries the SDK's own types for ctx, each file whole under
   assert.match(fixed!, /import type \{ BackendContext \} from '@jaspers-ai\/sdk'/)
 })
 
-test('the procedure builds in small steps: the shell, the install, then each piece filled in, built, and run', () => {
+test('the procedure asks for approval first, writes complete files in a single pass with plugin.tsx last, and validates on each save', () => {
   const [fixed] = builderSystem(reference, run)
-  const shell = fixed!.indexOf('Write the shell first')
-  const install = fixed!.indexOf('Call install_plugin on the shell')
-  const fill = fixed!.indexOf('Fill the shell in with edit_file')
+  const install = fixed!.indexOf('Call install_plugin before writing code')
+  const write = fixed!.indexOf('Write the complete files in a single pass with write_file')
   const runs = fixed!.indexOf('run_source it in the next round')
+  const fix = fixed!.indexOf('Fix those lines with edit_file')
   assert.ok(
-    shell > 0 && shell < install && install < fill && fill < runs,
-    'the shell, the install, the filling, the runs',
+    install > 0 && install < write && write < runs && runs < fix,
+    'approval first, complete files written, sources run, errors fixed',
   )
-  // A shell builds and does nothing yet, and says so when it is run.
-  assert.match(fixed!, /not written yet/)
-  // The user is asked once, on the shell, for all the finished plugin will reach; more is asked for when it is needed.
+  // Asks once up front for everything the plugin will reach, including shell: true for ~/Jaspers/shell.
   assert.match(fixed!, /everything the finished plugin will reach/)
-  assert.match(fixed!, /call install_plugin again with the whole list/)
-  // Filled a piece at a time, by edits, each one built before the next, and no further than the request needs.
-  assert.match(fixed!, /one piece a round/)
-  assert.match(fixed!, /Call check_plugin after each piece/)
-  assert.match(fixed!, /Never write several long pieces in one reply/)
-  assert.match(fixed!, /when it is needed, not before/)
+  assert.match(fixed!, /shell: true/)
+  assert.match(fixed!, /~\/Jaspers\/shell/)
+  assert.match(fixed!, /Call install_plugin again only when/)
+  // Complete files in one pass with plugin.tsx last, rather than not-written-yet shells.
+  assert.match(fixed!, /plugin\.tsx last/)
+  assert.match(fixed!, /rather than throwing not written yet shells/)
+  // Automatic validation on each save from write_file and edit_file.
+  assert.match(fixed!, /each write_file and edit_file save automatically rebuilds/)
   assert.match(fixed!, /edit_file replaces one passage of a file and leaves the rest as it is/)
-  assert.match(fixed!, /Fix those lines with edit_file/)
-  // One short file is written whole: a shell of it would be the same write twice.
-  assert.match(fixed!, /has no shell/)
+  // Shell-prepared files are read through ctx.files with shell: paths.
+  assert.match(fixed!, /ctx\.files/)
+  assert.match(fixed!, /shell:/)
   // Numbered through, so a step that names another by its number names the right one.
-  for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) assert.match(fixed!, new RegExp(`\\n${n}\\. `))
-  assert.doesNotMatch(fixed!, /\n9\. /)
-  assert.match(fixed!, /\n4\. Call install_plugin on the shell/)
-  assert.match(fixed!, /step 5 has nothing left to fill/)
-  // And the builder is who it is told it is: the shell, the approval, then the filling.
-  assert.match(fixed!, /write that plugin's shell, install it with the user's approval, then fill it in/)
+  for (const n of [1, 2, 3, 4, 5, 6, 7]) assert.match(fixed!, new RegExp(`\\n${n}\\. `))
+  assert.doesNotMatch(fixed!, /\n8\. /)
+  // And the builder is who it is told it is: approval first, complete files with plugin.tsx last, validated on save.
+  assert.match(
+    fixed!,
+    /get the user's approval with install_plugin before writing code, write the plugin's complete files with write_file \(plugin\.tsx last\) while the app validates each save automatically/,
+  )
 })
 
 test('finding the API starts from the Markdown documentation sites serve, and says when to stop', () => {

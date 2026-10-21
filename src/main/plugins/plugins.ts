@@ -256,8 +256,14 @@ function provenance(dir: string): Pick<PluginInfo, 'origin' | 'install' | 'built
   }
 }
 
-/** Builds a folder again now: after packages were installed into it, which the watcher does not see. */
+/** Builds a folder again now: after packages were installed into it, or on an explicit save. */
 export function rebuildPlugin(id: string): void {
+  const waiting = timers.get(id)
+  if (waiting) {
+    clearTimeout(waiting)
+    timers.delete(id)
+  }
+  codeChanged.delete(id)
   rescan(id)
 }
 

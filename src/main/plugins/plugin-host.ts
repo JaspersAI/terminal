@@ -6,6 +6,7 @@ import { createRpc, type Rpc } from '../../shared/rpc'
 import { createFiles, type FilesService } from './capabilities/files'
 import { createLlm } from './capabilities/llm'
 import { askForMissingSecret } from '../actions'
+import { hasShellApproval } from './shell-approval'
 import { createTools } from './capabilities/tools'
 import { jaspersHome } from '../home'
 import { call as callTool } from './mcp'
@@ -168,6 +169,7 @@ async function hostFor(id: string): Promise<Host> {
   return spawn(id, build)
 }
 
+/** Returns the registered host, or starts one with RPC and capability services and tracks its initialization. */
 function spawn(id: string, build: HostBuild): Host {
   // Never a second host over one that is still registered.
   const existing = hosts.get(id)
@@ -193,6 +195,7 @@ function spawn(id: string, build: HostBuild): Host {
   const files = createFiles({
     dataRoot: path.join(jaspersHome(), id),
     pluginRoot: build.dir,
+    shellRoot: hasShellApproval(build.dir) ? path.join(jaspersHome(), 'shell') : null,
     openPath: (file) => shell.openPath(file),
     showItemInFolder: (file) => shell.showItemInFolder(file),
   })
