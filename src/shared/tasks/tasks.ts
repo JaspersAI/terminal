@@ -49,14 +49,18 @@ export const TASK_EXCLUDED_TOOLS: readonly string[] = [
  */
 export const SHELL_TOOL = 'run_shell'
 
+export const TASK_PRO_MODE_OFF =
+  'Pro mode is off, so a task cannot run anything on this computer. Tell the user it is in Settings > Pro mode, and that turning it on is theirs to do.'
+
 /**
  * The first tool a run does not have that these instructions name, or nothing. Instructions are a
  * request the assistant writes to itself, and it writes them with every tool in front of it: one that
  * says `cancel_task` makes a task that fails at every run, so it is refused while the assistant is
  * still there to say so to the user.
  */
-export function missingInRun(instructions: string): string | undefined {
-  return TASK_EXCLUDED_TOOLS.find((tool) => new RegExp(`\\b${tool}\\b`).test(instructions))
+export function missingInRun(instructions: string, proMode = true): string | undefined {
+  const excluded = proMode ? TASK_EXCLUDED_TOOLS : [...TASK_EXCLUDED_TOOLS, SHELL_TOOL]
+  return excluded.find((tool) => new RegExp(`\\b${tool}\\b`).test(instructions))
 }
 
 /**
@@ -157,6 +161,8 @@ export type CheckedTaskInput = TaskInput & { model: string | null; commands: str
 export interface CheckOptions {
   /** Whether the orchestrator has a tool by this name now. */
   toolExists: (name: string) => boolean
+  /** Whether Pro mode is enabled, so shell commands and `run_shell` instructions can run. */
+  proMode?: boolean
 }
 
 /** The smallest executeAt + k × every (k ≥ 0) on or after `from`, so a task keeps its phase. */
@@ -236,9 +242,13 @@ export function afterRun(task: Task, run: TaskRun): Task {
 
 /** The input a task is made from, checked and trimmed. What is wrong is said for the model and the user alike. */
 export function checkTaskInput(input: TaskInput, options: CheckOptions): CheckedTaskInput {
+  const proMode = options.proMode ?? true
   const instructions = input.instructions.trim()
   if (!instructions || instructions.length > TASK_INSTRUCTIONS_MAX) {
     throw new Error(`instructions must be 1 to ${TASK_INSTRUCTIONS_MAX} characters saying what the task does.`)
+  }
+  if (!proMode && missingInRun(instructions, false) === SHELL_TOOL) {
+    throw new Error(TASK_PRO_MODE_OFF)
   }
   if (!Number.isFinite(input.executeAt)) throw new Error('executeAt must be a time in milliseconds since the epoch.')
   const call = checkCall(input.call, options)
@@ -259,13 +269,16 @@ export function checkTaskInput(input: TaskInput, options: CheckOptions): Checked
     speak,
     call,
     model: checkModel(input.model),
-    commands: checkCommands(input.commands),
+    commands: checkCommands(input.commands, proMode),
   }
 }
 
 /** The scripts as they are kept and compared: trimmed, each once, in the order given. Nothing here allows one. */
-export function checkCommands(commands: string[] | undefined): string[] {
+export function checkCommands(commands: string[] | undefined, proMode = true): string[] {
   const scripts = [...new Set((commands ?? []).map((command) => String(command).trim()))]
+  if (scripts.length > 0 && !proMode) {
+    throw new Error(TASK_PRO_MODE_OFF)
+  }
   if (scripts.some((script) => !script)) {
     throw new Error('commands are the scripts a run will run, each as it would be typed in a terminal.')
   }
@@ -316,6 +329,7 @@ function checkCall(call: TaskCall | null, options: CheckOptions): TaskCall | nul
   if (!tool) throw new Error('call.tool must name a tool.')
   if (TASK_EXCLUDED_TOOLS.includes(tool)) throw new Error(`A task cannot call ${tool}.`)
   if (tool === SHELL_TOOL) {
+    if (options.proMode === false) throw new Error(TASK_PRO_MODE_OFF)
     throw new Error(
       `A call cannot be ${SHELL_TOOL}: leave call out, say in instructions what to run, and give the script in commands.`,
     )

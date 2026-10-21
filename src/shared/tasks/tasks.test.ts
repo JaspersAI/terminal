@@ -3,12 +3,14 @@ import { test } from 'node:test'
 import { ORCHESTRATOR_TOOLS } from '../loops/loops.ts'
 import {
   afterRun,
+  checkCommands,
   checkTaskInput,
   missingInRun,
   needsShellInRun,
   SHELL_TOOL,
   TASK_EXCLUDED_TOOLS,
   TASK_MODEL_MAX,
+  TASK_PRO_MODE_OFF,
   computeNext,
   dueTasks,
   earliestNext,
@@ -219,6 +221,36 @@ test('a task carries the commands the user allowed it: whole scripts, trimmed, e
     () => checkTaskInput({ ...input, call: { tool: 'run_shell', input: { command: 'ls' } } }, ok),
     /cannot be run_shell/,
   )
+})
+
+test('when Pro mode is off, shell commands and run_shell instructions are refused while tasks without them still pass', () => {
+  assert.equal(missingInRun('Each run: run_shell `tail -40 out/run.log`.', true), undefined)
+  assert.equal(missingInRun('Each run: run_shell `tail -40 out/run.log`.', false), 'run_shell')
+  assert.deepEqual(checkCommands(undefined, false), [])
+  assert.deepEqual(checkCommands([], false), [])
+  assert.throws(() => checkCommands(['tail -40 out/run.log'], false), { message: TASK_PRO_MODE_OFF })
+
+  const off = { toolExists: () => true, proMode: false }
+  const input = {
+    workspaceId: 'ws-1',
+    instructions: 'Check the backtest',
+    executeAt: T0,
+    every: 5 * MIN,
+    at: null,
+    speak: 'always' as const,
+    call: null,
+  }
+  assert.deepEqual(checkTaskInput(input, off).commands, [])
+  assert.deepEqual(checkTaskInput({ ...input, commands: [] }, off).commands, [])
+  assert.throws(() => checkTaskInput({ ...input, commands: ['tail -40 out/run.log'] }, off), {
+    message: TASK_PRO_MODE_OFF,
+  })
+  assert.throws(() => checkTaskInput({ ...input, call: { tool: 'run_shell', input: { command: 'ls' } } }, off), {
+    message: TASK_PRO_MODE_OFF,
+  })
+  assert.throws(() => checkTaskInput({ ...input, instructions: 'Each run: run_shell `tail -40 out/run.log`.' }, off), {
+    message: TASK_PRO_MODE_OFF,
+  })
 })
 
 test("a task may name its model, and nothing but its length is checked, since the name is the provider's", () => {
