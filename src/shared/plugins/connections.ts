@@ -70,10 +70,10 @@ export function withConnectionUrl(
 ): { spec: Connection; log: string | null } {
   if (!Object.hasOwn(urls, id)) return { spec, log: null }
   const url = urls[id]!
-  const { command: _command, cwd: _cwd, ...rest } = spec
+  const { command: _command, cwd: _cwd, env: _env, ...rest } = spec
   return {
-    spec: { ...rest, url },
-    log: `[connections] ${id} -> ${url} (JASPERS_CONNECTION_URLS)`,
+    spec: { ...rest, env: {}, url },
+    log: `[connections] ${id} overridden (JASPERS_CONNECTION_URLS)`,
   }
 }
 

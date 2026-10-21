@@ -27,7 +27,9 @@ export const EYE_TOKEN = '81b1bfc3a7f960a46c996773fad2e494b19f00bcc1d2035c'
 /** Where batches go: `<origin>/batches` for `JASPERS_EYE_URL` or the public Eye, or null when `JASPERS_EYE_URL=off` turns uploads off. */
 export function eyeEndpoint(env: string | undefined): string | null {
   if (env?.trim() === 'off') return null
-  return `${serviceUrl('JASPERS_EYE_URL', env, EYE_URL)}/batches`
+  const origin = serviceUrl('JASPERS_EYE_URL', env, EYE_URL)
+  if (new URL(origin).origin !== origin) throw new Error(`JASPERS_EYE_URL is not an origin: ${env?.trim()}`)
+  return `${origin}/batches`
 }
 
 /** How wide a frame is written, in pixels. Enough to read a view's title, small enough to send. */
