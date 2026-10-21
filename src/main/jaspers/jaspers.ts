@@ -65,8 +65,13 @@ export function signedIn(): boolean {
   return getState().jaspers.tokens !== null
 }
 
-/** A fetch that goes out as the account: the bearer added, a 401 renewed once and sent again, a refusal thrown in the service's words. */
+/** A fetch that goes out as the account: the bearer added, a 401, 402, or 403 renewed once and sent again, a refusal thrown in the service's words. */
 export const asAccount: FetchLike = (url, init) => session().fetch(url, init)
+
+/** Runs an account-backed call, renewing the sign-in once and trying again when the result says a subscription is needed. */
+export function callAsAccount<T>(send: () => Promise<T>): Promise<T> {
+  return session().call(send)
+}
 
 /** Hears the sign-in begin and end, whoever ended it: the user, or Account refusing to renew it. A renewal is neither. */
 export function onSignInChange(listener: (signedIn: boolean) => void): () => void {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { useAppState } from '../../lib/state'
+import { dispatch, useAppState } from '../../lib/state'
 import { requestLeave } from './leave-guard'
 import { AboutPane } from './AboutPane'
 import { AppearancePane } from './AppearancePane'
@@ -40,9 +40,10 @@ interface Props {
  * Settings, over the whole home screen: the panes down the left and the chosen one on the right.
  * Each pane saves through the actions onboarding and the Plugins view dispatch, so closing it
  * loses nothing but a draft that was never saved. Over the panes, while the user is signed in with
- * Jaspers, Account is no pane: it opens the account's page on Account in the browser, and the pane
- * on show stays. Under them, View loops leaves Settings for the list of the workspace's loops, open
- * and closed (`LoopsDialog`). Escape, the cross, or a press on the backdrop closes it.
+ * Jaspers, Account and Sign out are no panes: Account opens the account's page on Account in the
+ * browser, Sign out ends the sign-in, and the pane on show stays. Under them, View loops leaves
+ * Settings for the list of the workspace's loops, open and closed (`LoopsDialog`). Escape, the
+ * cross, or a press on the backdrop closes it.
  */
 export function Settings({ onClose, onViewLoops }: Props): ReactElement {
   const [pane, setPane] = useState<Pane>('llm')
@@ -91,13 +92,21 @@ export function Settings({ onClose, onViewLoops }: Props): ReactElement {
           </h2>
           {/* No pane, so the one on show stays. Main opens the page, since main knows where Account is. */}
           {signedIn && (
-            <NavRow
-              id="jaspers-account"
-              icon={PersonIcon}
-              label="Account"
-              out
-              onClick={() => void window.app.openAccount()}
-            />
+            <>
+              <NavRow
+                id="jaspers-account"
+                icon={PersonIcon}
+                label="Account"
+                out
+                onClick={() => void window.app.openAccount()}
+              />
+              <NavRow
+                id="jaspers-sign-out"
+                icon={SignOutIcon}
+                label="Sign out"
+                onClick={() => void dispatch({ type: 'jaspers.signOut' })}
+              />
+            </>
           )}
           {PANES.map(({ id, label, icon }) => (
             <NavRow
@@ -207,6 +216,15 @@ function PersonIcon(): ReactElement {
   return (
     <svg viewBox="0 0 16 16" fill="none" aria-hidden className="h-4 w-4 stroke-current stroke-[1.25]">
       <path d="M8 2.5a2.75 2.75 0 1 0 0 5.5 2.75 2.75 0 0 0 0-5.5zM2.5 14c.6-3 2.8-4.5 5.5-4.5s4.9 1.5 5.5 4.5" />
+    </svg>
+  )
+}
+
+/** A doorway and an arrow out of it: leaving the sign-in. */
+function SignOutIcon(): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden className="h-4 w-4 stroke-current stroke-[1.25]">
+      <path d="M6.5 2.5h-4v11h4M6 8h7.5M11 5.5 13.5 8 11 10.5" />
     </svg>
   )
 }

@@ -34,8 +34,8 @@ interface Account {
   expire(access: string): void
   /** Marks a refresh token as spent elsewhere: presenting it again ends its grant, as Account does. */
   spend(refresh: string): void
-  /** What the gateway answers instead of serving, while set. */
-  refusal: { status: number; message: string } | null
+  /** What the gateway answers instead of serving, while set. When `token` is set, only that bearer is refused. */
+  refusal: { status: number; message: string; token?: string } | null
   /** Every bearer refused at the gateway, however fresh. */
   refuseEveryone: boolean
   /** The token endpoint answers 503 with a body that is not OAuth's, as a proxy in front would. */
@@ -188,7 +188,8 @@ async function fakeAccount(): Promise<Account> {
     if (route === 'POST /v1/chat/completions') {
       const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1] ?? ''
       await read(req)
-      if (account.refusal) return json(res, account.refusal.status, { error: { message: account.refusal.message } })
+      if (account.refusal && (!account.refusal.token || account.refusal.token === bearer))
+        return json(res, account.refusal.status, { error: { message: account.refusal.message } })
       const record = access.get(bearer)
       if (!record || record.expired || account.refuseEveryone)
         return json(res, 401, { error: { message: 'The Jaspers token is missing, expired, or not for this service.' } })
@@ -402,11 +403,33 @@ test('a renewal Account could not serve fails the request and keeps the sign-in 
   }
 })
 
-test("a 402 or 403 is thrown in the service's words, sent once, and leaves the sign-in as it was", async () => {
+test("a 402 or 403 renews the token and retries once, succeeding when access was granted and throwing in the service's words when still refused", async () => {
   const account = await fakeAccount()
   try {
     const { session } = harness(account)
     await session.signIn()
+    // Granted on the renewed token after a 403 or 402 on the stale one.
+    account.refusal = {
+      status: 403,
+      message: 'This account does not include the screener.',
+      token: account.issued[0]!.access_token,
+    }
+    const after403 = await session.fetch(...chat(account))
+    assert.equal(after403.status, 200)
+    assert.equal(account.seen.refreshes.length, 1)
+    assert.deepEqual(account.seen.gateway, [account.issued[1]!.access_token])
+
+    account.refusal = {
+      status: 402,
+      message: 'Your monthly allowance is used up.',
+      token: account.issued[1]!.access_token,
+    }
+    const after402 = await session.fetch(...chat(account))
+    assert.equal(after402.status, 200)
+    assert.equal(account.seen.refreshes.length, 2)
+    assert.deepEqual(account.seen.gateway, [account.issued[1]!.access_token, account.issued[2]!.access_token])
+
+    // Still refused on the fresh token: thrown in the service's words after one renewal, and the sign-in stays.
     account.refusal = { status: 402, message: 'Your monthly allowance is used up. It resets on 1 November.' }
     await assert.rejects(session.fetch(...chat(account)), (err: unknown) => {
       assert.ok(err instanceof RefusedError)
@@ -414,12 +437,13 @@ test("a 402 or 403 is thrown in the service's words, sent once, and leaves the s
       assert.equal(err.message, 'Your monthly allowance is used up. It resets on 1 November.')
       return true
     })
+    assert.equal(account.seen.refreshes.length, 3)
     account.refusal = { status: 403, message: 'This account does not include voice.' }
     await assert.rejects(
       session.fetch(...chat(account)),
       (err: unknown) => err instanceof RefusedError && err.status === 403,
     )
-    assert.equal(account.seen.refreshes.length, 0)
+    assert.equal(account.seen.refreshes.length, 4)
     assert.equal(session.signedIn(), true)
     // Through the provider wire, the words reach the user under the provider's name, as any refusal does.
     const jaspers = findProvider('llm', 'jaspers')!
@@ -431,6 +455,135 @@ test("a 402 or 403 is thrown in the service's words, sent once, and leaves the s
         return true
       },
     )
+  } finally {
+    await account.close()
+  }
+})
+
+test('a tool call whose result asks for a subscription renews the token once across concurrent callers and retries once', async () => {
+  const account = await fakeAccount()
+  try {
+    const { session } = harness(account)
+    await session.signIn()
+    const stale = account.issued[0]!.access_token
+    const refusal = {
+      isError: true,
+      content: [{ type: 'text', text: '{"code":"NEEDS_SUBSCRIPTION","message":"Subscribe to use Discover."}' }],
+    }
+    const ok = {
+      isError: false,
+      content: [{ type: 'text', text: '{"rows":[{"ticker":"AAPL"}]}' }],
+    }
+    const results = await Promise.all(
+      [1, 2, 3].map(() =>
+        session.call(async () => {
+          const bearer = await session.token()
+          return bearer === stale ? refusal : ok
+        }),
+      ),
+    )
+    assert.deepEqual(results, [ok, ok, ok])
+    assert.equal(account.seen.refreshes.length, 1)
+
+    // Still refused on the fresh token: tried once more, then returned as the server sent it.
+    let attempts = 0
+    const stillRefused = await session.call(async () => {
+      attempts++
+      await session.token()
+      return refusal
+    })
+    assert.deepEqual(stillRefused, refusal)
+    assert.equal(attempts, 2)
+    assert.equal(account.seen.refreshes.length, 2)
+
+    // A transient refresh failure returns the tool's own refusal and keeps the sign-in.
+    account.outage = true
+    let outageAttempts = 0
+    const duringOutage = await session.call(async () => {
+      outageAttempts++
+      return refusal
+    })
+    assert.deepEqual(duringOutage, refusal)
+    assert.equal(outageAttempts, 1)
+    assert.equal(session.signedIn(), true)
+    account.outage = false
+
+    // A grant revoked at Account during the refresh ends the sign-in with SignedOutError.
+    account.spend(account.issued[2]!.refresh_token)
+    await assert.rejects(
+      session.call(async () => refusal),
+      SignedOutError,
+    )
+    assert.equal(session.signedIn(), false)
+  } finally {
+    await account.close()
+  }
+})
+
+test('signing out while a refresh is in flight leaves the session signed out with no tokens or error reason', async () => {
+  const account = await fakeAccount()
+  try {
+    let enteredToken = () => {}
+    let finishToken = () => {}
+    let holdMode: 'before' | 'after' | null = null
+    const { session, clock, stored } = harness(account, {
+      fetch: async (url, init) => {
+        if (holdMode === 'before' && String(url).endsWith('/oauth/token')) {
+          holdMode = null
+          enteredToken()
+          await new Promise<void>((resolve) => {
+            finishToken = resolve
+          })
+        }
+        const res = await fetch(url, init)
+        if (holdMode === 'after' && String(url).endsWith('/oauth/token')) {
+          holdMode = null
+          enteredToken()
+          await new Promise<void>((resolve) => {
+            finishToken = resolve
+          })
+        }
+        return res
+      },
+    })
+
+    // 1. Refresh fails with invalid_grant after signOut revoked the token.
+    await session.signIn()
+    clock.now += 59 * 60_000
+    holdMode = 'before'
+    const reachedBefore = new Promise<void>((resolve) => {
+      enteredToken = resolve
+    })
+    const refreshing = assert.rejects(session.token(), (err: unknown) => {
+      assert.ok(err instanceof SignedOutError)
+      assert.equal(err.message, 'Not signed in to Jaspers. Sign in with Jaspers in Settings.')
+      return true
+    })
+    await reachedBefore
+    await session.signOut()
+    finishToken()
+    await refreshing
+    assert.equal(session.signedIn(), false)
+    assert.deepEqual(stored(), SIGNED_OUT)
+
+    // 2. Refresh already succeeded at Account before signOut cleared state: new tokens are not written back.
+    await session.signIn()
+    clock.now += 59 * 60_000
+    holdMode = 'after'
+    const reachedAfter = new Promise<void>((resolve) => {
+      enteredToken = resolve
+    })
+    const refreshing2 = assert.rejects(session.token(), (err: unknown) => {
+      assert.ok(err instanceof SignedOutError)
+      assert.equal(err.message, 'Not signed in to Jaspers. Sign in with Jaspers in Settings.')
+      return true
+    })
+    await reachedAfter
+    await session.signOut()
+    finishToken()
+    await refreshing2
+    assert.equal(session.signedIn(), false)
+    assert.deepEqual(stored(), SIGNED_OUT)
   } finally {
     await account.close()
   }

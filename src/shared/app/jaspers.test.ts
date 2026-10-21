@@ -10,6 +10,7 @@ import {
   emailOf,
   gatewayUrl,
   nearExpiry,
+  needsSubscription,
   readStoredJaspers,
   readTokens,
   refusalMessage,
@@ -129,4 +130,90 @@ test("a refusal is read in the service's own words, whichever shape it wrote the
   assert.equal(refusalMessage(403, '{"error":{"message":""}}'), '{"error":{"message":""}}')
   assert.equal(refusalMessage(402, '   '), 'HTTP 402')
   assert.equal(refusalMessage(403, 'x'.repeat(300)).length, 200)
+})
+
+test('a tool result or error that asks for a subscription or account access is recognized, and data or other errors are not', () => {
+  assert.equal(
+    needsSubscription({
+      isError: true,
+      content: [{ type: 'text', text: '{"code":"NEEDS_SUBSCRIPTION","message":"Subscribe to use Discover."}' }],
+    }),
+    true,
+  )
+  assert.equal(
+    needsSubscription({
+      structuredContent: { error: { code: 'SUBSCRIPTION_REQUIRED', message: 'A subscription is required.' } },
+    }),
+    true,
+  )
+  assert.equal(
+    needsSubscription({
+      content: [{ type: 'text', text: 'Manage your subscription at https://account.jsprai.com/auth/account.' }],
+    }),
+    true,
+  )
+  assert.equal(
+    needsSubscription({
+      isError: true,
+      content: [{ type: 'text', text: 'This account does not include the screener.' }],
+    }),
+    true,
+  )
+  assert.equal(
+    needsSubscription({
+      isError: true,
+      content: [{ type: 'text', text: 'Account access is required to run this tool.' }],
+    }),
+    true,
+  )
+  assert.equal(
+    needsSubscription({
+      error: 'insufficient_scope',
+      error_description: 'This account does not include the screener.',
+    }),
+    true,
+  )
+  // Normal company or filing results mentioning subscriptions or account access are data, not refusals.
+  assert.equal(
+    needsSubscription({
+      content: [
+        {
+          type: 'text',
+          text: 'Item 1. Business: Our cloud platform requires a subscription and account access for enterprise customers.',
+        },
+      ],
+    }),
+    false,
+  )
+  assert.equal(
+    needsSubscription({
+      isError: false,
+      structuredContent: {
+        rows: [{ ticker: 'CRM', business: 'Enterprise software that requires a subscription.' }],
+      },
+      content: [
+        {
+          type: 'text',
+          text: '{"rows":[{"ticker":"CRM","business":"Enterprise software that requires a subscription."}]}',
+        },
+      ],
+    }),
+    false,
+  )
+  // Unrelated tool errors are not subscription refusals, even when a column or query mentions subscription.
+  assert.equal(
+    needsSubscription({
+      isError: true,
+      content: [{ type: 'text', text: 'Ticker XXXX was not found.' }],
+    }),
+    false,
+  )
+  assert.equal(
+    needsSubscription({
+      isError: true,
+      content: [{ type: 'text', text: 'SQLITE_ERROR: no such column: subscription_revenue' }],
+    }),
+    false,
+  )
+  assert.equal(needsSubscription(null), false)
 })
