@@ -1,12 +1,18 @@
 # SDK reference
 
-[`@jaspers-ai/sdk`](https://www.npmjs.com/package/@jaspers-ai/sdk) is what a plugin is written against. It lives in `packages/sdk` of this repo, an npm workspace the app itself imports by the same name.
+[`@jaspers-ai/sdk`](https://www.npmjs.com/package/@jaspers-ai/sdk) ([MIT](../packages/sdk/LICENSE)) is the TypeScript contract that Jaspers Terminal plugins are written against (**Advantage #3: TypeScript End-to-End**). It lives in [`packages/sdk`](../packages/sdk/README.md) of this repo, an npm workspace the app itself imports by the same name.
 
 ```sh
 npm install --save-dev @jaspers-ai/sdk react zod typescript @types/react @types/node
 ```
 
-The app provides the SDK, `react`, `react-dom`, and `zod` at runtime, so the install is for types.
+The app provides the SDK, `react`, `react-dom`, and `zod` at runtime through its zero-install host runtime (`jaspers-host://runtime/`), so the install is for local TypeScript typechecking and tests only.
+
+### Why the SDK stays small (and how `build_plugin` uses this file)
+
+`@jaspers-ai/sdk` reduces plugin complexity for both human developers and the built-in coding agent (`build_plugin`) by keeping the entire API surface to four definitions (`definePlugin`, `defineConnection`, `defineSource`, `defineView`), four model-drivable React hooks (`useData`, `usePanelState`, `usePublish`, `usePublishText` plus `useBridge`), a capability-gated backend `ctx` (`BackendContext`), and Agent Skills helpers (`skillsPrompt`, `skillTools`, `runSkillTool`).
+
+`src/main/agent/build/reference.ts` bundles this file (`docs/sdk-reference.md?raw`), [`docs/writing-a-plugin.md`](writing-a-plugin.md) (`?raw`), the exact TypeScript interfaces in `packages/sdk/src/context.ts?raw` and `packages/sdk/src/llm.ts?raw`, and the four starter templates in [`docs/templates/`](templates/README.md) directly into the coding agent's system prompt (`builderSystem` in `src/shared/agent/build/prompt.ts`). That single source of truth ensures that local/open-weight models and cloud models synthesize plugins against the exact same TypeScript signatures and security rules documented below.
 
 ## `definePlugin`
 
