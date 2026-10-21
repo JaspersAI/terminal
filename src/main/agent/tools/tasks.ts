@@ -3,9 +3,10 @@ import {
   checkCommands,
   formatLocal,
   missingInRun,
-  needsShellInRun,
   parseAt,
   scheduleText,
+  SHELL_TOOL,
+  TASK_PRO_MODE_OFF,
   taskStatus,
   type Task,
   type TaskCall,
@@ -123,8 +124,9 @@ const TOOLS: Tool[] = [
         call: optional(input.call, asCall) ?? null,
         model: optional(input.model, asPathString) ?? null,
       }
-      checkTask({ ...draft, commands: asCommands(input.commands) })
-      const commands = await approveForTask(asCommands(input.commands), context)
+      const wanted = checkCommands(asCommands(input.commands), getState().proMode.enabled)
+      checkTask({ ...draft, commands: wanted })
+      const commands = await approveForTask(wanted, context)
       // The wait for an answer can be minutes: "in 60" counts from the answer, not from the question.
       const now = Date.now()
       const task = scheduleTask({ ...draft, executeAt: whenOf(input.at, input.in, now), commands }, now)
@@ -169,7 +171,7 @@ const TOOLS: Tool[] = [
       const id = asTaskId(input.taskId)
       if (input.commands !== undefined && input.commands !== null) {
         // The list given replaces the task's: one it already had stays allowed, a new one is asked about.
-        const wanted = checkCommands(asCommands(input.commands))
+        const wanted = checkCommands(asCommands(input.commands), getState().proMode.enabled)
         const had = getTask(id, context.workspaceId).commands
         const added = await approveForTask(
           wanted.filter((command) => !had.includes(command)),
@@ -222,15 +224,13 @@ function asSeconds(value: unknown, what: string): number {
 
 function asTaskInstructions(value: unknown, context: ToolContext): string {
   const instructions = asInstructions(value)
-  const missing = missingInRun(instructions)
+  const missing = missingInRun(instructions, getState().proMode.enabled)
+  if (missing === SHELL_TOOL) {
+    throw new Error(TASK_PRO_MODE_OFF)
+  }
   if (missing) {
     throw new Error(
       `A task's run does not have ${missing}: it works on its own, with nobody there to answer or approve, and it cannot schedule, change, or cancel a task. Schedule only what a run can do without it; if the work needs it, tell the user it cannot be scheduled and why.`,
-    )
-  }
-  if (!getState().proMode.enabled && needsShellInRun(instructions)) {
-    throw new Error(
-      'Pro mode is off, so a task cannot run anything on this computer. Tell the user it is in Settings > Pro mode, and that turning it on is theirs to do.',
     )
   }
   const slash = parseSlash(instructions)
@@ -262,6 +262,9 @@ function asCommands(raw: unknown): string[] {
 function asCall(raw: unknown): TaskCall {
   const value = unstring(raw)
   if (isRecord(value) && typeof value.tool === 'string') {
+    if (value.tool.trim() === SHELL_TOOL && !getState().proMode.enabled) {
+      throw new Error(TASK_PRO_MODE_OFF)
+    }
     const input = unstring(value.input)
     return { tool: value.tool, input: isRecord(input) ? input : {} }
   }

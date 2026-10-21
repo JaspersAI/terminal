@@ -23,6 +23,7 @@ import { askUser } from '../../actions'
 import { jaspersHome } from '../../home'
 import { getState } from '../../state'
 import { allowTaskCommand, taskAllows } from '../../tasks/tasks'
+import { TASK_PRO_MODE_OFF } from '../../../shared/tasks/tasks'
 import { askedBy } from '../utils/runs'
 import type { Tool, ToolContext } from './types'
 
@@ -141,6 +142,11 @@ const runShell: Tool = {
         `The user did not approve \`${command}\`. Leave it; say what you wanted to run and ask what they would rather do.`,
       )
     }
+    if (!getState().proMode.enabled) {
+      throw new Error(
+        'Pro mode is off, so nothing can be run on this computer. Tell the user it is in Settings > Pro mode, and that turning it on is theirs to do.',
+      )
+    }
     if (approval === 'conversation') allowed.add(key)
     if (approval === 'session') allowedSessions.add(conversation)
     if (approval === 'task' && task !== undefined) allowTaskCommand(task, command)
@@ -165,9 +171,7 @@ export async function approveForTask(commands: string[], context: ToolContext): 
   if (commands.length === 0) return []
   const proMode = getState().proMode
   if (!proMode.enabled) {
-    throw new Error(
-      'Pro mode is off, so a task cannot run anything on this computer. Tell the user it is in Settings > Pro mode, and that turning it on is theirs to do.',
-    )
+    throw new Error(TASK_PRO_MODE_OFF)
   }
   if (process.platform !== 'darwin' || !fs.existsSync(SANDBOX)) {
     throw new Error("Commands run only where macOS can confine them to Jaspers's folder, and this computer cannot.")
@@ -175,6 +179,9 @@ export async function approveForTask(commands: string[], context: ToolContext): 
   const folder = await shellFolder()
   const scripts = [...new Set(commands.map(asCommand))]
   for (const command of scripts) {
+    if (!getState().proMode.enabled) {
+      throw new Error(TASK_PRO_MODE_OFF)
+    }
     const approval = readTaskApproval(
       await askUser(
         askForTask(folder, proMode.timeoutSeconds),
@@ -185,7 +192,13 @@ export async function approveForTask(commands: string[], context: ToolContext): 
       ),
       'scheduling',
     )
+    if (!getState().proMode.enabled) {
+      throw new Error(TASK_PRO_MODE_OFF)
+    }
     await log({ command, folder, answer: approval === 'task' ? 'task, when scheduled' : 'denied, when scheduled' })
+    if (!getState().proMode.enabled) {
+      throw new Error(TASK_PRO_MODE_OFF)
+    }
     if (approval !== 'task') {
       throw new Error(
         `The user did not allow the task \`${command}\`, so nothing was scheduled or changed. Leave it; say what the task would have run and ask what they would rather do.`,
