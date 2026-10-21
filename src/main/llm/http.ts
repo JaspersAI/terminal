@@ -92,13 +92,37 @@ function detail(text: string): string {
 const QUIET_MS = 5 * 60_000
 
 /**
+ * The same for a model on this computer (Ollama, LM Studio, a server of one's own on localhost). It
+ * streams nothing while it loads and reads the request, and on a laptop a long request takes minutes
+ * to read: a 27B model under Ollama took four minutes over 35k tokens, and the next, longer request
+ * passed five before a word came. The machine is the user's own, and nothing is billed while it works.
+ */
+const LOCAL_QUIET_MS = 20 * 60_000
+
+/** Whether a request goes to this computer itself. */
+export function onThisComputer(url: string): boolean {
+  let host: string
+  try {
+    host = new URL(url).hostname
+  } catch {
+    return false
+  }
+  return host === 'localhost' || host.endsWith('.localhost') || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host)
+}
+
+/** How long a stream to this address may say nothing. */
+export function quietLimit(url: string): number {
+  return onThisComputer(url) ? LOCAL_QUIET_MS : QUIET_MS
+}
+
+/**
  * POST to a provider and read back a server-sent event stream, one payload at a time. The errors are
  * the same shape as `post`'s, since the failure a caller has to explain is the same one: a provider
  * that refused, with whatever it said about why.
  *
  * The limit is on the silence between pieces, not on the whole stream, which is the point of
  * streaming a long reply: a model that thinks for ten minutes and says so as it goes is working, and
- * one that has sent nothing for five is not. A caller that stops reading (a `break`, or an error
+ * one that has sent nothing for five is not (twenty, for a model on this computer). A caller that stops reading (a `break`, or an error
  * thrown at it) cancels the body.
  */
 export async function* sse(
@@ -106,14 +130,22 @@ export async function* sse(
   url: string,
   headers: Record<string, string>,
   body: string,
-  quietMs = QUIET_MS,
+  quietMs = quietLimit(url),
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
   const quiet = new AbortController()
   let timer: NodeJS.Timeout | undefined
+  // On this computer, silence is most often the model still reading a long request, so the error
+  // says what would make it answer sooner.
+  const why = onThisComputer(url)
+    ? '; a model on this computer says nothing while it reads the request, so a smaller model or a shorter conversation answers sooner'
+    : ''
   const heard = (): void => {
     clearTimeout(timer)
-    timer = setTimeout(() => quiet.abort(new Error(`nothing arrived for ${Math.round(quietMs / 1000)} s`)), quietMs)
+    timer = setTimeout(
+      () => quiet.abort(new Error(`nothing arrived for ${Math.round(quietMs / 1000)} s${why}`)),
+      quietMs,
+    )
   }
   heard()
   try {

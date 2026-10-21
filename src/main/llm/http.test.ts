@@ -3,7 +3,7 @@ import { createServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
 import type { Provider } from '../../shared/llm/providers.ts'
-import { post, ProviderError, sse } from './http.ts'
+import { onThisComputer, post, ProviderError, quietLimit, sse } from './http.ts'
 
 const TEST: Provider = {
   id: 'test',
@@ -61,6 +61,38 @@ test('a stream that goes quiet is given up on, and says so', async () => {
     },
     async (url) => {
       await assert.rejects(read(url, 60), /Test: .*nothing arrived for/)
+    },
+  )
+})
+
+test('a model on this computer is waited on longer, since it says nothing while it reads a long request', () => {
+  for (const url of [
+    'http://localhost:11434/v1/chat/completions',
+    'http://127.0.0.1:1234/v1/chat/completions',
+    'http://[::1]:11434/v1/chat/completions',
+    'http://ollama.localhost/v1/chat/completions',
+  ]) {
+    assert.equal(onThisComputer(url), true, url)
+    assert.equal(quietLimit(url), 20 * 60_000, url)
+  }
+  for (const url of ['https://api.anthropic.com/v1/messages', 'http://192.168.1.20:11434/v1', 'not a url']) {
+    assert.equal(onThisComputer(url), false, url)
+    assert.equal(quietLimit(url), 5 * 60_000, url)
+  }
+})
+
+test('a model on this computer that goes quiet says what would make it answer sooner', async () => {
+  await serving(
+    (res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write('data: {"n":1}\n\n')
+    },
+    async (url) => {
+      // The test server is on 127.0.0.1, which is this computer.
+      await assert.rejects(
+        read(url, 60),
+        /nothing arrived for 0 s; a model on this computer says nothing while it reads/,
+      )
     },
   )
 })
