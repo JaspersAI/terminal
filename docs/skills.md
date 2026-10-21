@@ -1,4 +1,14 @@
-# Skills
+# Skills and workflows (Own Your Workflows)
+
+Jaspers Terminal lets you **own your workflows** (**Advantage #6**) by combining three repeatable automation primitives that run locally across both open-weight/local models and cloud providers:
+
+1. **Agent Skills (`SKILL.md`):** Portable domain playbooks stored in `~/Jaspers/skills/<name>/SKILL.md` or bundled inside a plugin's `skills/` directory in the open [Agent Skills](https://agentskills.io) format.
+2. **Scheduled NYSE market-calendar tasks (`market-calendar.ts` & `clock-rule.ts`):** Recurring prompts, `/skill` runs, or direct tool refreshes scheduled on local-time clock rules with built-in US equity market trading-day and holiday awareness.
+3. **Zero-token SQLite delta watches (`delta.ts` & `watched`):** High-frequency source watches (`call` + `speak: "changed"`) that poll data sources and diff rows in `~/Jaspers/data/jaspers.db` on schedule at zero LLM token cost, waking the language model only when the underlying data actually changes.
+
+---
+
+## Agent Skills (`SKILL.md`)
 
 A skill is written know-how the assistant picks up when a request calls for it: how you like a DCF laid out, what a morning brief covers, which views a credit review opens. Jaspers uses the [Agent Skills](https://agentskills.io) format, so a skill written for Claude Code, Codex, or another client works here, and one written here works there.
 
@@ -123,3 +133,32 @@ export default definePlugin({
 ```
 
 `ctx.skills.catalog({ names })` narrows the list; `ctx.skills.activate(name)` and `ctx.skills.read(name, path)` are what the two tools call. A plugin gets the skills the assistant may load, never one that is off or one only `/name` loads.
+
+---
+
+## Scheduled NYSE market-calendar tasks (`market-calendar.ts` & `clock-rule.ts`)
+
+Ask the assistant in plain words to run work on a schedule — *"every morning at 9:35am ET when the market is open, run `/morning-brief`"* or *"refresh my watchlist every 5 minutes"* — or manage tasks in **Settings > Tasks**.
+
+The scheduler (`src/main/tasks/tasks.ts` paired with `src/shared/tasks/tasks.ts`, `src/shared/tasks/clock-rule.ts`, and `src/shared/tasks/market-calendar.ts`) supports up to `TASKS_MAX = 50` pending tasks per workspace across three timing modes:
+
+- **Local-time clock rules (`at: ClockRule`):** A rule `{ days, time, timeZone, marketOnly }` resolves each run in its IANA time zone (such as `America/New_York`) across daylight-saving transitions (`nextByRule` in `src/shared/tasks/clock-rule.ts`), so `09:30` stays `09:30` year-round. Malformed clock rules fail validation (`checkRule`) rather than silently becoming daily schedules.
+- **Offline NYSE / Nasdaq trading-day calendar (`marketOnly: true`):** When `marketOnly` is set, `isTradingDay` (`src/shared/tasks/market-calendar.ts`, with built-in holiday tables through `CALENDAR_THROUGH = '2028-12-31'`) skips weekends and full US equity market holidays without making any network request.
+- **Intervals (`every`) and one-shots (`executeAt`):** Direct tool calls (`call`) can repeat as often as every 1 second (`EVERY_MIN_CALL_MS = 1_000`), while assistant instruction runs (`instructions`) repeat at 60 seconds or longer (`EVERY_MIN_ASK_MS = 60_000`).
+- **Skills, model pinning, and Pro mode scripts:**
+  - Starting `instructions` with `/name` (for example `/morning-brief AAPL MSFT`) loads that Agent Skill on every scheduled run.
+  - Each task can pin its own `model` (such as a fast local Ollama model or a smaller cloud model; see [Getting started](getting-started.md)) and counts against the daily task token budget in **Settings > Tasks**.
+  - Tasks that need shell automation can attach up to `TASK_COMMANDS_MAX = 5` pre-approved [Pro mode](pro-mode.md) scripts (`commands`), approved once when the task is scheduled.
+
+## Zero-token SQLite delta watches (`speak: "changed"` & `delta.ts`)
+
+Most scheduled checks — polling for a new 8-K filing, watching a short-interest feed, or monitoring an earnings release — find no change on the vast majority of ticks. Waking an LLM on every interval wastes tokens or ties up your local GPU.
+
+When a task is scheduled with both a direct tool `call` (such as `run_source` or `refresh_element`) and `speak: "changed"` (`isWatch` in `src/shared/tasks/tasks.ts`), the scheduler runs it as a **zero-token SQLite delta watch**:
+
+1. **Direct source poll:** At each scheduled tick, `execute` (`src/main/tasks/tasks.ts`) invokes `call` directly without calling any language model.
+2. **SQLite observation history (`watched` in `~/Jaspers/data/jaspers.db`):** The store (`watch` in `src/store/db.ts`) records the observation (`task`, `at`, SHA-256 `hash`, `text`) in the `watched` table, trimming older entries past the latest 20 observations per task (`trimWatched`), and returns the previous observation.
+3. **Order-independent row diffing (`src/shared/tasks/delta.ts`):** `delta(before, after)` strips volatile run metadata (`datasetId`, `resultId`, `rowCount` via `RUN_METADATA`), extracts structured JSON rows (`extractRows` + `stableStringify`), and compares the previous and current results as a multiset (bag of lines, up to `LINES_MAX = 40` added/removed lines and `DELTA_MAX = 4000` characters). If a data source simply re-orders the same rows between calls, `delta` reports `changed: false`.
+4. **Wake on change only:**
+   - When `changed` is `false` (and on the very first baseline run), the tick finishes immediately with `result: "unchanged"` — **zero LLM tokens are spent** and no notification is raised.
+   - When `changed` is `true`, the scheduler wakes the task's model with `instructions` plus the exact `New` and `Gone` rows (`found.text`), posts the assistant's reply into the workspace conversation, and records a notification.
