@@ -239,6 +239,69 @@ test("past it, every answer but the newest round's is set aside", () => {
   assert.equal(out[2]!.length, LARGE + 1)
 })
 
+test('a round that only reads answers again keeps the round before it whole: the model reads the two together', () => {
+  // One page, then another: past the limit, so the first stands aside.
+  const fetched: Turn[] = [
+    asked('go'),
+    calling('c1', 'fetch_page'),
+    answer('c1', big(half)),
+    calling('c2', 'fetch_page'),
+    answer('c2', big(half)),
+  ]
+  const put = setAside(fetched, { asked: 0, aside: 0 })!
+  assert.deepEqual(put.sending, { asked: 0, aside: 4 })
+  // The model asks for the first back, to read it beside the second.
+  const back: Turn[] = [...put.turns, calling('r1', 'read_again', { call: 'c1' }), answer('r1', big(half))]
+  assert.equal(setAside(back, put.sending), null, "the second page's answer stays whole beside what was read again")
+  const out = outputs(sent(back, put.sending))
+  assert.match(out[0]!, /^\[Set aside: /)
+  assert.equal(out[1]!.length, half)
+  assert.equal(out[2]!.length, half)
+  // A new call after that is a new round: what came before it stands aside as ever.
+  const next: Turn[] = [...back, calling('c3', 'fetch_page'), answer('c3', big(LARGE + 1))]
+  assert.deepEqual(setAside(next, put.sending)!.sending, { asked: 0, aside: 8 })
+})
+
+test('a round that reads again beside a new call is a new round like any other', () => {
+  const turns: Turn[] = [
+    asked('go'),
+    calling('c1', 'fetch_page'),
+    answer('c1', big(half)),
+    calling('c2', 'fetch_page'),
+    answer('c2', big(half)),
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: [
+        { id: 'r1', name: 'read_again', input: { call: 'c1' } },
+        { id: 'c3', name: 'fetch_page', input: {} },
+      ],
+      raw: null,
+    },
+    {
+      role: 'tool',
+      results: [
+        { callId: 'r1', output: big(half), isError: false },
+        { callId: 'c3', output: big(LARGE + 1), isError: false },
+      ],
+    },
+  ]
+  assert.deepEqual(setAside(turns, { asked: 0, aside: 0 })!.sending, { asked: 0, aside: 6 })
+})
+
+test('a conversation too long for its model still gives up the round a read again was beside', () => {
+  const turns: Turn[] = [
+    asked('go'),
+    calling('c1', 'fetch_page'),
+    answer('c1', big(half)),
+    { role: 'assistant', text: '', toolCalls: [{ id: 'r1', name: 'read_again', input: { call: 'c0' } }], raw: null },
+    answer('r1', big(half)),
+  ]
+  const room = makeRoom(turns, { asked: 0, aside: 0 })!
+  assert.equal(room.withheld, 0)
+  assert.deepEqual(room.sending, { asked: 0, aside: 4 })
+})
+
 test('setting answers aside takes no answer out of the thread, and takes the thinking out of every turn', () => {
   const used = { type: 'tool_use', id: 'c1', name: 'run_source', input: {} }
   const thought: Turn = {

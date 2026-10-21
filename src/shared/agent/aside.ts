@@ -34,6 +34,8 @@ export const WHOLE_MAX = 60_000
  * to go.
  */
 export const ROOM = 2 / 3
+/** The tool that brings an answer set aside back, named here since a round of it is asked to be read with the one before. */
+export const READ_AGAIN = 'read_again'
 
 /** How much of an answer its note keeps: the beginning, where a table names its columns and a reply its ids. */
 const HEAD = 200
@@ -84,8 +86,10 @@ export function sent(turns: Turn[], { asked, aside }: Sending, kept: ReadonlySet
 /**
  * A request's thread once its answers are more than it keeps whole: every one but the newest round's
  * set aside, or null while they are within it, or when the newest round is all there is, which the
- * model has not read. Thinking comes out of every turn, since it is tied to the conversation as it
- * stood. No answer is taken out of the thread.
+ * model has not read. A newest round that only reads answers again keeps the round before it whole
+ * too: the model asked for them back to read beside what it had in front of it, and setting that
+ * aside in turn would have it read the two again by turns, never together. Thinking comes out of
+ * every turn, since it is tied to the conversation as it stood. No answer is taken out of the thread.
  */
 export function setAside(
   turns: Turn[],
@@ -95,7 +99,7 @@ export function setAside(
   const calls = callsIn(turns)
   const whole = long(turns, sending.aside, turns.length, calls, kept)
   if (whole.reduce((total, result) => total + result.output.length, 0) <= WHOLE_MAX) return null
-  return butNewest(turns, sending, calls, kept)
+  return butNewest(turns, sending, calls, kept, keptWhole(turns, calls))
 }
 
 /**
@@ -170,14 +174,15 @@ export function cutFrom({ asked, aside }: Sending, cut: number): Sending {
   return { asked: now, aside: Math.max(now, aside - cut) }
 }
 
-/** Every answer of the request before its newest round set aside, with thinking out, or null when none of them is whole. */
+/** Every answer of the request before `from` (its newest round, by default) set aside, with thinking out, or null when none of them is whole. */
 function butNewest(
   turns: Turn[],
   sending: Sending,
   calls: ReadonlyMap<string, ToolCall>,
   kept: ReadonlySet<string>,
+  from: number = newestRound(turns),
 ): { turns: Turn[]; sending: Sending; aside: number; saved: number } | null {
-  const newest = newestRound(turns)
+  const newest = Math.max(from, sending.aside)
   const read = long(turns, sending.aside, newest, calls, kept)
   if (read.length === 0) return null
   return {
@@ -203,6 +208,19 @@ function long(
 
 function standsAside(result: ToolResult, calls: ReadonlyMap<string, ToolCall>, kept: ReadonlySet<string>): boolean {
   return result.output.length > LARGE && !kept.has(calls.get(result.callId)?.name ?? '')
+}
+
+/**
+ * Where the answers that stay whole begin: the newest round, or, when every call of that round reads
+ * an answer again, the round before it, which the model was reading when it asked.
+ */
+function keptWhole(turns: Turn[], calls: ReadonlyMap<string, ToolCall>): number {
+  const newest = newestRound(turns)
+  if (newest < 0) return newest
+  const round = turns[newest] as Answered
+  if (!round.results.every((result) => calls.get(result.callId)?.name === READ_AGAIN)) return newest
+  const before = newestRound(turns.slice(0, newest))
+  return before < 0 ? newest : before
 }
 
 /** The last round of answers in a thread, or -1 in one with none. */
