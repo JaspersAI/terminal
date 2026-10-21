@@ -14,7 +14,7 @@ With Pro mode on, the assistant can ask to run a script inside Jaspers's dedicat
 
 ## Approval tiers (`always`, `once`, `session`, and `task`)
 
-Every command requires explicit approval unless covered by a tier you selected (`readApproval` and `approvalChoices` in `src/shared/app/pro-mode.ts`). Closing the question, stopping the run, timing out, or typing free-form text in place of a button all evaluate to `denied`.
+Every command requires explicit approval unless covered by a tier you selected (`readApproval` and `approvalChoices` in `src/shared/app/pro-mode.ts`) or `allowReadOnly` is enabled and the command passes `isReadOnlyCommand`. Closing the question, stopping the run, timing out, or typing free-form text in place of a button all evaluate to `denied`.
 
 | Tier / Choice | Setting (`ApprovalMode`) | Scope and behavior |
 | --- | --- | --- |
@@ -77,7 +77,7 @@ To prevent ambient credential leakage:
 
 ## Getting files in and out
 
-`~/Jaspers/shell` is an ordinary folder on disk. A command can read files directly from `~/Desktop` or `~/Downloads`; for any other file, copy it into `~/Jaspers/shell`. Everything a command writes stays inside `~/Jaspers/shell`, which you can open at any time from **Settings > Pro mode > Show folder**.
+`~/Jaspers/shell` is an ordinary folder on disk. A command can read files directly from `~/Desktop` or `~/Downloads`; for any other file, copy it into `~/Jaspers/shell`. Command writes are generally confined to `~/Jaspers/shell`, with exceptions for `/private/var/folders`, `/private/tmp`, and `/dev`. You can open `~/Jaspers/shell` at any time from **Settings > Pro mode > Show folder**.
 
 ## Audit log (`shell.jsonl`) and Eye telemetry exclusions
 

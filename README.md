@@ -5,7 +5,7 @@
 <h1 align="center">Jaspers Terminal</h1>
 
 <p align="center">
-  The open-source agentic terminal for public markets — built for open and local inference.
+  The agentic terminal for public markets, source-available under BSL 1.1 — built for open and local inference.
 </p>
 
 <p align="center">
@@ -56,11 +56,11 @@ Plugins are authored in strict TypeScript against `@jaspers-ai/sdk` ([MIT](packa
 
 The Terminal provides React, React DOM, Zod, and `@jaspers-ai/sdk` at runtime through its zero-install host runtime (`jaspers-host://runtime/`), so a plugin folder in `~/Jaspers/plugins/<id>` needs no `node_modules` unless it imports third-party packages. Saving any file in `~/Jaspers/plugins/<id>` triggers an esbuild rebuild in milliseconds and hot-reloads the view in place without losing panel state. Because the same documentation ([`docs/sdk-reference.md`](docs/sdk-reference.md) and [`docs/writing-a-plugin.md`](docs/writing-a-plugin.md)) is embedded verbatim via `?raw` into the coding agent's system prompt, human developers and the coding agent target the exact same contracts.
 
-### 4. Open Source & Local-First
+### 4. Source-Available under BSL 1.1 & Local-First
 
-The entire Terminal codebase is open source under the [Business Source License 1.1](LICENSE) (converting automatically to MIT four years after each release) and is complete without a Jaspers subscription.
+The entire Terminal codebase is source-available under [BSL 1.1](LICENSE) (converting automatically to MIT four years after each release) and is complete without a Jaspers subscription.
 
-Everything the Terminal fetches is stored in one SQLite file on your machine, `~/Jaspers/data/jaspers.db`, stamped with the source, arguments, workspace, and timestamp. Nothing expires and nothing leaves your machine. Open `~/Jaspers/data/jaspers.db` directly in `sqlite3`, DuckDB, R, or Python/pandas while Jaspers Terminal is running.
+Everything the Terminal fetches is stored in one SQLite file on your machine, `~/Jaspers/data/jaspers.db`, stamped with the source, arguments, workspace, and timestamp. Records remain local by default, but prompts or source requests may be sent to configured OpenRouter, Groq, direct cloud providers, or HTTP MCP services. User data has no automatic expiry except explicitly bounded histories; watched observations retain only the latest 20 per task (see [How it works](docs/architecture.md)). Open `~/Jaspers/data/jaspers.db` directly in `sqlite3`, DuckDB, R, or Python/pandas while Jaspers Terminal is running.
 
 ### 5. Own Your Inference
 
@@ -148,7 +148,7 @@ npm run dev
 2. **vLLM, llama.cpp (`llama-server`), or LM Studio:**
    Choose **Other providers > Custom**, enter your local OpenAI-compatible base URL (for example `http://localhost:8000/v1` for vLLM, `http://localhost:8080/v1` for `llama.cpp`, or `http://localhost:1234/v1` for LM Studio) and model identifier. No API key is required unless your server enforces one.
 3. **Hosted open-weight providers:**
-   Choose **OpenRouter** (`https://openrouter.ai/api/v1`) or **Groq** (`https://api.groq.com/openai/v1`, default `llama-3.3-70b-versatile`) and paste your key, which is sealed in your OS keychain.
+   Choose **OpenRouter** (`https://openrouter.ai/api/v1`) or **Groq** (`https://api.groq.com/openai/v1`, default `openai/gpt-oss-120b`) and paste your key, which is sealed in your OS keychain.
 
 ### Option B: Jaspers One or Cloud Providers
 
