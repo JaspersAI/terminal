@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { stableStringify } from './stable'
-import { useBridge, usePanel, type PanelRef } from './bridge'
+import { stableStringify } from './stable.ts'
+import { useBridge, usePanel, type PanelRef } from './bridge.ts'
 
 // What a view is written against. State lives in the panel, not in the component: the orchestrator
 // can set it, and the change comes back down the same subscription as the view's own writes, so
@@ -95,6 +95,26 @@ const IDLE: Omit<SourceData, 'refetch'> = {
   meta: EMPTY_META,
 }
 
+/** Starts a source run: keeps loaded data on screen while refreshing the same query, and clears it when the query changes. */
+export function beginSourceRun(
+  previous: Omit<SourceData, 'refetch'>,
+  sameQuery: boolean = true,
+): Omit<SourceData, 'refetch'> {
+  return sameQuery ? { ...previous, loading: true, error: null } : { ...IDLE, loading: true }
+}
+
+/** Ends a failed source run: keeps already-loaded data or text on a failed refresh of the same query, and reports the error otherwise. */
+export function failSourceRun(
+  previous: Omit<SourceData, 'refetch'>,
+  err: unknown,
+  sameQuery: boolean = true,
+): Omit<SourceData, 'refetch'> {
+  if (sameQuery && (previous.data !== undefined || previous.text !== undefined)) {
+    return { ...previous, loading: false, error: null }
+  }
+  return { ...IDLE, error: err instanceof Error ? err.message : String(err) }
+}
+
 /** Whatever a store path holds, kept up to date. Undefined until the first value arrives. */
 export function useData(path: string): unknown
 /** A source run, again whenever `args` change by value, and again, fresh, when the view's panel is refreshed. An empty source is idle, for a view still waiting for its state. */
@@ -112,6 +132,8 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   const panel = usePanel()
   /** Set before a nonce bump that means fetch again: the run it causes skips main's cache. */
   const fresh = useRef(false)
+  const failed = useRef(false)
+  const lastQuery = useRef<string | null>(null)
 
   useEffect(() => {
     if (isSource) return
@@ -124,26 +146,35 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
     // No source yet: a view whose panel state has not arrived is waiting, not failing, and must not
     // ask main for a source with no name. It stays idle until it has one.
     if (!target) {
+      lastQuery.current = null
+      failed.current = false
       setResult(IDLE)
       return
     }
     let live = true
+    const query = `${target}\0${key}`
+    const sameQuery = lastQuery.current === query
+    lastQuery.current = query
     const wantFresh = fresh.current
     fresh.current = false
-    setResult((previous) => ({ ...previous, loading: true, error: null }))
+    failed.current = false
+    setResult((previous) => beginSourceRun(previous, sameQuery))
     void (async () => {
       try {
         const run = await bridge.runSource(target, args, { fresh: wantFresh })
         const rows = run.kind === 'dataset' ? await bridge.datasetRows(run.datasetId) : undefined
         // A later request has already started: its answer is the one that counts.
         if (!live) return
+        failed.current = false
         setResult(
           run.kind === 'dataset'
             ? { data: rows, loading: false, error: null, datasetId: run.datasetId, meta: run.meta }
             : { ...IDLE, text: run.text },
         )
       } catch (err) {
-        if (live) setResult({ ...IDLE, error: err instanceof Error ? err.message : String(err) })
+        if (!live) return
+        failed.current = true
+        setResult((previous) => failSourceRun(previous, err, sameQuery))
       }
     })()
     return () => {
@@ -156,8 +187,6 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   // arguments: a connection that was not ready (the app starting up, a key just saved), or a source
   // that was not registered, which is every source of a plugin for the moment the app takes to
   // build it after it opens.
-  const failed = useRef(false)
-  failed.current = result.error !== null
   useEffect(() => {
     if (!isSource) return
     const again = (registry: string): (() => void) => {
@@ -168,7 +197,10 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
           seen = true
           return
         }
-        if (failed.current) setNonce((n) => n + 1)
+        if (failed.current) {
+          fresh.current = true
+          setNonce((n) => n + 1)
+        }
       })
     }
     const offs = [again('connections'), again('sources')]
