@@ -260,3 +260,99 @@ test('readMcpCall and readInput merge top-level tool arguments into args, parse 
     },
   )
 })
+
+test("readMcpCall and readInput resolve a bare plugin with multiple connections to the ready connection offering the tool, prepare its arguments against that tool's schema, and fall back to the first ready connection when no connection offers the tool", () => {
+  const searchSchema = {
+    type: 'object',
+    required: ['ticker'],
+    properties: {
+      ticker: { type: 'string' },
+      form: { type: 'string', enum: ['10-K', '10-Q'] },
+      limit: { type: 'integer', minimum: 1 },
+      filter_json: { type: 'string' },
+      notes: { type: 'string' },
+    },
+  }
+  const recordConnections = {
+    'research/jaspers': {
+      id: 'research/jaspers',
+      plugin: 'research',
+      status: 'ready',
+      tools: [{ name: 'get_guide', inputSchema: { type: 'object', properties: { topic: { type: 'string' } } } }],
+    },
+    'research/filings': {
+      id: 'research/filings',
+      plugin: 'research',
+      status: 'ready',
+      tools: [{ name: 'search_filings', inputSchema: searchSchema }],
+    },
+  }
+
+  for (const connections of [recordConnections, Object.values(recordConnections)]) {
+    const call = {
+      connection: 'research',
+      tool: 'search_filings',
+      ticker: 'AAPL',
+      form: '10-k',
+      limit: '5',
+      filter_json: { fy: 2024 },
+      notes: '',
+    }
+    const expected = {
+      connection: 'research/filings',
+      tool: 'search_filings',
+      args: {
+        ticker: 'AAPL',
+        form: '10-K',
+        limit: 5,
+        filter_json: '{"fy":2024}',
+      },
+    }
+    assert.deepEqual(readMcpCall(call, connections), expected)
+    assert.deepEqual(readInput(call, 'core/mcp', connections), expected)
+
+    const unknown = { connection: 'research', tool: 'unknown_tool', query: 'risk' }
+    assert.deepEqual(readMcpCall(unknown, connections), {
+      connection: 'research/jaspers',
+      tool: 'unknown_tool',
+      args: { query: 'risk' },
+    })
+    assert.deepEqual(readInput(unknown, 'core/mcp', connections), {
+      connection: 'research/jaspers',
+      tool: 'unknown_tool',
+      args: { query: 'risk' },
+    })
+  }
+
+  const mixedRecord = {
+    'research/offline': {
+      id: 'research/offline',
+      plugin: 'research',
+      status: 'error',
+      tools: [{ name: 'search_filings', inputSchema: searchSchema }, { name: 'offline_only' }],
+    },
+    'research/jaspers': recordConnections['research/jaspers'],
+    'research/filings': recordConnections['research/filings'],
+  }
+  for (const connections of [mixedRecord, Object.values(mixedRecord)]) {
+    assert.equal(
+      readMcpCall({ connection: 'research', tool: 'search_filings', ticker: 'MSFT' }, connections).connection,
+      'research/filings',
+    )
+    assert.equal(
+      readMcpCall({ connection: 'research', tool: 'offline_only' }, connections).connection,
+      'research/jaspers',
+    )
+  }
+
+  const nonReadyRecord = {
+    'research/jaspers': { ...recordConnections['research/jaspers'], status: 'connecting' },
+    'research/filings': { ...recordConnections['research/filings'], status: 'needs-secret' },
+  }
+  for (const connections of [nonReadyRecord, Object.values(nonReadyRecord)]) {
+    assert.equal(
+      readMcpCall({ connection: 'research', tool: 'search_filings', ticker: 'MSFT' }, connections).connection,
+      'research/filings',
+    )
+  }
+})
