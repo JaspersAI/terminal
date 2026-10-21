@@ -79,6 +79,8 @@ const restarts = new Map<string, NodeJS.Timeout>()
 /** A host being stopped for a rebuild or a removal: calls wait for it rather than starting another. */
 const stopping = new Map<string, Promise<void>>()
 const autoRestartedAt = new Map<string, number>()
+/** Set once a quit goes ahead: from then on a host that exits is going with the app, not crashing. */
+let quitting = false
 
 /** A build landed: its host replaces whatever host the plugin had, now or on the first run that needs one. */
 export async function startHost(id: string, build: HostBuild): Promise<void> {
@@ -134,9 +136,19 @@ export async function stopAllHosts(reason: string): Promise<void> {
   await Promise.all([...hosts.keys()].map((id) => stopHost(id, reason)))
 }
 
+/**
+ * When a quit goes ahead (`before-quit`, not held back): the hosts may go before `will-quit` kills
+ * them, with the app's own processes, and that exit is the quit's, not a crash to record or to show
+ * on the plugin. Nothing restarts from here on.
+ */
+export function quittingHosts(): void {
+  quitting = true
+  for (const id of [...restarts.keys()]) cancelRestart(id)
+}
+
 /** On quit. will-quit cannot wait, so the hosts are killed rather than asked. */
 export function killAllHosts(): void {
-  for (const id of [...restarts.keys()]) cancelRestart(id)
+  quittingHosts()
   for (const host of [...hosts.values()]) {
     host.stopping = true
     teardown(host, 'the app is quitting')
@@ -260,7 +272,7 @@ async function stopHost(id: string, reason: string): Promise<void> {
 
 /** An exit nobody asked for. */
 function exited(host: Host, code: number): void {
-  if (host.stopping) return
+  if (host.stopping || quitting) return
   const message = `plugin host exited with code ${code}`
   record({ kind: 'crash', name: 'plugin-host', data: { plugin: host.id, exitCode: code } })
   // A host that is no longer the plugin's leaves the one that is, and its live values, alone.
