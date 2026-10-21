@@ -54,15 +54,12 @@ export async function runSource(
   if (!source) throw new Error(`Unknown source ${id}.`)
   const def = source.def
   const workspaceId = options.workspaceId ?? null
-  const declared =
+  const declared = (): ConnectionTool | undefined =>
     source.connection && isMcpSource(def)
       ? currentConnections()[source.connection]?.tools.find((one) => one.name === def.tool)
       : undefined
-  const mcpArgs = isMcpSource(def)
-    ? declared
-      ? prepareMcpArguments(declared.inputSchema, asArgs(args))
-      : asArgs(args)
-    : null
+  const tool = declared()
+  const mcpArgs = isMcpSource(def) ? (tool ? prepareMcpArguments(tool.inputSchema, asArgs(args)) : asArgs(args)) : null
   const preparedArgs: unknown = mcpArgs ?? args
   // A server answers the same whoever asks; a plugin's code may answer each workspace its own way.
   const key = stableStringify(isMcpSource(def) ? [source.id, mcpArgs] : [source.id, preparedArgs, workspaceId])
@@ -83,11 +80,11 @@ export async function runSource(
   let text: string
   try {
     ;({ value, text } = isMcpSource(def)
-      ? mapped(await call(source.connection!, def.tool, mcpArgs!, { signal: options.signal }), options.raw, declared)
+      ? mapped(await call(source.connection!, def.tool, mcpArgs!, { signal: options.signal }), options.raw, declared())
       : await runFunction(source, preparedArgs, workspaceId, options.raw))
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : String(error)
-    const message = isMcpSource(def) ? withParameters(rawMessage, declared) : rawMessage
+    const message = isMcpSource(def) ? withParameters(rawMessage, declared()) : rawMessage
     // A run that failed is worth keeping: what a source stopped answering is half of what changed.
     file(source.id, preparedArgs, key, workspaceId, {
       rows: null,

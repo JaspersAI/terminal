@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   checkConnection,
   connectionUrls,
+  isStaleHttpSession,
   offeredTools,
   offersTool,
   resolveSecrets,
@@ -316,4 +317,32 @@ test('withConnectionUrl swaps the URL of a mapped connection and logs it, leavin
     spec: http,
     log: null,
   })
+})
+
+test('isStaleHttpSession detects expired or broken Streamable HTTP sessions while ignoring auth and tool errors', () => {
+  const http = checkConnection(HTTP, 'jaspers/sec')
+  const stdio = checkConnection(STDIO, 'earningscall/server')
+  const httpError = (code: number, detail: string): Error =>
+    Object.assign(new Error(`Streamable HTTP error: Error POSTing to endpoint: ${detail}`), { code })
+
+  assert.equal(isStaleHttpSession(httpError(400, 'Bad Request: Mcp-Session-Id header is required'), http), true)
+  assert.equal(isStaleHttpSession(httpError(400, 'Bad Request: No valid session ID provided'), http), true)
+  assert.equal(isStaleHttpSession(httpError(404, 'Session not found'), http), true)
+  assert.equal(isStaleHttpSession(httpError(502, 'Bad Gateway'), http), true)
+  assert.equal(isStaleHttpSession(httpError(503, 'Service Unavailable'), http), true)
+  assert.equal(
+    isStaleHttpSession(new Error('Streamable HTTP error: Error POSTing to endpoint: Session not found'), http),
+    true,
+  )
+  assert.equal(isStaleHttpSession(new TypeError('fetch failed'), http), true)
+  assert.equal(isStaleHttpSession(new Error('MCP error -32001: Session not found'), http), true)
+  assert.equal(isStaleHttpSession(new Error('MCP error -32000: Bad Request: Server not initialized'), http), true)
+
+  assert.equal(isStaleHttpSession(httpError(401, 'Unauthorized'), http), false)
+  assert.equal(isStaleHttpSession(httpError(403, 'Forbidden'), http), false)
+  assert.equal(isStaleHttpSession(Object.assign(new Error('Unauthorized'), { name: 'UnauthorizedError' }), http), false)
+  assert.equal(isStaleHttpSession(new Error('MCP error -32602: Invalid params: ticker is required'), http), false)
+  assert.equal(isStaleHttpSession(new Error('Unknown ticker symbol'), http), false)
+  assert.equal(isStaleHttpSession(httpError(404, 'Session not found'), stdio), false)
+  assert.equal(isStaleHttpSession(new TypeError('fetch failed'), stdio), false)
 })

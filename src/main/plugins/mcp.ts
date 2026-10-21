@@ -19,7 +19,13 @@ import {
   type ListedTool,
   type ToolApp,
 } from '../../shared/plugins/apps'
-import { offeredTools, offersTool, resolveSecrets, type Connection } from '../../shared/plugins/connections'
+import {
+  isStaleHttpSession,
+  offeredTools,
+  offersTool,
+  resolveSecrets,
+  type Connection,
+} from '../../shared/plugins/connections'
 import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { getConnection, missingOf, secretValues, setInfo, statusFor } from './connections'
 import { oauthProvider } from './oauth'
@@ -55,6 +61,8 @@ interface Live {
 const clients = new Map<string, Live>()
 /** Each attempt at a connection gets a number, so a slow one cannot publish over a newer one. */
 const attempts = new Map<string, number>()
+/** An attempt already under way, so concurrent callers join one handshake instead of aborting each other's. */
+const connecting = new Map<string, Promise<void>>()
 /** A connection that failed tries again on its own, waiting longer each time, so a server that was down comes back without anyone pressing Reconnect. */
 const RETRY_MS = [15_000, 30_000, 60_000, 120_000, 300_000]
 const retries = new Map<string, NodeJS.Timeout>()
@@ -67,7 +75,27 @@ const throughJaspers = new Set<string>()
  * Builds the client for one connection, or says what it is still waiting for. Safe to call again at
  * any time: whatever was connected is closed first.
  */
-export async function connect(id: string, retry = 0): Promise<void> {
+export function connect(id: string, retry = 0): Promise<void> {
+  const run = connectOne(id, retry).finally(() => {
+    if (connecting.get(id) === run) connecting.delete(id)
+  })
+  connecting.set(id, run)
+  return run
+}
+
+/**
+ * Re-establishes a connection when no attempt is already under way and the stale client (if named)
+ * has not already been replaced by another caller's reconnect.
+ */
+function reconnect(id: string, stale?: Live): Promise<void> {
+  const inflight = connecting.get(id)
+  if (inflight) return inflight
+  const current = clients.get(id)
+  if (stale ? current !== stale : current !== undefined) return Promise.resolve()
+  return connect(id)
+}
+
+async function connectOne(id: string, retry = 0): Promise<void> {
   const entry = getConnection(id)
   if (!entry) return
   const { spec, plugin, dir } = entry
@@ -83,7 +111,9 @@ export async function connect(id: string, retry = 0): Promise<void> {
     setInfo(id, { status, error: null, tools: [], instructions: null, missing })
     return
   }
-  setInfo(id, { status: 'connecting', error: null, missing })
+  if (getState().connections[id]?.status !== 'ready') {
+    setInfo(id, { status: 'connecting', error: null, missing })
+  }
   let viaJaspers: boolean
   try {
     viaJaspers = spec.auth === 'oauth' && (await signsInThroughJaspers(resolved.connection.url!))
@@ -262,12 +292,14 @@ export async function disconnect(id: string): Promise<void> {
  * after taking its own attempt number: bumping there would make every connect supersede itself.
  */
 export async function forget(id: string): Promise<void> {
+  connecting.delete(id)
   attempts.set(id, (attempts.get(id) ?? 0) + 1)
   await disconnect(id)
 }
 
 /** Stdio children die with the app, so this runs on will-quit before anything else. */
 export function closeAll(): void {
+  connecting.clear()
   for (const id of retries.keys()) cancelRetry(id)
   for (const [id, live] of clients) {
     clients.delete(id)
@@ -299,6 +331,9 @@ export async function call(
   if (askForMissingSecret && !clients.has(id) && getState().connections[id]?.status === 'needs-secret') {
     await untilAborted(askForMissingSecret(id), opts.signal)
   }
+  if (!clients.has(id) && (connecting.has(id) || getState().connections[id]?.status === 'error')) {
+    await untilAborted(reconnect(id), opts.signal)
+  }
   const live = clients.get(id)
   if (!live) throw unavailable(id)
   // The declaration is the allowlist, so a call with no declaration to check against is refused
@@ -322,24 +357,25 @@ export async function call(
   }
   // A model's empty value for an optional field means leave it out, and spelling mismatches are
   // repaired against the tool's schema before the server sees them.
-  const declared = getState().connections[id]?.tools.find((t) => t.name === tool)
-  const sent = declared ? prepareMcpArguments(declared.inputSchema, args) : args
+  const declared = (): ConnectionTool | undefined => getState().connections[id]?.tools.find((t) => t.name === tool)
   // A server that reports progress is working: each report starts the wait over, so a long call is
   // held to its silences rather than to its whole length, the way a streamed reply is.
-  const send = (): Promise<unknown> =>
-    live.client.callTool({ name: tool, arguments: sent }, undefined, {
+  const send = (client: Client): Promise<unknown> => {
+    const schema = declared()?.inputSchema
+    return client.callTool({ name: tool, arguments: schema ? prepareMcpArguments(schema, args) : args }, undefined, {
       signal: opts.signal,
       timeout: opts.timeoutMs,
       resetTimeoutOnProgress: true,
       onprogress: () => {},
     })
+  }
   let result: unknown
   try {
-    result = await asked(id, live, entry.spec, send)
+    result = await asked(id, live, entry.spec, send, opts.signal)
   } catch (error) {
     if (from === 'model') {
       const message = error instanceof Error ? error.message : String(error)
-      const told = withParameters(message, declared)
+      const told = withParameters(message, declared())
       if (told !== message) throw new Error(told, { cause: error })
     }
     throw error
@@ -348,7 +384,7 @@ export async function call(
     const answer = result as { content?: unknown[]; isError?: boolean } | null
     if (answer && typeof answer === 'object' && answer.isError === true) {
       const { text } = mapToolResult(answer)
-      const told = withParameters(text, declared)
+      const told = withParameters(text, declared())
       if (told !== text) return { ...answer, content: [{ type: 'text', text: told }] }
     }
   }
@@ -368,30 +404,56 @@ export function toolOf(id: string, tool: string): { info: ConnectionTool | undef
 
 /** One of a connection's pages, read from its server: `resources/read` on a `ui://` address. */
 export async function readPage(id: string, uri: string): Promise<{ html: string; csp: unknown; border: boolean }> {
+  if (!clients.has(id) && (connecting.has(id) || getState().connections[id]?.status === 'error')) {
+    await reconnect(id)
+  }
   const live = clients.get(id)
   if (!live) throw unavailable(id)
   const entry = getConnection(id)
   if (!entry) throw new Error(`connection_unavailable: ${id} is no longer declared by any plugin.`)
-  return pageOf(await asked(id, live, entry.spec, () => live.client.readResource({ uri })), uri)
+  return pageOf(await asked(id, live, entry.spec, (client) => client.readResource({ uri })), uri)
 }
 
 /**
- * One request on a connection's client, with what a connection that signs in needs around it: sent
- * once more when it was refused while another's refresh was landing, and the sign-in's end published
- * when that is what it found.
+ * One request on a connection's client, with what a connection that signs in or speaks HTTP needs
+ * around it: sent once more when it was refused while another's refresh was landing or when its HTTP
+ * session had expired, and the sign-in's end published when that is what it found.
  */
-async function asked<T>(id: string, live: Live, spec: Connection, send: () => Promise<T>): Promise<T> {
-  if (spec.auth !== 'oauth') return send()
+async function asked<T>(
+  id: string,
+  live: Live,
+  spec: Connection,
+  send: (client: Client) => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const once = async (current: Live): Promise<T> => {
+    if (spec.auth !== 'oauth') return send(current.client)
+    try {
+      const attempt = () => sentAgainIfRefused(() => send(current.client))
+      return await (current.viaJaspers ? callAsAccount(attempt) : attempt())
+    } catch (err) {
+      // The app's sign-in with Jaspers ended under the call, or the connection's own did.
+      if (err instanceof SignedOutError) await signedOut(id, current, 'needs-sign-in')
+      else if (err instanceof UnauthorizedError || refused(err)) await signedOut(id, current, 'needs-auth')
+      // Cut off because another call had just found the sign-in gone: told what a call made now would be.
+      else if (clients.get(id) !== current && waits(getState().connections[id]?.status)) throw unavailable(id)
+      throw err
+    }
+  }
   try {
-    const attempt = () => sentAgainIfRefused(send)
-    return await (live.viaJaspers ? callAsAccount(attempt) : attempt())
+    return await once(live)
   } catch (err) {
-    // The app's sign-in with Jaspers ended under the call, or the connection's own did.
-    if (err instanceof SignedOutError) await signedOut(id, live, 'needs-sign-in')
-    else if (err instanceof UnauthorizedError || refused(err)) await signedOut(id, live, 'needs-auth')
-    // Cut off because another call had just found the sign-in gone: told what a call made now would be.
-    else if (clients.get(id) !== live && waits(getState().connections[id]?.status)) throw unavailable(id)
-    throw err
+    if (
+      signal?.aborted ||
+      waits(getState().connections[id]?.status) ||
+      (!isStaleHttpSession(err, spec) && !(spec.url && (connecting.has(id) || clients.get(id) !== live)))
+    ) {
+      throw err
+    }
+    await untilAborted(reconnect(id, live), signal)
+    const renewed = clients.get(id)
+    if (!renewed || renewed === live) throw err
+    return once(renewed)
   }
 }
 
