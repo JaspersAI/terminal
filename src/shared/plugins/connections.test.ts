@@ -283,16 +283,27 @@ test('withConnectionUrl swaps the URL of a mapped connection and logs it, leavin
   const http = checkConnection(HTTP, 'jaspers/sec')
   assert.deepEqual(withConnectionUrl('jaspers/sec', http, urls), {
     spec: { ...http, url: 'http://localhost:3380/mcp' },
-    log: '[connections] jaspers/sec -> http://localhost:3380/mcp (JASPERS_CONNECTION_URLS)',
+    log: '[connections] jaspers/sec overridden (JASPERS_CONNECTION_URLS)',
   })
-  const stdio = checkConnection({ ...STDIO, cwd: 'server' }, 'earningscall/server')
-  assert.deepEqual(
-    withConnectionUrl('earningscall/server', stdio, { 'earningscall/server': 'http://localhost:3390' }),
-    {
-      spec: { auth: 'none', headers: {}, env: {}, url: 'http://localhost:3390' },
-      log: '[connections] earningscall/server -> http://localhost:3390 (JASPERS_CONNECTION_URLS)',
-    },
+  const stdio = checkConnection(
+    { ...STDIO, cwd: 'server', env: { SCREENER_API_KEY: '${secret:KEY}' } },
+    'earningscall/server',
   )
+  const overridden = withConnectionUrl('earningscall/server', stdio, {
+    'earningscall/server': 'http://user:pass@localhost:3390/mcp?key=test',
+  })
+  assert.deepEqual(overridden, {
+    spec: {
+      auth: 'none',
+      headers: {},
+      env: {},
+      url: 'http://user:pass@localhost:3390/mcp?key=test',
+    },
+    log: '[connections] earningscall/server overridden (JASPERS_CONNECTION_URLS)',
+  })
+  assert.deepEqual(stdio.env, { SCREENER_API_KEY: '${secret:KEY}' })
+  assert.deepEqual(secretRefs(overridden.spec), [])
+  assert.deepEqual(resolveSecrets(overridden.spec, {}), { connection: overridden.spec })
   assert.deepEqual(withConnectionUrl('other/server', http, urls), {
     spec: http,
     log: null,

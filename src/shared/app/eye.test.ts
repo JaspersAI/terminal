@@ -93,9 +93,21 @@ test('Eye sends to the public endpoint unless JASPERS_EYE_URL names another orig
   assert.equal(eyeEndpoint('  off \n'), null)
 })
 
-test('an override of Eye that is not an http(s) URL or off is refused, not fallen back from', () => {
+test('an override of Eye that is not an http(s) origin or off is refused, not fallen back from', () => {
   assert.throws(() => eyeEndpoint('eye.jsprai.com'), /JASPERS_EYE_URL is not a URL/)
   assert.throws(() => eyeEndpoint('ftp://eye.jsprai.com'), /JASPERS_EYE_URL is not http or https/)
+  for (const bad of [
+    'http://localhost:3370/batches',
+    'http://localhost:3370/v1/',
+    'http://localhost:3370/?debug=1',
+    'http://localhost:3370?debug=1',
+    'http://localhost:3370/?',
+    'http://localhost:3370#frag',
+    'http://localhost:3370/#',
+    'http://user:pass@localhost:3370',
+  ]) {
+    assert.throws(() => eyeEndpoint(bad), /JASPERS_EYE_URL is not an origin/, bad)
+  }
 })
 
 test('a frame the same as the last one of its window is not a new frame', () => {
