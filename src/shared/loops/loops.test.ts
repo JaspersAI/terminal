@@ -544,6 +544,8 @@ test('the orchestrator is offered nothing that drives a view, and a loop\u2019s 
     VIEW_TOOLS.filter((tool) => LOOP_EXCLUDED_TOOLS.includes(tool)),
     [],
   )
+  assert.equal(ORCHESTRATOR_TOOLS.includes('run_shell'), true)
+  assert.equal(LOOP_EXCLUDED_TOOLS.includes('run_shell'), false)
 })
 
 test('a name a file saved from before loops were numbered is left behind: a loop is called by its number', () => {
