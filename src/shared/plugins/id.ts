@@ -4,6 +4,9 @@
 const ID = /^[a-z0-9][a-z0-9-]*$/
 export const ID_MAX = 64
 
+/** Home folders that must never become a plugin’s writable data root. */
+export const RESERVED_PLUGIN_NAMES = new Set(['plugins', 'skills', 'shell'])
+
 export function isPluginId(id: string): boolean {
   return ID.test(id) && id.length <= ID_MAX
 }

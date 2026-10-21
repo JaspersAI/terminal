@@ -8,7 +8,7 @@ import {
   replaceOnce,
   type FolderFile,
 } from '../../../shared/agent/build/files.ts'
-import { isPluginId } from '../../../shared/plugins/id.ts'
+import { isPluginId, RESERVED_PLUGIN_NAMES } from '../../../shared/plugins/id.ts'
 import { buildRoot, homePluginsRoot } from '../../home.ts'
 import { inside, isMissing, realpathLoose } from '../../plugins/confine.ts'
 
@@ -33,6 +33,7 @@ export async function openFolder(id: string, owner: Owner): Promise<BuildFolder>
   if (!isPluginId(id)) {
     throw new Error(`A plugin id is lower-case letters, digits, and dashes, at most 64; ${JSON.stringify(id)} is not.`)
   }
+  if (RESERVED_PLUGIN_NAMES.has(id)) throw new Error(`${id} is reserved for a Jaspers folder; choose another id.`)
   if (owner === 'other') {
     throw new Error(
       `There is already a plugin called ${id} that was not built here: it is the user's own or installed from a source. Choose another id, or ask the user.`,

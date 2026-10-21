@@ -31,6 +31,10 @@ test('a free id opens a staging folder outside plugins, and a taken id of anothe
     assert.ok(fs.existsSync(folder.dir))
     await assert.rejects(openFolder('yfinance', 'other'), /already a plugin called yfinance/)
     await assert.rejects(openFolder('Bad Id', 'free'), /lower-case letters/)
+    for (const id of ['plugins', 'skills', 'shell']) {
+      await assert.rejects(openFolder(id, 'free'), /reserved/)
+      await assert.rejects(openFolder(id, 'built'), /reserved/)
+    }
   } finally {
     await fsp.rm(dir, { recursive: true, force: true })
   }

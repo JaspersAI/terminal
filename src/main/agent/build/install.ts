@@ -17,6 +17,7 @@ import {
 import type { PluginInfo } from '../../../shared/state.ts'
 import { readBuildRecordFile, writeBuildRecordFile } from '../../plugins/build-record.ts'
 import { fileContents, type BuildFolder } from './folder.ts'
+import { hasShellApproval, writeShellApproval } from '../../plugins/shell-approval.ts'
 
 // install_plugin: the one place a plugin the assistant wrote is put in front of the user. The first
 // time, the question shows the envelope and the files whole, and a yes writes the record, installs
@@ -69,11 +70,14 @@ export async function installPlugin(
     const record: BuildRecord = { purpose, request, at: deps.now(), approved: envelope }
     writeBuildRecordFile(folder.dir, record)
     if (packageSpecs.length > 0) await deps.installPackages(folder.dir, packageSpecs)
+    writeShellApproval(folder.dir, envelope.shell === true)
     const live = await deps.land(folder)
     return { folder: live, info: hasEntry ? await deps.wait(live.id) : null }
   }
 
   const record = readBuildRecordFile(folder.dir) ?? { purpose, request, at: deps.now(), approved: EMPTY_ENVELOPE }
+  // A copied build record cannot bypass the shell consent prompt.
+  record.approved = { ...record.approved, shell: hasShellApproval(folder.dir) }
   const lines = widened(envelope, record.approved)
   if (lines.length > 0) {
     deps.notice?.(approvalNotice(folder.id, purpose))
@@ -83,7 +87,9 @@ export async function installPlugin(
         `The user did not allow ${folder.id} to reach more: ${lines.join(', ')}. Keep to what was approved, or stop.`,
       )
     }
-    writeBuildRecordFile(folder.dir, { ...record, purpose, approved: union(record.approved, envelope) })
+    const approved = union(record.approved, envelope)
+    writeBuildRecordFile(folder.dir, { ...record, purpose, approved })
+    writeShellApproval(folder.dir, approved.shell === true)
     const fresh = packageSpecs.filter((spec) => !record.approved.packages.includes(nameOf(spec)))
     if (fresh.length > 0) await deps.installPackages(folder.dir, fresh)
   }

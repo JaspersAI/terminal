@@ -17,7 +17,12 @@ interface Tally {
 }
 
 /** Unpacks `file` into `dir`, which must not exist yet. Returns the files written, as posix paths. */
-export async function extract(file: string, dir: string, limits: ExtractLimits): Promise<string[]> {
+export async function extract(
+  file: string,
+  dir: string,
+  limits: ExtractLimits,
+  reserveBytes?: (bytes: number) => void,
+): Promise<string[]> {
   const head = Buffer.alloc(4)
   const handle = await fsp.open(file, 'r')
   try {
@@ -50,7 +55,14 @@ export async function extract(file: string, dir: string, limits: ExtractLimits):
         tally.bytes += chunk.length
         if (tally.bytes > limits.unpackedBytes)
           done(new Error(`The archive unpacks to more than ${sizeText(limits.unpackedBytes)}.`))
-        else done(null, chunk)
+        else {
+          try {
+            reserveBytes?.(chunk.length)
+            done(null, chunk)
+          } catch (error) {
+            done(error as Error)
+          }
+        }
       },
     })
 
@@ -69,11 +81,12 @@ function unzip(file: string, place: Place, counter: () => Transform): Promise<vo
     yauzl.open(file, { lazyEntries: true, strictFileNames: true, validateEntrySizes: true }, (err, zip) => {
       if (err || !zip) return reject(unreadable(err ?? 'no zip'))
       let failed = false
+      let writing: Promise<void> | undefined
       const fail = (error: unknown): void => {
         if (failed) return
         failed = true
         zip.close()
-        reject(error)
+        void Promise.allSettled(writing ? [writing] : []).then(() => reject(error))
       }
       zip.on('error', (error: unknown) => fail(unreadable(error)))
       zip.on('end', () => {
@@ -90,10 +103,11 @@ function unzip(file: string, place: Place, counter: () => Transform): Promise<vo
         const to = target
         zip.openReadStream(entry, (openErr, stream) => {
           if (openErr || !stream) return fail(openErr ?? new Error(`${entry.fileName} could not be read.`))
-          pipeline(stream, counter(), fs.createWriteStream(to, { flags: 'wx', mode: 0o644 })).then(
-            () => zip.readEntry(),
-            fail,
-          )
+          if (failed) return void stream.destroy()
+          writing = pipeline(stream, counter(), fs.createWriteStream(to, { flags: 'wx', mode: 0o644 }))
+          void writing.then(() => {
+            if (!failed) zip.readEntry()
+          }, fail)
         })
       })
       zip.readEntry()
@@ -118,11 +132,14 @@ function untar(file: string, place: Place, counter: () => Transform): Promise<vo
     const parser = new tar.Parser({ strict: true })
     const writes: Promise<void>[] = []
     let failed = false
+    const active = new Set<tar.ReadEntry>()
     const fail = (error: unknown): void => {
       if (failed) return
       failed = true
       source.destroy()
-      reject(error)
+      parser.abort(error instanceof Error ? error : new Error(String(error)))
+      for (const entry of active) entry.destroy()
+      void Promise.allSettled(writes).then(() => reject(error))
     }
     parser.on('entry', (entry: tar.ReadEntry) => {
       if (failed) return entry.resume()
@@ -135,8 +152,9 @@ function untar(file: string, place: Place, counter: () => Transform): Promise<vo
         return fail(error)
       }
       if (target === null) return entry.resume()
+      active.add(entry)
       const write = pipeline(entry, counter(), fs.createWriteStream(target, { flags: 'wx', mode: 0o644 }))
-      writes.push(write.catch((error: unknown) => fail(error)))
+      writes.push(write.finally(() => active.delete(entry)).catch((error: unknown) => fail(error)))
     })
     parser.on('error', fail)
     parser.on('end', () => {

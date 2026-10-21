@@ -104,7 +104,11 @@ test('a root spec wins the top slot over a deeper version of the same name', () 
 test('a cached tarball gets a flat, deterministic file name and the cache is capped at 1 GB', () => {
   assert.equal(PACKAGE_LIMITS.cacheBytes, 1024 * 1024 * 1024)
   assert.equal(cacheFileName({ name: 'pdf-lib', version: '1.17.1' }), 'pdf-lib-1.17.1.tgz')
-  assert.equal(cacheFileName({ name: '@scope/pkg', version: '2.0.0-beta.1' }), '@scope_pkg-2.0.0-beta.1.tgz')
+  assert.equal(cacheFileName({ name: '@scope/pkg', version: '2.0.0-beta.1' }), '@scope%2fpkg-2.0.0-beta.1.tgz')
+  assert.notEqual(
+    cacheFileName({ name: '@a/b_c', version: '1.0.0' }),
+    cacheFileName({ name: '@a_b/c', version: '1.0.0' }),
+  )
   assert.ok(!cacheFileName({ name: '../evil/pkg', version: '1.0.0' }).includes('/'))
   assert.ok(!cacheFileName({ name: '../evil/pkg', version: '1.0.0' }).startsWith('.'))
 })

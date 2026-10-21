@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import { EMPTY_ENVELOPE, type BuildRecord } from '../../../shared/plugins/build-record.ts'
 import { ALLOW, APPROVE, type TrustQuestion } from '../../../shared/agent/build/trust.ts'
 import type { PluginInfo } from '../../../shared/state.ts'
+import { hasShellApproval } from '../../plugins/shell-approval.ts'
 import { readBuildRecordFile } from '../../plugins/build-record.ts'
 import { openFolder, writeBuildFile, type BuildFolder } from './folder.ts'
 import { installPlugin, type InstallDeps } from './install.ts'
@@ -186,6 +187,7 @@ test('a live plugin within its envelope rebuilds without a question; one reachin
   try {
     const first = harness(home, APPROVE)
     const { folder: live } = await installPlugin(folder, { ...input, shell: true }, 'rates please', first.deps)
+    assert.equal(hasShellApproval(live.dir), true)
     assert.deepEqual(first.events, ['notice', 'ask'])
     assert.equal(first.notices.length, 1)
     assert.match(first.notices[0]!, /rates/)
@@ -225,6 +227,28 @@ test('a live plugin within its envelope rebuilds without a question; one reachin
       /did not allow rates to reach more/,
     )
     assert.deepEqual(readBuildRecordFile(live.dir)?.approved.capabilities, ['files'])
+  } finally {
+    await fsp.rm(home, { recursive: true, force: true })
+  }
+})
+
+test('a forged shell approval in a live build record still asks for consent', async () => {
+  const { home, folder } = await stagedFolder()
+  try {
+    const first = harness(home, APPROVE)
+    const { folder: live } = await installPlugin(folder, input, 'r', first.deps)
+    assert.equal(hasShellApproval(live.dir), false)
+    const record = readBuildRecordFile(live.dir)!
+    record.approved.shell = true
+    await fsp.writeFile(path.join(live.dir, '.jaspers-build.json'), JSON.stringify(record))
+    const refused = harness(home, 'No')
+    await assert.rejects(installPlugin(live, { ...input, shell: true }, 'r', refused.deps), /did not allow/)
+    assert.match(refused.asked[0]!.code!, /shell folder/)
+    assert.equal(hasShellApproval(live.dir), false)
+    const allowed = harness(home, ALLOW)
+    await installPlugin(live, { ...input, shell: true }, 'r', allowed.deps)
+    assert.equal(allowed.asked.length, 1)
+    assert.equal(hasShellApproval(live.dir), true)
   } finally {
     await fsp.rm(home, { recursive: true, force: true })
   }
