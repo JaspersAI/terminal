@@ -12,7 +12,7 @@ import { registerSkillEditorIpc } from './skills/skill-editor'
 import { registerSkillInstallIpc } from './skills/skill-install'
 import { registerLiveIpc } from './plugins/live-ipc'
 import { flush } from './persist'
-import { killAllHosts, stopAllHosts } from './plugins/plugin-host'
+import { killAllHosts, quittingHosts, stopAllHosts } from './plugins/plugin-host'
 import { startPlugins } from './plugins/plugins'
 import { registerBuiltins } from './plugins/registry'
 import { startSkills } from './skills/skills'
@@ -241,6 +241,8 @@ app.on('before-quit', (event) => {
     })
     return
   }
+  // The quit goes ahead: a host that goes from here on goes with the app.
+  quittingHosts()
   endSession()
 })
 app.on('will-quit', killAllHosts)

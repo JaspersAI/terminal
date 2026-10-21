@@ -1,0 +1,9 @@
+# How Deliver checks a change to this repo: these commands run from the repo root, in order,
+# with CI=1, and every one must pass before Deliver opens a ready pull request.
+# Deliver reads this file from main, so a branch can't change its own checks.
+verify:
+  - npm ci
+  - npm run typecheck
+  - npm run format:check
+  - npm test
+  - npm run build

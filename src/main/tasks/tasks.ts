@@ -284,7 +284,7 @@ async function execute(task: Task): Promise<void> {
   replace(afterRun(before, { at, ok, result, ms }))
   const notice = runNotice(
     taskLabel(current),
-    { call: current.call, lastRun: before.lastRun },
+    { call: current.call, every: current.every, lastRun: before.lastRun, history: before.history },
     { ok, result, changed: found?.changed ?? false },
   )
   if (!notice) return

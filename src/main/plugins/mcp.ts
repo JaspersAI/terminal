@@ -22,7 +22,7 @@ import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { getConnection, missingOf, secretValues, setInfo, statusFor } from './connections'
 import { oauthProvider } from './oauth'
 import { refreshOnce } from './oauth-refresh'
-import { accountAddress, asAccount, signedIn } from '../jaspers/jaspers'
+import { accountAddress, asAccount, callAsAccount, signedIn } from '../jaspers/jaspers'
 import { RefusedError, SignedOutError } from '../jaspers/session'
 import { getState } from '../state'
 
@@ -47,6 +47,7 @@ interface Live {
   transport: Transport
   /** Every tool the connection offers, the ones only its page may call included, each with its page and callers. */
   tools: Map<string, ToolApp>
+  viaJaspers: boolean
 }
 
 const clients = new Map<string, Live>()
@@ -132,7 +133,7 @@ export async function connect(id: string, retry = 0): Promise<void> {
     const offered = offeredTools(spec, listed)
     if (offered.missing.length > 0) console.warn(`[mcp ${id}] tools: the server lists no ${offered.missing.join(', ')}`)
     const { tree, all } = readTools(offered.tools)
-    clients.set(id, { client, transport, tools: all })
+    clients.set(id, { client, transport, tools: all, viaJaspers })
     setInfo(id, {
       status: 'ready',
       error: null,
@@ -360,7 +361,8 @@ export async function readPage(id: string, uri: string): Promise<{ html: string;
 async function asked<T>(id: string, live: Live, spec: Connection, send: () => Promise<T>): Promise<T> {
   if (spec.auth !== 'oauth') return send()
   try {
-    return await sentAgainIfRefused(send)
+    const attempt = () => sentAgainIfRefused(send)
+    return await (live.viaJaspers ? callAsAccount(attempt) : attempt())
   } catch (err) {
     // The app's sign-in with Jaspers ended under the call, or the connection's own did.
     if (err instanceof SignedOutError) await signedOut(id, live, 'needs-sign-in')

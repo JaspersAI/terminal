@@ -1,5 +1,5 @@
 import { ACTIVATE_SKILL, READ_SKILL_FILE, skillLoaded } from '@jaspers-ai/sdk/skills'
-import { callOf, cutFrom, makeRoom, sent, setAside, type Sending } from '../../../shared/agent/aside'
+import { callOf, cutFrom, makeRoom, READ_AGAIN, sent, setAside, type Sending } from '../../../shared/agent/aside'
 import { cited, keptOn, type Citation } from '../../../shared/agent/citations'
 import { portableFork, putBack, standing, type Fork } from '../../../shared/agent/fork'
 import { RECENT, recent, withoutThinking } from '../../../shared/agent/history'
@@ -270,7 +270,7 @@ export function offered(tools: Tool[], history: Turn[]): Tool[] {
  */
 function readAgain(history: Turn[]): Tool {
   return {
-    name: 'read_again',
+    name: READ_AGAIN,
     readsOnly: true,
     whole: true,
     description:

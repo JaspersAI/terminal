@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { batchAccepted, EYE_ENDPOINT, EYE_TOKEN, eventsPart, retryDelay } from '../../shared/app/eye'
+import { batchAccepted, EYE_TOKEN, eventsPart, eyeEndpoint, retryDelay } from '../../shared/app/eye'
 import { eyeRoot } from '../home'
 import { getState, subscribe } from '../state'
 import { liveSession, onRecorded, ownSession, queuedBatches, record } from './eye'
@@ -26,6 +26,12 @@ import { EVENTS_FILE } from './events'
 // A server that asks for later is left alone until the wait is over: what is written meanwhile waits
 // with it, rather than every new line asking again.
 
+/**
+ * Where batches go: the environment's, for development against a local run, null when turned off,
+ * else the public one. Read once, as main loads: a wrong value stops the app here rather than
+ * sending somewhere else.
+ */
+const ENDPOINT = eyeEndpoint(process.env['JASPERS_EYE_URL'])
 /** How many frames go in one request, so a long session is sent in parts rather than one huge body. */
 const FRAMES_PER_REQUEST = 40
 /** How many runs, the same way. */
@@ -49,6 +55,10 @@ const sentOf = new Map<string, number>()
 
 /** Starts the uploader: a pass soon after launch, one whenever something new is written, and one every few minutes regardless. */
 export function startUploads(): void {
+  if (ENDPOINT === null) {
+    console.log('[eye] uploads off (JASPERS_EYE_URL=off)')
+    return
+  }
   schedule(NEXT_MS)
   subscribe((next, prev) => {
     if (next.eye.frames !== prev.eye.frames || next.eye.runs !== prev.eye.runs) wake()
@@ -114,11 +124,30 @@ function failed(why: { status: number } | { message: string }): void {
 }
 
 /**
- * One batch, or the next part of one: its frames and its runs, and the telemetry lines not yet sent.
+ * One batch, or the next part of one: its frames and its runs, and the telemetry lines not yet sent,
+ * posted to `EYE_ENDPOINT` (`POST /batches`) as `multipart/form-data` (see the `POST /batches`
+ * section in `JaspersAI/jaspers-eye`'s `README.md#post-batches` at
+ * https://github.com/JaspersAI/jaspers-eye/blob/main/README.md#post-batches):
+ *
+ * - `session`: the session folder's timestamp stamp.
+ * - `install`: this install's UUID (`state.eye.install`).
+ * - `app`: the app version (`app.getVersion()`).
+ * - `platform`: `process.platform`.
+ * - `closed`: `'true'` only when the session is no longer live and no unsent `events.jsonl` lines
+ *   remain after this part, `'false'` otherwise.
+ * - `frames`: up to `FRAMES_PER_REQUEST` (40) `<stamp>-w<window>.jpg` JPEG blobs.
+ * - `runs`: up to `RUNS_PER_REQUEST` (50) legacy `*.run.json` blobs from earlier builds.
+ * - `feedback`: up to `RUNS_PER_REQUEST` (50) `<stamp>-<id>.feedback.json` notes sent from the eye
+ *   popover.
+ * - `events`: when new whole telemetry lines exist, the slice of `events.jsonl` as
+ *   `<session>.jsonl` (`application/x-ndjson`).
+ * - `from`: when `events` is present, the 0-based starting line number of that slice.
+ *
  * The files that went are deleted when the endpoint has them, all but this run's telemetry file,
  * which only grows; an earlier run's folder goes once nothing is left in it.
  */
 async function send(session: string): Promise<'accepted' | { status: number } | 'empty'> {
+  if (!ENDPOINT) return 'empty'
   const folder = path.join(eyeRoot(), session)
   const closed = liveSession() !== session
   const own = ownSession() === session
@@ -162,7 +191,7 @@ async function send(session: string): Promise<'accepted' | { status: number } | 
     form.append('events', new Blob([events.body], { type: 'application/x-ndjson' }), `${session}.jsonl`)
     form.append('from', String(from))
   }
-  const response = await fetch(EYE_ENDPOINT, {
+  const response = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { authorization: `Bearer ${EYE_TOKEN}` },
     body: form,

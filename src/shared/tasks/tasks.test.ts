@@ -317,10 +317,38 @@ test('a call that went well is quiet, unless it is a watch that found a change',
 test('a failure is told once, the first of a streak', () => {
   const failed = { at: T0, ok: false, result: 'down', ms: 5 }
   const fine = { at: T0, ok: true, result: '', ms: 5 }
-  assert.equal(runNotice('t1', task(), { ok: false, result: 'down', changed: false }), 't1 failed: down')
+  const daily = { every: 24 * 60 * 60 * S }
+  assert.equal(runNotice('t1', task(daily), { ok: false, result: 'down', changed: false }), 't1 failed: down')
   assert.equal(
-    runNotice('t1', task({ lastRun: fine }), { ok: false, result: 'down', changed: false }),
+    runNotice('t1', task({ ...daily, lastRun: fine }), { ok: false, result: 'down', changed: false }),
     't1 failed: down',
   )
-  assert.equal(runNotice('t1', task({ lastRun: failed }), { ok: false, result: 'down', changed: false }), null)
+  assert.equal(
+    runNotice('t1', task({ ...daily, lastRun: failed }), { ok: false, result: 'down', changed: false }),
+    null,
+  )
+  assert.equal(
+    runNotice('t1', task({ every: null, lastRun: fine }), { ok: false, result: 'down', changed: false }),
+    't1 failed: down',
+  )
+})
+
+test('a task that runs every few minutes tells a failure at its second in a row, not one the next run recovers from', () => {
+  const failed = { at: T0, ok: false, result: 'fetch failed', ms: 5 }
+  const fine = { at: T0, ok: true, result: '', ms: 5 }
+  const minutely = { every: 60 * S }
+  const run = { ok: false, result: 'fetch failed', changed: false }
+  // The refresh that runs as the computer wakes, before the network is back.
+  assert.equal(runNotice('t10', task({ ...minutely, lastRun: fine, history: [fine] }), run), null)
+  assert.equal(runNotice('t10', task({ ...minutely }), run), null)
+  // Still failing a minute later: now it is said, once.
+  assert.equal(
+    runNotice('t10', task({ ...minutely, lastRun: failed, history: [fine] }), run),
+    't10 failed: fetch failed',
+  )
+  assert.equal(runNotice('t10', task({ ...minutely, lastRun: failed }), run), 't10 failed: fetch failed')
+  assert.equal(runNotice('t10', task({ ...minutely, lastRun: failed, history: [failed, fine] }), run), null)
+  // Fifteen minutes is still soon enough to wait for; more is not.
+  assert.equal(runNotice('t1', task({ every: 15 * 60 * S, lastRun: fine }), run), null)
+  assert.equal(runNotice('t1', task({ every: 16 * 60 * S, lastRun: fine }), run), 't1 failed: fetch failed')
 })
