@@ -30,6 +30,7 @@ import {
   loopRules,
   gridPrimer,
   ROUTER_RULES,
+  taskPreface,
   tilePrimer,
   toldOf,
 } from './prompt.ts'
@@ -985,4 +986,19 @@ test("the tile primer says a piece of work's views are laid out inside its tile,
   assert.match(tile, /20 columns × 10 rows of its own/)
   assert.match(tile, /fitted to what is in it/)
   assert.doesNotMatch(tile, /write_cells|Cells:/)
+})
+
+test('a task preface lists allowed commands for run_shell only while Pro mode is on', () => {
+  const withShell = taskPreface('t4', ['tail -40 out/run.log', 'cat out/summary.json'], true)
+  assert.match(withShell, /^This request is scheduled task t4, running on its own at its time:/)
+  assert.match(
+    withShell,
+    /Pass one to run_shell exactly as it is written, whole, and it runs without asking[\s\S]*<command>\ntail -40 out\/run\.log\n<\/command>\n<command>\ncat out\/summary\.json\n<\/command>$/,
+  )
+  const withoutCommands = taskPreface('t4', [], true)
+  assert.match(withoutCommands, /^This request is scheduled task t4, running on its own at its time:/)
+  assert.doesNotMatch(withoutCommands, /<command>|run_shell/)
+  const proModeOff = taskPreface('t4', ['tail -40 out/run.log'], false)
+  assert.equal(proModeOff, withoutCommands)
+  assert.doesNotMatch(proModeOff, /<command>|run_shell/)
 })

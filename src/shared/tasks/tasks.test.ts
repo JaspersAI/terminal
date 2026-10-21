@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { ORCHESTRATOR_TOOLS } from '../loops/loops.ts'
 import {
   afterRun,
   checkTaskInput,
   missingInRun,
+  needsShellInRun,
+  SHELL_TOOL,
+  TASK_EXCLUDED_TOOLS,
   TASK_MODEL_MAX,
   computeNext,
   dueTasks,
@@ -168,6 +172,11 @@ test('instructions that name a tool a run does not have are caught when the task
   assert.equal(missingInRun('Each Friday, write_skill what worked this week.'), 'write_skill')
   // A command is a run's to make: it is checked against what the user allowed the task, not left out.
   assert.equal(missingInRun('Each run: run_shell `tail -40 out/run.log`.'), undefined)
+  assert.equal(needsShellInRun('Each run: run_shell `tail -40 out/run.log`.'), true)
+  assert.equal(needsShellInRun('Refresh e3 and say what changed.'), false)
+  assert.equal(needsShellInRun('Note the prerun_shell_log figures.'), false)
+  assert.equal(ORCHESTRATOR_TOOLS.includes(SHELL_TOOL), true)
+  assert.equal(TASK_EXCLUDED_TOOLS.includes(SHELL_TOOL), false)
   // A whole name only: a word that merely holds one is not a tool being asked for.
   assert.equal(missingInRun('Refresh e3 and say what changed.'), undefined)
   assert.equal(missingInRun('Note the preask_userland figures.'), undefined)
