@@ -1,4 +1,10 @@
-import { resolveSecrets, secretRefs, type Connection } from '../../shared/plugins/connections'
+import {
+  connectionUrls,
+  resolveSecrets,
+  secretRefs,
+  withConnectionUrl,
+  type Connection,
+} from '../../shared/plugins/connections'
 import { stableStringify } from '../../shared/data/hash'
 import type { ConnectionInfo } from '../../shared/state'
 import { connect, forget } from './mcp'
@@ -21,6 +27,12 @@ export interface HeldConnection {
   dir: string
 }
 
+/**
+ * Local connection URL overrides from `JASPERS_CONNECTION_URLS`, for development against a local
+ * server. Read once, as main loads: a wrong value stops the app here rather than connecting
+ * somewhere else.
+ */
+const CONNECTION_URLS = connectionUrls(process.env['JASPERS_CONNECTION_URLS'])
 const held = new Map<string, HeldConnection>()
 
 export function getConnection(id: string): HeldConnection | undefined {
@@ -81,8 +93,10 @@ export function registerConnections(plugin: string, dir: string, specs: Record<s
   const values = secretValues(plugin)
   const infos: Record<string, ConnectionInfo> = {}
   const changed: string[] = []
-  for (const [name, spec] of Object.entries(specs)) {
+  for (const [name, declared] of Object.entries(specs)) {
     const id = `${plugin}/${name}`
+    const { spec, log } = withConnectionUrl(id, declared, CONNECTION_URLS)
+    if (log) console.log(log)
     const entry: HeldConnection = { id, plugin, name, spec, dir }
     const previous = held.get(id)
     const kept =
