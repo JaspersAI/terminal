@@ -602,6 +602,7 @@ export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'open_window',
   'use_all_screens',
   'use_one_screen',
+  'refresh_element',
   'write_cells',
   'read_cells',
   'clear_cells',

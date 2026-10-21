@@ -575,6 +575,7 @@ test('the orchestrator is told to route, by the tools that hold work, and of no 
   }
   assert.match(ROUTER_RULES, /^Rules: you route/)
   assert.match(ROUTER_RULES, /never to a second piece/)
+  assert.match(ROUTER_RULES, /to bring a view's data up to date now, call refresh_element\./)
 })
 
 test('the orchestrator is told a skill to write or publish is its own to do, as a task to schedule is, and not a piece of work', () => {
