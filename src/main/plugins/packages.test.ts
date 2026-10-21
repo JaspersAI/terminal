@@ -302,7 +302,7 @@ test('root and dependency listing requests stop at the package limit', async () 
   }
 })
 
-test('package downloads run with bounded concurrency', async (t) => {
+test('package downloads run with bounded concurrency', { timeout: 10_000 }, async (t) => {
   const catalog = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`pkg${i}`, { '1.0.0': {} }]))
   const reg = await registry(catalog)
   const dir = await plugin()
@@ -318,14 +318,21 @@ test('package downloads run with bounded concurrency', async (t) => {
     return fetchOriginal(...args)
   })
   const installing = installPackages(dir, Object.keys(catalog), { registry: reg.url })
+  installing.catch(() => undefined)
   try {
-    await firstWave.promise
+    await Promise.race([
+      firstWave.promise,
+      installing.then(() => assert.fail('installPackages settled before the first download wave')),
+    ])
     await new Promise<void>((resolve) => setImmediate(resolve))
     assert.equal(started, 4)
   } finally {
     gate.resolve()
-    await installing
-    await reg.close()
+    try {
+      await installing
+    } finally {
+      await reg.close()
+    }
   }
   assert.equal(started, 10)
 })
@@ -360,46 +367,61 @@ test('concurrent extraction reserves bytes before writing past the aggregate lim
 })
 
 for (const hadModules of [false, true]) {
-  test(`placement rollback waits for sibling copies and removes partial targets (existing modules: ${hadModules})`, async (t) => {
-    const reg = await registry(CATALOG)
-    const dir = await plugin()
-    const modules = path.join(dir, 'node_modules')
-    if (hadModules) {
-      await fsp.mkdir(modules)
-      await fsp.writeFile(path.join(modules, 'keep.txt'), 'keep')
-    }
-    const copy = fsp.cp
-    const slowStarted = deferred()
-    const finishSlow = deferred()
-    t.mock.method(fsp, 'cp', async (...args: Parameters<typeof copy>) => {
-      const target = String(args[1])
-      if (target === path.join(modules, 'a')) {
-        await fsp.mkdir(target)
-        await fsp.writeFile(path.join(target, 'partial.txt'), 'partial')
-        await slowStarted.promise
-        throw new Error('copy failed')
+  test(
+    `placement rollback waits for sibling copies and removes partial targets (existing modules: ${hadModules})`,
+    { timeout: 10_000 },
+    async (t) => {
+      const reg = await registry(CATALOG)
+      const dir = await plugin()
+      const modules = path.join(dir, 'node_modules')
+      if (hadModules) {
+        await fsp.mkdir(modules)
+        await fsp.writeFile(path.join(modules, 'keep.txt'), 'keep')
       }
-      slowStarted.resolve()
-      await finishSlow.promise
-      await copy(...args)
-    })
-    let settled = false
-    const installing = installPackages(dir, ['a'], { registry: reg.url }).finally(() => {
-      settled = true
-    })
-    const rejected = assert.rejects(installing, /copy failed/)
-    try {
-      await slowStarted.promise
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      assert.equal(settled, false)
-    } finally {
-      finishSlow.resolve()
-      await rejected
-      await reg.close()
-    }
-    if (hadModules) assert.deepEqual(await fsp.readdir(modules), ['keep.txt'])
-    else assert.ok(!fs.existsSync(modules))
-  })
+      const copy = fsp.cp
+      const slowStarted = deferred()
+      const finishSlow = deferred()
+      t.mock.method(fsp, 'cp', async (...args: Parameters<typeof copy>) => {
+        const target = String(args[1])
+        if (target === path.join(modules, 'a')) {
+          await fsp.mkdir(target)
+          await fsp.writeFile(path.join(target, 'partial.txt'), 'partial')
+          await slowStarted.promise
+          throw new Error('copy failed')
+        }
+        slowStarted.resolve()
+        await finishSlow.promise
+        await copy(...args)
+      })
+      let settled = false
+      const installing = installPackages(dir, ['a'], { registry: reg.url }).finally(() => {
+        settled = true
+      })
+      const rejected = assert.rejects(installing, /copy failed/)
+      rejected.catch(() => undefined)
+      try {
+        await Promise.race([
+          slowStarted.promise,
+          installing.then(
+            () => assert.fail('installPackages settled before the sibling copy started'),
+            () => assert.fail('installPackages settled before the sibling copy started'),
+          ),
+        ])
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        assert.equal(settled, false)
+      } finally {
+        slowStarted.resolve()
+        finishSlow.resolve()
+        try {
+          await rejected
+        } finally {
+          await reg.close()
+        }
+      }
+      if (hadModules) assert.deepEqual(await fsp.readdir(modules), ['keep.txt'])
+      else assert.ok(!fs.existsSync(modules))
+    },
+  )
 }
 
 for (const integrity of ['missing', 'unsupported', 'sha1'] as const) {
