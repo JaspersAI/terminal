@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { cellName, onGrid, parseCellName, rangeName, type GridSize, type Rect } from '../../../shared/grid/grid'
 import { displayValue, evaluateSheet, isError } from '../../../shared/grid/formula'
 import { expectsReference, referencedCells } from '../../../shared/grid/reference'
-import { moveTo, pressAt, spanRect, type Pointed, type Pointing } from './pointing'
+import { arrowStep, moveTo, pressAt, spanRect, stepCell, stepPointing, type Pointed, type Pointing } from './pointing'
 import { send } from './send'
 
 // The grid's own cells as a light spreadsheet: click one and type in it. What a cell holds is grid
@@ -57,24 +57,20 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
   const [selection, setSelection] = useState<Rect | null>(null)
   const values = useMemo(() => evaluateSheet(cells, size), [cells, size])
   const input = useRef<HTMLInputElement>(null)
-  /** The drag in flight, in a ref: a pointer move reads what the last one left without waiting for a render. */
+  /** The reference being pointed at (by pointer or arrow keys), kept in a ref so the next step reads it directly. */
   const pointing = useRef<Pointing | null>(null)
+  /** Whether the pointer is dragging a reference right now, as distinct from arrow-key pointing with the button up. */
+  const dragging = useRef(false)
   const selecting = useRef<Selecting | null>(null)
 
   /** Saves what was typed, unless it is what was there already, and leaves the cell. */
   const commit = (next: string | null): void => {
+    pointing.current = null
+    dragging.current = false
     if (editing && (cells[editing.name] ?? '') !== editing.draft) {
       send({ type: 'cells.write', workspaceId, window: windowNumber, cells: { [editing.name]: editing.draft } })
     }
     setEditing(next === null ? null : { name: next, draft: cells[next] ?? '' })
-  }
-
-  /** The cell one step from here, or null at the edge, so Enter and Tab stop rather than wrap. */
-  const step = (name: string, dx: number, dy: number): string | null => {
-    const cell = parseCellName(name)
-    if (!cell) return null
-    const next = { x: cell.x + dx, y: cell.y + dy }
-    return onGrid(next, size) ? cellName(next.x, next.y) : null
   }
 
   /**
@@ -89,10 +85,11 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
     return onGrid(at, size) ? cellName(at.x, at.y) : null
   }
 
-  /** Where the caret is in the cell being typed in, or null when there is no input to ask. */
+  /** Where the caret is in the cell being typed in, or null when there is no input or a range of text is selected. */
   const caretNow = (): number | null => {
-    const at = input.current?.selectionStart
-    return typeof at === 'number' ? at : null
+    const start = input.current?.selectionStart
+    const end = input.current?.selectionEnd
+    return typeof start === 'number' && start === end ? start : null
   }
 
   /**
@@ -169,6 +166,7 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
         // stays where it is, and a drag from here rewrites that reference as a range.
         if (editing && caret !== null && expectsReference(editing.draft, caret)) {
           event.currentTarget.setPointerCapture(event.pointerId)
+          dragging.current = true
           point(pressAt(editing.draft, caret, name, size))
           return
         }
@@ -185,12 +183,14 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
       // rather than a box per cell standing by for it.
       onPointerMove={(event) => {
         // A release this page never heard — over a view's frame, or outside the window — leaves
-        // nothing held: a move with the button up ends both drags rather than carrying on with them.
-        if ((event.buttons & 1) === 0 && (pointing.current || selecting.current)) {
+        // nothing held: a move with the button up ends both pointer drags rather than carrying on
+        // with them, while leaving an arrow-key pointing session alone.
+        if ((event.buttons & 1) === 0 && (dragging.current || selecting.current)) {
+          dragging.current = false
           pointing.current = null
           selecting.current = null
         }
-        const held = pointing.current
+        const held = dragging.current ? pointing.current : null
         if (held) {
           const to = cellUnder(event, true)
           const step = to ? moveTo(held, to, size) : null
@@ -215,7 +215,8 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
       }}
       onPointerUp={(event) => {
         // Letting go of a reference drag leaves the caret after what went in, ready to be typed on.
-        if (pointing.current) input.current?.focus()
+        if (dragging.current) input.current?.focus()
+        dragging.current = false
         pointing.current = null
         selecting.current = null
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -224,6 +225,7 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
       }}
       onPointerCancel={() => {
         // Whatever went in stands: a cancelled drag is not a reason to take a reference back out.
+        dragging.current = false
         pointing.current = null
         selecting.current = null
       }}
@@ -269,25 +271,65 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
                 aria-label={`Cell ${name}`}
                 value={editing.draft}
                 spellCheck={false}
-                onChange={(event) => setEditing({ name, draft: event.target.value })}
+                onChange={(event) => {
+                  pointing.current = null
+                  dragging.current = false
+                  setEditing({ name, draft: event.target.value })
+                }}
                 onBlur={() => commit(null)}
                 // The layer's own press would commit this cell and start it again, losing the cursor.
-                onPointerDown={(event) => event.stopPropagation()}
+                onPointerDown={(event) => {
+                  pointing.current = null
+                  dragging.current = false
+                  event.stopPropagation()
+                }}
                 onKeyDown={(event) => {
                   // Every key that means something here is answered here: the grid's own shortcuts
                   // and the composer's listen on the window, and a cell being typed in is not them.
                   if (event.key === 'Enter') {
                     event.preventDefault()
                     event.stopPropagation()
-                    commit(step(name, 0, event.shiftKey ? -1 : 1))
-                  } else if (event.key === 'Tab') {
+                    commit(stepCell(name, 0, event.shiftKey ? -1 : 1, size))
+                    return
+                  }
+                  if (event.key === 'Tab') {
                     event.preventDefault()
                     event.stopPropagation()
-                    commit(step(name, event.shiftKey ? -1 : 1, 0))
-                  } else if (event.key === 'Escape') {
+                    commit(stepCell(name, event.shiftKey ? -1 : 1, 0, size))
+                    return
+                  }
+                  if (event.key === 'Escape') {
                     event.preventDefault()
                     event.stopPropagation()
+                    pointing.current = null
+                    dragging.current = false
                     setEditing(null)
+                    return
+                  }
+                  const move = !event.metaKey && !event.ctrlKey && !event.altKey ? arrowStep(event.key) : null
+                  if (move) {
+                    const caret = caretNow()
+                    if (caret !== null && (pointing.current !== null || expectsReference(editing.draft, caret))) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      dragging.current = false
+                      const next = stepPointing(
+                        pointing.current,
+                        name,
+                        editing.draft,
+                        caret,
+                        move.dx,
+                        move.dy,
+                        event.shiftKey,
+                        size,
+                      )
+                      if (next) point(next)
+                      return
+                    }
+                  }
+                  if (event.key !== 'Shift') {
+                    pointing.current = null
+                    dragging.current = false
                   }
                 }}
                 className="absolute inset-0 w-full bg-background px-1 text-xs ring-1 ring-primary outline-none"
