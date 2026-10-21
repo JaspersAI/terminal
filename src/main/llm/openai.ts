@@ -37,7 +37,9 @@ interface OpenAiResponse {
   usage?: {
     prompt_tokens?: number
     completion_tokens?: number
+    total_tokens?: number
     prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }
+    completion_tokens_details?: { reasoning_tokens?: number }
   }
 }
 
@@ -164,6 +166,10 @@ export function readOpenai(data: OpenAiResponse): Completion {
   const choice = data.choices?.[0]
   const message = choice?.message ?? {}
   const calls = message.tool_calls ?? []
+  const input = data.usage?.prompt_tokens ?? 0
+  const completion = data.usage?.completion_tokens ?? 0
+  const reasoning = data.usage?.completion_tokens_details?.reasoning_tokens ?? 0
+  const fromTotal = data.usage?.total_tokens !== undefined ? Math.max(0, data.usage.total_tokens - input) : 0
   return {
     text: message.content ?? '',
     toolCalls: calls.map((c) => ({
@@ -173,8 +179,8 @@ export function readOpenai(data: OpenAiResponse): Completion {
     })),
     stopReason: choice?.finish_reason ?? '',
     usage: {
-      input: data.usage?.prompt_tokens ?? 0,
-      output: data.usage?.completion_tokens ?? 0,
+      input,
+      output: Math.max(completion + reasoning, fromTotal),
       cacheRead: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       cacheWrite: data.usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
     },
@@ -211,7 +217,7 @@ export function openaiStream(
       const delta = isRecord(choice.delta) ? choice.delta : {}
       const thinking = onThinking ? thinkingOf(delta) : ''
       if (thinking) onThinking?.(thinking)
-      if (typeof delta.content === 'string' && delta.content) {
+      if (!isThought(delta) && typeof delta.content === 'string' && delta.content) {
         content += delta.content
         onText?.(delta.content)
       }
@@ -252,15 +258,34 @@ export function openaiStream(
   }
 }
 
+/** Whether a streamed delta is a Gemini thought chunk (`extra_content.google.thought === true`), whose words ride in `content`. */
+function isThought(delta: Record<string, unknown>): boolean {
+  return (
+    isRecord(delta.extra_content) && isRecord(delta.extra_content.google) && delta.extra_content.google.thought === true
+  )
+}
+
 /**
- * What a piece of a streamed reply holds of the model's thinking. Chat Completions has no field for
- * it; OpenRouter, which Jaspers' own models come through, sends it as `reasoning_details`, a list of
- * parts (the text itself, a summary of it, or thinking sealed by its provider, which has no words to
- * show), and as a plain `reasoning` string beside them. The parts are read where a piece has them
- * and the string where it does not, so a thought sent both ways is heard once.
+ * What a piece of a streamed reply holds of the model's thinking. Chat Completions has no one field
+ * for it: Gemini on Vertex AI marks a thought chunk with `extra_content.google.thought === true` and
+ * puts the words in `content`; OpenRouter sends `reasoning_details` (parts of text, summary, or
+ * sealed thinking, which has no words to show) and a plain `reasoning` string beside them; other
+ * OpenAI-compatible servers send `reasoning_content`. The parts are read where a piece has them and
+ * the string where it does not, so a thought sent both ways is heard once.
  */
 function thinkingOf(delta: Record<string, unknown>): string {
-  if (!Array.isArray(delta.reasoning_details)) return typeof delta.reasoning === 'string' ? delta.reasoning : ''
+  if (isThought(delta)) return typeof delta.content === 'string' ? delta.content : ''
+  if (
+    isRecord(delta.extra_content) &&
+    isRecord(delta.extra_content.google) &&
+    typeof delta.extra_content.google.thought === 'string'
+  ) {
+    return delta.extra_content.google.thought
+  }
+  if (!Array.isArray(delta.reasoning_details)) {
+    if (typeof delta.reasoning === 'string') return delta.reasoning
+    return typeof delta.reasoning_content === 'string' ? delta.reasoning_content : ''
+  }
   return delta.reasoning_details
     .map((part) => {
       if (!isRecord(part)) return ''

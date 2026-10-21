@@ -413,8 +413,13 @@ test('a Chat Completions stream joins the content and the arguments a tool call 
 })
 
 test('a Chat Completions stream says what the model is thinking, where its provider sends that', () => {
+  const deltas: string[] = []
   const thoughts: string[] = []
-  const reader = openaiStream(undefined, undefined, (delta) => thoughts.push(delta))
+  const reader = openaiStream(
+    (delta) => deltas.push(delta),
+    undefined,
+    (delta) => thoughts.push(delta),
+  )
   for (const event of [
     // OpenRouter sends a thought twice in one piece, as a string and in its details: it is said once.
     {
@@ -431,6 +436,12 @@ test('a Chat Completions stream says what the model is thinking, where its provi
     { choices: [{ delta: { reasoning_details: [{ type: 'reasoning.summary', summary: 'lists the fields.' }] } }] },
     // The string alone, where that is all there is.
     { choices: [{ delta: { reasoning: ' Next, the screen.' } }] },
+    // Gemini on Vertex AI marks a thought chunk on extra_content.google.thought and puts the words in content.
+    {
+      choices: [{ delta: { content: ' First, the filings.', extra_content: { google: { thought: true } } } }],
+    },
+    // Providers that send reasoning_content beside or instead of reasoning.
+    { choices: [{ delta: { reasoning_content: ' Then the chart.' } }] },
     // Sealed thinking has no words to say, whatever stands in for them.
     {
       choices: [
@@ -442,13 +453,21 @@ test('a Chat Completions stream says what the model is thinking, where its provi
   ]) {
     reader.push(event)
   }
-  assert.deepEqual(thoughts, ['The guide ', 'lists the fields.', ' Next, the screen.'])
+  assert.deepEqual(thoughts, [
+    'The guide ',
+    'lists the fields.',
+    ' Next, the screen.',
+    ' First, the filings.',
+    ' Then the chart.',
+  ])
+  assert.deepEqual(deltas, ['Done.'])
   // The thinking is shown and not kept: the reply is its words.
   const reply = readOpenai(reader.done())
   assert.deepEqual([reply.text, reply.raw], ['Done.', null])
   // Nobody listening changes nothing.
   const quiet = openaiStream()
   quiet.push({ choices: [{ delta: { reasoning: 'A thought.' } }] })
+  quiet.push({ choices: [{ delta: { content: 'Another thought.', extra_content: { google: { thought: true } } } }] })
   assert.equal(readOpenai(quiet.done()).text, '')
 })
 
@@ -641,6 +660,37 @@ test('what OpenRouter served from its cache and wrote to it is read into the usa
     },
   })
   assert.deepEqual(usage, { input: 10339, output: 60, cacheRead: 10318, cacheWrite: 21 })
+})
+
+test('what Vertex AI spent on thinking is counted into the output, whether completion_tokens leaves it out or is omitted', () => {
+  const withBoth = readOpenai({
+    choices: [{ message: { content: 'Hi.' }, finish_reason: 'stop' }],
+    usage: {
+      prompt_tokens: 400,
+      completion_tokens: 30,
+      total_tokens: 550,
+      completion_tokens_details: { reasoning_tokens: 120 },
+    },
+  })
+  assert.deepEqual(withBoth.usage, { input: 400, output: 150, cacheRead: 0, cacheWrite: 0 })
+
+  const onlyReasoning = readOpenai({
+    choices: [{ message: { content: null }, finish_reason: 'tool_calls' }],
+    usage: {
+      prompt_tokens: 400,
+      completion_tokens_details: { reasoning_tokens: 90 },
+    },
+  })
+  assert.deepEqual(onlyReasoning.usage, { input: 400, output: 90, cacheRead: 0, cacheWrite: 0 })
+
+  const fromTotal = readOpenai({
+    choices: [{ message: { content: null }, finish_reason: 'tool_calls' }],
+    usage: {
+      prompt_tokens: 400,
+      total_tokens: 490,
+    },
+  })
+  assert.deepEqual(fromTotal.usage, { input: 400, output: 90, cacheRead: 0, cacheWrite: 0 })
 })
 
 // What the user added while a run was at work: a user turn straight after a round's results, with

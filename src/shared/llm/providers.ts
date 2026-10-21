@@ -27,9 +27,10 @@ export interface Provider<Api extends string = string> {
 }
 
 /**
- * Jaspers' own service, which serves every kind under the one sign-in with Jaspers: models through
- * OpenRouter, in OpenAI's shapes. The server is the jaspers-account repo; the base URL here is the
- * public gateway, and main follows Account's address instead when the environment names another.
+ * Jaspers' own service, which serves every kind under the one sign-in with Jaspers: Gemini on Vertex AI
+ * for language models and OpenRouter for voice and search, in OpenAI's shapes. The server is the
+ * jaspers-account repo; the base URL here is the public gateway, and main follows Account's address
+ * instead when the environment names another.
  */
 export const JASPERS = 'jaspers'
 const JASPERS_URL = gatewayUrl(JASPERS_ACCOUNT)
@@ -47,7 +48,7 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       hint: 'Models, voice, and web search with one sign-in',
       api: 'openai',
       baseUrl: JASPERS_URL,
-      model: 'anthropic/claude-opus-5.5',
+      model: 'gemini-3.8-flash',
       tokenRequired: true,
     },
     {
@@ -366,10 +367,10 @@ function isHttpUrl(value: string): boolean {
 
 /**
  * Whether a request to this provider marks its prompt for caching. OpenRouter caches an Anthropic
- * model's prompt only where the request asks, and Jaspers' own service is OpenRouter behind the sign-in;
- * the models that cache on their own ignore the marks. Every other Chat Completions provider caches
- * by prefix on its own or not at all, and some refuse a field they do not know.
+ * model's prompt only where the request asks; the models that cache on their own ignore the marks.
+ * Every other Chat Completions provider caches by prefix on its own or not at all, and some refuse a
+ * field they do not know.
  */
 export function marksCache(provider: Provider<LlmApi>): boolean {
-  return provider.id === JASPERS || provider.id === 'openrouter'
+  return provider.id === 'openrouter'
 }
