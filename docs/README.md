@@ -1,6 +1,6 @@
 # Jaspers Terminal docs
 
-Jaspers Terminal is an open-source, local-first desktop runtime for public-market research, engineered so local and open-weight models run as reliably as frontier cloud models.
+Jaspers Terminal is a local-first desktop runtime for public-market research, source-available under BSL 1.1 and engineered so local and open-weight models run as reliably as frontier cloud models.
 
 ## Core capabilities
 

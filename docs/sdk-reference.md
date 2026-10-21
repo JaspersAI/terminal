@@ -10,7 +10,7 @@ The app provides the SDK, `react`, `react-dom`, and `zod` at runtime through its
 
 ### Why the SDK stays small (and how `build_plugin` uses this file)
 
-`@jaspers-ai/sdk` reduces plugin complexity for both human developers and the built-in coding agent (`build_plugin`) by keeping the entire API surface to four definitions (`definePlugin`, `defineConnection`, `defineSource`, `defineView`), four model-drivable React hooks (`useData`, `usePanelState`, `usePublish`, `usePublishText` plus `useBridge`), a capability-gated backend `ctx` (`BackendContext`), and Agent Skills helpers (`skillsPrompt`, `skillTools`, `runSkillTool`).
+`@jaspers-ai/sdk` reduces plugin complexity for both human developers and the built-in coding agent (`build_plugin`) with four definitions (`definePlugin`, `defineConnection`, `defineSource`, `defineView`), six public React hooks (four model-drivable hooks: `useData`, `usePanelState`, `usePublish`, `usePublishText`; plus `useBridge` and `usePanel`), a capability-gated backend `ctx` (`BackendContext`), and Agent Skills helpers (`skillsPrompt`, `skillTools`, `runSkillTool`).
 
 `src/main/agent/build/reference.ts` bundles this file (`docs/sdk-reference.md?raw`), [`docs/writing-a-plugin.md`](writing-a-plugin.md) (`?raw`), the exact TypeScript interfaces in `packages/sdk/src/context.ts?raw` and `packages/sdk/src/llm.ts?raw`, and the four starter templates in [`docs/templates/`](templates/README.md) directly into the coding agent's system prompt (`builderSystem` in `src/shared/agent/build/prompt.ts`). That single source of truth ensures that local/open-weight models and cloud models synthesize plugins against the exact same TypeScript signatures and security rules documented below.
 

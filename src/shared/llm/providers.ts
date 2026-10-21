@@ -110,7 +110,7 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       hint: 'Fast open models',
       api: 'openai',
       baseUrl: 'https://api.groq.com/openai/v1',
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-120b',
       keyUrl: 'https://console.groq.com/keys',
       tokenPrefix: 'gsk_',
       tokenRequired: true,
