@@ -49,7 +49,7 @@ export const stateTools: Tool[] = [
   {
     name: 'set',
     description:
-      "Write one value inside a panel's state, which is how you change what a placed view shows. The path is panels/<id>/state, or a key path under it like panels/e3/state/filters/ranges. The whole resulting state is checked against the view's schema, and the error says what was wrong with it. Returns the state as it now is.",
+      "Write one value inside a panel's state, which is how you change what a placed view shows. The path is panels/<id>/state, or a key path under it like panels/e3/state/filters/ranges; a number is a place in a list, so panels/e3/state/filters/0 is its first filter. The whole resulting state is checked against the view's schema, and the error says what was wrong with it. Returns the state as it now is.",
     parameters: {
       type: 'object',
       properties: {

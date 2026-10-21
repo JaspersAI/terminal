@@ -674,16 +674,35 @@ export function refreshPanel(grid: Grid, id: string, at: number): { grid: Grid; 
 
 /**
  * A copy of `target` with `value` at `path`, making the objects on the way. An empty path is the
- * value itself, which has to be an object: it becomes a whole panel state.
+ * value itself, which has to be an object: it becomes a whole panel state. A number in the path
+ * under a list is a place in it (filters/0 is the first filter), so the list stays a list; the
+ * place just past its end adds one.
  */
 export function setIn(target: Record<string, unknown>, path: string[], value: unknown): Record<string, unknown> {
   if (path.length === 0) {
     if (!isPlainObject(value)) throw new Error('State must be an object.')
     return value
   }
-  const [key, ...rest] = path
-  const child = target[key!]
-  return { ...target, [key!]: rest.length === 0 ? value : setIn(isPlainObject(child) ? child : {}, rest, value) }
+  return putAt(target, path, value, []) as Record<string, unknown>
+}
+
+function putAt(target: unknown, path: string[], value: unknown, above: string[]): unknown {
+  if (path.length === 0) return value
+  const [key, ...rest] = path as [string, ...string[]]
+  if (Array.isArray(target) && /^[0-9]+$/.test(key)) {
+    const index = Number(key)
+    if (index > target.length) {
+      const at = above.join('/') || 'state'
+      throw new Error(
+        `${at} has ${target.length} item${target.length === 1 ? '' : 's'}, so ${at}/${key} would leave a gap: write ${at}/0 to ${at}/${target.length}, or the whole of ${at}.`,
+      )
+    }
+    const copy = [...target]
+    copy[index] = putAt(target[index], rest, value, [...above, key])
+    return copy
+  }
+  const object = isPlainObject(target) ? target : {}
+  return { ...object, [key]: putAt(object[key], rest, value, [...above, key]) }
 }
 
 // Placement.

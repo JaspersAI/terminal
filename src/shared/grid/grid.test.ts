@@ -471,6 +471,28 @@ test('setIn writes deep without touching what it was given', () => {
   assert.deepEqual(target, { a: { b: 1 } })
 })
 
+test('setIn writes one item of a list by its place, and the list stays a list', () => {
+  const target = { filters: [{ field: 'market_cap' }, { field: 'sic' }], sort: { field: 'revenue' } }
+  // The screener's filters/0 set to an object had become { "0": … }, which the view refused as not a list.
+  assert.deepEqual(setIn(target, ['filters', '0'], { field: 'revenue' }), {
+    filters: [{ field: 'revenue' }, { field: 'sic' }],
+    sort: { field: 'revenue' },
+  })
+  assert.deepEqual(setIn(target, ['filters', '1', 'field'], 'name').filters, [
+    { field: 'market_cap' },
+    { field: 'name' },
+  ])
+  assert.deepEqual(setIn(target, ['filters', '2'], { field: 'roe' }).filters, [
+    { field: 'market_cap' },
+    { field: 'sic' },
+    { field: 'roe' },
+  ])
+  assert.deepEqual(target.filters, [{ field: 'market_cap' }, { field: 'sic' }])
+  assert.throws(() => setIn(target, ['filters', '5'], {}), /filters has 2 items, so filters\/5 would leave a gap/)
+  // A number under an object is a key, as before.
+  assert.deepEqual(setIn({ ranges: {} }, ['ranges', '7'], 1), { ranges: { '7': 1 } })
+})
+
 test('the map lists elements and free space, and draws the cells from three elements on', () => {
   assert.equal(gridMap(EMPTY_GRID), 'The grid is empty.')
   const two = build(
