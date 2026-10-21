@@ -53,6 +53,7 @@ export function storeTools(): Tool[] {
  * runs a source it is still writing, and there a missing key is an answer it reports.
  */
 export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
+  /** Lists public sources and resolvable tools on ready connections using the latest application state. */
   const named = (): string[] => {
     const state = getState()
     const sources = allSources()
@@ -70,6 +71,7 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
     }
     return [...ids]
   }
+  /** Resolves a public source or throws with nearby source ids to help correct an unknown reference. */
   const find = (id: string): RegisteredSource => {
     const source = getSource(id)
     if (!source || source.def.internal) {
@@ -102,6 +104,7 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
         },
         required: ['source'],
       },
+      /** Runs a source with normalized input, returning its text and dataset metadata and showing a loop app when available. */
       async run(input, { workspaceId, signal, unread, loop }) {
         const id = asPathString(input.source).trim()
         const source = find(id)
@@ -157,6 +160,7 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
         },
         required: ['source'],
       },
+      /** Describes a source or a targeted generic MCP tool, including its full parameter schema. */
       async run(input) {
         const id = asPathString(input.source).trim()
         const state = getState()

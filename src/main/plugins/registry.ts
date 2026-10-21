@@ -93,6 +93,7 @@ export function getView(id: string): ViewDef | undefined {
   return views.get(id)
 }
 
+/** Finds a registered source or resolves a connection tool reference against the current connections. */
 export function getSource(id: string): RegisteredSource | undefined {
   return sources.get(id) ?? resolveConnectionSource(id, sources.values(), currentConnections())
 }
@@ -165,6 +166,7 @@ const MCP_SOURCE: SourceDef = {
       args: z.record(z.string(), z.unknown()).default({}),
     })
     .passthrough(),
+  /** Normalizes a generic MCP call, prepares its arguments, and adds schema context to validation failures. */
   run: async (args) => {
     const connections = currentConnections()
     const { connection, tool, args: toolArgs } = readMcpCall(args, connections)
@@ -426,6 +428,7 @@ function project(): void {
   update((state) => ({ ...state, views: viewInfos(), sources: sourceInfos() }))
 }
 
+/** Reads current connections, returning an empty map before application state is available. */
 function currentConnections(): Record<string, ConnectionInfo> {
   try {
     return getState().connections
