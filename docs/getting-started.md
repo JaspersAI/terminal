@@ -20,20 +20,20 @@ The first run downloads the Electron binary.
 
 ## First launch
 
-Jaspers Terminal is built so you can **own your inference**: local and open-weight models are first-class setup options alongside **Jaspers One** (the one-step Jaspers sign-in) and direct cloud API keys. Because the Terminal offloads raw market data and filing prose to a local SQLite database (`~/Jaspers/data/jaspers.db`) and bounds view outputs to 4 KB of structured JSON (see [How it works](architecture.md)), local and open-weight models run reliably without overflowing their context windows.
+Jaspers Terminal supports local and open-weight models alongside **Jaspers One** and direct cloud provider API keys. The application stores fetched market data and filing text in a local SQLite database (`~/Jaspers/data/jaspers.db`) and bounds view outputs to 4 KB of structured JSON (see [How it works](architecture.md)) to limit prompt size per turn.
 
 On first launch, choose how you want to run inference, or change it at any time in **Settings > Language model** (under **Jaspers Terminal** on macOS with `⌘,`, or **File** on Windows with `Ctrl+,`):
 
 ### Option 1: Local and open-weight models (Ollama, vLLM, llama.cpp, LM Studio, OpenRouter, Groq)
 
-Open **Other providers** during setup (or **Settings > Language model**) to connect a local inference engine or an open-weight model router:
+Open **Other providers** during setup (or **Settings > Language model**) to connect a local inference server or an open-weight model router:
 
-| Provider | Default Base URL | Default Model | API Key | Best for |
+| Provider | Default Base URL | Default Model | API Key | Notes |
 | --- | --- | --- | --- | --- |
-| **Ollama** (`ollama`) | `http://localhost:11434/v1` | `llama3.2` | Not required | Zero-configuration local models on macOS or Windows |
+| **Ollama** (`ollama`) | `http://localhost:11434/v1` | `llama3.2` | Not required | Local models on macOS or Windows |
 | **Custom** (`custom`) | *(enter your server URL)* | *(enter model ID)* | Optional | **vLLM**, **llama.cpp** (`llama-server`), **LM Studio**, or any self-hosted OpenAI-compatible endpoint |
-| **OpenRouter** (`openrouter`) | `https://openrouter.ai/api/v1` | `anthropic/claude-opus-5.5` | Required (`sk-or-…`) | Hosted open-weight models (Qwen, DeepSeek, Llama, Mistral) and frontier models under one key |
-| **Groq** (`groq`) | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | Required (`gsk_…`) | High-throughput open-weight inference for interactive grid work and scheduled tasks |
+| **OpenRouter** (`openrouter`) | `https://openrouter.ai/api/v1` | `anthropic/claude-opus-5.5` | Required (`sk-or-…`) | Hosted open-weight (Qwen, DeepSeek, Llama, Mistral) and commercial models under one key |
+| **Groq** (`groq`) | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` | Required (`gsk_…`) | Hosted open-weight inference for interactive grid work and scheduled tasks |
 
 - **Ollama:** Install [Ollama](https://ollama.com), pull a tool-capable open-weight model (`ollama pull llama3.2` or `ollama pull qwen2.5-coder:32b`), and select **Ollama**. The base URL `http://localhost:11434/v1` and default model `llama3.2` are pre-filled, and no API key is needed.
 - **vLLM:** Start your vLLM server (`vllm serve Qwen/Qwen2.5-Coder-32B-Instruct --enable-auto-tool-choice --tool-call-parser hermes`), pick **Custom**, set the base URL to `http://localhost:8000/v1`, and enter the served model name.
@@ -71,11 +71,11 @@ Finish, answer the question about [Eye](eye.md), and the assistant welcomes you 
 
 ## Pinning local models to workspaces and scheduled tasks
 
-You do not have to run every workflow on the same model. Jaspers Terminal lets you switch models across workspace conversations without losing context and pin specific models to scheduled tasks:
+Jaspers Terminal supports switching models across workspace conversations and pinning specific models to scheduled tasks:
 
-- **Switching models in a workspace with portable history (`portable`):** Each workspace chat and each numbered Grid Loop (`loop_1`, `loop_2`, …) stores its conversation thread in `~/Jaspers/data/jaspers.db` keyed by the active `[providerId, baseUrl, model]`. When you switch from a cloud model to a local Ollama, vLLM, llama.cpp, or LM Studio model in **Settings > Language model** (or by asking the assistant, which asks you to confirm before switching), the thread is converted in place (`portable` in `src/shared/agent/history.ts`): provider-specific replay blocks (such as Anthropic thinking blocks or OpenAI reasoning items) are stripped while every user prompt, assistant message, and tool call is preserved. This lets you use a large cloud or coding model to synthesize a new plugin (`build_plugin`) or lay out a complex workspace, and then switch the workspace to a fast local model for day-to-day updates and grid refinement.
-- **Pinning a model to a scheduled task:** Every scheduled task belongs to a workspace and accepts an optional `model` override on the active provider (`schedule_task` / `update_task`). When you ask the assistant to schedule recurring work — for example, *"every weekday at 9:30am on llama3.2, check my watchlist for 5% movers"* or *"every 15 minutes on openai/gpt-oss-120b, summarize new 8-K filings"* — the task pins that `model` name and runs its background turns on the cheaper or smaller local model while your interactive workspace chat stays on your primary analysis model. Leaving `model` blank uses whichever model the workspace is currently configured with.
-- **Zero-token SQLite delta watches:** For high-frequency monitoring on local or cloud setups, tasks can specify a direct source `call` with `speak: "changed"`. The Terminal runs the source on schedule and compares the returned rows against the previous run in SQLite without calling any LLM at all, waking the pinned model only when the data actually changes (see [Skills](skills.md)).
+- **Switching models in a workspace with portable history (`portable`):** Each workspace chat and each numbered Grid Loop (`loop_1`, `loop_2`, …) stores its conversation thread in `~/Jaspers/data/jaspers.db` keyed by the active `[providerId, baseUrl, model]`. When you switch from a cloud model to a local Ollama, vLLM, llama.cpp, or LM Studio model in **Settings > Language model** (or by asking the assistant, which asks you to confirm before switching), the thread is converted in place (`portable` in `src/shared/agent/history.ts`): provider-specific replay blocks (such as Anthropic thinking blocks or OpenAI reasoning items) are stripped while every user prompt, assistant message, and tool call is preserved. This allows using one model to build a plugin (`build_plugin`) or lay out a workspace and then switching the workspace to another model for subsequent turns.
+- **Pinning a model to a scheduled task:** Every scheduled task belongs to a workspace and accepts an optional `model` override on the active provider (`schedule_task` / `update_task`). When you ask the assistant to schedule recurring work — for example, *"every weekday at 9:30am on llama3.2, check my watchlist for 5% movers"* or *"every 15 minutes on openai/gpt-oss-120b, summarize new 8-K filings"* — the task pins that `model` name and runs its background turns on the specified model while interactive workspace requests use the workspace's configured model. Leaving `model` blank uses whichever model the workspace is currently configured with.
+- **SQLite delta watches (`speak: "changed"`):** Tasks can specify a direct source `call` with `speak: "changed"`. The Terminal runs the source on schedule and compares the returned rows against the previous run in SQLite without calling a language model, invoking the configured model only when rows are added or removed (see [Skills](skills.md)).
 
 ## Several screens
 

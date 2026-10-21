@@ -1,14 +1,14 @@
-# Pro mode (Shell Access for Full Control)
+# Pro mode
 
-Pro mode (**Advantage #7: Shell Access for Full Control in Pro Mode**) lets the assistant run local multi-line shell, Python, R, and CLI scripts on your computer (`run_shell` in `src/main/agent/tools/shell.ts`, governed by `src/shared/app/pro-mode.ts`).
+Pro mode lets the assistant run local multi-line shell, Python, R, and CLI scripts on your computer (`run_shell` in `src/main/agent/tools/shell.ts`, governed by `src/shared/app/pro-mode.ts`).
 
-It is **off** by default (`PRO_MODE_OFF`) until you turn it on in **Settings > Pro mode**, and nothing in the app can turn it on for you: the assistant has no tool that reaches the setting (`change_setting` never touches Pro mode or [Eye](eye.md)), and while Pro mode is off the `run_shell` tool is omitted from the assistant's tool catalog altogether, so the model is never even told it could ask.
+It is **off** by default (`PRO_MODE_OFF`) until you turn it on in **Settings > Pro mode**, and nothing in the app can turn it on for you: the assistant has no tool that reaches the setting (`change_setting` never touches Pro mode or [Eye](eye.md)), and while Pro mode is off the `run_shell` tool is omitted from the assistant's tool catalog.
 
 ## Local Python, R, and CLI execution in `~/Jaspers/shell`
 
 With Pro mode on, the assistant can ask to run a script inside Jaspers's dedicated workspace folder, `~/Jaspers/shell` (with read-only grants for `~/Desktop` and `~/Downloads`).
 
-- **Whole-workflow scripts (`COMMAND_MAX = 10,000`):** A `run_shell` call is a complete script up to 10,000 characters, not a single line. Multi-line scripts, `cd`, `&&`, `set -e`, pipes, and inline Python/R heredocs (`python3 - <<'PY'`, `Rscript -e`, `duckdb`, `sqlite3`, `curl`, `jq`, `grep`, `awk`, `sed`, `diff`, `git`) all execute in one shell invocation (`${SHELL || '/bin/sh'} -c`). A twenty-step data pipeline, custom backtest, or `.xlsx`/PDF export is one script you read and approve once, rather than twenty separate prompts.
+- **Multi-line scripts (`COMMAND_MAX = 10,000`):** A `run_shell` call is a script up to 10,000 characters. Multi-line scripts, `cd`, `&&`, `set -e`, pipes, and inline Python/R heredocs (`python3 - <<'PY'`, `Rscript -e`, `duckdb`, `sqlite3`, `curl`, `jq`, `grep`, `awk`, `sed`, `diff`, `git`) execute in one shell invocation (`${SHELL || '/bin/sh'} -c`), so a multi-step data pipeline or `.xlsx`/PDF export can be reviewed and approved as a single script.
 - **Full script inspection:** Every script is shown in full before it runs, in a scrollable monospaced box under the question, together with the working directory (`~/Jaspers/shell`) and the timeout ceiling (`timeoutSeconds`). Nothing is shortened or hidden.
 - **Process-group lifecycle:** Each approved script runs in its own detached process group. If the script exceeds its timeout (`commandTimeout`, default `TIMEOUT_DEFAULT = 120` seconds, configurable from `TIMEOUT_MIN = 1` to `TIMEOUT_MAX = 600` seconds) or you press **Stop** in the composer, the app sends `SIGKILL` to the entire process group (`-child.pid`) so background child processes are terminated cleanly. Output returned to the model is capped at `outputMax` (`OUTPUT_DEFAULT = 100,000` characters, configurable from `OUTPUT_MIN = 1,000` to `OUTPUT_MAX = 1,000,000` characters via `capOutput`).
 
@@ -20,24 +20,24 @@ Every command requires explicit approval unless covered by a tier you selected (
 | --- | --- | --- |
 | **Allow once** (`ALLOW_ONCE`) / **Deny** (`DENY`) | `always` (*Every command*, default) | Runs (or refuses) the single `run_shell` call in front of you. |
 | **Allow in this conversation** (`ALLOW_CONVERSATION`) | `once` (*Once per command in a conversation*) | Remembers the exact script string for the current conversation via `approvalKey(conversation, command)` (`${conversation}\u0000${command}`). No prefix matching, no wildcards, no normalization: one character different is a new command. Cleared on `/new`, thread reset (`forgetApprovals`), or app quit. |
-| **Allow every command in this conversation** (`ALLOW_SESSION`) | `session` (*Once per conversation*) | Approves all subsequent `run_shell` commands in that conversation without prompting until `/new` or app quit. Designed for interactive sessions you are actively watching, not unattended runs. |
+| **Allow every command in this conversation** (`ALLOW_SESSION`) | `session` (*Once per conversation*) | Approves all subsequent `run_shell` commands in that conversation without prompting until `/new` or app quit. Intended for interactive sessions you are actively monitoring, not unattended runs. |
 | **Allow for this task** (`ALLOW_TASK`) | Scheduled tasks (`TaskApprovalAt`: `'scheduling'` or `'run'`) | When the assistant schedules or updates a task with shell scripts (`commands`, up to `TASK_COMMANDS_MAX = 5`), `approveForTask` prompts you immediately (**Allow for this task** or **Deny**) while you are present. Denying any script aborts scheduling. Approved scripts are saved verbatim on the task (`task.commands`) and run unattended on schedule (`taskAllows`). If a task run ever requests a script not in `task.commands`, it prompts with **Allow once**, **Allow for this task**, or **Deny** (and an unanswered prompt after 10 minutes is a refusal). **Settings > Tasks** lists every script a task is allowed to run, and deleting the task revokes the allowance. |
 
-## Deterministic read-only command filtering (`isReadOnlyCommand`)
+## Read-only command filtering (`isReadOnlyCommand`)
 
-When **Read-only commands** (`allowReadOnly`, off by default) is enabled in **Settings > Pro mode**, the assistant can run simple, single-command inspections without prompting if and only if `isReadOnlyCommand(command)` (`src/shared/app/pro-mode.ts`) returns `true`:
+When **Read-only commands** (`allowReadOnly`, off by default) is enabled in **Settings > Pro mode**, the assistant can run single-command inspections without prompting if `isReadOnlyCommand(command)` (`src/shared/app/pro-mode.ts`) returns `true`:
 
-1. **No shell metacharacters or chaining (`SHELL_SYNTAX`):** The command must be a single line with zero occurrences of `|`, `&`, `;`, `<`, `>`, `` ` ``, `$`, `(`, `)`, `{`, `}`, `[`, `]`, `\n`, `\r`, `*`, `?`, `~`, or `\`. Pipes (`cat x | sh`), redirects (`> file`), command substitution (`$(...)`), globs, and multi-line scripts always require approval.
-2. **Closed allowlist of programs (`READ_ONLY_PROGRAMS`):** The first word must be one of:
+1. **No shell metacharacters or chaining (`SHELL_SYNTAX`):** The command must be a single line with no occurrences of `|`, `&`, `;`, `<`, `>`, `` ` ``, `$`, `(`, `)`, `{`, `}`, `[`, `]`, `\n`, `\r`, `*`, `?`, `~`, or `\`. Pipes (`cat x | sh`), redirects (`> file`), command substitution (`$(...)`), globs, and multi-line scripts always require approval.
+2. **Allowlist of programs (`READ_ONLY_PROGRAMS`):** The first word must be one of:
    `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `file`, `stat`, `du`, `df`, `pwd`, `echo`, `which`, `whoami`, `date`, `diff`, `sort`, `uniq`, `cut`, `basename`, `dirname`, `sw_vers`, `uname`, or `git`.
-3. **Strict subcommand and flag checks:**
+3. **Subcommand and flag checks:**
    - If the program is `git`, the immediately following argument (`rest[0]`) must be in `READ_ONLY_GIT`: `status`, `log`, `diff`, `show`, `blame`, `describe`, `ls-files`, or `rev-parse` (so `git -C repo diff` or `git push` are never treated as read-only).
    - If the program is `find`, none of its arguments may match `-(exec|execdir|ok|okdir|delete|fprint|fprintf|fls)`.
-   - If the program is `tail` or `head`, `-f` is rejected so an unprompted read never hangs indefinitely.
+   - If the program is `tail` or `head`, `-f` is rejected so an unprompted read does not block indefinitely.
 
 Anything outside these rules falls back to the standard approval prompt.
 
-## Kernel-enforced macOS sandbox (`sandboxProfile`) and folder grants
+## macOS `sandbox-exec` profile (`sandboxProfile`) and folder grants
 
 A command is confined by the operating system kernel via `/usr/bin/sandbox-exec`, not by inspecting the script text. On each run, `sandboxProfile(folder, onPath, readable)` (`src/shared/app/pro-mode.ts`) generates a Seatbelt profile:
 
@@ -82,4 +82,4 @@ To prevent ambient credential leakage:
 ## Audit log (`shell.jsonl`) and Eye telemetry exclusions
 
 - **Local audit log (`~/Jaspers/data/shell.jsonl`):** Every command requested via `run_shell` or task scheduling is appended as one JSON line to `~/Jaspers/data/shell.jsonl`: timestamp (`at`), `command`, `folder`, your `answer` (`once`, `conversation`, `session`, `task`, `read-only`, `denied`, `task, when scheduled`, or `denied, when scheduled`), `timeout`, exit `code`, and duration (`ms`). Command stdout/stderr is never written to `shell.jsonl`.
-- **Eye telemetry exclusions ([Eye](eye.md)):** While a Pro mode command approval question (or any key input field) is on screen, `captureBlocked` (`src/shared/app/eye.ts`) suppresses [Eye](eye.md) window screenshots on both periodic 1-minute ticks and one-shot user feedback submissions. The script waiting for your approval is never photographed into a telemetry frame, and `~/Jaspers/data/shell.jsonl` stays strictly on your machine.
+- **Eye telemetry exclusions ([Eye](eye.md)):** While a Pro mode command approval question (or any key input field) is on screen, `captureBlocked` (`src/shared/app/eye.ts`) suppresses [Eye](eye.md) window screenshots on both periodic 1-minute ticks and one-shot user feedback submissions. The script waiting for your approval is not captured into a telemetry frame, and `~/Jaspers/data/shell.jsonl` is stored locally on disk.

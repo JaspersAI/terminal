@@ -12,7 +12,7 @@ A new version waits for Hub's review, and the directory lists it once it is appr
 
 A plugin that imports only React, React DOM, zod, and `@jaspers-ai/sdk` needs no `node_modules`: the app provides those via `jaspers-host://runtime/`. Keep them, the type packages, and your tooling in `devDependencies`, and they stay behind when you publish.
 
-> **Plugins and skills vs. local Pro mode scripts:** Plugins (`~/Jaspers/plugins/<id>`) and [Agent Skills](skills.md) (`~/Jaspers/skills/<name>/SKILL.md`) run inside the Terminal's capability-gated sandbox and are portable across machines, making them ready to publish on [Jaspers Hub](https://hub.jsprai.com). For ad-hoc local Python, R, and CLI pipelines that depend on your machine's toolchains in `~/Jaspers/shell`, use [Pro mode](pro-mode.md) instead, or turn a proven workflow into a portable TypeScript plugin or skill when you are ready to share it.
+> **Plugins and skills vs. local Pro mode scripts:** Plugins (`~/Jaspers/plugins/<id>`) and [Agent Skills](skills.md) (`~/Jaspers/skills/<name>/SKILL.md`) run inside the Terminal's capability-gated sandbox and can be packaged for [Jaspers Hub](https://hub.jsprai.com). Local Python, R, and CLI scripts that depend on host toolchains in `~/Jaspers/shell` run through [Pro mode](pro-mode.md) instead.
 
 ## As an archive
 
