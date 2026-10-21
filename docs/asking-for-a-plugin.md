@@ -23,7 +23,7 @@ Files:         plugin.tsx 2.1 KB · package.json 0.2 KB
 …
 ```
 
-The lines above the files are the plugin's **envelope**: every host its code may fetch, every capability it may use, every key it may ask you for, every server it may connect to, every npm package it brings in. The files follow, whole, in the scrolling box. For all but the smallest plugin they are its shell: each file with its sources and functions named and nothing behind them yet. The builder fills them in after your yes, and the app holds every line of that to the envelope. **Build it** writes the folder and the app builds it; **No**, closing the question, or leaving it are all no, and the assistant stops.
+The lines above the files are the plugin's **envelope**: every host its code may fetch, every capability it may use, every key it may ask you for, every server it may connect to, every npm package it brings in. The files follow, whole, in the scrolling box. For all but the smallest plugin they are its shell: each file with its sources and functions named and nothing behind them yet. The builder fills them in after your yes, and the app holds every line of that to the envelope. **Build it** writes the folder and the app builds it; **No**, closing the question, or leaving it are all no, and the assistant stops. Typing an answer of your own instead, like a name or a change you want first, approves nothing either: the builder follows what you wrote and asks again.
 
 A built plugin reaches MCP servers over https only, never by running a command of its own, and its code can import only its own files and the packages in its folder.
 

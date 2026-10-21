@@ -1,6 +1,7 @@
 import {
   ALLOW,
   APPROVE,
+  DECLINE,
   isApproved,
   trustQuestion,
   widenQuestion,
@@ -21,7 +22,8 @@ import { fileContents, type BuildFolder } from './folder.ts'
 // time, the question shows the envelope and the files whole, and a yes writes the record, installs
 // the packages, and moves the folder into plugins/, where the watcher builds it. Later, a call
 // within the approved envelope only rebuilds; one reaching wider shows what is new, and a yes widens
-// the record. A no is final for the run. What touches the app (asking, the tree, the packages) is
+// the record. A no is final for the run; words the user typed in place of a button approve nothing
+// and go back to the builder to follow. What touches the app (asking, the tree, the packages) is
 // handed in, so a test drives the gate.
 
 const PURPOSE_MAX = 200
@@ -56,7 +58,10 @@ export async function installPlugin(
   if (!folder.live) {
     const answer = await deps.ask(trustQuestion({ id: folder.id, purpose, envelope, files, home: deps.home }))
     if (!isApproved(answer, APPROVE)) {
-      throw new Error(`The user did not approve building ${folder.id}. Say what you wanted to build and stop.`)
+      throw new Error(
+        wrote(answer, DECLINE) ??
+          `The user did not approve building ${folder.id}. Say what you wanted to build and stop.`,
+      )
     }
     const record: BuildRecord = { purpose, request, at: deps.now(), approved: envelope }
     writeBuildRecordFile(folder.dir, record)
@@ -71,7 +76,8 @@ export async function installPlugin(
     const answer = await deps.ask(widenQuestion(folder.id, lines))
     if (!isApproved(answer, ALLOW)) {
       throw new Error(
-        `The user did not allow ${folder.id} to reach more: ${lines.join(', ')}. Keep to what was approved, or stop.`,
+        wrote(answer, DECLINE) ??
+          `The user did not allow ${folder.id} to reach more: ${lines.join(', ')}. Keep to what was approved, or stop.`,
       )
     }
     writeBuildRecordFile(folder.dir, { ...record, purpose, approved: union(record.approved, envelope) })
@@ -80,6 +86,17 @@ export async function installPlugin(
   }
   deps.rebuild(folder.id)
   return { folder, info: await deps.wait(folder.id) }
+}
+
+/**
+ * What to tell the builder when the user typed words of their own in place of a button: nothing is
+ * approved, since only the button's word is a yes, but the words are theirs to follow, often a change
+ * they want before they approve. Null for the no button or a closed question, which stop the build.
+ */
+function wrote(answer: string | null, no: string): string | null {
+  const words = answer?.trim() ?? ''
+  if (!words || words === no) return null
+  return `Nothing was installed: in place of an answer the user wrote ${JSON.stringify(words)}. Do as it says if you can, then call install_plugin again to ask them, since only the button approves; if you cannot, say why and stop.`
 }
 
 /** What was approved before and what is asked now, together: an edit never narrows the record on its own. */
