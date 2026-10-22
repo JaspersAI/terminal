@@ -10,6 +10,8 @@ export const PACKAGE_LIMITS = {
   packages: 200,
   /** The most the unpacked packages may hold together. */
   unpackedBytes: 200 * 1024 * 1024,
+  /** The most the downloaded tarball cache on disk may hold before the oldest go. */
+  cacheBytes: 1024 * 1024 * 1024,
   /** How long one registry request or tarball download may take. */
   requestMs: 60_000,
 }
@@ -82,6 +84,33 @@ export interface Placed {
 
 export function packageKey(name: string, version: string): string {
   return `${name}@${version}`
+}
+
+/** A single file name under the package cache for a resolved package: scoped names have no slash. */
+export function cacheFileName(item: { name: string; version: string }): string {
+  /** Flattens a name or version into a filename component without leading dots. */
+  const safe = (text: string): string => text.replace(/[^a-zA-Z0-9._@-]+/g, '_').replace(/^\.+/, '_')
+  return `${item.name.split('/').map(safe).join('%2f')}-${safe(item.version)}.tgz`
+}
+
+/** One tarball in the on-disk package cache, as the folder lists it. */
+export interface CachedPackage {
+  name: string
+  bytes: number
+  mtimeMs: number
+}
+
+/** Which cached tarballs to drop, oldest first, to bring the cache within `maxBytes`. */
+export function packagesToDrop(cached: CachedPackage[], maxBytes: number = PACKAGE_LIMITS.cacheBytes): CachedPackage[] {
+  const order = [...cached].sort((a, b) => a.mtimeMs - b.mtimeMs || a.name.localeCompare(b.name))
+  const drop: CachedPackage[] = []
+  let held = order.reduce((sum, entry) => sum + entry.bytes, 0)
+  for (const entry of order) {
+    if (held <= maxBytes) break
+    drop.push(entry)
+    held -= entry.bytes
+  }
+  return drop
 }
 
 /**
