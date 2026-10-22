@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { cellText, isNumeric, isYearColumn, shownText } from './cells.ts'
+import { cellText, isCompactTable, isNumeric, isYearColumn, numericValue, shownText, sortRows } from './cells.ts'
 
 test('a cell is written grouped, unless its column says otherwise', () => {
   assert.equal(cellText(1234567), '1,234,567')
@@ -28,10 +28,56 @@ test('a column of years is years; one amount in it makes it amounts', () => {
   assert.equal(isYearColumn([], 'p'), false)
 })
 
-test('a column is numeric when every value in it is a number', () => {
+test('a column is numeric when every value in it is a number or a formatted numeric string', () => {
   assert.equal(isNumeric([{ a: 1 }, { a: null }, { a: 2.5 }], 'a'), true)
+  assert.equal(isNumeric([{ a: '$11,235' }, { a: '-$8,917' }, { a: '+$118.45' }, { a: '-$122.38' }], 'a'), true)
+  assert.equal(isNumeric([{ a: '38.2%' }, { a: '-1.45%' }, { a: '' }], 'a'), true)
+  assert.equal(isNumeric([{ a: '1,234,567' }, { a: '($122.38)' }, { a: '−$42.10' }], 'a'), true)
   assert.equal(isNumeric([{ a: 1 }, { a: 'x' }], 'a'), false)
-  assert.equal(isNumeric([{ a: null }], 'a'), false)
+  assert.equal(isNumeric([{ a: '2026-10-22' }], 'a'), false)
+  assert.equal(isNumeric([{ a: null }, { a: '' }], 'a'), false)
+})
+
+test('numericValue reads numbers, currencies, percentages, and grouped figures, and rejects labels and dates', () => {
+  assert.equal(numericValue(42.5), 42.5)
+  assert.equal(numericValue('$11,235'), 11235)
+  assert.equal(numericValue('-$8,917'), -8917)
+  assert.equal(numericValue('+$118.45'), 118.45)
+  assert.equal(numericValue('-$122.38'), -122.38)
+  assert.equal(numericValue('($122.38)'), -122.38)
+  assert.equal(numericValue('−$122.38'), -122.38)
+  assert.equal(numericValue('38.2%'), 38.2)
+  assert.equal(numericValue('-1.45%'), -1.45)
+  assert.equal(numericValue('1,234,567.89'), 1234567.89)
+  assert.equal(numericValue('AAPL'), null)
+  assert.equal(numericValue('2026-10-22'), null)
+  assert.equal(numericValue('1,2'), null)
+  assert.equal(numericValue('12,34'), null)
+  assert.equal(numericValue('--5'), null)
+  assert.equal(numericValue(''), null)
+  assert.equal(numericValue(null), null)
+})
+
+test('sortRows orders formatted numeric columns by value and keeps empty cells last', () => {
+  const rows = [{ pnl: '-$122.38' }, { pnl: '$11,235' }, { pnl: null }, { pnl: '-$8,917' }, { pnl: '+$118.45' }]
+  assert.deepEqual(
+    sortRows(rows, ['pnl'], { column: 'pnl', descending: false }).map((r) => r.pnl),
+    ['-$8,917', '-$122.38', '+$118.45', '$11,235', null],
+  )
+  assert.deepEqual(
+    sortRows(rows, ['pnl'], { column: 'pnl', descending: true }).map((r) => r.pnl),
+    ['$11,235', '+$118.45', '-$122.38', '-$8,917', null],
+  )
+})
+
+test('isCompactTable turns on for multi-column tables in narrow tiles or tight per-column widths', () => {
+  assert.equal(isCompactTable(7, 460), true)
+  assert.equal(isCompactTable(8, 640), true)
+  assert.equal(isCompactTable(4, 480), true)
+  assert.equal(isCompactTable(7, 0), true)
+  assert.equal(isCompactTable(3, 400), false)
+  assert.equal(isCompactTable(4, 700), false)
+  assert.equal(isCompactTable(8, 900), false)
 })
 
 test('a fraction on screen is cut to six significant digits, the copied text keeps it whole', () => {

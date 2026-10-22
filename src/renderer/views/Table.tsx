@@ -1,7 +1,7 @@
-import { useMemo, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
 import type { ViewProps } from './index'
-import { cellText, isNumeric, isYearColumn, shownText } from './cells'
+import { cellText, isCompactTable, isNumeric, isYearColumn, shownText, sortRows } from './cells'
 import { pickColumns, useRows } from './data'
 
 // A table over any source, or over the store. This is the view that means a server does not need a
@@ -17,11 +17,28 @@ export function Table({ panel }: ViewProps): ReactElement {
   const [wanted] = usePanelState<string[] | null>(panel, 'columns', null)
   const [title] = usePanelState<string | null>(panel, 'title', null)
   const [sort, setSort] = useState<{ column: string; descending: boolean } | null>(null)
+  const [width, setWidth] = useState(0)
+  const box = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const element = box.current
+    if (!element) return
+    setWidth(element.getBoundingClientRect().width)
+    const observer = new ResizeObserver((entries) => {
+      const next = entries[0]?.contentRect.width
+      if (next !== undefined) setWidth(next)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
 
   const found = useRows({ source, args, sql })
   const columns = pickColumns(found.columns, wanted)
-  const rows = useMemo(() => sorted(found.rows, columns, sort), [found.rows, columns, sort])
+  const rows = useMemo(() => sortRows(found.rows, columns, sort), [found.rows, columns, sort])
   const years = useMemo(() => yearColumns(found.rows, columns), [found.rows, columns])
+  const numeric = useMemo(() => numericColumns(found.rows, columns), [found.rows, columns])
+  const compact = isCompactTable(columns.length, width)
+  const cellPad = compact ? 'px-1 py-0.5' : 'px-2 py-1'
 
   usePublish(panel, {
     rowCount: found.rows.length,
@@ -31,85 +48,83 @@ export function Table({ panel }: ViewProps): ReactElement {
   })
   usePublishText(panel, rows.length > 0 ? asText(title, columns, rows, years) : found.text)
 
-  if (found.error) return <Message tone="bad">{found.error}</Message>
-  if (found.loading && rows.length === 0) return <Message>Loading…</Message>
-  if (rows.length === 0) {
-    if (found.text)
-      return <pre className="h-full overflow-auto p-3 font-mono text-xs whitespace-pre-wrap">{found.text}</pre>
-    return <Message>{source || sql ? 'Nothing came back.' : 'Set source, or sql, to fill this table.'}</Message>
-  }
-
   return (
-    <div className="flex h-full flex-col">
-      {title && <p className="shrink-0 truncate px-3 pt-2 text-xs text-muted-foreground">{title}</p>}
-      <div className="min-h-0 flex-1 overflow-auto">
-        <table className="min-w-full border-collapse text-xs">
-          <thead className="sticky top-0 bg-background">
-            <tr>
-              {columns.map((column) => {
-                const numeric = isNumeric(found.rows, column)
-                const on = sort?.column === column
-                return (
-                  <th
-                    key={column}
-                    scope="col"
-                    onClick={() => setSort(on && sort.descending ? null : { column, descending: on })}
-                    className={`cursor-pointer border-b border-border px-2 py-1 font-medium whitespace-nowrap hover:bg-muted ${
-                      numeric ? 'text-right' : 'text-left'
-                    }`}
-                  >
-                    {column}
-                    <span className="text-muted-foreground">{on ? (sort.descending ? ' ↓' : ' ↑') : ''}</span>
-                  </th>
-                )
-              })}
-              {/* Soaks up the width left over, so the columns that hold something hug it instead of
-                  being spread across a wide element. */}
-              <th className="w-full border-b border-border" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={index} className="even:bg-muted/40">
-                {columns.map((column) => (
-                  <td
-                    key={column}
-                    className={`max-w-80 truncate border-b border-border/50 px-2 py-1 whitespace-nowrap ${isNumeric(found.rows, column) ? 'text-right tabular-nums' : ''}`}
-                  >
-                    {shownText(row[column], !years.has(column))}
-                  </td>
+    <div ref={box} className="flex h-full flex-col">
+      {found.error ? (
+        <Message tone="bad">{found.error}</Message>
+      ) : found.loading && rows.length === 0 ? (
+        <Message>Loading…</Message>
+      ) : rows.length === 0 ? (
+        found.text ? (
+          <pre className="h-full overflow-auto p-3 font-mono text-xs whitespace-pre-wrap">{found.text}</pre>
+        ) : (
+          <Message>{source || sql ? 'Nothing came back.' : 'Set source, or sql, to fill this table.'}</Message>
+        )
+      ) : (
+        <>
+          {title && <p className="shrink-0 truncate px-3 pt-2 text-xs text-muted-foreground">{title}</p>}
+          <div className="min-h-0 flex-1 overflow-auto">
+            <table className={`min-w-full border-collapse ${compact ? 'text-[11px] leading-4' : 'text-xs'}`}>
+              <thead className="sticky top-0 bg-background">
+                <tr>
+                  {columns.map((column) => {
+                    const isNum = numeric.has(column)
+                    const on = sort?.column === column
+                    return (
+                      <th
+                        key={column}
+                        scope="col"
+                        onClick={() => setSort(on && sort.descending ? null : { column, descending: on })}
+                        className={`cursor-pointer border-b border-border ${cellPad} font-medium whitespace-nowrap hover:bg-muted ${
+                          isNum ? 'text-right' : 'text-left'
+                        }`}
+                      >
+                        {column}
+                        <span className="text-muted-foreground">{on ? (sort.descending ? ' ↓' : ' ↑') : ''}</span>
+                      </th>
+                    )
+                  })}
+                  {/* Soaks up the width left over, so the columns that hold something hug it instead of
+                      being spread across a wide element. */}
+                  <th className="w-full border-b border-border" />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr key={index} className="even:bg-muted/40">
+                    {columns.map((column) => (
+                      <td
+                        key={column}
+                        className={`border-b border-border/50 ${cellPad} whitespace-nowrap ${
+                          numeric.has(column)
+                            ? 'text-right tabular-nums'
+                            : compact
+                              ? 'max-w-24 truncate'
+                              : 'max-w-80 truncate'
+                        }`}
+                      >
+                        {shownText(row[column], !years.has(column))}
+                      </td>
+                    ))}
+                    <td className="border-b border-border/50" />
+                  </tr>
                 ))}
-                <td className="border-b border-border/50" />
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="shrink-0 border-t border-border px-3 py-1 text-xs text-muted-foreground">
-        {rows.length.toLocaleString()} row{rows.length === 1 ? '' : 's'}
-        {found.truncated && ', cut'}
-      </p>
+              </tbody>
+            </table>
+          </div>
+          <p className="shrink-0 border-t border-border px-3 py-1 text-xs text-muted-foreground">
+            {rows.length.toLocaleString()} row{rows.length === 1 ? '' : 's'}
+            {found.truncated && ', cut'}
+          </p>
+        </>
+      )}
     </div>
   )
 }
 
-/** In the page, on a column the user pressed. Nothing is asked for again. */
-function sorted(
-  rows: Record<string, unknown>[],
-  columns: string[],
-  sort: { column: string; descending: boolean } | null,
-): Record<string, unknown>[] {
-  if (!sort || !columns.includes(sort.column)) return rows
-  const direction = sort.descending ? -1 : 1
-  return [...rows].sort((a, b) => {
-    const left = a[sort.column]
-    const right = b[sort.column]
-    if (left === right) return 0
-    if (left === null || left === undefined) return 1
-    if (right === null || right === undefined) return -1
-    if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction
-    return String(left).localeCompare(String(right)) * direction
-  })
+/** The columns that read as numbers, right aligned and kept whole. */
+function numericColumns(rows: Record<string, unknown>[], columns: string[]): Set<string> {
+  return new Set(columns.filter((column) => isNumeric(rows, column)))
 }
 
 /** The columns written as years, whose digits are not grouped. */
