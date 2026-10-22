@@ -1,4 +1,5 @@
 import { z, type ZodType } from 'zod'
+import { BROWSER_VIEW, browserSummary, normalizeBrowserUrl } from '../../shared/grid/browser'
 import { CHAT_VIEW } from '../../shared/grid/grid'
 import type { ConnectionInfo, SourceInfo, ViewInfo } from '../../shared/state'
 import { prepareMcpArguments, readMcpCall } from '../../shared/data/arguments'
@@ -145,7 +146,7 @@ export function sourceInfos(): Record<string, SourceInfo> {
 /** The views and sources the app ships with. */
 export function registerBuiltins(): void {
   registerSources(null, { mcp: MCP_SOURCE })
-  registerViews(null, [NOTE, TABLE, METRIC, CHART, PLUGINS, TASKS, INBOX, CHAT, APP])
+  registerViews(null, [NOTE, TABLE, METRIC, CHART, PLUGINS, TASKS, INBOX, CHAT, APP, BROWSER])
   // An MCP source is described by its tool, which its connection only lists once it is up: the
   // sources are projected again whenever a connection's tools change, so the catalog catches up.
   subscribe((next, prev) => {
@@ -390,6 +391,31 @@ const APP: ViewDef = {
   instructions:
     "A connection's own view of one of its tools: the server's page, showing what the tool answered, where the user can go on working with it. It is put on the grid for you when you call a tool that has a view with run_source on core/mcp, and that answer names the element. Place one yourself only to bring one back: state.connection is <plugin>/<name>, state.tool the tool, state.args its arguments, and the view makes the call itself. Changing state.args calls again, and so does refresh_element. Its text is what the page says it is showing; output.status is asking while the user has not yet allowed that connection's views.",
   summarize: appSummary,
+}
+
+const BROWSER: ViewDef = {
+  id: BROWSER_VIEW,
+  plugin: null,
+  title: 'Browser',
+  state: z.object({
+    url: z
+      .string()
+      .default('')
+      .refine((url) => normalizeBrowserUrl(url) !== null, {
+        message: 'url must be an https:// or http:// address.',
+      }),
+  }),
+  output: z.object({
+    url: z.string(),
+    title: z.string(),
+    loading: z.boolean(),
+    canGoBack: z.boolean(),
+    canGoForward: z.boolean(),
+    error: z.string().nullable(),
+  }),
+  instructions:
+    'A web browser on the grid, for live pages, streams, and sites that need a sign-in or refuse to be framed. Set state.url to an https (or http) address to open it; refresh_element reloads the page. output has the current url, title, loading, canGoBack, canGoForward, and error, and the page text is published to panels/<id>/text.',
+  summarize: browserSummary,
 }
 
 /** A reference to a source that is not registered says so once, rather than reaching the model. */
