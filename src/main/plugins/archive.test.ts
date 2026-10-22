@@ -191,3 +191,40 @@ test('a file that is not an archive is refused', async () => {
   const s = scratch()
   await assert.rejects(extract(s.archive(Buffer.from('<html>')), s.target, LIMITS), /not a \.zip or \.tar\.gz/)
 })
+
+for (const kind of ['tar', 'zip'] as const) {
+  test(`${kind} reserves bytes before writing and settles all writes on failure`, async (t) => {
+    const s = scratch()
+    const entries = [
+      { name: 'a.txt', body: 'x'.repeat(40000) },
+      { name: 'b.txt', body: 'y'.repeat(40000) },
+    ]
+    const file = s.archive(
+      kind === 'tar' ? targz(entries.map((entry) => tarEntry(entry.name, entry.body))) : zip(entries),
+    )
+    const create = fs.createWriteStream
+    const streams: fs.WriteStream[] = []
+    t.mock.method(fs, 'createWriteStream', (...args: Parameters<typeof create>) => {
+      const stream = create(...args)
+      streams.push(stream)
+      return stream
+    })
+    let held = 0
+    await assert.rejects(
+      extract(file, s.target, LIMITS, (bytes) => {
+        if (held + bytes > 60000) throw new Error('shared byte limit')
+        held += bytes
+      }),
+      /shared byte limit/,
+    )
+    assert.ok(held > 0 && held <= 60000)
+    assert.ok(
+      streams.every((stream) => stream.closed),
+      'no file writes outlive extraction failure',
+    )
+    const bytes = fs
+      .readdirSync(s.target)
+      .reduce((total, name) => total + fs.statSync(path.join(s.target, name)).size, 0)
+    assert.ok(bytes <= held)
+  })
+}

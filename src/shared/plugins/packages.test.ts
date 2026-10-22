@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { chooseVersion, placePackages, readPackument, type Packument, type Resolved } from './packages.ts'
+import {
+  cacheFileName,
+  chooseVersion,
+  PACKAGE_LIMITS,
+  packagesToDrop,
+  placePackages,
+  readPackument,
+  type CachedPackage,
+  type Packument,
+  type Resolved,
+} from './packages.ts'
 
 const packument: Packument = {
   name: 'b',
@@ -89,4 +99,32 @@ test('a root spec wins the top slot over a deeper version of the same name', () 
       ['b@2.0.0', 'node_modules/a/node_modules/b'],
     ],
   )
+})
+
+test('a cached tarball gets a flat, deterministic file name and the cache is capped at 1 GB', () => {
+  assert.equal(PACKAGE_LIMITS.cacheBytes, 1024 * 1024 * 1024)
+  assert.equal(cacheFileName({ name: 'pdf-lib', version: '1.17.1' }), 'pdf-lib-1.17.1.tgz')
+  assert.equal(cacheFileName({ name: '@scope/pkg', version: '2.0.0-beta.1' }), '@scope%2fpkg-2.0.0-beta.1.tgz')
+  assert.notEqual(
+    cacheFileName({ name: '@a/b_c', version: '1.0.0' }),
+    cacheFileName({ name: '@a_b/c', version: '1.0.0' }),
+  )
+  assert.ok(!cacheFileName({ name: '../evil/pkg', version: '1.0.0' }).includes('/'))
+  assert.ok(!cacheFileName({ name: '../evil/pkg', version: '1.0.0' }).startsWith('.'))
+})
+
+const cached = (name: string, mtimeMs: number, bytes: number): CachedPackage => ({ name, mtimeMs, bytes })
+
+test('the oldest cached tarballs are dropped when the cache exceeds its byte limit', () => {
+  const entries = [cached('newest.tgz', 3000, 60), cached('oldest.tgz', 1000, 50), cached('middle.tgz', 2000, 40)]
+  assert.deepEqual(packagesToDrop(entries, 200), [])
+  assert.deepEqual(
+    packagesToDrop(entries, 100).map((entry) => entry.name),
+    ['oldest.tgz'],
+  )
+  assert.deepEqual(
+    packagesToDrop(entries, 65).map((entry) => entry.name),
+    ['oldest.tgz', 'middle.tgz'],
+  )
+  assert.equal(packagesToDrop(entries, 10).length, 3)
 })
