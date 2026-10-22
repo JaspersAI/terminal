@@ -33,7 +33,7 @@ const readLoop: Tool = {
   name: 'read_loop',
   readsOnly: true,
   description:
-    'Reads one piece of work on this workspace: what it is for, whether it is working, asking, or idle, its tile with what each view in it shows, and its last exchanges with what each run did. The way to answer what a piece of work is doing or has found.',
+    'Reads one piece of work on this workspace: what it is for, whether it is working, asking, or idle, its tile with what each view in it shows (its state, output, and text length), and its last exchanges with what each run did. Call this to inspect, reason over, compare, or explain what a piece of work is doing, has found, or is showing, before answering the user or deciding whether a loop needs to change anything.',
   parameters: {
     type: 'object',
     properties: {
