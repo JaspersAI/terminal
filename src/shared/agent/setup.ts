@@ -3,9 +3,12 @@
 // the whole catalog in front of it, chooses the plugins and skills the work's agent is told of in full.
 // That call is one model call, answered with one tool call, and what it chose is checked here.
 
-import type { ToolDefinition } from '../llm/llm.ts'
+import type { Effort, ToolDefinition } from '../llm/llm.ts'
 
 export const SETUP_TOOL = 'set_up_loop'
+/** One short call apart from the conversation's cache: low effort, and a shorter wait before asking again. */
+export const SETUP_EFFORT: Effort = 'low'
+export const SETUP_TIMEOUT_MS = 20_000
 
 /** The one tool the setup call is offered, and the shape of its answer. */
 export const SETUP_DEFINITION: ToolDefinition = {
