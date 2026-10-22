@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_ENVELOPE } from '../../plugins/build-record.ts'
 import { BUILD_LIMITS } from './files.ts'
-import { ALLOW, APPROVE, DECLINE, isApproved, trustQuestion, widenQuestion } from './trust.ts'
+import { ALLOW, APPROVE, approvalNotice, DECLINE, isApproved, trustQuestion, widenQuestion } from './trust.ts'
 
 const input = {
   id: 'fred',
@@ -57,4 +57,21 @@ test('a widening asks to allow only what is new', () => {
   assert.equal(question.text, 'Let the plugin fred reach more than it was approved for?')
   assert.equal(question.code, '+ host api.example.com\n+ package pdf-lib')
   assert.deepEqual(question.choices, [ALLOW, DECLINE])
+})
+
+test('requesting the shared shell folder clearly indicates read-only access in the prompt and envelope', () => {
+  const question = trustQuestion({
+    ...input,
+    envelope: { ...input.envelope, capabilities: ['files'], shell: true },
+  })
+  assert.match(question.text, /read-only access to \/Users\/me\/Jaspers\/shell/)
+  assert.match(question.code, /Shell folder: +read-only \(~\/Jaspers\/shell\)/)
+})
+
+test('approvalNotice names the plugin waiting for approval', () => {
+  const text = approvalNotice('fred', 'FRED economic series')
+  assert.match(text, /fred/)
+  assert.match(text, /FRED economic series/)
+  assert.match(text, /waiting for your approval/i)
+  assert.match(approvalNotice('fred'), /fred.*waiting for your approval/i)
 })
