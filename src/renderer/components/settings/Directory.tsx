@@ -1,7 +1,15 @@
 import { useId, useState, type ReactElement } from 'react'
-import { BROWSER_PLUGIN_DESCRIPTION, BROWSER_PLUGIN_ID, BROWSER_PLUGIN_TITLE } from '../../../shared/grid/browser'
+import { BROWSER_PLUGIN_ID } from '../../../shared/grid/browser'
 import type { HubItem } from '../../../shared/hub/hub'
-import { initials, itemKey, standing, useHubDirectory, type HubDirectory, type Standing } from '../../lib/hub-directory'
+import {
+  initials,
+  itemKey,
+  standing,
+  useHubDirectory,
+  withBrowserItem,
+  type HubDirectory,
+  type Standing,
+} from '../../lib/hub-directory'
 import { useAppState } from '../../lib/state'
 import { StatusLine } from './InstallPrompt'
 import type { Install } from './use-install'
@@ -96,35 +104,21 @@ interface PartProps {
   entry: (item: HubItem) => EntryProps
 }
 
-/** Built-in Browser entry shown in the plugin setup directory for every version with browser support. */
-const CORE_BROWSER_ITEM: HubItem = {
-  handle: 'jaspers',
-  name: BROWSER_PLUGIN_ID,
-  kind: 'plugin',
-  title: BROWSER_PLUGIN_TITLE,
-  description: BROWSER_PLUGIN_DESCRIPTION,
-  version: '1.0.0',
-  tags: [],
-  stars: 0,
-  downloads: 0,
-  official: true,
-  reviewed: true,
-  featured: true,
-  page: '',
-}
-
-/** The plugins Hub features, as cards, in Hub's order, led by the built-in Browser. */
+/** The plugins Hub features, as cards, in Hub's order. */
 function Featured({ directory, entry }: PartProps): ReactElement | null {
   const { featured, retryFeatured } = directory
-  const items = [CORE_BROWSER_ITEM, ...featured.items.filter((one) => one.name !== BROWSER_PLUGIN_ID)]
+  const items = featured.items.filter((one) => one.name !== BROWSER_PLUGIN_ID)
+  if (!featured.error && items.length === 0) return null
   return (
     <div className="mt-5">
       <h4 className="text-xs text-muted-foreground">Featured</h4>
-      <div className="mt-2 grid gap-4 @min-[44rem]:grid-cols-2">
-        {items.map((item) => (
-          <FeatureCard key={itemKey(item)} {...entry(item)} />
-        ))}
-      </div>
+      {items.length > 0 && (
+        <div className="mt-2 grid gap-4 @min-[44rem]:grid-cols-2">
+          {items.map((item) => (
+            <FeatureCard key={itemKey(item)} {...entry(item)} />
+          ))}
+        </div>
+      )}
       {featured.error && <Unreachable error={featured.error} onRetry={retryFeatured} />}
     </div>
   )
@@ -134,6 +128,7 @@ function Featured({ directory, entry }: PartProps): ReactElement | null {
 function Others({ directory, entry, search }: PartProps & { search: boolean }): ReactElement {
   const { others, query, setQuery, more, retryOthers } = directory
   const searching = query.trim() !== ''
+  const items = withBrowserItem(others.items, query)
   return (
     <div className="mt-8">
       <h4 className="text-xs text-muted-foreground">On Jaspers Hub</h4>
@@ -150,9 +145,9 @@ function Others({ directory, entry, search }: PartProps & { search: boolean }): 
           className={`${FIELD} mt-2 [&::-webkit-search-cancel-button]:hidden`}
         />
       )}
-      {others.items.length > 0 && (
+      {items.length > 0 && (
         <ul className="mt-2 border-t border-border">
-          {others.items.map((item) => (
+          {items.map((item) => (
             <SourceRow key={itemKey(item)} {...entry(item)} />
           ))}
         </ul>
@@ -161,7 +156,7 @@ function Others({ directory, entry, search }: PartProps & { search: boolean }): 
         <Unreachable error={others.error} onRetry={retryOthers} />
       ) : others.loading ? (
         <p className="mt-2 text-sm text-muted-foreground">{searching ? 'Searching…' : 'Loading…'}</p>
-      ) : others.items.length === 0 ? (
+      ) : items.length === 0 ? (
         <p className="mt-2 text-sm text-muted-foreground">
           {searching ? 'Nothing on Jaspers Hub matches.' : 'Nothing more on Jaspers Hub yet.'}
         </p>

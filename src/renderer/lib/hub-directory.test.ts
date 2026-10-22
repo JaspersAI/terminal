@@ -2,7 +2,16 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { HubItem } from '../../shared/hub/hub.ts'
 import type { PluginInfo } from '../../shared/state.ts'
-import { appendPage, failure, initials, loadPart, rest, standing } from './hub-directory.ts'
+import {
+  appendPage,
+  CORE_BROWSER_ITEM,
+  failure,
+  initials,
+  loadPart,
+  rest,
+  standing,
+  withBrowserItem,
+} from './hub-directory.ts'
 
 function item(name: string, over: Partial<HubItem> = {}): HubItem {
   return {
@@ -136,4 +145,24 @@ test('a part loads what Hub gave, and a Hub that refuses or never answers is an 
     loading: false,
     error: 'Jaspers Hub could not be reached. No answer in 0.05 seconds.',
   })
+})
+
+test('withBrowserItem places the non-featured built-in Browser plugin in the Hub list and filters it by search query', () => {
+  assert.equal(CORE_BROWSER_ITEM.featured, false)
+  assert.equal(CORE_BROWSER_ITEM.title, 'Browser')
+  assert.match(CORE_BROWSER_ITEM.description, /Bloomberg Television/)
+
+  const hubItems = [item('sec'), item('fed')]
+  assert.deepEqual(
+    withBrowserItem(hubItems, '').map((one) => one.name),
+    ['sec', 'fed', 'browser'],
+  )
+  assert.deepEqual(
+    withBrowserItem(hubItems, 'bloomberg').map((one) => one.name),
+    ['sec', 'fed', 'browser'],
+  )
+  assert.deepEqual(
+    withBrowserItem(hubItems, 'treasury').map((one) => one.name),
+    ['sec', 'fed'],
+  )
 })
