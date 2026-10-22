@@ -13,6 +13,14 @@ export const TERMS_URL = 'https://jsprai.com/terms'
 export function readTermsAccepted(value: unknown): boolean {
   return value === true
 }
+
+/** Whether this window must ask the user to accept the Terms of Use before proceeding: the main window, until accepted. */
+export function needsTermsAcceptance(
+  state: { termsAccepted: boolean; onboardingComplete?: boolean },
+  windowNumber: number,
+): boolean {
+  return windowNumber === 1 && !state.termsAccepted
+}
 /** The one scope Account grants. */
 export const JASPERS_SCOPE = 'mcp'
 /** A token this close to running out is renewed before it is used, so a request never goes out on one about to be refused. */

@@ -42,13 +42,14 @@ export function Home({ welcome }: Props): ReactElement {
   )
   const workspaceId = useAppState((s) => s.currentWorkspaceId)
   const docked = useDockedChat(workspaceId, MAIN_WINDOW)
+  const termsAccepted = useAppState((s) => s.termsAccepted)
   // Eye asks once, on the first run after it existed, and remembers either answer. Only here, so one
-  // window asks and the extensions never do.
-  const askEye = useAppState((s) => !s.eye.asked)
+  // window asks and the extensions never do, and only after the Terms of Use have been accepted.
+  const askEye = useAppState((s) => s.termsAccepted && !s.eye.asked)
   useEffect(() => {
-    if (!welcome || askEye) return
+    if (!welcome || !termsAccepted || askEye) return
     window.app.agent.welcome().catch((err: unknown) => console.error('[welcome]', errorMessage(err)))
-  }, [welcome, askEye])
+  }, [welcome, termsAccepted, askEye])
   return (
     <>
       <div inert={settings || loops} className="contents">
