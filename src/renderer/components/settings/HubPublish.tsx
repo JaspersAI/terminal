@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useState, type ReactElement } from 'react'
 import { TERMS_URL } from '../../../shared/app/jaspers'
-import { HANDLE_RULE, isHandle, type HubMe } from '../../../shared/hub/hub'
+import { HANDLE_RULE, isHandle, PUBLISHER_REPRESENTATIONS, REVIEW_SCOPE, type HubMe } from '../../../shared/hub/hub'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
 import { BUTTON, FIELD, PRIMARY } from './Row'
@@ -73,15 +73,7 @@ export function PublishToHub({ kind, id }: { kind: 'plugin' | 'skill'; id: strin
         </button>
       </div>
       <p className="w-full text-right text-xs text-muted-foreground">
-        By publishing you agree to the{' '}
-        <button
-          type="button"
-          onClick={() => void window.app.openExternal(TERMS_URL)}
-          className="underline hover:text-foreground"
-        >
-          Terms of Use ↗
-        </button>
-        .
+        By publishing, you agree to the <TermsLink />, {PUBLISHER_REPRESENTATIONS}
       </p>
       {asking && <ClaimHandle onClaimed={send} onCancel={() => setAsking(false)} />}
       {line && (
@@ -185,6 +177,11 @@ export function HubItems(): ReactElement {
             ? `What you published to Jaspers Hub as ${me.handle}. Hub reviews each version before it is listed.`
             : 'What you publish to Jaspers Hub, from a plugin or a skill of your own. Your first publish claims your handle there.'}
         </p>
+        {me?.handle && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {REVIEW_SCOPE} See the <TermsLink />.
+          </p>
+        )}
       </div>
       {error ? (
         <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -223,6 +220,19 @@ export function HubItems(): ReactElement {
         </ul>
       )}
     </section>
+  )
+}
+
+/** The Terms of Use, opened in the browser. */
+function TermsLink(): ReactElement {
+  return (
+    <button
+      type="button"
+      onClick={() => void window.app.openExternal(TERMS_URL)}
+      className="underline hover:text-foreground"
+    >
+      Terms of Use ↗
+    </button>
   )
 }
 

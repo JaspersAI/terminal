@@ -7,7 +7,7 @@ test('the user is asked with the name and version Hub will read, and where it is
   const question = publishQuestion({ name: 'brief', version: '1.0.0', handle: 'acme' })
   assert.equal(
     question.text,
-    'Publish the skill brief 1.0.0 to Jaspers Hub? It is sent as acme/brief and waits there for review; nothing is sent until you say Publish. By publishing you agree to the Terms of Use, https://jsprai.com/terms.',
+    'Publish the skill brief 1.0.0 to Jaspers Hub? It is sent as acme/brief and waits there for review; nothing is sent until you say Publish. By publishing, you agree to the Terms of Use (https://jsprai.com/terms), including its publisher representations: you have the right to publish this, it contains no malicious code, it infringes no one’s rights, and its data sources are used within their terms.',
   )
   assert.equal(
     question.code,

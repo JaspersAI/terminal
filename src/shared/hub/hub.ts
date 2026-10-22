@@ -15,6 +15,12 @@ export const UPLOAD_BYTES = 50 * 1024 * 1024
 const HANDLE_MAX = 39
 /** Hub's rule for a handle, in words. */
 export const HANDLE_RULE = `A handle is lower-case letters, digits, and hyphens, starting with a letter or a digit, at most ${HANDLE_MAX}.`
+/** What Hub's review is and is not, said beside any mention that Hub reviews a version before listing it. The Terms of Use follow. */
+export const REVIEW_SCOPE =
+  'Review checks listing standards — the declared security envelope and metadata — not a plugin’s accuracy, quality, security, or fitness for any purpose. Plugins and skills are third-party content, provided as is.'
+/** What publishing agrees to, after "you agree to the Terms of Use": the publisher representations the Terms hold. */
+export const PUBLISHER_REPRESENTATIONS =
+  'including its publisher representations: you have the right to publish this, it contains no malicious code, it infringes no one’s rights, and its data sources are used within their terms.'
 const WEB_HOST = new URL(HUB_WEB).host
 const API = new URL(HUB_API)
 /** An item's page: `/<handle>/<name>`. */
