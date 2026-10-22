@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   CHART_KINDS,
+  chartMessage,
   figure,
   FORMATS,
   formatted,
@@ -146,4 +147,31 @@ test('a chart of fixed columns says one is missing only once rows have named the
   assert.equal(missingColumns('pie', ['dollars'], ['symbol', 'dollars']), null)
   assert.match(missingColumns('candlestick', ['open', 'close'], ['date', 'open', 'close']) ?? '', /candlestick/)
   assert.equal(missingColumns('line', [], ['date']), null)
+})
+
+test('a chart says Loading only before rows arrive, keeping the plot visible while a refresh loads', () => {
+  assert.equal(
+    chartMessage({ error: null, short: null, loading: true, rowCount: 0, yColumnCount: 0, hasInput: true }),
+    'Loading…',
+  )
+  assert.equal(
+    chartMessage({ error: null, short: null, loading: true, rowCount: 10, yColumnCount: 2, hasInput: true }),
+    null,
+  )
+  assert.equal(
+    chartMessage({ error: null, short: null, loading: false, rowCount: 0, yColumnCount: 0, hasInput: true }),
+    'Nothing came back.',
+  )
+  assert.equal(
+    chartMessage({ error: null, short: null, loading: false, rowCount: 0, yColumnCount: 0, hasInput: false }),
+    'Set source, or sql, and x and y.',
+  )
+  assert.equal(
+    chartMessage({ error: null, short: null, loading: false, rowCount: 5, yColumnCount: 0, hasInput: true }),
+    'No numeric column to plot. Set state.y to the columns to chart.',
+  )
+  assert.equal(
+    chartMessage({ error: 'fetch failed', short: null, loading: false, rowCount: 0, yColumnCount: 0, hasInput: true }),
+    'fetch failed',
+  )
 })

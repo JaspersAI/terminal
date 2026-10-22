@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { cellText, isNumeric, isYearColumn, shownText } from './cells.ts'
+import { cellText, isNumeric, isYearColumn, shownText, sqlAfterFailure, type Rows } from './cells.ts'
 
 test('a cell is written grouped, unless its column says otherwise', () => {
   assert.equal(cellText(1234567), '1,234,567')
@@ -56,4 +56,37 @@ test('a shown fraction keeps trailing zeroes, including when it rounds to a whol
   assert.equal(shownText(0.99999999), '1.00000')
   assert.equal(shownText(0.0000001), '1.00000e-7')
   assert.equal(cellText(1.5), '1.5')
+})
+
+test('sqlAfterFailure keeps loaded rows on a failed refresh of the same SQL query and surfaces the error otherwise', () => {
+  const loaded: Rows = {
+    rows: [{ date: '2026-10-22', equity: 100_000 }],
+    columns: ['date', 'equity'],
+    loading: true,
+    error: null,
+    text: null,
+    truncated: false,
+  }
+  assert.deepEqual(sqlAfterFailure(loaded, 'The query took too long.', true), {
+    ...loaded,
+    loading: false,
+    error: null,
+  })
+  assert.deepEqual(sqlAfterFailure(loaded, 'The query took too long.', false), {
+    rows: [],
+    columns: [],
+    loading: false,
+    error: 'The query took too long.',
+    text: null,
+    truncated: false,
+  })
+  const empty: Rows = { rows: [], columns: [], loading: true, error: null, text: null, truncated: false }
+  assert.deepEqual(sqlAfterFailure(empty, 'The query took too long.', true), {
+    rows: [],
+    columns: [],
+    loading: false,
+    error: 'The query took too long.',
+    text: null,
+    truncated: false,
+  })
 })

@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react'
-import { useBridge, useData, type SourceData } from '@jaspers-ai/sdk'
+import { useEffect, useRef, useState } from 'react'
+import { useBridge, useData, usePanel, type SourceData } from '@jaspers-ai/sdk'
+import { EMPTY_ROWS as EMPTY, sqlAfterFailure, type Rows } from './cells'
+
+export { sqlAfterFailure, type Rows } from './cells'
 
 // How a generic view gets its rows. Two ways in, one shape out: a source by registry id, which is
 // what a plugin's data is reached by, or SQL over the store, which is the only way to see further
@@ -7,19 +10,6 @@ import { useBridge, useData, type SourceData } from '@jaspers-ai/sdk'
 //
 // Both hooks run every render, whichever is in use, so their order never changes; the one that is
 // not in use is handed no target and does nothing.
-
-export interface Rows {
-  rows: Record<string, unknown>[]
-  /** The columns in the order they should read, from the first row unless the query named them. */
-  columns: string[]
-  loading: boolean
-  error: string | null
-  /** What a source that answered in prose said, when there were no rows. */
-  text: string | null
-  truncated: boolean
-}
-
-const EMPTY: Rows = { rows: [], columns: [], loading: false, error: null, text: null, truncated: false }
 
 export interface Ask {
   source?: string | null
@@ -30,17 +20,36 @@ export interface Ask {
 
 export function useRows({ source, args, sql, limit }: Ask): Rows {
   const bridge = useBridge()
+  const panel = usePanel()
   // Called every render either way, so the hook order never changes; an empty source is idle.
   const fromSource: SourceData = useData(source ?? '', args ?? {})
   const [fromSql, setFromSql] = useState<Rows>(EMPTY)
+  const [sqlNonce, setSqlNonce] = useState(0)
+  const loadedSql = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!panel || !sql || source) return
+    let seen = false
+    return bridge.subscribe(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`, (stamp) => {
+      if (!seen) {
+        seen = true
+        return
+      }
+      if (stamp === null || stamp === undefined) return
+      setSqlNonce((n) => n + 1)
+    })
+  }, [bridge, panel, sql, source])
 
   useEffect(() => {
     if (!sql || source) {
+      loadedSql.current = null
       setFromSql(EMPTY)
       return
     }
     let live = true
-    setFromSql((previous) => ({ ...previous, loading: true, error: null }))
+    const signature = `${sql}\n${limit ?? ''}`
+    const sameQuery = loadedSql.current === signature
+    setFromSql((previous) => (sameQuery ? { ...previous, loading: true, error: null } : { ...EMPTY, loading: true }))
     const read = bridge.query
     if (!read) {
       setFromSql({ ...EMPTY, error: 'This view cannot read the store here.' })
@@ -49,6 +58,7 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
     void read(sql, limit)
       .then((result) => {
         if (!live) return
+        loadedSql.current = signature
         setFromSql({
           rows: result.rows.map((row) => Object.fromEntries(result.columns.map((column, i) => [column, row[i]]))),
           columns: result.columns,
@@ -59,12 +69,14 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
         })
       })
       .catch((error: unknown) => {
-        if (live) setFromSql({ ...EMPTY, error: error instanceof Error ? error.message : String(error) })
+        if (!live) return
+        const message = error instanceof Error ? error.message : String(error)
+        setFromSql((previous) => sqlAfterFailure(previous, message, sameQuery))
       })
     return () => {
       live = false
     }
-  }, [bridge, sql, source, limit])
+  }, [bridge, sql, source, limit, sqlNonce])
 
   if (!source && sql) return fromSql
   if (!source) return EMPTY
