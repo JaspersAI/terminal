@@ -35,7 +35,7 @@ The Hub lists plugins and skills published by Jaspers and by third parties. Thir
 
 If you publish a plugin or skill, you represent that you have the right to publish it; that it contains no malicious code; that it does not infringe any third party's rights; and that its use of any data source complies with that source's terms. You grant Jaspers a nonexclusive, worldwide, royalty-free license to host, reproduce, distribute, and display it for operating and promoting the Hub, and you will indemnify Jaspers for claims arising from it as set out in Section 13.
 
-We respond to copyright notices under the Digital Millennium Copyright Act. Send notices to legal@jsprai.com. We may remove content alleged to infringe and may terminate repeat infringers.
+We respond to copyright notices under the Digital Millennium Copyright Act. Our designated agent for receiving copyright notices, registered with the US Copyright Office: Legal, Jaspers, Inc., 2261 Market St., Ste 46118, San Francisco, CA 94114, legal@jsprai.com. We may remove content alleged to infringe and may terminate repeat infringers.
 
 6. The Coding Agent and Code You Run
 
@@ -104,4 +104,4 @@ Miscellaneous. These Terms, the Privacy Policy, and the applicable source licens
 
 Contact. Jaspers, Inc., 2261 Market St., Ste 46118, San Francisco, CA 94114 · legal@jsprai.com
 
-v.2 · October 21, 2026
+v.3 · October 21, 2026
