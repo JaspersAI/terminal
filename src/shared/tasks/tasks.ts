@@ -9,6 +9,10 @@ import { checkRule, nextByRule, ruleText, type ClockRule } from './clock-rule.ts
 export type { ClockRule } from './clock-rule.ts'
 
 export const TASK_INSTRUCTIONS_MAX = 1000
+/** Connections and plugin hosts come up in the first seconds; a run missed while the app was closed or asleep waits for them. */
+export const STARTUP_GRACE_MS = 15_000
+/** A task days out re-arms every minute rather than overflowing a timeout. */
+export const TIMER_MAX_MS = 60_000
 /** A model name, which is whatever the provider calls one. */
 export const TASK_MODEL_MAX = 200
 /** Pending tasks at once on one workspace: enabled, with a next time. Past this, scheduling there is refused. */
@@ -193,15 +197,42 @@ export function isDue(task: Task, now: number): boolean {
   return isPending(task) && !task.running && task.nextAt! <= now
 }
 
-export function dueTasks(tasks: Task[], now: number): Task[] {
-  return tasks.filter((t) => isDue(t, now))
+/** Whether a timer fired late enough past its deadline that the machine slept before resume arrived. */
+export function isWakeLag(expectedAt: number | null, now: number): boolean {
+  return expectedAt !== null && now - expectedAt >= STARTUP_GRACE_MS
 }
 
-/** The next time any pending task is due, or null. A running task waits for its run to end. */
+function isRefreshCall(task: Pick<Task, 'call'>): boolean {
+  return task.call?.tool === 'refresh_element'
+}
+
+/**
+ * The tasks due to start now. A `refresh_element` call on a workspace waits while another task on
+ * that workspace is running or also due, so panels refresh after the workspace's data tasks settle.
+ */
+export function dueTasks(tasks: Task[], now: number): Task[] {
+  const busyWorkspaces = new Set<string>()
+  for (const task of tasks) {
+    if (!isRefreshCall(task) && (task.running || isDue(task, now))) {
+      busyWorkspaces.add(task.workspaceId)
+    }
+  }
+  return tasks.filter((t) => isDue(t, now) && (!isRefreshCall(t) || !busyWorkspaces.has(t.workspaceId)))
+}
+
+/**
+ * The next time any pending task is due, or null. A running task waits for its run to end, and a
+ * panel refresh waits while another task on its workspace is running.
+ */
 export function earliestNext(tasks: Task[]): number | null {
+  const runningWorkspaces = new Set<string>()
+  for (const task of tasks) {
+    if (task.running && !isRefreshCall(task)) runningWorkspaces.add(task.workspaceId)
+  }
   let earliest: number | null = null
   for (const task of tasks) {
     if (!isPending(task) || task.running) continue
+    if (isRefreshCall(task) && runningWorkspaces.has(task.workspaceId)) continue
     if (earliest === null || task.nextAt! < earliest) earliest = task.nextAt!
   }
   return earliest

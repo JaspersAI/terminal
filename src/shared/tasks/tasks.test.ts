@@ -17,6 +17,7 @@ import {
   everyText,
   formatLocal,
   isDue,
+  isWakeLag,
   nextAfter,
   parseAt,
   pruneFinished,
@@ -25,6 +26,7 @@ import {
   RESULT_MAX,
   runNotice,
   shortLocal,
+  STARTUP_GRACE_MS,
   taskStatus,
   type Task,
 } from './tasks.ts'
@@ -114,6 +116,72 @@ test('the earliest next time among pending tasks, and none when nothing is pendi
     ]),
     T0 + S,
   )
+})
+
+test('a refresh_element task waits while another task on its workspace is due or running', () => {
+  const fetchTask = task({
+    id: 't1',
+    workspaceId: 'ws-1',
+    call: { tool: 'run_source', input: { source: 'alpaca/positions' } },
+    nextAt: T0,
+  })
+  const askTask = task({
+    id: 't2',
+    workspaceId: 'ws-1',
+    call: null,
+    instructions: 'Update portfolio SQL',
+    nextAt: T0,
+  })
+  const refresh8 = task({
+    id: 't3',
+    workspaceId: 'ws-1',
+    call: { tool: 'refresh_element', input: { elementId: 'e8' } },
+    nextAt: T0,
+  })
+  const refresh10 = task({
+    id: 't4',
+    workspaceId: 'ws-1',
+    call: { tool: 'refresh_element', input: { elementId: 'e10' } },
+    nextAt: T0,
+  })
+  const otherWorkspaceRefresh = task({
+    id: 't5',
+    workspaceId: 'ws-2',
+    call: { tool: 'refresh_element', input: { elementId: 'e1' } },
+    nextAt: T0,
+  })
+
+  // When both data tasks and refresh_element tasks are due on ws-1, the data tasks start first;
+  // another workspace's refresh_element task is unaffected.
+  assert.deepEqual(
+    dueTasks([fetchTask, askTask, refresh8, refresh10, otherWorkspaceRefresh], T0).map((t) => t.id),
+    ['t1', 't2', 't5'],
+  )
+
+  // While a non-refresh task on ws-1 is running, ws-1's refresh_element tasks stay held back and do not arm a 0ms timer.
+  const whileRunning = [{ ...fetchTask, running: true }, refresh8, refresh10]
+  assert.deepEqual(dueTasks(whileRunning, T0), [])
+  assert.equal(earliestNext(whileRunning), null)
+
+  // Once the data task finishes and moves to its next slot, the refresh_element tasks are due together at once.
+  const afterFetch = [
+    afterRun({ ...fetchTask, running: true }, { at: T0, ok: true, result: 'ok', ms: 500 }),
+    refresh8,
+    refresh10,
+  ]
+  assert.equal(earliestNext(afterFetch), T0)
+  assert.deepEqual(
+    dueTasks(afterFetch, T0 + 500).map((t) => t.id),
+    ['t3', 't4'],
+  )
+})
+
+test('isWakeLag detects a timer firing after an OS sleep or event-loop lag spike', () => {
+  assert.equal(isWakeLag(null, T0), false)
+  assert.equal(isWakeLag(T0, T0 + 50), false)
+  assert.equal(isWakeLag(T0, T0 + STARTUP_GRACE_MS - 1), false)
+  assert.equal(isWakeLag(T0, T0 + STARTUP_GRACE_MS), true)
+  assert.equal(isWakeLag(T0, T0 + 550 * S), true)
 })
 
 test('afterRun records the run, caps its result, counts it, and moves to the next slot', () => {

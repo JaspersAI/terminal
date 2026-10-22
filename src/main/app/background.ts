@@ -29,6 +29,8 @@ export interface BackgroundDeps {
   showWindow(): void
   /** Whether the window is visible and focused, where a notice is seen in the app itself. */
   windowInFront(): boolean
+  /** Disarms the scheduler while the machine sleeps. */
+  suspendTasks?(): void
   /** Re-arms the scheduler. */
   wakeTasks(): void
   /** Installs the downloaded update and starts the new app. */
@@ -72,6 +74,7 @@ export function startBackground(deps: BackgroundDeps): void {
   powerMonitor.on('shutdown', () => {
     quitting = true
   })
+  powerMonitor.on('suspend', () => deps.suspendTasks?.())
   powerMonitor.on('resume', () => deps.wakeTasks())
 
   tray = new Tray(trayImage())
