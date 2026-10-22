@@ -566,8 +566,8 @@ test('the rules say how much of the conversation the orchestrator is sent, by th
   assert.match(ROUTER_RULES, /say you no longer have it and ask, rather than guess/)
 })
 
-test('the orchestrator is told to route, by the tools that hold work, and of no tool that drives a view', () => {
-  for (const tool of ['create_loop', 'update_loop', 'read_loop', 'delete_loop']) {
+test('the orchestrator is told to oversee the loops and route work, by the tools that inspect and hold work, and of no tool that drives a view', () => {
+  for (const tool of ['create_loop', 'update_loop', 'read_loop', 'delete_loop', 'get', 'query']) {
     assert.match(ROUTER_RULES, new RegExp(`\\b${tool}\\b`), tool)
   }
   for (const tool of VIEW_TOOLS) {
@@ -576,19 +576,26 @@ test('the orchestrator is told to route, by the tools that hold work, and of no 
   assert.match(ROUTER_RULES, /^Rules: you route/)
   assert.match(ROUTER_RULES, /never to a second piece/)
   assert.match(ROUTER_RULES, /to bring a view's data up to date now, call refresh_element\./)
+  assert.doesNotMatch(ROUTER_RULES, /only about the app itself/)
+  assert.doesNotMatch(ROUTER_RULES, /update_loop[^.]*a question about what it shows/)
+  assert.match(ROUTER_RULES, /read_loop[^.]*get[^.]*query/)
+  assert.match(
+    ROUTER_RULES,
+    /Never send a question about what a loop shows or why it looks the way it does to update_loop/,
+  )
 })
 
 test('the orchestrator is told a skill to write or publish is its own to do, as a task to schedule is, and not a piece of work', () => {
   assert.match(
     ROUTER_RULES,
-    /Answer in words yourself when words are the whole answer, and only about the app itself: [^.;]*a skill to write or publish\./,
+    /Answer in words yourself when words are the whole answer: [^.]*a skill to write or publish\./,
   )
 })
 
 test('the rules tell the assistant to run shell commands with run_shell when offered, and to point to Settings > Pro mode when not', () => {
   assert.match(
     ROUTER_RULES,
-    /Answer in words yourself when words are the whole answer, and only about the app itself: [^.;]*a command to run, a skill to write or publish\./,
+    /Answer in words yourself when words are the whole answer: [^.]*a command to run, a skill to write or publish\./,
   )
   assert.match(ROUTER_RULES, /call run_shell\b[^.]*rather than starting a loop or scheduling a task/)
   for (const rules of [ROUTER_RULES, LOOP_RULES, loopRules(false)]) {

@@ -33,7 +33,7 @@ export function orchestratorPrompt(workspaceId: string, preface: string[]): RunP
 }
 
 const SYSTEM =
-  'You are Jaspers, the orchestrator inside Jaspers Terminal, a financial research app. Work here is done in pieces, called loops: each has one tile on the grid, a command line on top and under it the views it shows, and an agent of its own, which places those views, calls the plugins, and keeps the conversation about that work. Your part is to route each request: answer it in words, hand it to the piece of work it belongs to, or start a new piece for it; and to arrange the grid. Keep replies brief. Requests may arrive through speech to text, so read past small transcription errors.'
+  'You are Jaspers, the central assistant and orchestrator inside Jaspers Terminal, a financial research app. Work on the grid is done in pieces, called loops: each has one tile on the grid, a command line on top and under it the views it shows, and an agent of its own, which places those views, calls the plugins, and keeps the conversation about that work. Your part is to oversee the workspace, reason over what is going on in the loops, views, tasks, and store, and converse with the user; to route work that needs new plugin data or changes a tile by handing it to the piece of work it belongs to or starting a new piece for it; and to arrange the grid. Requests may arrive through speech to text, so read past small transcription errors.'
 const LAYOUT =
   'You arrange the grid and put nothing on it. move_element and resize_element move and size the tile of any piece of work, and the views inside it keep their place in it; set_mode maximizes, minimizes, or floats one, arrange re-tiles a window, and free_space says where there is room. The grid never moves an element to make room, so when new work needs room, make it first or give create_loop a size or a spot that is free; if nothing fits, say the grid is full and ask whether to close something. Never delete work to make room for other work. When the user says "that" or "it" they mean the focused element, and the grid map names the work each tile belongs to, with the views inside it under it. The user may name a spot by its cells, like "at D3" or "J3 to N10": pass a spot or a size they asked for to create_loop.'
 const STATE =
@@ -61,11 +61,13 @@ function systemFor(workspaceId: string, preface: string[]): string[] {
  */
 export function stateNow(workspaceId: string): string {
   const state = toPublic(getState())
+  const filed = sourcesSeen().filter((id) => id in state.sources)
   return [
     describeGrid(workspaceId, windowSize, focusedWindow()),
     describeLoops(state, workspaceId, (loop) => statusNow(state, workspaceId, loop.id)),
     // What the focused element shows, without its view's instructions: those are for whoever drives it.
     describeRound(state, workspaceId, () => undefined, undefined, focusedWindow()),
+    ...(filed.length > 0 ? [describeFiled(filed, state.sources)] : []),
   ].join('\n')
 }
 

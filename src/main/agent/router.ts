@@ -46,7 +46,7 @@ const updateLoop: Tool = {
   name: 'update_loop',
   handoff: true,
   description:
-    "Hands the request to a piece of work that already exists: more of the same, a change to what it shows, a follow-up to what it found. Its agent takes it up in its own tile, at once when it is free and with what it is doing now when it is at work, on the user's request as they typed it, with message under it when you write one. Never start a second piece of work for what one is already doing.",
+    "Hands the request to a piece of work that already exists when the work in its tile needs to change or run something new: more data to fetch, a change to what one of its views shows, a view to place or close, or a follow-up for its agent to run. Its agent takes it up in its own tile, at once when it is free and with what it is doing now when it is at work, on the user's request as they typed it, with message under it when you write one. Do not use this to answer a question about what a loop shows, why it looks the way it does, or how it compares with other work: read the loop with read_loop (and get or query) and answer the user yourself. Never start a second piece of work for what one is already doing.",
   parameters: { type: 'object', properties: { loop: LOOP, message: MESSAGE }, required: ['loop'] },
   async run(input, context) {
     const loop = findLoop(toPublic(getState()), context.workspaceId, asWords(input.loop, 'loop'))
