@@ -113,6 +113,7 @@ const HANDLERS: Record<Action['type'], Handler> = {
   // The browser flow, waited for: the screen that asked moves on once the sign-in is in.
   'jaspers.signIn': () => signInWithJaspers(),
   'jaspers.signOut': () => signOut(),
+  'terms.accept': () => acceptTerms(),
   'onboarding.complete': () => completeOnboarding(),
   'workspace.create': () => createWorkspace(),
   'workspace.rename': (raw) => renameWorkspace(asString(raw.id), asString(raw.name)),
@@ -622,6 +623,10 @@ export async function signInWithJaspers(): Promise<void> {
   })
   // Signing in later, from Settings, installs nothing.
   if (!getState().onboardingComplete) void installDefaultsForSignUp()
+}
+
+export function acceptTerms(): void {
+  update((state) => (state.termsAccepted ? state : { ...state, termsAccepted: true }))
 }
 
 export function completeOnboarding(): void {

@@ -1,0 +1,107 @@
+Terms of Use
+
+Effective October 7, 2026. These Terms of Use (the "Terms") are an agreement between you and Jaspers, Inc., a Delaware corporation ("Jaspers," "we," "us"). They govern your use of:
+
+- the websites at jsprai.com and hub.jsprai.com (the "Sites");
+- the Jaspers Terminal desktop application in binary form, including installers, updates, and bundled components (the "App");
+- Jaspers Hub, the plugin and skill directory (the "Hub"); and
+- Jaspers' hosted services, including Jaspers One, Jaspers Discover, and Jaspers Research (the "Hosted Services").
+
+The Sites, App, Hub, and Hosted Services are together the "Services."
+
+By downloading or installing the App, creating an account, using an API key issued by Jaspers, or using any of the Services, you agree to these Terms. If you do not agree, do not use the Services. If you use the Services on behalf of an organization, you represent that you are authorized to bind it, and "you" includes that organization.
+
+1. Relationship to the Business Source License
+
+The Jaspers Terminal source code is licensed under the Business Source License 1.1 (the "BSL"), and @jaspers-ai/sdk is licensed under the MIT License. Nothing in these Terms limits the rights the BSL or the MIT License grant you in the source code. If these Terms conflict with the BSL with respect to rights in the source code, the BSL controls. These Terms additionally govern your use of the Services, including the App as distributed by Jaspers, which the source licenses do not address.
+
+2. Not Investment Advice
+
+JASPERS IS A SOFTWARE AND DATA TOOL. IT IS NOT AN INVESTMENT ADVISER, BROKER-DEALER, COMMODITY TRADING ADVISOR, OR FINANCIAL PLANNER, AND IT IS NOT REGISTERED AS ANY OF THESE WITH THE SEC, CFTC, FINRA, NFA, OR ANY STATE OR FOREIGN REGULATOR. NOTHING IN THE SERVICES — INCLUDING OUTPUT OF ANY LANGUAGE MODEL, ASSISTANT, ANALYST, RESEARCH ROOM, SCREEN, CHART, PLUGIN, OR DOCUMENT — IS INVESTMENT ADVICE, A RECOMMENDATION, AN OFFER OR SOLICITATION TO BUY OR SELL ANY SECURITY OR OTHER INSTRUMENT, OR A REPRESENTATION THAT ANY INVESTMENT OR STRATEGY IS SUITABLE FOR YOU.
+
+The Services provide impersonal tools, data, and software of general application. They do not take account of your financial situation or objectives. Any output that reads as analysis, opinion, or recommendation is machine-generated text, not advice from Jaspers. You are solely responsible for your investment and trading decisions and for compliance with laws and regulations that apply to you, including any that apply to your profession or firm. Trading and investing involve substantial risk, including the possible loss of the entire amount invested. Past performance is not indicative of future results. Consult a qualified professional before making investment decisions.
+
+3. AI-Generated Output
+
+The Services use language models, including models operated by third-party providers you configure and models made available through Jaspers One. Model output can be inaccurate, incomplete, outdated, or wrong, can misstate or misattribute data, and can differ between runs. Citations link to source material, but you are responsible for verifying any output before relying on it. Jaspers does not review, endorse, or verify model output.
+
+4. Market Data and Third-Party Sources
+
+Data shown in the Services comes from third-party sources — exchanges, data vendors, government agencies, and websites — through plugins and MCP servers. Data is provided "as is" and "as available," may be delayed, incomplete, or inaccurate, and is not guaranteed by Jaspers or its sources. Where you connect a source with your own API key or account, your use of that data is governed by your agreement with that vendor, you are responsible for complying with it (including display, redistribution, and usage limits), and Jaspers is not a party to it. Jaspers does not verify third-party data and is not responsible for decisions made in reliance on it.
+
+5. Plugins, Skills, and the Hub
+
+The Hub lists plugins and skills published by Jaspers and by third parties. Third-party plugins and skills are the content of their publishers, not of Jaspers. Hub review checks listing standards, such as the declared security envelope and metadata; it is not an endorsement and not a review of a plugin's accuracy, quality, security, legality, or fitness for any purpose. Jaspers may remove or refuse any listing at any time. Your use of a third-party plugin or skill is at your own risk and may be subject to the publisher's own license and terms.
+
+If you publish a plugin or skill, you represent that you have the right to publish it; that it contains no malicious code; that it does not infringe any third party's rights; and that its use of any data source complies with that source's terms. You grant Jaspers a nonexclusive, worldwide, royalty-free license to host, reproduce, distribute, and display it for operating and promoting the Hub, and you will indemnify Jaspers for claims arising from it as set out in Section 13.
+
+We respond to copyright notices under the Digital Millennium Copyright Act. Send notices to legal@jsprai.com. We may remove content alleged to infringe and may terminate repeat infringers.
+
+6. The Coding Agent and Code You Run
+
+The App includes a coding agent that can write plugin code at your request. Code it generates is created for you, runs on your machine, and is yours to review before you approve it. You are responsible for reviewing the security envelope presented before a plugin runs — the hosts it may contact, keys it requests, capabilities, and packages — and for the consequences of approving it, including that plugin's compliance with the terms of any API it calls. The same applies to commands you approve in Pro mode and to plugins you install from outside the Hub. Jaspers is not responsible for code generated by the coding agent or for third-party code you choose to run.
+
+7. Brokerage Connections and Order Execution
+
+Some plugins can connect to brokerage accounts (for example through a broker's API). Jaspers does not hold accounts or funds, does not route, place, or execute orders on its own systems, and receives no transaction-based compensation. Any order placed through a brokerage connection is placed by you, on your account, under your agreement with your broker, and at your sole risk. You are responsible for reviewing every order before it is submitted. Do not configure the Services to submit orders without your review.
+
+8. Hosted Services
+
+Jaspers One, Discover, and Research are optional, hosted, metered services that require a Jaspers account or API key. For these:
+
+- Fees, metering, and quotas are as described at purchase or in your plan. Metered usage is measured by our systems.
+- The Hosted Services are provided "as is" without any availability commitment. We may change, suspend, or discontinue them, and we may modify or deprecate APIs, with reasonable notice where practicable.
+- You may not resell the Hosted Services, redistribute their data outside your organization, use them to build a competing dataset, or circumvent metering. API keys are per-organization and must be kept confidential.
+- Either party may terminate your account at any time; Sections 2–4 and 10–16 survive.
+
+9. Acceptable Use
+
+You may not use the Services to violate law or third parties' rights; to attempt unauthorized access to systems of Jaspers or others; to interfere with the Services' operation; to publish malicious plugins or skills; to misrepresent output of the Services as having been reviewed or endorsed by Jaspers; or to use the Jaspers name or marks except as the BSL and our trademark guidelines permit.
+
+10. Privacy
+
+The App stores your keys, data, and conversation history locally on your machine; prompts and requests are sent to the model providers and data sources you configure. Our handling of personal information for the Sites and Hosted Services is described in the Privacy Policy, which is part of these Terms.
+
+11. Disclaimer of Warranties
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SERVICES ARE PROVIDED "AS IS" AND "AS AVAILABLE," WITH ALL FAULTS AND WITHOUT WARRANTY OF ANY KIND. JASPERS AND ITS SUPPLIERS AND DATA SOURCES DISCLAIM ALL WARRANTIES AND CONDITIONS, EXPRESS, IMPLIED, OR STATUTORY, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, QUIET ENJOYMENT, ACCURACY, AND ANY WARRANTIES ARISING FROM COURSE OF DEALING OR USAGE OF TRADE. JASPERS DOES NOT WARRANT THAT THE SERVICES WILL BE UNINTERRUPTED, ERROR-FREE, OR SECURE, THAT DATA OR OUTPUT WILL BE ACCURATE, COMPLETE, OR CURRENT, OR THAT DEFECTS WILL BE CORRECTED.
+
+12. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW: (A) JASPERS AND ITS OFFICERS, DIRECTORS, EMPLOYEES, AGENTS, SUPPLIERS, AND DATA SOURCES WILL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA, GOODWILL, OR BUSINESS OPPORTUNITY, OR FOR ANY TRADING OR INVESTMENT LOSSES, LOSSES FROM DECISIONS MADE IN RELIANCE ON THE SERVICES OR THEIR OUTPUT, OR LOSSES FROM INACCURATE, DELAYED, OR UNAVAILABLE DATA OR OUTPUT, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES AND EVEN IF A REMEDY FAILS OF ITS ESSENTIAL PURPOSE; AND (B) JASPERS' TOTAL AGGREGATE LIABILITY ARISING OUT OF OR RELATING TO THE SERVICES OR THESE TERMS WILL NOT EXCEED THE GREATER OF THE AMOUNTS YOU PAID JASPERS FOR THE SERVICES IN THE TWELVE MONTHS BEFORE THE EVENT GIVING RISE TO LIABILITY OR ONE HUNDRED US DOLLARS (US $100).
+
+Some jurisdictions do not allow the exclusion of certain warranties or the limitation of certain damages, so some of the above may not apply to you. In those jurisdictions, liability is limited to the greatest extent permitted by law. Nothing in these Terms excludes liability that cannot be excluded by law, including for fraud or for death or personal injury caused by negligence.
+
+13. Indemnification
+
+You will defend, indemnify, and hold harmless Jaspers and its officers, directors, employees, and agents from claims, damages, and expenses (including reasonable attorneys' fees) arising from: (a) plugins, skills, or other content you publish; (b) code you run or approve, including coding-agent output you approve; (c) your use of third-party data or services in breach of their terms; (d) orders or transactions placed through your brokerage connections; or (e) your violation of these Terms or of law.
+
+14. Dispute Resolution: Binding Arbitration and Class Waiver
+
+Please read this section carefully. It affects your rights.
+
+Informal resolution first. Before filing a claim, you and Jaspers agree to try to resolve the dispute informally: send a written notice describing the dispute to legal@jsprai.com, and we will do the same to your registered or provided contact. If the dispute is not resolved within 60 days, either party may proceed as below.
+
+Arbitration. Any dispute arising out of or relating to the Services or these Terms will be resolved by binding arbitration administered by the American Arbitration Association under its Consumer Arbitration Rules (or Commercial Arbitration Rules for business users), rather than in court, except that either party may bring an individual claim in small-claims court, and either party may seek injunctive relief in court for infringement or misuse of intellectual property. The Federal Arbitration Act governs this section. Arbitration will be conducted by a single arbitrator, in English, by videoconference or, if an in-person hearing is required, in the county where you reside (for consumers) or in Wilmington, Delaware (for business users). Jaspers will pay arbitration fees to the extent the AAA consumer rules require.
+
+Class waiver. ALL CLAIMS MUST BE BROUGHT IN THE PARTIES' INDIVIDUAL CAPACITY, AND NOT AS A PLAINTIFF OR CLASS MEMBER IN ANY PURPORTED CLASS, COLLECTIVE, CONSOLIDATED, OR REPRESENTATIVE PROCEEDING. THE ARBITRATOR MAY NOT CONSOLIDATE CLAIMS OR PRESIDE OVER ANY REPRESENTATIVE PROCEEDING. If the class waiver is found unenforceable as to a particular claim, that claim (and only that claim) must proceed in court, and the rest remain in arbitration.
+
+Opt-out. You may opt out of this arbitration agreement by emailing legal@jsprai.com within 30 days of first accepting these Terms, stating your name and that you opt out of arbitration. Opting out does not affect any other provision.
+
+15. Governing Law and Venue
+
+These Terms are governed by the laws of the State of Delaware, excluding its conflict-of-laws rules, and, where applicable, the Federal Arbitration Act. For disputes not subject to arbitration, the state and federal courts located in Delaware have exclusive jurisdiction, and both parties consent to personal jurisdiction there. If you are a consumer with a mandatory right to sue in your home jurisdiction or under its law, this section does not displace that right.
+
+16. General
+
+Export and sanctions. You may not use the Services in violation of US export control or sanctions laws, and you represent that you are not located in an embargoed jurisdiction or on a restricted-party list.
+
+Changes. We may update these Terms. Material changes will be posted at jsprai.com/terms with an updated effective date, and continued use after the effective date constitutes acceptance. Changes to Section 14 do not apply to disputes that arose before the change.
+
+Termination. We may suspend or terminate your access to the Hub or Hosted Services for breach of these Terms. Your rights in the source code under the BSL and MIT licenses are governed by those licenses, not by this section.
+
+Miscellaneous. These Terms, the Privacy Policy, and the applicable source licenses are the entire agreement regarding the Services. If a provision is unenforceable, it will be limited to the minimum extent necessary and the rest remain in effect. Failure to enforce a provision is not a waiver. You may not assign these Terms; Jaspers may assign them in connection with a merger, acquisition, or sale of assets. "Including" means "including without limitation."
+
+Contact. Jaspers, Inc., 2261 Market St., Ste 46118, San Francisco, CA 94114 · legal@jsprai.com
+
+v.2 · October 21, 2026

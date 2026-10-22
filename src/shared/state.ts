@@ -204,6 +204,7 @@ export interface BackgroundInfo {
 
 /** The tree as the renderer sees it. Main pushes the whole thing after every change. */
 export interface AppState {
+  termsAccepted: boolean
   onboardingComplete: boolean
   llm: ProviderSetting | null
   voice: ProviderSetting | null
@@ -320,6 +321,7 @@ export type Action =
   | { type: 'jaspers.signIn' }
   /** Revokes the sign-in at Account and forgets it. The providers set to Jaspers stay, and wait for the next sign-in. */
   | { type: 'jaspers.signOut' }
+  | { type: 'terms.accept' }
   | { type: 'onboarding.complete' }
   | { type: 'workspace.create' }
   | { type: 'workspace.rename'; id: string; name: string }

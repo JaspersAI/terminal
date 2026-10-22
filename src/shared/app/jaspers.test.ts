@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { test } from 'node:test'
 import {
   JASPERS_ACCOUNT,
@@ -12,6 +13,7 @@ import {
   nearExpiry,
   needsSubscription,
   readStoredJaspers,
+  readTermsAccepted,
   readTokens,
   refusalMessage,
   tokensOf,
@@ -216,4 +218,30 @@ test('a tool result or error that asks for a subscription or account access is r
     false,
   )
   assert.equal(needsSubscription(null), false)
+})
+
+test('terms acceptance reads as true only when stored as boolean true', () => {
+  assert.equal(readTermsAccepted(true), true)
+  for (const other of [false, undefined, null, 'true', 1, {}, []]) {
+    assert.equal(readTermsAccepted(other), false)
+  }
+})
+
+test('the Windows installer is configured with the full Terms of Use from jsprai.com/terms in one-click mode', () => {
+  const builder = fs.readFileSync(new URL('../../../electron-builder.yml', import.meta.url), 'utf8')
+  const nsisBlock = builder.match(/^nsis:\n((?:(?:  .*|#.*)\n?)*)/m)?.[1] ?? ''
+  const nsis = Object.fromEntries(
+    [...nsisBlock.matchAll(/^  ([A-Za-z0-9_]+):\s*(.+)$/gm)].map(([, key, value]) => [key, value.trim()]),
+  )
+  assert.equal(nsis['license'], 'build/license.txt')
+  assert.notEqual(nsis['oneClick'], 'false')
+
+  const license = fs.readFileSync(new URL('../../../build/license.txt', import.meta.url), 'utf8')
+  assert.match(license, /^Terms of Use\n\nEffective October 7, 2026\./)
+  for (let section = 1; section <= 16; section++) {
+    assert.match(license, new RegExp(`^${section}\\. `, 'm'), `missing Section ${section}`)
+  }
+  assert.match(license, /1\. Relationship to the Business Source License/)
+  assert.match(license, /16\. General/)
+  assert.match(license, /v\.2 · October 21, 2026\s*$/)
 })

@@ -121,6 +121,7 @@ function tree(
   skills: Record<string, SkillInfo> = {},
 ): AppState {
   return {
+    termsAccepted: true,
     onboardingComplete: true,
     llm: null,
     voice: null,
