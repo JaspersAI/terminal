@@ -66,7 +66,8 @@ test('execute kills the whole process group on timeout or abort, even if a backg
 
 test('execute on Windows invokes PowerShell, falls back to ComSpec on ENOENT, and kills the process tree via killTree on timeout', async () => {
   const calls: { file: string; args: string[]; env: Record<string, string>; detached: boolean }[] = []
-  const killed: number[] = []
+  const events: string[] = []
+  let activeEmitter: (EventEmitter & { kill: () => boolean }) | null = null
 
   const fakeSpawn = (
     file: string,
@@ -84,9 +85,11 @@ test('execute on Windows invokes PowerShell, falls back to ComSpec on ENOENT, an
     emitter.stderr = new PassThrough()
     emitter.pid = 4242
     emitter.kill = () => {
+      events.push('child.kill')
       emitter.emit('close', 1)
       return true
     }
+    activeEmitter = emitter
     queueMicrotask(() => {
       if (file === 'powershell.exe' && calls.length === 1) {
         const err = Object.assign(new Error('spawn powershell.exe ENOENT'), { code: 'ENOENT' })
@@ -110,7 +113,9 @@ test('execute on Windows invokes PowerShell, falls back to ComSpec on ENOENT, an
       ANTHROPIC_API_KEY: 'sk-secret',
     },
     spawn: fakeSpawn,
-    killTree: (pid) => killed.push(pid),
+    killTree: async (pid) => {
+      events.push(`killTree:${pid}`)
+    },
   })
   assert.equal(fallback.code, 0)
   assert.equal(fallback.timedOut, false)
@@ -129,8 +134,13 @@ test('execute on Windows invokes PowerShell, falls back to ComSpec on ENOENT, an
     hasSandbox: false,
     env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
     spawn: fakeSpawn,
-    killTree: (pid) => killed.push(pid),
+    killTree: async (pid) => {
+      events.push(`killTree:start:${pid}`)
+      await new Promise((r) => setTimeout(r, 20))
+      events.push(`killTree:done:${pid}`)
+      activeEmitter?.emit('close', null)
+    },
   })
   assert.equal(timedOut.timedOut, true)
-  assert.deepEqual(killed, [4242])
+  assert.deepEqual(events, ['killTree:start:4242', 'killTree:done:4242'])
 })

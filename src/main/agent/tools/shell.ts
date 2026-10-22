@@ -47,14 +47,11 @@ import type { Tool, ToolContext } from './types'
 // heredoc, and several lines all work, and a workflow is one thing the user reads and approves once
 // rather than twenty things they wave through.
 //
-// A command is confined by the OS, not by reading what it says: macOS's sandbox-exec runs it under a
-// profile that may read and write only inside the app's shell folder, read the user's Desktop and
-// Downloads, read the system and the folders on PATH so a program can be found, and nothing else.
-// Desktop and Downloads are where a file the user wants worked on usually is, so a script may read
-// them, and copy from them into the folder; it can change nothing there. The rest of the user's files
-// are not readable, so an approved command that turns out to do more than it said writes only inside
-// the folder and reads only what those two hold. Without
-// sandbox-exec nothing runs at all: an unconfined command is not what the user agreed to.
+// On macOS, sandbox-exec runs a command under a profile that may read and write only inside the
+// app's shell folder, read the user's Desktop and Downloads, read the system and the folders on
+// PATH so a program can be found, and nothing else. On Linux and Windows, where sandbox-exec is not
+// available, the command runs with the app's shell folder as its working directory and a sanitized
+// environment (`commandEnv`).
 
 /** Commands allowed for the rest of a conversation, by `approvalKey`. Never persisted: a restart forgets them. */
 const allowed = new Set<string>()
@@ -71,25 +68,7 @@ export function forgetApprovals(conversation: string): void {
 }
 
 export function shellTools(context?: ToolContext): Tool[] {
-  return getState().proMode.enabled && context ? [buildRunShell()] : []
-}
-
-function buildRunShell(): Tool {
-  const confined = isSandboxed()
-  return {
-    ...runShell,
-    description: runShellDescription(process.platform, confined),
-    parameters: {
-      ...runShell.parameters,
-      properties: {
-        ...(runShell.parameters['properties'] as Record<string, unknown>),
-        command: {
-          type: 'string',
-          description: commandParameterDescription(process.platform, confined),
-        },
-      },
-    },
-  }
+  return getState().proMode.enabled && context ? [runShell] : []
 }
 
 const runShell: Tool = {
