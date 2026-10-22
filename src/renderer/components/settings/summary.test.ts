@@ -47,8 +47,23 @@ function connection(status: ConnectionInfo['status'], id = 'fmp/mcp'): Connectio
   }
 }
 
-test('a plugin row reads its installed version and Ready when nothing is wrong', () => {
+test('a plugin row reads its installed version and Ready when nothing is wrong, or the update waiting for it', () => {
   assert.deepEqual(pluginLine(plugin(), [connection('ready')]), { version: '1.0.0', status: 'Ready', alert: false })
+  const withUpdate = plugin({
+    install: {
+      source: 'Jaspers Hub: jaspers/fmp',
+      updatable: true,
+      version: '1.0.0',
+      installedAt: '2026-09-16T00:00:00.000Z',
+      available: '1.2.0',
+    },
+  })
+  assert.deepEqual(pluginLine(withUpdate, [connection('ready')]), {
+    version: '1.0.0',
+    status: 'Update to 1.2.0',
+    alert: false,
+  })
+  assert.equal(pluginLine(withUpdate, [connection('needs-secret')]).status, 'Needs a key')
 })
 
 test('a folder of the user’s own reads local, having no installed version', () => {

@@ -11,9 +11,14 @@ import { removeHost, startHost } from './plugin-host'
 import type { PluginInfo } from '../../shared/state'
 import { registerConnections, secretValues, unregisterConnections } from './connections'
 import { useUnpackedEsbuild } from './esbuild-path'
-import { pluginRoots } from '../home'
+import { addNotice } from '../app/notices'
+import { homePluginsRoot, pluginRoots } from '../home'
+import { hubItem } from '../hub/hub'
 import { readInstallRecord } from './install-record'
+import { latestReleaseTag } from './install-stage'
 import { setPluginInfo } from './plugin-info'
+import { checkPluginUpdates, type PluginUpdateDeps } from './plugin-updates'
+import { isNewerVersion } from '../../shared/plugins/semver'
 import { registerPlugin, unregisterPlugin, type ViewDef } from './registry'
 import { registerPluginSkills, unregisterPluginSkills } from '../skills/skills'
 import { getState, update } from '../state'
@@ -29,6 +34,8 @@ import { getState, update } from '../state'
 
 /** An editor's save lands as several events; wait for them to stop before rebuilding. */
 const WATCH_DELAY_MS = 200
+const FIRST_UPDATE_CHECK_MS = 10_000
+const UPDATE_CHECK_EVERY_MS = 4 * 60 * 60 * 1000
 
 const watchers: fs.FSWatcher[] = []
 const timers = new Map<string, NodeJS.Timeout>()
@@ -36,13 +43,21 @@ const timers = new Map<string, NodeJS.Timeout>()
 const codeChanged = new Set<string>()
 /** One build at a time per plugin, so two saves in a row cannot register out of order. */
 const queue = new Map<string, Promise<void>>()
+let checkingUpdates: Promise<void> | null = null
+let updatesStarted = false
 
 /** Finds every plugin, builds it, and watches for changes. Once, at startup. */
 export function startPlugins(): void {
   // Before the first build loads esbuild: a packaged app has to be told where its binary is.
   useUnpackedEsbuild()
+  try {
+    fs.mkdirSync(homePluginsRoot(), { recursive: true })
+  } catch {
+    // Read-only or unavailable home: discover and watch whatever exists.
+  }
   for (const [id, dir] of discover()) void load(id, dir)
   watch()
+  startPluginUpdates()
 }
 
 /** Where the built browser bundle for a plugin goes. Stage 4 serves it to the iframe from here. */
@@ -213,12 +228,13 @@ function remove(id: string): void {
 function begin(id: string, dir: string): void {
   update((state) => {
     const previous = state.plugins[id]
+    const nextProvenance = provenance(dir, previous?.install?.available ?? null)
     const info: PluginInfo = previous
-      ? { ...previous, dir, ...provenance(dir), status: 'building' }
+      ? { ...previous, dir, ...nextProvenance, status: 'building' }
       : {
           id,
           dir,
-          ...provenance(dir),
+          ...nextProvenance,
           status: 'building',
           version: 0,
           sources: [],
@@ -238,10 +254,11 @@ function begin(id: string, dir: string): void {
 }
 
 /** Whether a plugin folder was built by the assistant, installed from a source, or is the user's own. */
-function provenance(dir: string): Pick<PluginInfo, 'origin' | 'install' | 'built'> {
+function provenance(dir: string, available: string | null = null): Pick<PluginInfo, 'origin' | 'install' | 'built'> {
   const built = readBuildRecordFile(dir)
   if (built) return { origin: 'built', install: null, built: { purpose: built.purpose, at: built.at } }
   const record = readInstallRecord(dir)
+  const stillAvailable = record && available && isNewerVersion(available, record.version) ? available : null
   return {
     origin: record ? 'installed' : 'local',
     install: record
@@ -250,6 +267,7 @@ function provenance(dir: string): Pick<PluginInfo, 'origin' | 'install' | 'built
           updatable: record.source.kind !== 'file',
           version: record.version,
           installedAt: record.installedAt,
+          ...(stillAvailable ? { available: stillAvailable } : {}),
         }
       : null,
     built: null,
@@ -280,4 +298,46 @@ function messages(err: unknown): string[] {
 
 function ignored(name: string): boolean {
   return name.startsWith('.') || name === 'node_modules'
+}
+
+const updateDeps: PluginUpdateDeps = {
+  installed: () =>
+    Object.values(getState().plugins).flatMap((plugin) => {
+      if (plugin.origin !== 'installed') return []
+      const record = readInstallRecord(plugin.dir)
+      return record ? [{ id: plugin.id, version: record.version, source: record.source }] : []
+    }),
+  hubVersion: async (handle, name) => (await hubItem(handle, name))?.shown?.version ?? null,
+  githubVersion: latestReleaseTag,
+  setAvailable: (id, installedVersion, available) => {
+    update((state) => {
+      const plugin = state.plugins[id]
+      if (!plugin?.install || plugin.install.version !== installedVersion) return state
+      if ((plugin.install.available ?? null) === available) return state
+      return {
+        ...state,
+        plugins: {
+          ...state.plugins,
+          [id]: { ...plugin, install: { ...plugin.install, available } },
+        },
+      }
+    })
+  },
+  notice: (text) => addNotice('plugins', text),
+}
+
+function checkInstalledPluginUpdates(): Promise<void> {
+  if (!checkingUpdates) {
+    checkingUpdates = checkPluginUpdates(updateDeps).finally(() => {
+      checkingUpdates = null
+    })
+  }
+  return checkingUpdates
+}
+
+function startPluginUpdates(): void {
+  if (updatesStarted) return
+  updatesStarted = true
+  setTimeout(() => void checkInstalledPluginUpdates(), FIRST_UPDATE_CHECK_MS)
+  setInterval(() => void checkInstalledPluginUpdates(), UPDATE_CHECK_EVERY_MS)
 }

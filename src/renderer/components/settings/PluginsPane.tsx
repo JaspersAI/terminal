@@ -7,7 +7,7 @@ import { Directory } from './Directory'
 import { HubItems, PublishToHub } from './HubPublish'
 import { StatusLine } from './InstallPrompt'
 import { useInstall, type Install } from './use-install'
-import { BUTTON, FIELD, Row } from './Row'
+import { BUTTON, FIELD, PRIMARY, Row } from './Row'
 import { Entry, ListHeading, PinnedEntry, PlusIcon, Split } from './Split'
 import { pluginLine, shownEntry } from './summary'
 
@@ -242,17 +242,21 @@ interface InstalledProps {
 /** An installed plugin: where it came from, a new version from there, or away with it. */
 function InstalledRow({ plugin, install, installer }: InstalledProps): ReactElement {
   const { busy, start } = installer
+  const available = install.available
   return (
-    <Row label={`Installed ${install.version}`} hint={install.source}>
+    <Row
+      label={available ? `Installed ${install.version} · ${available} available` : `Installed ${install.version}`}
+      hint={install.source}
+    >
       <Removal plugin={plugin} installer={installer}>
         {install.updatable && (
           <button
             type="button"
             disabled={busy}
             onClick={() => start({ kind: 'update', id: plugin.id })}
-            className={BUTTON}
+            className={available ? PRIMARY : BUTTON}
           >
-            Update
+            {available ? `Update to ${available}` : 'Update'}
           </button>
         )}
       </Removal>

@@ -251,11 +251,11 @@ async function archiveUrl(source: Exclude<InstallSource, { kind: 'hub' }>): Prom
 }
 
 /**
- * The latest release's source archive, found without the API: /releases/latest redirects to the
- * page of the tag it is of, and the path of that page names the tag. Null when GitHub does not
- * redirect there, which is what a repo with no release, a private repo, and a block all look like.
+ * The latest release's tag, found without the API: /releases/latest redirects to the page of the
+ * tag it is of, and the path of that page names the tag. Null when GitHub does not redirect there,
+ * which is what a repo with no release, a private repo, and a block all look like.
  */
-async function latestTagArchive(owner: string, repo: string): Promise<string | null> {
+export async function latestReleaseTag(owner: string, repo: string): Promise<string | null> {
   let response: Response
   try {
     // HEAD, so a refused lookup does not also download a release page.
@@ -269,7 +269,12 @@ async function latestTagArchive(owner: string, repo: string): Promise<string | n
   }
   if (!response.ok) return null
   // Redirects are followed, so the tag's page is where the answer came from; undici keeps it in url.
-  const tag = releaseTagOf(response.url, owner, repo)
+  return releaseTagOf(response.url, owner, repo)
+}
+
+/** The latest release's source archive, found without the API over /releases/latest's redirect. */
+async function latestTagArchive(owner: string, repo: string): Promise<string | null> {
+  const tag = await latestReleaseTag(owner, repo)
   return tag ? tagArchiveUrl(owner, repo, tag) : null
 }
 

@@ -13,7 +13,7 @@ import { installDefaults } from './default-install'
 import { readInstallRecord } from './install-record'
 import { commitStaged, discardStaged, stageFile, stageFromHub, stageSource, type Staged } from './install-stage'
 import { readBuildRecordFile } from './build-record'
-import { bundlePath } from './plugins'
+import { bundlePath, rebuildPlugin } from './plugins'
 import { getState, update } from '../state'
 
 // Installing a plugin from outside. Asked: the archive is staged and checked (install-stage.ts), and
@@ -91,6 +91,7 @@ export async function confirmInstall(token: string): Promise<void> {
   clearTimeout(waiting.timer)
   held = null
   await commitStaged(waiting.staged)
+  rebuildPlugin(waiting.staged.manifest.id)
 }
 
 /** Removes the staged plugin and clears its expiry timer only when `token` matches; stale tokens do nothing. */
@@ -115,7 +116,10 @@ export function installDefaultsForSignUp(): Promise<void> {
     installed: (id) => getState().plugins[id] !== undefined || fs.existsSync(path.join(homePluginsRoot(), id)),
     item: hubItem,
     stage: stageFromHub,
-    commit: commitStaged,
+    commit: async (staged) => {
+      await commitStaged(staged)
+      rebuildPlugin(staged.manifest.id)
+    },
     discard: discardStaged,
     notice: (text) => addNotice('plugins', text),
     setInstalling: (id) => update((state) => (state.installing === id ? state : { ...state, installing: id })),
@@ -134,6 +138,7 @@ export async function removeInstalled(id: string): Promise<void> {
       `${id} was neither installed from a source nor built by the assistant, so the app leaves its folder alone.`,
     )
   await shell.trashItem(dir)
+  rebuildPlugin(id)
   console.log(`[install] ${id} removed`)
   update((state) => {
     const secrets = { ...state.secrets }
