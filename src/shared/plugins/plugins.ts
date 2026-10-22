@@ -8,6 +8,7 @@
 import type { BackendContext, Capability, SecretSpec, SourceDef, ViewDefinition } from '@jaspers-ai/sdk/define'
 // The extension is explicit because Node's test runner resolves this import at run time.
 import { checkConnection, secretRefs, type Connection } from './connections.ts'
+import { RESERVED_PLUGIN_NAMES } from './id.ts'
 
 /** A plugin id, a folder name, a source name, a view name: all the same shape. */
 const NAME = /^[a-z0-9][a-z0-9-]*$/
@@ -27,9 +28,6 @@ const CAPABILITIES: Record<Capability, true> = {
 
 /** A secret key, in a shape an environment variable can hold. */
 const SECRET_KEY = /^[A-Z0-9_]+$/i
-
-/** Folders in the Jaspers home that are not a plugin's: a plugin's data folder is named by its id. */
-const RESERVED = new Set(['plugins', 'skills'])
 
 export interface ValidatedPlugin {
   id: string
@@ -133,7 +131,7 @@ function capabilityList(value: unknown, id: string): Capability[] {
     }
     if (!list.includes(name as Capability)) list.push(name as Capability)
   }
-  if (RESERVED.has(id) && list.some((c) => c === 'files' || c === 'sandbox')) {
+  if (RESERVED_PLUGIN_NAMES.has(id) && list.some((c) => c === 'files' || c === 'sandbox')) {
     throw new Error(`Plugin ${id} cannot declare files or sandbox: its data folder would be the Jaspers ${id} folder.`)
   }
   return list
