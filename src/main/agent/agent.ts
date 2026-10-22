@@ -234,7 +234,9 @@ async function loop({
         return text
       }
       history.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw })
-      if (reply.text) {
+      const isHandoff = (name: string): boolean => available.find((tool) => tool.name === name)?.handoff === true
+      const allHandoff = reply.toolCalls.every((call) => isHandoff(call.name))
+      if (reply.text && !allHandoff) {
         log(`assistant: ${reply.text}`)
         // Whoever watches keeps what it said in the run's trail, ahead of the calls it is about.
         emit({ kind: 'said', runId: entry.runId, text: reply.text })
@@ -257,17 +259,21 @@ async function loop({
       keep?.()
       // A round that only handed the request over is the run's end: the work goes on in runs of its
       // own, and what each handoff answered is the reply. A run stopped under its calls is not one.
-      const handed = handoffReply(
-        reply.toolCalls,
-        results,
-        (name) => available.find((tool) => tool.name === name)?.handoff === true,
-      )
+      const handed = joined.length === 0 ? handoffReply(reply.toolCalls, results, isHandoff, reply.text) : null
       if (handed !== null && !signal.aborted) {
-        history.push({ role: 'assistant', text: handed, toolCalls: [], raw: null })
+        const citations = citedBy(handed, history, context.workspaceId)
+        const sources = citations.length > 0 ? { citations } : {}
+        history.push({ role: 'assistant', text: handed, toolCalls: [], raw: null, ...sources })
         log(`final: ${handed} [handed over]`)
-        // The box that asked has nothing more to show: the work answers in its own tile.
-        if (!quiet) emit({ kind: 'handed', runId: entry.runId })
+        if (citations.length > 0 && !quiet) emit({ kind: 'citations', runId: entry.runId, citations })
+        // The box that asked has nothing more to show when the run only handed work over; when it also
+        // answered in words, keep the box up so the user can read them.
+        if (!quiet && !reply.text.trim()) emit({ kind: 'handed', runId: entry.runId })
         return handed
+      }
+      if (reply.text && allHandoff) {
+        log(`assistant: ${reply.text}`)
+        emit({ kind: 'said', runId: entry.runId, text: reply.text })
       }
     }
     throw new Error(`Gave up after ${most} rounds of tool calls.`)

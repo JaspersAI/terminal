@@ -65,6 +65,12 @@ test('a round that only handed the request over answers with what each handoff s
     handoffReply([call('create_loop'), call('update_loop')], [ok('Started @a.'), ok('Sent to @b.')], hands),
     'Started @a.\nSent to @b.',
   )
+  // Words the model wrote alongside a handoff stay above what the handoff answered.
+  assert.equal(
+    handoffReply([call('update_loop')], [ok('Sent to loop_15.')], hands, '  The chart stopped at 500 points. \n'),
+    'The chart stopped at 500 points.\n\nSent to loop_15.',
+  )
+  assert.equal(handoffReply([call('update_loop')], [ok('Sent to loop_15.')], hands, '   '), 'Sent to loop_15.')
   // A handoff that failed is the model's to read and put right.
   assert.equal(handoffReply([call('create_loop')], [failed('Unknown plugin x.')], hands), null)
   assert.equal(
