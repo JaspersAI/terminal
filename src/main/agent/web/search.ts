@@ -76,6 +76,8 @@ function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
 }
 
 async function reason(response: Response): Promise<string> {
-  const text = (await response.text().catch(() => '')).split('\n')[0]?.slice(0, 200) ?? ''
+  const raw = (await response.text().catch(() => '')).trim()
+  if (!raw || raw.startsWith('<')) return '.'
+  const text = raw.split('\n')[0]?.slice(0, 200) ?? ''
   return text ? `: ${text}` : '.'
 }

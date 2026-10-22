@@ -84,3 +84,39 @@ test('a refusal carries its status and how long the provider asked to be left al
     },
   )
 })
+
+test('an HTML error page from a proxy or gateway is replaced with a clean status detail instead of raw markup', async () => {
+  const cloudflare524 =
+    '<!DOCTYPE html>\n<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->\n<head><title>account.jsprai.com | 524: A timeout occurred</title></head>'
+  for (const [status, body, expected] of [
+    [524, cloudflare524, 'Test returned 524: timed out'],
+    [
+      502,
+      '<html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1></body></html>',
+      'Test returned 502: bad gateway',
+    ],
+    [
+      503,
+      '  <!doctype html><html><body>Service Temporarily Unavailable</body></html>',
+      'Test returned 503: unavailable',
+    ],
+    [529, '', 'Test returned 529: overloaded'],
+  ] as const) {
+    await serving(
+      (res) => {
+        res.writeHead(status, { 'content-type': 'text/html' })
+        res.end(body)
+      },
+      async (url) => {
+        for (const refused of [() => post(WIRE, url, {}, '{}'), () => read(url, 1000)]) {
+          await assert.rejects(refused, (err: unknown) => {
+            assert.ok(err instanceof ProviderError)
+            assert.equal(err.message, expected)
+            assert.equal(err.status, status)
+            return true
+          })
+        }
+      },
+    )
+  }
+})

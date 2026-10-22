@@ -132,6 +132,10 @@ test("a refusal is read in the service's own words, whichever shape it wrote the
   assert.equal(refusalMessage(403, 'Forbidden by the proxy'), 'Forbidden by the proxy')
   assert.equal(refusalMessage(403, '{"error":{"message":""}}'), '{"error":{"message":""}}')
   assert.equal(refusalMessage(402, '   '), 'HTTP 402')
+  assert.equal(
+    refusalMessage(524, '<!DOCTYPE html>\n<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->'),
+    'HTTP 524',
+  )
   assert.equal(refusalMessage(403, 'x'.repeat(300)).length, 200)
 })
 
