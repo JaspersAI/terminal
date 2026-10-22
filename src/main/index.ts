@@ -33,7 +33,7 @@ import { knownSecrets } from './agent/utils/settings'
 import { startUploads, stopUploads } from './eye/upload'
 import { startTheme } from './app/theme'
 import { installUpdate, startUpdates } from './app/updates'
-import { startTasks, stopTasks, wakeTasks } from './tasks/tasks'
+import { startTasks, stopTasks, suspendTasks, wakeTasks } from './tasks/tasks'
 import { findTool } from './agent/tools'
 import { registerSchemes, registerViewHost } from './plugins/viewhost'
 import { registerVoiceIpc } from './llm/voice'
@@ -195,7 +195,7 @@ app.whenReady().then(() => {
     useOneScreen: () => oneScreenOrNotice(),
   })
 
-  startBackground({ showWindow: showAll, windowInFront: anyInFront, wakeTasks, installUpdate })
+  startBackground({ showWindow: showAll, windowInFront: anyInFront, suspendTasks, wakeTasks, installUpdate })
   // Eye, if the user has it on: a frame of the app's own windows every minute, and a line of
   // telemetry for what the app did. It records into a folder on this machine, and the uploader
   // sends each piece to Jaspers as soon as it is whole. Started here rather than with a window, so

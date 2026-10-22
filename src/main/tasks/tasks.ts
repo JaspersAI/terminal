@@ -6,9 +6,12 @@ import {
   dueTasks,
   earliestNext,
   isPending,
+  isWakeLag,
   pruneFinished,
   runNotice,
+  STARTUP_GRACE_MS,
   TASKS_MAX,
+  TIMER_MAX_MS,
   type Task,
   type TaskCall,
   type TaskInput,
@@ -29,11 +32,6 @@ import { watch } from '../data/store'
 // task, and again whenever the tasks change; a run marks its task running, so a tick during it cannot
 // start another.
 
-/** Connections and plugin hosts come up in the first seconds; a run missed while the app was closed waits for them. */
-const STARTUP_GRACE_MS = 15_000
-/** A task days out re-arms every minute rather than overflowing a timeout. */
-const TIMER_MAX_MS = 60_000
-
 export interface SchedulerDeps {
   /** Whether the orchestrator has a tool by this name now, for a call to be checked against. */
   toolExists(name: string): boolean
@@ -50,6 +48,7 @@ let deps: SchedulerDeps | null = null
 let timer: NodeJS.Timeout | null = null
 let grace: NodeJS.Timeout | null = null
 let started = false
+let expectedAt: number | null = null
 /** The task and time the timer was last armed for, so the log says so once rather than on every change. */
 let armedFor: string | null = null
 let stopListening: (() => void) | null = null
@@ -60,14 +59,8 @@ function now(): number {
   return deps?.now?.() ?? Date.now()
 }
 
-/** Wires the dependencies and, after the startup grace, arms the timer; from then on every change to the tasks re-arms it. */
-export function startTasks(next: SchedulerDeps): void {
-  deps = next
-  stopListening?.()
-  stopListening = subscribe((after, before) => {
-    if (started && after.tasks !== before.tasks) arm()
-  })
-  if (grace) clearTimeout(grace)
+function startAfterGrace(): void {
+  suspendTasks()
   grace = setTimeout(() => {
     grace = null
     started = true
@@ -75,18 +68,36 @@ export function startTasks(next: SchedulerDeps): void {
   }, STARTUP_GRACE_MS)
 }
 
-/** After sleep: a timer armed before it fires late, so arm again from the clock as it is now. */
-export function wakeTasks(): void {
-  if (started) arm()
+/** Wires the dependencies and, after the startup grace, arms the timer; from then on every change to the tasks re-arms it. */
+export function startTasks(next: SchedulerDeps): void {
+  deps = next
+  stopListening?.()
+  stopListening = subscribe((after, before) => {
+    if (started && after.tasks !== before.tasks) arm()
+  })
+  startAfterGrace()
 }
 
-/** On quit: nothing more is started. A run in flight is lost, and its task runs at the next launch. */
-export function stopTasks(): void {
+/** While the machine sleeps: disarm until wake, so an overdue timer does not fire before the network is back. */
+export function suspendTasks(): void {
   started = false
   if (grace) clearTimeout(grace)
   if (timer) clearTimeout(timer)
   grace = null
   timer = null
+  expectedAt = null
+  armedFor = null
+}
+
+/** After sleep: wait the grace window for connections and the network to settle, then arm from the clock as it is now. */
+export function wakeTasks(): void {
+  if (!deps) return
+  startAfterGrace()
+}
+
+/** On quit: nothing more is started. A run in flight is lost, and its task runs at the next launch. */
+export function stopTasks(): void {
+  suspendTasks()
 }
 
 /** A task by id. With a workspace, only that workspace's: the orchestrator on one cannot reach another's. */
@@ -196,25 +207,35 @@ function replace(task: Task): void {
 function arm(): void {
   if (timer) clearTimeout(timer)
   timer = null
+  expectedAt = null
   const tasks = getState().tasks
   const at = earliestNext(tasks)
   if (at === null) {
     armedFor = null
     return
   }
-  const wait = Math.max(0, at - now())
+  const currentNow = now()
+  const wait = Math.max(0, at - currentNow)
   const soonest = tasks.find((t) => isPending(t) && !t.running && t.nextAt === at)
   const label = `${soonest?.id ?? '?'}@${at}`
   if (label !== armedFor) {
     armedFor = label
     console.log(`[tasks] armed ${soonest?.id ?? '?'} in ${Math.round(wait / 1000)} s`)
   }
-  timer = setTimeout(tick, Math.min(wait, TIMER_MAX_MS))
+  const delay = Math.min(wait, TIMER_MAX_MS)
+  expectedAt = currentNow + delay
+  timer = setTimeout(tick, delay)
 }
 
 function tick(): void {
   timer = null
+  const dueAt = expectedAt
+  expectedAt = null
   if (!started) return
+  if (isWakeLag(dueAt, now())) {
+    wakeTasks()
+    return
+  }
   for (const task of dueTasks(getState().tasks, now())) void execute(task)
   arm()
 }
