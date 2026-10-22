@@ -68,6 +68,7 @@ test('what is wider is named field by field, and nothing is wider than itself', 
     connections: [...approved.connections, 'extra: https://x.test/mcp'],
     packages: ['pdf-lib', 'left-pad'],
     frames: [...approved.frames, 'https://evil.test'],
+    shell: true,
   }
   assert.deepEqual(widened(more, approved), [
     'host api.example.com',
@@ -76,7 +77,9 @@ test('what is wider is named field by field, and nothing is wider than itself', 
     'connection extra: https://x.test/mcp',
     'package left-pad',
     'frame https://evil.test',
+    'shell folder (read-only)',
   ])
+  assert.deepEqual(widened(approved, { ...approved, shell: true }), [])
 })
 
 test('a record is read only when whole', () => {
@@ -87,6 +90,9 @@ test('a record is read only when whole', () => {
     approved: EMPTY_ENVELOPE,
   }
   assert.deepEqual(readBuildRecord(record), record)
+  const withShell = { ...record, approved: { ...EMPTY_ENVELOPE, capabilities: ['files'], shell: true } }
+  assert.deepEqual(readBuildRecord(withShell), withShell)
+  assert.equal(readBuildRecord({ ...record, approved: { ...EMPTY_ENVELOPE, shell: 'yes' } }), null)
   assert.equal(readBuildRecord({ ...record, approved: { hosts: 'x' } }), null)
   assert.equal(readBuildRecord({ purpose: 'x' }), null)
   assert.equal(readBuildRecord(null), null)
@@ -114,6 +120,11 @@ test('an envelope read from tool input is strings only, trimmed, deduplicated, a
     },
   )
   assert.deepEqual(envelopeFromInput({}), { envelope: EMPTY_ENVELOPE, packageSpecs: [] })
+  assert.deepEqual(envelopeFromInput({ shell: true }), {
+    envelope: { ...EMPTY_ENVELOPE, capabilities: ['files'], shell: true },
+    packageSpecs: [],
+  })
+  assert.throws(() => envelopeFromInput({ shell: 'yes' }), /shell is a boolean/)
   assert.throws(() => envelopeFromInput({ hosts: [7] }), /hosts is a list of host names/)
   assert.throws(() => envelopeFromInput({ capabilities: ['network'] }), /capabilities are llm, tools, files/)
   assert.throws(() => envelopeFromInput({ secrets: ['apikey'] }), /secrets is an object/)
@@ -133,5 +144,9 @@ test('an envelope is described a line a field, with none where empty', () => {
       'Packages:      none',
       'Frames:        https://www.tradingview-widget.com',
     ].join('\n'),
+  )
+  assert.match(
+    describeEnvelope({ ...EMPTY_ENVELOPE, capabilities: ['files'], shell: true }),
+    /\nShell folder: {2}read-only \(~\/Jaspers\/shell\)$/,
   )
 })

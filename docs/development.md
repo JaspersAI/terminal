@@ -72,6 +72,8 @@ The Composer keeps controls and animation in `Composer.tsx`. `request.ts` owns r
 
 ## Plugins, connections, and trust
 
+The builder stores shell-folder consent in main-owned `<JASPERS_HOME>/.build-approvals/`, bound to the approved plugin directory. The host never grants shell access from a plugin's `.jaspers-build.json`; old build records alone require fresh shell approval through the builder. Replacing the directory does not inherit consent.
+
 Plugins are folders under `<JASPERS_HOME>/plugins/<id>`, with `plugin.tsx` and a matching definition id. Official plugins live in separate repositories. Saving a plugin rebuilds it; a failed build retains the last good registration. Builds are serialized per plugin. Skill-only edits rescan skills without rebuilding code.
 
 The loader makes a browser bundle and a definitions bundle. The definitions build is neutral with browser main fields, evaluated with a timeout and a small `require` allowlist. Main reads schemas; a utility process runs function sources, `start`, and jobs. A VM and utility process contain faults, not malicious code.

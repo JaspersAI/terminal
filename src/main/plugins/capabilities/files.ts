@@ -6,17 +6,19 @@ import type { FileEntry } from '@jaspers-ai/sdk/define'
 import { canOpen, formatPluginPath, parsePluginPath, type PluginPath } from '../../../shared/plugins/files.ts'
 import { inside, isMissing, realpathLoose } from '../confine.ts'
 
-// The files capability, done in main: a plugin's data folder, read and write, and its own folder,
-// read only. Every path is parsed by the rules in shared/plugins/files.ts and then checked again against the
-// real folder once symlinks are resolved, so a link inside the folder cannot carry a read or a write
-// outside it. Electron's shell is passed in rather than imported, which lets a test run this against
-// a temporary folder.
+// The files capability, done in main: a plugin's data folder, read and write, its own folder,
+// read only, and the shared shell folder, read only when approved. Every path is parsed by the rules in
+// shared/plugins/files.ts and then checked again against the real folder once symlinks are resolved, so
+// a link inside the folder cannot carry a read or a write outside it. Electron's shell is passed in
+// rather than imported, which lets a test run this against a temporary folder.
 
 export interface FilesDeps {
   /** <JASPERS_HOME>/<plugin id>. Created by the first write. */
   dataRoot: string
   /** The plugin's own folder. */
   pluginRoot: string
+  /** <JASPERS_HOME>/shell when the plugin is approved to read the shared shell folder. */
+  shellRoot?: string | null
   /** shell.openPath: resolves with an error message, empty on success. */
   openPath(file: string): Promise<string>
   showItemInFolder(file: string): void
@@ -39,6 +41,7 @@ const READ_MAX = 20 * 1024 * 1024
 /** A save lands as several events; wait for them to stop before saying what changed. */
 const WATCH_DELAY_MS = 200
 
+/** Creates file operations confined to data, plugin, and approved shell roots, with writes limited to data. */
 export function createFiles(deps: FilesDeps): FilesService {
   const watches = new Set<() => void>()
   let closed = false
@@ -49,7 +52,12 @@ export function createFiles(deps: FilesDeps): FilesService {
     const name = formatPluginPath(parsed)
     if (parsed.root === 'plugin' && access === 'write')
       throw new Error(`${name} is in the plugin's own folder, which is read only.`)
-    const root = parsed.root === 'plugin' ? deps.pluginRoot : deps.dataRoot
+    if (parsed.root === 'shell') {
+      if (access === 'write') throw new Error(`${name} is in the shared shell folder, which is read only.`)
+      if (!deps.shellRoot)
+        throw new Error(`${name} is in the shared shell folder, which this plugin was not approved to read.`)
+    }
+    const root = parsed.root === 'plugin' ? deps.pluginRoot : parsed.root === 'shell' ? deps.shellRoot! : deps.dataRoot
     const file = path.join(root, ...parsed.segments)
     if (!inside(await realpathLoose(root), await realpathLoose(file))) {
       throw new Error(`Paths stay inside the plugin's folder; ${name} leads out of it.`)
@@ -124,10 +132,13 @@ export function createFiles(deps: FilesDeps): FilesService {
       return entries
     },
 
+    /** Removes a data path recursively, unlinking a symbolic link itself rather than its target. */
     async remove(raw) {
       const parsed = parsePluginPath(raw)
       if (parsed.root === 'plugin')
         throw new Error(`${formatPluginPath(parsed)} is in the plugin's own folder, which is read only.`)
+      if (parsed.root === 'shell')
+        throw new Error(`${formatPluginPath(parsed)} is in the shared shell folder, which is read only.`)
       if (parsed.segments.length === 0) throw new Error('remove needs a path inside the folder, not the folder itself.')
       // A link is removed as itself, wherever it points; only the folder holding it has to be inside.
       const file = path.join(deps.dataRoot, ...parsed.segments)
