@@ -231,3 +231,5 @@ Contributor commands and architectural rules are in [CLAUDE.md](CLAUDE.md); agen
 | **Jaspers Terminal** | Root repository | [Business Source License 1.1](LICENSE) | Free to use for personal or internal business use; forbids offering the Terminal or a fork as a hosted or managed product or service. Each version converts to **MIT** four years after release. |
 | **`@jaspers-ai/sdk`** | [`packages/sdk/`](packages/sdk/README.md) | [MIT](packages/sdk/LICENSE) | MIT license; plugins built with the SDK may use any license. |
 | **Plugin templates** | [`docs/templates/`](docs/templates/README.md) | [MIT](packages/sdk/LICENSE) | Starter templates that can be copied, modified, and published under any license. |
+
+Use of the distributed app and Jaspers services is subject to the [Terms of Use](https://jsprai.com/terms).

@@ -1,4 +1,5 @@
 import { useState, type ReactElement } from 'react'
+import { TERMS_URL } from '../../../shared/app/jaspers'
 import type { UpdateInfo } from '../../../shared/app/updates'
 import type { Action } from '../../../shared/state'
 import { errorMessage } from '../../lib/errors'
@@ -26,6 +27,17 @@ export function AboutPane(): ReactElement {
       </h3>
       <p className="mt-1 text-sm text-muted-foreground">
         Jaspers Terminal {updates.version}. Electron {electron}, Chrome {chrome}, Node {node}.
+      </p>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Use of the app and of Jaspers services is subject to the{' '}
+        <button
+          type="button"
+          onClick={() => void window.app.openExternal(TERMS_URL)}
+          className="underline hover:text-foreground"
+        >
+          Terms of Use ↗
+        </button>
+        .
       </p>
       {/* One line, not a Row: a Row keeps a wide column for a text field, and this is two buttons. */}
       <div className="mt-5 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-y border-border py-3">

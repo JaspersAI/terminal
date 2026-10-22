@@ -1,4 +1,5 @@
 import { app, Menu, shell, type MenuItemConstructorOptions } from 'electron'
+import { TERMS_URL } from '../../shared/app/jaspers'
 
 // The menu bar. Without one of its own the app gets Electron's: on macOS an app menu with no
 // Settings, where a Mac user looks for it with ⌘,; on Windows a File menu holding Exit alone, a View
@@ -70,6 +71,7 @@ export function installMenu(deps: MenuDeps): void {
             label: 'Jaspers Terminal on GitHub',
             click: () => void shell.openExternal('https://github.com/JaspersAI/terminal'),
           },
+          { label: 'Terms of Use', click: () => void shell.openExternal(TERMS_URL) },
         ],
       },
     ]),

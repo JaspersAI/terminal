@@ -6,6 +6,8 @@
 
 /** Where Account is, unless `JASPERS_ACCOUNT_URL` says otherwise. */
 export const JASPERS_ACCOUNT = 'https://account.jsprai.com'
+/** The Terms of Use, which using the app and every Jaspers service is subject to: linked wherever the app says so. */
+export const TERMS_URL = 'https://jsprai.com/terms'
 /** The one scope Account grants. */
 export const JASPERS_SCOPE = 'mcp'
 /** A token this close to running out is renewed before it is used, so a request never goes out on one about to be refused. */

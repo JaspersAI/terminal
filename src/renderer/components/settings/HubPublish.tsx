@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useState, type ReactElement } from 'react'
+import { TERMS_URL } from '../../../shared/app/jaspers'
 import { HANDLE_RULE, isHandle, type HubMe } from '../../../shared/hub/hub'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
@@ -71,6 +72,17 @@ export function PublishToHub({ kind, id }: { kind: 'plugin' | 'skill'; id: strin
           {signedIn ? 'Publish to Hub' : busy ? 'Waiting for the browser…' : 'Sign in with Jaspers'}
         </button>
       </div>
+      <p className="w-full text-right text-xs text-muted-foreground">
+        By publishing you agree to the{' '}
+        <button
+          type="button"
+          onClick={() => void window.app.openExternal(TERMS_URL)}
+          className="underline hover:text-foreground"
+        >
+          Terms of Use ↗
+        </button>
+        .
+      </p>
       {asking && <ClaimHandle onClaimed={send} onCancel={() => setAsking(false)} />}
       {line && (
         <p className={`w-full text-xs break-words ${line.error ? 'text-destructive' : 'text-muted-foreground'}`}>
