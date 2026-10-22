@@ -238,7 +238,7 @@ test('the Windows installer is configured with the full Terms of Use from jsprai
   assert.notEqual(nsis['oneClick'], 'false')
 
   const license = fs.readFileSync(new URL('../../../build/license.txt', import.meta.url), 'utf8')
-  assert.match(license, /^Terms of Use\n\nEffective October 7, 2026\./)
+  assert.match(license, /^\uFEFFTerms of Use\n\nEffective October 7, 2026\./)
   for (let section = 1; section <= 16; section++) {
     assert.match(license, new RegExp(`^${section}\\. `, 'm'), `missing Section ${section}`)
   }
