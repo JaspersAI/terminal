@@ -261,3 +261,87 @@ test('what will be sent is read first, without sending, and sent on its own afte
     NoHandleError,
   )
 })
+
+test('publishing an update to an item already on Hub raises its version past what Hub has and writes it before packing', async () => {
+  const dir = folder(PLUGIN)
+  const existing = {
+    handle: 'acme',
+    items: [
+      {
+        handle: 'acme',
+        name: 'demo',
+        kind: 'plugin' as const,
+        listed: '1.0.0',
+        versions: [
+          { version: '1.2.0', state: 'pending', note: null, analysis: 'done', createdAt: '2026-10-06T00:00:00.000Z' },
+          { version: '1.0.0', state: 'approved', note: null, analysis: 'done', createdAt: '2026-10-05T00:00:00.000Z' },
+        ],
+      },
+    ],
+  }
+  const given = deps(
+    { origin: 'built', dir },
+    {
+      me: async () => existing,
+      publishArchive: async (body) => {
+        given.sent.push(body)
+        return { ...PUBLISHED, version: '1.2.1' }
+      },
+    },
+  )
+  // Preparing computes the next version without mutating package.json if the user cancels.
+  const prepared = await preparePublish({ kind: 'plugin', id: 'demo' }, given)
+  assert.equal(prepared.version, '1.2.1')
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version, '1.0.0')
+
+  // Sending writes the bumped version to package.json and packs it into the archive.
+  const result = await sendPublish(prepared, given)
+  assert.equal(result.version, '1.2.1')
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version, '1.2.1')
+  const unpackDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jaspers-unpacked-'))
+  roots.push(unpackDir)
+  const archiveFile = path.join(unpackDir, 'archive.tar.gz')
+  fs.writeFileSync(archiveFile, given.sent[0]!)
+  await tar.x({ file: archiveFile, cwd: unpackDir })
+  assert.equal(JSON.parse(fs.readFileSync(path.join(unpackDir, 'demo', 'package.json'), 'utf8')).version, '1.2.1')
+
+  // A version the author already raised above Hub's highest stays as written.
+  const raisedDir = folder({ ...PLUGIN, 'package.json': JSON.stringify({ name: 'demo', version: '2.0.0' }) })
+  const raisedPrepared = await preparePublish(
+    { kind: 'plugin', id: 'demo' },
+    deps({ origin: 'local', dir: raisedDir }, { me: async () => existing }),
+  )
+  assert.equal(raisedPrepared.version, '2.0.0')
+
+  // Updating an existing skill on Hub bumps metadata.version in SKILL.md the same way.
+  const skillDir = folder(SKILL)
+  const skillGiven = deps(
+    { origin: 'local', dir: skillDir },
+    {
+      me: async () => ({
+        handle: 'acme',
+        items: [
+          {
+            handle: 'acme',
+            name: 'brief',
+            kind: 'skill',
+            listed: '1.0.0',
+            versions: [
+              {
+                version: '1.0.0',
+                state: 'approved',
+                note: null,
+                analysis: 'done',
+                createdAt: '2026-10-05T00:00:00.000Z',
+              },
+            ],
+          },
+        ],
+      }),
+    },
+  )
+  const skillPrepared = await preparePublish({ kind: 'skill', id: 'brief' }, skillGiven)
+  assert.equal(skillPrepared.version, '1.0.1')
+  await sendPublish(skillPrepared, skillGiven)
+  assert.match(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8'), /version:\s*1\.0\.1/)
+})

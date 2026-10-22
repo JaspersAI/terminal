@@ -211,6 +211,13 @@ test('writing package.json over one with pre-installed dependencies preserves de
       type: 'module',
       dependencies: { 'left-pad': '^1.3.0', 'pdf-lib': '^1.17.1' },
     })
+    // A higher version already in package.json (from an earlier Hub publish) is preserved when the builder writes 1.0.0.
+    await fsp.writeFile(
+      path.join(folder.dir, 'package.json'),
+      `${JSON.stringify({ name: 'rates', version: '1.2.1', private: true, type: 'module' }, null, 2)}\n`,
+    )
+    await writeBuildFile(folder, 'package.json', '{"name":"rates","version":"1.0.0","private":true,"type":"module"}')
+    assert.equal(JSON.parse(await readBuildFile(folder, 'package.json')).version, '1.2.1')
   } finally {
     await fsp.rm(dir, { recursive: true, force: true })
   }
