@@ -23,15 +23,41 @@ const SAVED: ProviderSetting = {
 const OLLAMA = findProvider('llm', 'ollama')!
 const ANTHROPIC = findProvider('llm', 'anthropic')!
 
-test('a form shows what is saved for the saved provider, and the defaults for any other', () => {
+test('a form shows what is saved for the saved provider, and the defaults for any other, while Jaspers always keeps its own defaults', () => {
   assert.deepEqual(providerFields(SAVED, OLLAMA), { baseUrl: 'http://gpu-box:11434/v1', model: 'qwen3' })
   assert.deepEqual(providerFields(SAVED, ANTHROPIC), { baseUrl: 'https://api.anthropic.com', model: 'claude-opus-5' })
   assert.deepEqual(providerFields(null, OLLAMA), { baseUrl: 'http://localhost:11434/v1', model: 'llama3.2' })
+  const jaspers = findProvider('llm', 'jaspers')!
+  const staleJaspers: ProviderSetting = {
+    providerId: 'jaspers',
+    baseUrl: 'http://127.0.0.1:3350/v1',
+    model: 'anthropic/claude-opus-5.5',
+    hasToken: false,
+  }
+  assert.deepEqual(providerFields(staleJaspers, jaspers), {
+    baseUrl: 'https://account.jsprai.com/v1',
+    model: 'gemini-3.8-flash',
+  })
 })
 
-test('a form holds no change while it reads as what main would store', () => {
+test('a form holds no change while it reads as what main would store, or when Jaspers is already saved', () => {
   const same = { providerId: 'ollama', baseUrl: ' http://gpu-box:11434/v1/ ', model: 'qwen3 ', token: '  ' }
   assert.equal(providerChanged(SAVED, same), false)
+  const savedJaspers: ProviderSetting = {
+    providerId: 'jaspers',
+    baseUrl: 'https://account.jsprai.com/v1',
+    model: 'gemini-3.8-flash',
+    hasToken: false,
+  }
+  assert.equal(
+    providerChanged(savedJaspers, {
+      providerId: 'jaspers',
+      baseUrl: 'https://account.jsprai.com/v1',
+      model: 'openai/gpt-5.4',
+      token: '',
+    }),
+    false,
+  )
 })
 
 test('another provider, base URL, or model is a change, and so is a key to store', () => {
@@ -72,16 +98,16 @@ const JASPERS_LLM = {
   token: 'sealed-key',
 }
 
-test('a Jaspers key saved as the language model sets voice up with it', () => {
+test('a Jaspers key saved as the language model sets voice up with it on the Jaspers voice model', () => {
   assert.deepEqual(voiceWith(JASPERS_LLM, null), {
     providerId: 'jaspers',
     baseUrl: 'https://account.jsprai.com/v1',
     model: 'openai/gpt-4o-mini-transcribe',
     token: 'sealed-key',
   })
-  // Voice already on Jaspers keeps its model, and takes the new key and address.
+  // Voice on Jaspers always uses Jaspers' own voice model.
   const before = { providerId: 'jaspers', baseUrl: 'http://127.0.0.1:3350/v1', model: 'openai/whisper-1', token: 'old' }
-  assert.deepEqual(voiceWith(JASPERS_LLM, before), { ...JASPERS_LLM, model: 'openai/whisper-1' })
+  assert.deepEqual(voiceWith(JASPERS_LLM, before), { ...JASPERS_LLM, model: 'openai/gpt-4o-mini-transcribe' })
 })
 
 test('voice on another provider stays, and any other language model leaves voice alone', () => {
@@ -98,12 +124,15 @@ test('voice on another provider stays, and any other language model leaves voice
   assert.equal(voiceWith(anthropic, jaspersVoice), jaspersVoice)
 })
 
-test('Jaspers is one address for both kinds, takes no key, and needs the sign-in', () => {
+test('Jaspers is one address for every kind, takes no key or user-selected model, and needs the sign-in', () => {
   assert.equal(findProvider('llm', 'jaspers')!.model, 'gemini-3.8-flash')
   assert.equal(findProvider('llm', 'jaspers')!.baseUrl, findProvider('voice', 'jaspers')!.baseUrl)
   assert.equal(signsIn(findProvider('llm', 'jaspers')!), true)
   assert.equal(signsIn(ANTHROPIC), false)
-  const input = { providerId: 'jaspers', baseUrl: 'https://account.jsprai.com/v1', model: 'openai/gpt-5.4', token: '' }
+  assert.equal(takesModel('llm', findProvider('llm', 'jaspers')!), false)
+  assert.equal(takesModel('voice', findProvider('voice', 'jaspers')!), false)
+  assert.equal(takesModel('search', findProvider('search', 'jaspers')!), false)
+  const input = { providerId: 'jaspers', baseUrl: 'https://account.jsprai.com/v1', model: '', token: '' }
   assert.equal(validateProviderInput('llm', input), 'Sign in with Jaspers to use Jaspers.')
   // A key pasted anyway is not what Jaspers takes: the sign-in is, and nothing else makes it valid.
   assert.equal(validateProviderInput('llm', { ...input, token: 'eyJ…' }), 'Sign in with Jaspers to use Jaspers.')

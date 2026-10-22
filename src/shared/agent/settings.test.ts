@@ -50,6 +50,21 @@ test('a provider switch keeps what is set on the same provider, takes the defaul
   })
   const other = settingChange({ setting: 'provider', kind: 'llm', provider: 'openai' }, NOW).action
   assert.ok(other.type === 'provider.set' && other.input.providerId === 'openai' && other.input.baseUrl !== '')
+  const jaspers = settingChange({ setting: 'provider', kind: 'llm', provider: 'jaspers', model: 'openai/gpt-5.4' }, NOW)
+  assert.deepEqual(jaspers, {
+    action: {
+      type: 'provider.set',
+      kind: 'llm',
+      input: {
+        providerId: 'jaspers',
+        baseUrl: 'https://account.jsprai.com/v1',
+        model: 'gemini-3.8-flash',
+        token: '',
+      },
+    },
+    confirm: 'Switch the language model to Jaspers? The conversation goes on with it from the next request.',
+    done: 'The language model is now Jaspers. The conversation goes on with it from the next request.',
+  })
   assert.throws(
     () => settingChange({ setting: 'provider', kind: 'llm', provider: 'nope' }, NOW),
     /No language model provider nope/,

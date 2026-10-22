@@ -50,6 +50,15 @@ test('a request reaches the provider with its model, a capped token limit, the s
     { model: 'claude-opus-5', maxTokens: 32_000, signal: true, timeoutMs: 600_000 },
   )
   assert.deepEqual(usage, [[30, 7]])
+
+  const jaspersConfig = {
+    provider: { id: 'jaspers', name: 'Jaspers' },
+    baseUrl: 'https://account.jsprai.com/v1',
+    model: 'gemini-3.8-flash',
+    token: null,
+  } as unknown as NonNullable<ReturnType<LlmDeps['config']>>
+  await createLlm({ ...d, config: () => jaspersConfig }).complete(request, signal)
+  assert.equal(seen!.model, undefined)
 })
 
 test('a rate limit or server error is tried once more after two seconds; a refusal is not', async () => {

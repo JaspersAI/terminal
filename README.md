@@ -150,7 +150,7 @@ npm run dev
 
 ### Option B: Jaspers One or Cloud Providers
 
-- **Sign in with Jaspers (Jaspers One):** Browser sign-in configures the language model (`anthropic/claude-opus-5.5`), voice transcription (`openai/gpt-4o-mini-transcribe`), and web search, and installs the **Jaspers Screener** (`jaspers/screener-mcp`) and **Jaspers Research** (`jaspers/research`) plugins from [Jaspers Hub](https://hub.jsprai.com).
+- **Sign in with Jaspers (Jaspers One):** Browser sign-in configures the language model (Google Gemini on Vertex AI: `gemini-3.8-flash` and `gemini-4-argon`), voice transcription (`openai/gpt-4o-mini-transcribe`), and web search, and installs the **Jaspers Screener** (`jaspers/screener-mcp`) and **Jaspers Research** (`jaspers/research`) plugins from [Jaspers Hub](https://hub.jsprai.com).
 - **Direct cloud keys:** Choose **Anthropic** (`claude-opus-5`), **Amazon Bedrock** (`https://bedrock-mantle.<region>.api.aws/anthropic`, default `anthropic.claude-opus-4-8`), **OpenAI** (`gpt-5.4`), **Google** (`gemini-3.8-flash`), or **xAI** (`grok-4.6`), plus optional voice (**ElevenLabs**, **OpenAI**, **Deepgram**, **Cartesia**, or **Custom**) and web search (**Brave Search** or **Amazon Bedrock**).
 
 See [Getting started](docs/getting-started.md) for local model configuration, workspace model switching, per-task model pinning, multi-monitor setup, and [packaging](docs/getting-started.md#packaging).

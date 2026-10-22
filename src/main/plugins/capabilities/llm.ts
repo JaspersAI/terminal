@@ -1,5 +1,6 @@
 import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../../shared/llm/llm.ts'
 import { createLimiter, isRetryable } from '../../../shared/llm/limits.ts'
+import { signsIn } from '../../../shared/llm/providers.ts'
 import type { ProviderConfig } from '../../secrets'
 
 // The llm capability: a plugin's model calls, made by main with the configured provider, so the
@@ -37,7 +38,7 @@ export function createLlm(deps: LlmDeps): { complete(raw: unknown, signal: Abort
         const config = deps.config()
         if (!config) throw new Error('No language model is configured.')
         const options: CompleteOptions = {
-          model: request.model,
+          model: signsIn(config.provider) ? undefined : request.model,
           maxTokens: request.maxTokens === undefined ? undefined : Math.min(request.maxTokens, TOKENS_MAX),
           signal,
           timeoutMs: TIMEOUT_MS,

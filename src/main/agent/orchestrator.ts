@@ -3,6 +3,7 @@ import { taskNote } from '../../shared/agent/transcript'
 import { WELCOME_PREFACE } from '../../shared/agent/welcome'
 import { EXCHANGES_MAX } from '../../shared/data/store'
 import { addressed, LOOP_ID, loopName } from '../../shared/loops/loops'
+import { signsIn } from '../../shared/llm/providers'
 import type { Turn } from '../../shared/llm/llm'
 import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { withoutSecretPrompts } from '../actions'
@@ -102,8 +103,9 @@ export interface TaskRequest {
 export function runTask(task: TaskRequest): Promise<string> {
   return inBackground(() => {
     // The provider stays the app's, since its key and base URL are what main holds; only the model
-    // changes, so a watch can run on a cheap one.
-    const config = task.model ? { ...configured(), model: task.model } : configured()
+    // changes, so a watch can run on a cheap one, unless the provider is Jaspers, which picks its own.
+    const base = configured()
+    const config = task.model && !signsIn(base.provider) ? { ...base, model: task.model } : base
     // A /name in the instructions is the skill's own text by the time a model reads it, in this run
     // and in work this run hands on.
     const said = expandSlash(task.instructions) ?? task.instructions

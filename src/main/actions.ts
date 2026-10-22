@@ -588,10 +588,12 @@ function setBudget(raw: Record<string, unknown>): void {
 }
 
 export function setProvider(kind: ProviderKind, raw: ProviderInput): void {
+  const provider = findProvider(kind, raw.providerId)
+  const viaJaspers = provider !== undefined && signsIn(provider)
   const input = {
     providerId: raw.providerId,
-    baseUrl: normalizeBaseUrl(raw.baseUrl),
-    model: raw.model.trim(),
+    baseUrl: viaJaspers ? provider.baseUrl : normalizeBaseUrl(raw.baseUrl),
+    model: viaJaspers ? provider.model : raw.model.trim(),
     token: raw.token.trim(),
   }
   const previous = getState()[kind]
@@ -599,7 +601,7 @@ export function setProvider(kind: ProviderKind, raw: ProviderInput): void {
   const error = validateProviderInput(kind, input, { savedToken: kept !== null, signedIn: signedIn() })
   if (error) throw new Error(error)
   // The Jaspers provider's credential is the sign-in: no key is kept for it, pasted or saved.
-  const token = signsIn(findProvider(kind, input.providerId)!) ? null : input.token ? seal(input.token) : kept
+  const token = viaJaspers ? null : input.token ? seal(input.token) : kept
   const stored = { providerId: input.providerId, baseUrl: input.baseUrl, model: input.model, token }
   update((state) =>
     kind === 'llm'
