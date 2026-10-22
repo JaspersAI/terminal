@@ -26,8 +26,8 @@ import {
   RESULT_MAX,
   runNotice,
   shortLocal,
-  STARTUP_GRACE_MS,
   taskStatus,
+  WAKE_GRACE_MS,
   type Task,
 } from './tasks.ts'
 
@@ -177,10 +177,11 @@ test('a refresh_element task waits while another task on its workspace is due or
 })
 
 test('isWakeLag detects a timer firing after an OS sleep or event-loop lag spike', () => {
+  assert.equal(WAKE_GRACE_MS, 5 * S)
   assert.equal(isWakeLag(null, T0), false)
   assert.equal(isWakeLag(T0, T0 + 50), false)
-  assert.equal(isWakeLag(T0, T0 + STARTUP_GRACE_MS - 1), false)
-  assert.equal(isWakeLag(T0, T0 + STARTUP_GRACE_MS), true)
+  assert.equal(isWakeLag(T0, T0 + WAKE_GRACE_MS - 1), false)
+  assert.equal(isWakeLag(T0, T0 + WAKE_GRACE_MS), true)
   assert.equal(isWakeLag(T0, T0 + 550 * S), true)
 })
 

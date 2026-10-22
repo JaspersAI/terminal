@@ -12,6 +12,7 @@ import {
   STARTUP_GRACE_MS,
   TASKS_MAX,
   TIMER_MAX_MS,
+  WAKE_GRACE_MS,
   type Task,
   type TaskCall,
   type TaskInput,
@@ -59,13 +60,13 @@ function now(): number {
   return deps?.now?.() ?? Date.now()
 }
 
-function startAfterGrace(): void {
+function startAfterGrace(ms: number): void {
   suspendTasks()
   grace = setTimeout(() => {
     grace = null
     started = true
     arm()
-  }, STARTUP_GRACE_MS)
+  }, ms)
 }
 
 /** Wires the dependencies and, after the startup grace, arms the timer; from then on every change to the tasks re-arms it. */
@@ -75,7 +76,7 @@ export function startTasks(next: SchedulerDeps): void {
   stopListening = subscribe((after, before) => {
     if (started && after.tasks !== before.tasks) arm()
   })
-  startAfterGrace()
+  startAfterGrace(STARTUP_GRACE_MS)
 }
 
 /** While the machine sleeps: disarm until wake, so an overdue timer does not fire before the network is back. */
@@ -92,7 +93,7 @@ export function suspendTasks(): void {
 /** After sleep: wait the grace window for connections and the network to settle, then arm from the clock as it is now. */
 export function wakeTasks(): void {
   if (!deps) return
-  startAfterGrace()
+  startAfterGrace(WAKE_GRACE_MS)
 }
 
 /** On quit: nothing more is started. A run in flight is lost, and its task runs at the next launch. */

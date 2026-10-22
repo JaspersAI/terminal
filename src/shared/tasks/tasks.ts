@@ -9,8 +9,10 @@ import { checkRule, nextByRule, ruleText, type ClockRule } from './clock-rule.ts
 export type { ClockRule } from './clock-rule.ts'
 
 export const TASK_INSTRUCTIONS_MAX = 1000
-/** Connections and plugin hosts come up in the first seconds; a run missed while the app was closed or asleep waits for them. */
+/** Connections and plugin hosts come up in the first seconds; a run missed while the app was closed waits for them. */
 export const STARTUP_GRACE_MS = 15_000
+/** After sleep the network takes a few seconds to come back; overdue tasks wait this long on wake. */
+export const WAKE_GRACE_MS = 5_000
 /** A task days out re-arms every minute rather than overflowing a timeout. */
 export const TIMER_MAX_MS = 60_000
 /** A model name, which is whatever the provider calls one. */
@@ -199,7 +201,7 @@ export function isDue(task: Task, now: number): boolean {
 
 /** Whether a timer fired late enough past its deadline that the machine slept before resume arrived. */
 export function isWakeLag(expectedAt: number | null, now: number): boolean {
-  return expectedAt !== null && now - expectedAt >= STARTUP_GRACE_MS
+  return expectedAt !== null && now - expectedAt >= WAKE_GRACE_MS
 }
 
 function isRefreshCall(task: Pick<Task, 'call'>): boolean {
