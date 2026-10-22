@@ -127,7 +127,14 @@ export interface PluginInfo {
   /** A folder of the user's own, one installed from a source, or one the assistant built. */
   origin: 'local' | 'installed' | 'built'
   /** An installed plugin's record. `version` is the package's; the build count above is not. */
-  install: { source: string; updatable: boolean; version: string; installedAt: string } | null
+  install: {
+    source: string
+    updatable: boolean
+    version: string
+    installedAt: string
+    /** A newer version found at its source, while it waits to be installed. */
+    available?: string | null
+  } | null
   /** A built plugin's record: what it is for, and when the user approved it. */
   built: { purpose: string; at: string } | null
 }

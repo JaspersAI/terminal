@@ -13,7 +13,7 @@ The app downloads and unpacks the archive, refusing anything that could land out
 
 **A plugin runs code on your computer with your permissions.** Jaspers runs a plugin's code in its own process to contain crashes, not to stop harmful code. Install only plugins from people you trust.
 
-Once installed, the plugin lands in `~/Jaspers/plugins/<id>` and loads like any other. Pick it in Settings > Plugins to see where it came from, with **Update** (from Hub, a repo, or a link; every new version asks again) and **Remove** (the folder goes to the Trash and its keys are deleted; its own files in `~/Jaspers/<id>` stay). The app never overwrites or removes a folder you put in `~/Jaspers/plugins` yourself.
+Once installed, the plugin lands in `~/Jaspers/plugins/<id>` and loads like any other. The app checks installed plugins for newer versions on Jaspers Hub and GitHub and alerts you when an update is available. Pick it in Settings > Plugins to see where it came from, with **Update** (from Hub, a repo, or a link; every new version asks again) and **Remove** (the folder goes to the Trash and its keys are deleted; its own files in `~/Jaspers/<id>` stay). The app never overwrites or removes a folder you put in `~/Jaspers/plugins` yourself.
 
 You can also ask the assistant: "install github.com/owner/repo", or "install jaspers/screener-mcp" for one Jaspers Hub lists. It goes through the same download and checks, then asks you in the conversation, with the plugin's name, version, where it came from, and the archive's SHA-256. Nothing of it runs until you press **Install**; **Cancel**, closing the question, or stopping the run means no. A scheduled task's run cannot install anything.
 

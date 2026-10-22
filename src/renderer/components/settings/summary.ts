@@ -26,6 +26,7 @@ export function pluginLine(
   if (has('connecting')) return say('Connecting', false)
   const jobs = plugin.jobs.length
   if (jobs > 0) return say(`${jobs} ${jobs === 1 ? 'job' : 'jobs'} running`, false)
+  if (plugin.install?.available) return say(`Update to ${plugin.install.available}`, false)
   return say('Ready', false)
 }
 

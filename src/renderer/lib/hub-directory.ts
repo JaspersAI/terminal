@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { HubItem } from '../../shared/hub/hub'
 import { describeSource } from '../../shared/plugins/install.ts'
+import { isNewerVersion } from '../../shared/plugins/semver.ts'
 import type { AppState } from '../../shared/state'
 import { errorMessage } from './errors.ts'
 
@@ -43,7 +44,9 @@ export function standing(item: HubItem, plugins: AppState['plugins']): Standing 
   const plugin = plugins[item.name]
   if (!plugin) return 'available'
   const fromHere = plugin.install?.source === describeSource({ kind: 'hub', handle: item.handle, name: item.name })
-  return fromHere && plugin.install?.version !== item.version ? 'update' : 'installed'
+  return fromHere && plugin.install !== null && isNewerVersion(item.version, plugin.install.version)
+    ? 'update'
+    : 'installed'
 }
 
 /** Everything else: the pages without the featured plugins, which are shown above them. */

@@ -48,12 +48,13 @@ function plugin(id: string, install: PluginInfo['install']): PluginInfo {
 
 const installedAt = '2026-10-05T00:00:00.000Z'
 
-test('a plugin installed from this item on Hub, at another version, can be updated', () => {
+test('a plugin installed from this item on Hub, at a newer version, can be updated', () => {
   const plugins = {
     sec: plugin('sec', { source: 'Jaspers Hub: jaspers/sec', updatable: true, version: '1.0.0', installedAt }),
   }
   assert.equal(standing(item('sec'), plugins), 'update')
   assert.equal(standing(item('sec', { version: '1.0.0' }), plugins), 'installed')
+  assert.equal(standing(item('sec', { version: '0.9.0' }), plugins), 'installed')
 })
 
 test('a plugin of the same id from anywhere else is installed, and Hub does not update it', () => {
