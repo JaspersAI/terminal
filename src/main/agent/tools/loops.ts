@@ -33,7 +33,7 @@ const readLoop: Tool = {
   name: 'read_loop',
   readsOnly: true,
   description:
-    'Reads one piece of work on this workspace: what it is for, whether it is working, asking, or idle, its tile with what each view in it shows, and its last exchanges with what each run did. The way to answer what a piece of work is doing or has found.',
+    'Reads one piece of work on this workspace: what it is for, whether it is working, asking, or idle, its tile with what each view in it shows, and its last exchanges with what each run did and why any failed. Use it, together with get (for panel state, output, text, and plugin or connection errors) and query (for source runs and errors in the store), to observe, analyze, and answer in words what a piece of work is doing, what its views show, or why it failed, without sending the question to the loop.',
   parameters: {
     type: 'object',
     properties: {
