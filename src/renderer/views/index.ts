@@ -1,8 +1,10 @@
 import type { ComponentType } from 'react'
 import type { PanelRef } from '@jaspers-ai/sdk'
+import { BROWSER_VIEW } from '../../shared/grid/browser'
 import { CHAT_VIEW } from '../../shared/grid/grid'
 import { APP_VIEW } from '../../shared/plugins/apps'
 import { App } from './App'
+import { Browser } from './Browser'
 import { Chart } from './Chart'
 import { Chat } from './Chat'
 import { Inbox } from './Inbox'
@@ -29,4 +31,5 @@ export const BUILT_IN_VIEWS: Record<string, ComponentType<ViewProps>> = {
   'core/tasks': Tasks,
   'core/inbox': Inbox,
   [APP_VIEW]: App,
+  [BROWSER_VIEW]: Browser,
 }

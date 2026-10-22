@@ -45,7 +45,7 @@ A pushed tag `v<version>` is a release: `release.yml` builds, signs, and uploads
 | Area | Entry points |
 | --- | --- |
 | State, mutations, persistence | `src/main/state.ts`, `actions.ts`, `persist.ts` |
-| Grid rules and integration | `src/shared/grid/grid.ts`, `src/main/grid/grid.ts`, `windows.ts` |
+| Grid rules and integration | `src/shared/grid/grid.ts`, `src/main/grid/grid.ts`, `windows.ts`; the built-in browser (`core/browser`) in `src/shared/grid/browser.ts`, `src/main/grid/browser.ts` over `browser-manager.ts`, and `src/renderer/views/Browser.tsx` over `browser-view.ts` |
 | Orchestrator and conversations | `src/main/agent/agent.ts`, the agent loop, over `utils/`; `orchestrator.ts`, the global box's and a task's requests, and `loop.ts`, a piece of work's, both over `request.ts`; `router.ts`, the tools that start, hand to, and delete work; `threads.ts`, `thread-file.ts`, `memory.ts`; rules in `src/shared/agent/` |
 | Tool families | `src/main/agent/tools.ts` composes `src/main/agent/tools/` |
 | Builder and the web | `src/main/agent/build.ts` over `build/`; `web/` is the search client and the page fetch |
