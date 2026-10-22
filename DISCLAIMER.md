@@ -1,0 +1,13 @@
+# Disclaimer
+
+**Jaspers Terminal is a software and data tool. Nothing it produces is investment advice.**
+
+Jaspers, Inc. is not an investment adviser, broker-dealer, commodity trading advisor, or financial planner, and is not registered as any of these with the SEC, CFTC, FINRA, NFA, or any state or foreign regulator. Nothing in this repository, the application, its plugins, or the Jaspers hosted services — including the output of any language model, assistant, analyst, research room, screen, chart, or document — is investment advice, a recommendation, an offer or solicitation to buy or sell any security or other instrument, or a representation that any investment or strategy is suitable for you. The Terminal provides impersonal tools, data, and software of general application; it does not take account of any person's financial situation or objectives. You are solely responsible for your investment and trading decisions. Trading and investing involve substantial risk, including the possible loss of the entire amount invested. Past performance is not indicative of future results.
+
+**Model output can be wrong.** The Terminal connects to language models you configure. Their output can be inaccurate, incomplete, outdated, or wrong, can misstate or misattribute data, and can differ between runs. Citations link to source material, but verify any output before relying on it.
+
+**Data comes from third parties.** Market and economic data shown in the Terminal comes from the sources you connect — exchanges, data vendors, government agencies, and websites — through plugins and MCP servers. It is provided as is, may be delayed, incomplete, or inaccurate, and is subject to each source's own terms. Where you connect a source with your own API key or account, you are responsible for complying with your agreement with that vendor.
+
+**You run the code you approve.** Plugins — whether installed from Jaspers Hub, built by the Terminal's coding agent at your request, or written by hand — and commands approved in Pro mode run on your machine under the permissions you grant them. Review the security envelope before approving a plugin. Jaspers is not responsible for third-party plugins, for code the coding agent generates for you, or for what approved code does with the access you give it.
+
+**No warranty.** The source code in this repository is provided "AS IS" under the [Business Source License 1.1](LICENSE), which disclaims all warranties and conditions. Use of the distributed application, Jaspers Hub, and the Jaspers hosted services is additionally governed by the [Terms of Use](https://jsprai.com/terms), which disclaim warranties, exclude trading and market losses, and limit Jaspers' liability.
