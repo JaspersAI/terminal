@@ -7,7 +7,7 @@ Jaspers Terminal is an Electron desktop application and spreadsheet grid for pub
 - **Inference configuration** — Run local and open-weight models via Ollama (`http://localhost:11434/v1`), vLLM, llama.cpp, LM Studio, OpenRouter, Groq, or any OpenAI-compatible endpoint alongside Jaspers One and cloud provider keys, with portable conversation history across model switches, per-task model pinning, and SQLite context offloading ([Getting started](getting-started.md), [How it works](architecture.md)).
 - **Built-in coding agent (`build_plugin`)** — Generate TypeScript plugins for data feeds, views, document generators, or MCP connections from four starter templates within a user-approved security envelope ([Asking the assistant for a plugin](asking-for-a-plugin.md), [Plugin templates](templates/README.md)).
 - **Skills and scheduled workflows** — Use [Agent Skills](https://agentskills.io) (`SKILL.md`), NYSE market-calendar scheduled tasks, and SQLite delta watches (`speak: "changed"`) for recurring research tasks ([Skills](skills.md)).
-- **Pro mode** — Run multi-line shell, Python, R, and CLI scripts in `~/Jaspers/shell` with read-only `~/Desktop` and `~/Downloads` access, configurable approval tiers, read-only command filtering, and macOS `sandbox-exec` confinement ([Pro mode](pro-mode.md)).
+- **Pro mode** — Run multi-line shell, PowerShell, Python, R, and CLI scripts in `~/Jaspers/shell` across macOS, Windows, and Linux, with configurable approval tiers, read-only command filtering, and macOS `sandbox-exec` confinement ([Pro mode](pro-mode.md)).
 
 ## Guides
 
