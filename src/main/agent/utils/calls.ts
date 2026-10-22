@@ -3,6 +3,7 @@ import { untilAborted } from '../../../shared/abort'
 import { capOutput } from '../../../shared/agent/history'
 import { cap } from '../../../shared/agent/prompt'
 import { batches, callLine } from '../../../shared/agent/rounds'
+import { messageOf } from '../../../shared/rpc'
 import type { ToolCall, ToolResult } from '../../llm/llm'
 import type { Tool, ToolContext } from '../tools/types'
 import { noteToolEnd, noteToolStart } from './record'
@@ -81,7 +82,7 @@ async function execute(
       })
       return stopped
     }
-    const message = err instanceof Error ? err.message : String(err)
+    const message = messageOf(err)
     log(`tool ${call.name} failed: ${message}`)
     return finish(false, message)
   }

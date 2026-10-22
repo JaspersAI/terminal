@@ -1,5 +1,6 @@
 import { mapToolResult } from '../../../shared/data/datasets.ts'
 import { cap } from '../../../shared/agent/prompt.ts'
+import { messageOf } from '../../../shared/rpc.ts'
 import type { ConnectionInfo } from '../../../shared/state.ts'
 
 // The tools capability: the connections' own tools, for a plugin's backend to offer a model. A tool
@@ -94,7 +95,7 @@ export function createTools(deps: ToolsDeps) {
           isError: result.isError === true,
         }
       } catch (err) {
-        return { text: err instanceof Error ? err.message : String(err), isError: true }
+        return { text: messageOf(err), isError: true }
       }
     },
   }

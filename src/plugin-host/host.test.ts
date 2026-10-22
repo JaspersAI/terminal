@@ -348,6 +348,18 @@ module.exports = definePlugin({
       hosts: ['api.invalid'],
       run: async (_args, ctx) => ctx.fetch('https://api.invalid/q?key=\${secret:apikey}'),
     }),
+    caught: defineSource({
+      description: 'Caught',
+      input: z.object({}),
+      hosts: ['api.invalid'],
+      run: async (_args, ctx) => {
+        try {
+          return await ctx.fetch('https://api.invalid/q')
+        } catch (err) {
+          throw new Error('BLS failed: ' + err.message)
+        }
+      },
+    }),
   },
 })
 `
@@ -365,7 +377,12 @@ test("a source's fetch carries the plugin's secrets main sent, and fails naming 
     main.request('source.run', { name: 'quote', args: {}, secrets: { apikey: 'k' } }),
     (err: Error) => {
       assert.doesNotMatch(err.message, /needs its apikey/)
+      assert.match(err.message, /fetch failed \(.*api\.invalid.*\)/)
       return true
     },
+  )
+  await assert.rejects(
+    main.request('source.run', { name: 'caught', args: {}, secrets: {} }),
+    /BLS failed: fetch failed \(.*api\.invalid.*\)/,
   )
 })

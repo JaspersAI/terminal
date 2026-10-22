@@ -72,6 +72,10 @@ test('a refusal, a failure, an unknown tool, and an overlong answer come back as
     thrown: async () => {
       throw new Error('connection_unavailable: jaspers/sec is connecting')
     },
+    network: async () => {
+      const cause = Object.assign(new Error('getaddrinfo EAI_FAIL api.bls.gov'), { code: 'EAI_FAIL' })
+      throw new TypeError('fetch failed', { cause })
+    },
     long: async () => ({ content: [{ type: 'text', text: 'x'.repeat(150_000) }] }),
   }
   const tools = createTools({ connections: () => CONNECTIONS, call: async (_id, tool) => answers[tool]!() })
@@ -82,6 +86,10 @@ test('a refusal, a failure, an unknown tool, and an overlong answer come back as
   })
   assert.deepEqual(await tools.call({ id: 'jaspers/sec/thrown', args: {} }, signal), {
     text: 'connection_unavailable: jaspers/sec is connecting',
+    isError: true,
+  })
+  assert.deepEqual(await tools.call({ id: 'jaspers/sec/network', args: {} }, signal), {
+    text: 'fetch failed (getaddrinfo EAI_FAIL api.bls.gov)',
     isError: true,
   })
   const long = await tools.call({ id: 'jaspers/sec/long', args: {} }, signal)

@@ -5,6 +5,7 @@ import { isMcpSource, type BackendContext, type FunctionSourceSpec } from '@jasp
 import { parseArguments, prepareMcpArguments } from '../../shared/data/arguments'
 import { withParameters } from '../../shared/data/tool-parameters'
 import { guardedFetch } from '../../shared/plugins/guarded-fetch'
+import { messageOf } from '../../shared/rpc'
 import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { call } from '../plugins/mcp'
 import { runInHost } from '../plugins/plugin-host'
@@ -83,7 +84,7 @@ export async function runSource(
       ? mapped(await call(source.connection!, def.tool, mcpArgs!, { signal: options.signal }), options.raw, declared())
       : await runFunction(source, preparedArgs, workspaceId, options.raw))
   } catch (error) {
-    const rawMessage = error instanceof Error ? error.message : String(error)
+    const rawMessage = messageOf(error)
     const message = isMcpSource(def) ? withParameters(rawMessage, declared()) : rawMessage
     // A run that failed is worth keeping: what a source stopped answering is half of what changed.
     file(source.id, preparedArgs, key, workspaceId, {
@@ -92,7 +93,7 @@ export async function runSource(
       text: null,
       error: message,
     })
-    throw message === rawMessage ? error : new Error(message, { cause: error })
+    throw error instanceof Error && error.message === message ? error : new Error(message, { cause: error })
   }
 
   keepCitations(workspaceId, value)

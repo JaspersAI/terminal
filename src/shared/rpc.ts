@@ -155,11 +155,33 @@ function reasonOf(signal: AbortSignal): Error {
 }
 
 /**
- * An error's message. Checked by shape, not instanceof: a plugin's code runs in a vm whose Error is
- * another realm's, and String() of one would put "Error: " in front of every message it sends.
+ * An error's message, with its cause when the message does not already say it. Checked by shape,
+ * not instanceof: a plugin's code runs in a vm whose Error is another realm's, and String() of one
+ * would put "Error: " in front of every message it sends.
  */
-function messageOf(err: unknown): string {
-  return hasMessage(err) ? err.message : String(err)
+export function messageOf(err: unknown): string {
+  return formatError(err, 0, false)
+}
+
+function formatError(err: unknown, depth: number, asCause: boolean): string {
+  if (typeof err === 'string') return err
+  if (!isRecord(err)) return String(err)
+  const own = typeof err['message'] === 'string' ? err['message'] : ''
+  const nested =
+    !own.trim() && Array.isArray(err['errors'])
+      ? (err['errors'].map((one) => formatError(one, depth + 1, true)).find((text) => text.length > 0) ?? '')
+      : ''
+  const text = own.trim() ? own : nested
+  const code = typeof err['code'] === 'string' ? err['code'].trim() : ''
+  const base = !text
+    ? code || (hasMessage(err) ? err.message : String(err))
+    : asCause && code && !text.includes(code)
+      ? `${code}: ${text}`
+      : text
+  if (depth >= 3 || err['cause'] === undefined || err['cause'] === null) return base
+  const cause = formatError(err['cause'], depth + 1, true).trim()
+  if (!cause || base.includes(cause)) return base
+  return base ? `${base} (${cause})` : cause
 }
 
 function hasMessage(value: unknown): value is { message: string } {

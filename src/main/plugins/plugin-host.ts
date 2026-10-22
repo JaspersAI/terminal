@@ -2,7 +2,7 @@ import { shell, utilityProcess, type UtilityProcess } from 'electron'
 import path from 'node:path'
 import type { Capability } from '@jaspers-ai/sdk/define'
 import { parsePath, readPath } from '../../shared/paths'
-import { createRpc, type Rpc } from '../../shared/rpc'
+import { createRpc, messageOf, type Rpc } from '../../shared/rpc'
 import { createFiles, type FilesService } from './capabilities/files'
 import { createLlm } from './capabilities/llm'
 import { askForMissingSecret } from '../actions'
@@ -485,8 +485,4 @@ function delay(ms: number): Promise<void> {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
-}
-
-function messageOf(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
 }

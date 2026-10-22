@@ -155,3 +155,56 @@ test('an error made in another realm, like a plugin vm, crosses as its message a
   })
   await assert.rejects(main.request('fail'), (err: Error) => err.message === 'No room new.')
 })
+
+test('a handler error with a cause carries the cause across the wire without duplicating it', async () => {
+  const { runInNewContext } = await import('node:vm')
+  const [a, b] = pair()
+  const main = createRpc(a)
+  const host = createRpc(b)
+  host.handle('dns', () => {
+    const cause = Object.assign(new Error('getaddrinfo EAI_FAIL api.bls.gov'), { code: 'EAI_FAIL' })
+    throw new TypeError('fetch failed', { cause })
+  })
+  host.handle('aggregate', () => {
+    const cause = Object.assign(
+      new AggregateError([
+        Object.assign(new Error('connect ECONNREFUSED ::1:443'), { code: 'ECONNREFUSED' }),
+        Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), { code: 'ECONNREFUSED' }),
+      ]),
+      { code: 'ECONNREFUSED' },
+    )
+    throw new TypeError('fetch failed', { cause })
+  })
+  host.handle('coded', () => {
+    const cause = Object.assign(new Error('Connect Timeout Error'), { code: 'UND_ERR_CONNECT_TIMEOUT' })
+    throw new TypeError('fetch failed', { cause })
+  })
+  host.handle('already', () => {
+    const cause = new Error('getaddrinfo EAI_FAIL api.bls.gov')
+    throw new TypeError('fetch failed (getaddrinfo EAI_FAIL api.bls.gov)', { cause })
+  })
+  host.handle('vmCause', () => {
+    throw runInNewContext('new Error("BLS request failed", { cause: new Error("getaddrinfo EAI_FAIL api.bls.gov") })')
+  })
+
+  await assert.rejects(
+    main.request('dns'),
+    (err: Error) => err.message === 'fetch failed (getaddrinfo EAI_FAIL api.bls.gov)',
+  )
+  await assert.rejects(
+    main.request('aggregate'),
+    (err: Error) => err.message === 'fetch failed (connect ECONNREFUSED ::1:443)',
+  )
+  await assert.rejects(
+    main.request('coded'),
+    (err: Error) => err.message === 'fetch failed (UND_ERR_CONNECT_TIMEOUT: Connect Timeout Error)',
+  )
+  await assert.rejects(
+    main.request('already'),
+    (err: Error) => err.message === 'fetch failed (getaddrinfo EAI_FAIL api.bls.gov)',
+  )
+  await assert.rejects(
+    main.request('vmCause'),
+    (err: Error) => err.message === 'BLS request failed (getaddrinfo EAI_FAIL api.bls.gov)',
+  )
+})
