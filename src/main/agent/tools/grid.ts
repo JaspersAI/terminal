@@ -313,7 +313,7 @@ export function gridTools(context?: ToolContext): Tool[] {
     },
     {
       name: 'open_window',
-      description: `Open another window of this workspace with a grid of its own, empty, or as it was if that number was open before. It opens beside the main window, which is the only one with the chat. Up to ${WINDOWS_MAX} windows in all. Returns the number and the open ones; then place there with window.`,
+      description: `Open another window of this workspace with a grid of its own, empty, or as it was if that number was open before. It opens beside the main window, which is the only one with the chat. A last resort: open one only when the user asks for another window, or when no window already open has free cells for what is to be placed (free_space says), since the user wants the windows they see filled first. Up to ${WINDOWS_MAX} windows in all. Returns the number and the open ones; then place there with window.`,
       parameters: {
         type: 'object',
         properties: {

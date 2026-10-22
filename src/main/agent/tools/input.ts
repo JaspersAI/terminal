@@ -7,7 +7,8 @@ export const WINDOW = {
   type: 'integer',
   minimum: 1,
   maximum: WINDOWS_MAX,
-  description: 'The window number from the grid map. Default 1.',
+  description:
+    'The window number from the grid map. Default 1. Prefer a window already open with free cells over another one.',
 }
 
 export function optional<T>(value: unknown, parse: (value: unknown) => T): T | undefined {
