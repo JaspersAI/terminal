@@ -19,12 +19,12 @@ export interface RunDeps {
     args: string[],
     options: { cwd: string; detached: boolean; windowsHide: boolean; env: Record<string, string> },
   ) => ChildProcess
-  killTree?: (pid: number) => void
+  killTree?: (pid: number) => Promise<void>
 }
 
 /** Whether commands on this platform run under macOS's `sandbox-exec`. */
-export function isSandboxed(platform = process.platform, hasSandbox = fs.existsSync(SANDBOX_EXEC)): boolean {
-  return platform === 'darwin' && hasSandbox
+export function isSandboxed(platform: string = process.platform, hasSandbox?: boolean): boolean {
+  return platform === 'darwin' && (hasSandbox ?? fs.existsSync(SANDBOX_EXEC))
 }
 
 function defaultSpawn(
@@ -35,8 +35,13 @@ function defaultSpawn(
   return nodeSpawn(file, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] })
 }
 
-function defaultKillTree(pid: number): void {
-  execFile('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true }, () => undefined)
+function defaultKillTree(pid: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true }, (err) => {
+      if (err) reject(err)
+      else resolve()
+    })
+  })
 }
 
 /**
@@ -57,7 +62,7 @@ export async function execute(
   deps?: RunDeps,
 ): Promise<Outcome> {
   const platform = deps?.platform ?? process.platform
-  const hasSandbox = deps?.hasSandbox ?? (platform === 'darwin' && fs.existsSync(SANDBOX_EXEC))
+  const hasSandbox = isSandboxed(platform, deps?.hasSandbox)
   const env = commandEnv(deps?.env ?? process.env)
   const home = deps?.home ?? os.homedir()
   try {
@@ -121,27 +126,52 @@ function spawnOnce(
       done()
       resolve(outcome)
     }
-    const stop = (): void => {
-      if (platform === 'win32') {
-        if (child.pid) killTree(child.pid)
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          // Process already exited.
-        }
-      } else {
-        try {
-          if (child.pid) process.kill(-child.pid, 'SIGKILL')
-        } catch {
-          child.kill('SIGKILL')
-        }
-      }
+    const armDrain = (): void => {
+      if (settled) return
       // If a grandchild outside the group holds stdio open after kill, bound how long we wait for close.
       drainTimer ??= setTimeout(() => {
         child.stdout?.destroy()
         child.stderr?.destroy()
         finish({ code: null, output, timedOut })
       }, 250)
+    }
+    const stop = (): void => {
+      if (platform === 'win32') {
+        if (child.pid) {
+          void Promise.resolve(killTree(child.pid))
+            .catch(() => {
+              try {
+                child.kill('SIGKILL')
+              } catch {
+                // Process already exited.
+              }
+            })
+            .finally(() => {
+              if (!settled) {
+                try {
+                  child.kill('SIGKILL')
+                } catch {
+                  // Process already exited.
+                }
+              }
+              armDrain()
+            })
+          return
+        }
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          // Process already exited.
+        }
+        armDrain()
+        return
+      }
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        child.kill('SIGKILL')
+      }
+      armDrain()
     }
     const timer = setTimeout(() => {
       timedOut = true
