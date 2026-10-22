@@ -138,16 +138,58 @@ export function commandTimeout(requested: unknown, configured: number): number {
 
 /**
  * What a command is given of the app's environment: the few variables a program needs to find its
- * way, and nothing else. The app's own process holds whatever it was launched with, a provider key
- * among it when one came from the environment, and none of that is a command's business.
+ * way on macOS, Linux, or Windows, and nothing else. The app's own process holds whatever it was
+ * launched with, a provider key among it when one came from the environment, and none of that is a
+ * command's business.
  */
-export const ENV_KEPT = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TMPDIR', 'TZ'] as const
+export const ENV_KEPT = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'TMPDIR',
+  'TZ',
+  'SystemRoot',
+  'SystemDrive',
+  'windir',
+  'ComSpec',
+  'PATHEXT',
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'USERNAME',
+  'USERDOMAIN',
+  'COMPUTERNAME',
+  'OS',
+  'PROCESSOR_ARCHITECTURE',
+  'NUMBER_OF_PROCESSORS',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'ProgramData',
+  'ProgramFiles',
+  'ProgramFiles(x86)',
+  'ProgramW6432',
+  'CommonProgramFiles',
+  'CommonProgramFiles(x86)',
+  'CommonProgramW6432',
+  'TEMP',
+  'TMP',
+  'PSModulePath',
+] as const
 
 /** That environment, from the app's, with a terminal that claims nothing so a program does not draw. */
 export function commandEnv(from: Record<string, string | undefined>): Record<string, string> {
   const env: Record<string, string> = { TERM: 'dumb' }
+  const lower = new Map<string, string>()
+  for (const [key, value] of Object.entries(from)) {
+    if (typeof value === 'string' && value !== '') lower.set(key.toLowerCase(), value)
+  }
   for (const key of ENV_KEPT) {
-    const value = from[key]
+    const exact = from[key]
+    const value = typeof exact === 'string' && exact !== '' ? exact : lower.get(key.toLowerCase())
     if (typeof value === 'string' && value !== '') env[key] = value
   }
   return env
@@ -269,4 +311,106 @@ export function sandboxProfile(folder: string, onPath: string[], readable: strin
 /** Paths as a sandbox profile's subpath list, quoted, in order, with the duplicates dropped. */
 function subpaths(paths: string[]): string {
   return [...new Set(paths)].map((path) => `(subpath ${JSON.stringify(path)})`).join(' ')
+}
+
+/** macOS's sandbox: what confines a command on macOS. Deprecated by Apple and still what confines a command. */
+export const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
+
+export interface ShellCommandOptions {
+  platform: string
+  command: string
+  folder: string
+  home: string
+  env: Record<string, string | undefined>
+  hasSandbox?: boolean
+  useCmdFallback?: boolean
+}
+
+export interface ShellSpawnSpec {
+  file: string
+  args: string[]
+  confined: boolean
+}
+
+/**
+ * The program and arguments that run `command` on `platform`:
+ * - On macOS when `sandbox-exec` is available, runs `${SHELL || '/bin/sh'} -c` under `sandboxProfile`.
+ * - On Windows, runs `powershell.exe -NoLogo -NoProfile -NonInteractive -Command` (or `${ComSpec || 'cmd.exe'} /d /s /c` on fallback).
+ * - On Linux (and macOS without `sandbox-exec`), runs `${SHELL || '/bin/sh'} -c`.
+ */
+export function shellCommand(options: ShellCommandOptions): ShellSpawnSpec {
+  if (options.platform === 'win32') {
+    if (options.useCmdFallback) {
+      const cmd = options.env['ComSpec'] || options.env['COMSPEC'] || 'cmd.exe'
+      return { file: cmd, args: ['/d', '/s', '/c', options.command], confined: false }
+    }
+    return {
+      file: 'powershell.exe',
+      args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', options.command],
+      confined: false,
+    }
+  }
+  const shell = options.env['SHELL'] || '/bin/sh'
+  if (options.platform === 'darwin' && (options.hasSandbox ?? true)) {
+    const profile = sandboxProfile(
+      options.folder,
+      (options.env['PATH'] ?? '').split(':').filter(Boolean),
+      readOnlyFolders(options.home),
+    )
+    return { file: SANDBOX_EXEC, args: ['-p', profile, shell, '-c', options.command], confined: true }
+  }
+  return { file: shell, args: ['-c', options.command], confined: false }
+}
+
+function whereClause(folder: string, seconds: number, confined: boolean): string {
+  return confined
+    ? `It can write only inside ${folder}, read that and your Desktop and Downloads, and is stopped after ${seconds}s.`
+    : `It runs in ${folder} and is stopped after ${seconds}s.`
+}
+
+/**
+ * What the user is asked. The script itself goes beside the question rather than in it, so the field
+ * shows it as it would be typed — every line, monospaced — and nothing about it is shortened: what is
+ * being approved is the text, and text nobody can read is not something to approve.
+ */
+export function askCommand(folder: string, seconds: number, confined = true): string {
+  return `Run this on your computer? ${whereClause(folder, seconds, confined)}`
+}
+
+/** What the user is asked while a task is made: the same script, allowed for every run of it rather than for now. */
+export function askTaskCommand(folder: string, seconds: number, confined = true): string {
+  return `Let the scheduled task run this on your computer at each of its runs, without asking again? ${whereClause(folder, seconds, confined)}`
+}
+
+/** What the user is asked when a task's run reaches for a script nobody allowed it. */
+export function askTaskAtRunCommand(task: string, folder: string, seconds: number, confined = true): string {
+  return `Scheduled task ${task} wants to run this on your computer. ${whereClause(folder, seconds, confined)}`
+}
+
+export function runShellDescription(platform: string, confined = true): string {
+  const workflow =
+    platform === 'win32'
+      ? "Runs a PowerShell script on the user's own computer and answers with what it printed. A workflow over files — make folders, download with curl.exe or Invoke-WebRequest, inspect or transform files with PowerShell or python, compare two files, write results back — is exactly what this is for, and the whole workflow belongs in one call: pass a multi-line PowerShell script, with cd, pipes, and $ErrorActionPreference = 'Stop' as you would type them."
+      : "Runs a shell script on the user's own computer and answers with what it printed. A workflow over files — make folders, download with curl into them, pull sections out with grep, awk, sed, or python3, diff two files, write results back — is exactly what this is for, and the whole workflow belongs in one call: pass a multi-line script, with cd, &&, set -e, and heredocs as you would type them."
+  const scope = confined
+    ? "It runs inside Jaspers's own folder, ~/Jaspers/shell, which is the only place it can write. It can also read the user's ~/Desktop and ~/Downloads, so a file they saved or downloaded there is read in place, or copied into the folder to work on; it cannot change or delete anything in them, and the rest of the user's files are not readable."
+    : "It runs with Jaspers's own folder, ~/Jaspers/shell, as its working directory."
+  return `${workflow} ${scope} When the user asks for shell work, do it here: do not answer from a source instead, and do not offer to build a plugin for it. A plain data question that a source, a query, or a plugin already answers still goes there, not to a command. The user approves the script before it runs, and a refusal is final: do not ask again, and do not try another wording of the same thing. Say what you are about to run and why before you call it. In a scheduled task's run, a script the user allowed that task runs without asking and any other asks them then, when they may not be there: when you schedule work that needs a command, give the exact script in schedule_task's commands, so they are asked now, and have the run pass it unchanged. Files it leaves in the folder are the user's to open from Settings > Pro mode.`
+}
+
+export function commandParameterDescription(platform: string, confined = true): string {
+  const max = COMMAND_MAX.toLocaleString('en-US')
+  if (platform === 'win32') {
+    return `The PowerShell script, exactly as it would be typed in a terminal, up to ${max} characters. One script of several lines is better than several calls: it runs in one PowerShell invocation in Jaspers's shell folder, so cd holds and the user approves it once. Start it with $ErrorActionPreference = 'Stop' when a later step depends on an earlier one.`
+  }
+  const scope = confined
+    ? "It runs in Jaspers's shell folder, the only place it can write; ~/Desktop and ~/Downloads can be read as well."
+    : "It runs with Jaspers's shell folder as its working directory."
+  return `The script, exactly as it would be typed in a terminal, up to ${max} characters. One script of several lines is better than several calls: it runs in one shell, so cd holds, && and set -e hold, and the user approves it once. Start it with set -e when a later step depends on an earlier one. ${scope}`
+}
+
+export function proFolderHint(platform: string): string {
+  return platform === 'darwin'
+    ? 'The only place a command can write, and what it leaves is yours to open. It can also read your Desktop and Downloads, and change nothing there.'
+    : 'Where every command starts, and what it leaves there is yours to open.'
 }
