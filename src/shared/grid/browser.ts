@@ -143,6 +143,12 @@ export function browserUserAgent(raw: string): string {
     .trim()
 }
 
+/** Replaces the `"Electron";v="..."` brand in `Sec-CH-UA` headers with `"Google Chrome"` so sites do not flag Electron as an outdated browser. */
+export function browserClientHintHeader(raw: string, chromeVersion = '136'): string {
+  const safeVersion = chromeVersion.trim() || '136'
+  return raw.replace(/"Electron"\s*;\s*v="[^"]*"/gi, `"Google Chrome";v="${safeVersion}"`)
+}
+
 /** Reads a `core/browser` panel's state, normalizing its URL and falling back to `DEFAULT_BROWSER_URL` when unset or invalid. */
 export function readBrowserState(state: unknown): BrowserState {
   if (!isRecord(state)) return { url: DEFAULT_BROWSER_URL }
@@ -250,7 +256,7 @@ export function browserSummary(state: unknown, output: unknown): string {
   return short
 }
 
-function shortAddress(url: string): string {
+export function shortAddress(url: string): string {
   try {
     const parsed = new URL(url)
     const tail = parsed.pathname === '/' && !parsed.search ? '' : `${parsed.pathname}${parsed.search}`

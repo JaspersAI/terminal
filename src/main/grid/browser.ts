@@ -1,5 +1,5 @@
 import { ipcMain, session, WebContentsView, type BrowserWindow, type Session } from 'electron'
-import { BROWSER_PARTITION, browserUserAgent, isBrowserUrl } from '../../shared/grid/browser'
+import { BROWSER_PARTITION, browserClientHintHeader, browserUserAgent, isBrowserUrl } from '../../shared/grid/browser'
 import { PANEL_TEXT_MAX, panelOf } from '../../shared/grid/grid'
 import { publishChecked, publishTextChecked, setPanelStateChecked } from '../actions'
 import { getState, subscribe } from '../state'
@@ -67,6 +67,23 @@ function browserSession(): Session {
   const partition = session.fromPartition(BROWSER_PARTITION)
   const cleanUa = browserUserAgent(partition.getUserAgent())
   if (cleanUa) partition.setUserAgent(cleanUa)
+  const fullChrome = process.versions.chrome || '136.0.0.0'
+  const majorChrome = fullChrome.split('.')[0] || '136'
+  partition.webRequest.onBeforeSendHeaders((details, callback) => {
+    const requestHeaders = { ...details.requestHeaders }
+    for (const [key, value] of Object.entries(requestHeaders)) {
+      if (typeof value !== 'string') continue
+      const lower = key.toLowerCase()
+      if (lower === 'user-agent') {
+        requestHeaders[key] = browserUserAgent(value)
+      } else if (lower === 'sec-ch-ua') {
+        requestHeaders[key] = browserClientHintHeader(value, majorChrome)
+      } else if (lower === 'sec-ch-ua-full-version-list') {
+        requestHeaders[key] = browserClientHintHeader(value, fullChrome)
+      }
+    }
+    callback({ requestHeaders })
+  })
   partition.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(ALLOWED_PERMISSIONS.has(permission))
   })

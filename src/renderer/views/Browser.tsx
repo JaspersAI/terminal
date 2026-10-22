@@ -19,7 +19,7 @@ import {
   type BrowserTab,
 } from '../../shared/grid/browser'
 import { errorMessage } from '../lib/errors'
-import { useAppState } from '../lib/state'
+import { dispatch, useAppState } from '../lib/state'
 import { displayAddress, publishedOutput, tabLabel, viewportVisible } from './browser-view'
 import type { ViewProps } from './index'
 
@@ -63,6 +63,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
   const [stateUrl] = usePanelState<string>(panel, 'url', DEFAULT_BROWSER_URL)
   const refreshedAt = useData(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`)
   const grids = useAppState((s) => s.grids[panel.workspaceId])
+  const updateAvailable = useAppState((s) => (s.updates.status === 'ready' ? s.updates.available : null))
 
   const initialAddress = normalizeBrowserUrl(stateUrl) || DEFAULT_BROWSER_URL
   const [snapshot, setSnapshot] = useState<BrowserSnapshot>(() =>
@@ -334,6 +335,17 @@ export function Browser({ panel }: ViewProps): ReactElement {
             aria-label="Loading"
             className="h-1.5 w-1.5 shrink-0 animate-dots bg-foreground motion-reduce:animate-none"
           />
+        )}
+        {updateAvailable && (
+          <button
+            type="button"
+            aria-label={`Update browser to ${updateAvailable}`}
+            title={`Restart to update browser (${updateAvailable})`}
+            onClick={() => void dispatch({ type: 'updates.install' })}
+            className="shrink-0 border border-primary px-1.5 py-0.5 text-[10px] text-primary hover:bg-muted"
+          >
+            Update {updateAvailable}
+          </button>
         )}
         <button
           type="button"

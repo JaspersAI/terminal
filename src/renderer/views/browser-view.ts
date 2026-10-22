@@ -2,6 +2,7 @@ import {
   DEFAULT_BROWSER_URL,
   isVideoPageUrl,
   normalizeBrowserUrl,
+  shortAddress,
   type BrowserBounds,
   type BrowserOutput,
   type BrowserSnapshot,
@@ -12,14 +13,7 @@ export function tabLabel(tab: { title: string; url: string }): string {
   const title = tab.title.trim()
   if (title) return title
   const normalized = normalizeBrowserUrl(tab.url)
-  if (!normalized) return 'New tab'
-  try {
-    const parsed = new URL(normalized)
-    const tail = parsed.pathname === '/' && !parsed.search ? '' : `${parsed.pathname}${parsed.search}`
-    return `${parsed.host}${tail}`
-  } catch {
-    return normalized
-  }
+  return normalized ? shortAddress(normalized) : 'New tab'
 }
 
 /** True when two non-empty rectangles overlap in client coordinates. */

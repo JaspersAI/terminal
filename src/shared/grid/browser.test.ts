@@ -6,6 +6,7 @@ import {
   BROWSER_PLUGIN_ID,
   BROWSER_PLUGIN_TITLE,
   BROWSER_VIEW,
+  browserClientHintHeader,
   browserStanding,
   browserSummary,
   browserUserAgent,
@@ -91,6 +92,17 @@ test('isVideoPageUrl detects Bloomberg TV/Live and YouTube pages for default the
   assert.equal(
     browserUserAgent(rawUa),
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+  )
+  assert.equal(
+    browserClientHintHeader('"Not.A/Brand";v="99", "Electron";v="44", "Chromium";v="136"', '136'),
+    '"Not.A/Brand";v="99", "Google Chrome";v="136", "Chromium";v="136"',
+  )
+  assert.equal(
+    browserClientHintHeader(
+      '"Not.A/Brand";v="99.0.0.0", "Electron";v="44.3.0", "Chromium";v="136.0.7103.49"',
+      '136.0.7103.49',
+    ),
+    '"Not.A/Brand";v="99.0.0.0", "Google Chrome";v="136.0.7103.49", "Chromium";v="136.0.7103.49"',
   )
 })
 
