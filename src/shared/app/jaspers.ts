@@ -9,9 +9,100 @@ export const JASPERS_ACCOUNT = 'https://account.jsprai.com'
 /** The Terms of Use, which using the app and every Jaspers service is subject to: linked wherever the app says so. */
 export const TERMS_URL = 'https://jsprai.com/terms'
 
-/** Whether the stored value records that the user accepted the Terms of Use. Anything missing or malformed reads as false. */
-export function readTermsAccepted(value: unknown): boolean {
-  return value === true
+const TERMS_VERSION_FOOTER = /\nv\.(\d+)\s*·\s*[^\n]+$/
+
+/** Where the Terms of Use are pulled from: `JASPERS_TERMS_URL`'s, else the public one. */
+export function termsUrl(env: string | undefined): string {
+  return serviceUrl('JASPERS_TERMS_URL', env, TERMS_URL)
+}
+
+/** Extracts and normalizes the Terms of Use text from website HTML, Markdown, or a license file; null when the input is not valid Terms of Use text. */
+export function parseTermsText(raw: string): string | null {
+  const input = raw
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+    .trim()
+  if (!input) return null
+  let text: string
+  if (/^\s*<|<\/main>|<\/html>/i.test(input)) {
+    const main = input.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1]
+    if (!main) return null
+    text = main
+      .replace(/<hr\s*\/?>/gi, '')
+      .replace(/<li>([\s\S]*?)<\/li>/gi, '- $1\n')
+      .replace(/<\/ul>/gi, '\n')
+      .replace(/<\/(?:h[1-6]|p)>/gi, '\n\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&middot;/g, '·')
+      .replace(/&mdash;/g, '—')
+      .replace(/&ndash;/g, '–')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  } else {
+    text = input
+      .replace(/^---\n[\s\S]*?\n---\s*/, '')
+      .replace(/^#+\s+/gm, '')
+      .replace(/^---\n\n/gm, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
+  if (!text.startsWith('Terms of Use\n\nEffective ')) return null
+  if (!text.includes('Jaspers, Inc.') || !text.includes('\n1. ')) return null
+  if (!TERMS_VERSION_FOOTER.test(text)) return null
+  return text
+}
+
+/** The Terms of Use formatted for `build/license.txt` with a leading UTF-8 BOM for NSIS. */
+export function formatLicenseFile(terms: string): string {
+  const clean = parseTermsText(terms) ?? terms.replace(/^\uFEFF/, '').trim()
+  return `\uFEFF${clean}\n`
+}
+
+/** The version number in the Terms of Use footer (`v.N · Date`), or 0 when absent. */
+export function termsVersionNumber(terms: string): number {
+  const match = TERMS_VERSION_FOOTER.exec(terms.trim())
+  return match ? Number(match[1]) : 0
+}
+
+/** Picks between cached website Terms of Use and the bundled copy: the cached copy unless the bundled one has a strictly newer version number. */
+export function chooseTermsText(cached: unknown, bundled: string): string {
+  const bundledNorm = parseTermsText(bundled) ?? bundled.replace(/^\uFEFF/, '').trim()
+  const cachedNorm = typeof cached === 'string' ? parseTermsText(cached) : null
+  if (cachedNorm && termsVersionNumber(cachedNorm) >= termsVersionNumber(bundledNorm)) return cachedNorm
+  return bundledNorm
+}
+
+/** Stored accepted Terms of Use text, normalized, or null when missing or invalid. */
+export function readAcceptedTerms(value: unknown): string | null {
+  return typeof value === 'string' ? parseTermsText(value) : null
+}
+
+/** Whether the stored value records that the user accepted the current Terms of Use. Anything missing, malformed, or from an older version reads as false. */
+export function readTermsAccepted(value: unknown, acceptedTerms?: unknown, currentTerms?: string): boolean {
+  if (value !== true) return false
+  if (acceptedTerms === undefined && currentTerms === undefined) return true
+  if (!currentTerms) return false
+  const accepted = readAcceptedTerms(acceptedTerms)
+  const current = parseTermsText(currentTerms) ?? currentTerms.replace(/^\uFEFF/, '').trim()
+  return accepted !== null && accepted === current
+}
+
+/** The terms state after fetching the website's Terms of Use. Returns the same object when unchanged or when the fetched body is not valid Terms of Use. */
+export function termsAfterFetch<T extends { termsAccepted: boolean; acceptedTerms: string | null; termsText: string }>(
+  state: T,
+  fetchedRaw: string,
+): T {
+  const parsed = parseTermsText(fetchedRaw)
+  if (!parsed) return state
+  const termsAccepted = readTermsAccepted(state.termsAccepted, state.acceptedTerms, parsed)
+  if (parsed === state.termsText && termsAccepted === state.termsAccepted) return state
+  return { ...state, termsText: parsed, termsAccepted }
 }
 
 /** Whether this window must ask the user to accept the Terms of Use before proceeding: the main window, until accepted. */

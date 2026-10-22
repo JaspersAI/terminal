@@ -10,9 +10,9 @@
     "packages/*"
   ],
   "scripts": {
-    "predev": "node scripts/build-host-runtime.mjs",
+    "predev": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/pull-terms.mjs && node scripts/build-host-runtime.mjs",
     "dev": "electron-vite dev",
-    "prebuild": "node scripts/build-host-runtime.mjs",
+    "prebuild": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/pull-terms.mjs && node scripts/build-host-runtime.mjs",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "dist": "npm run build && electron-builder",

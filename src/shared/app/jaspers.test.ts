@@ -4,19 +4,27 @@ import { test } from 'node:test'
 import {
   JASPERS_ACCOUNT,
   SIGNED_OUT,
+  TERMS_URL,
   accountBacked,
   accountPage,
   accountUrl,
+  chooseTermsText,
   claimsOf,
   emailOf,
+  formatLicenseFile,
   gatewayUrl,
   nearExpiry,
   needsSubscription,
   needsTermsAcceptance,
+  parseTermsText,
+  readAcceptedTerms,
   readStoredJaspers,
   readTermsAccepted,
   readTokens,
   refusalMessage,
+  termsAfterFetch,
+  termsUrl,
+  termsVersionNumber,
   tokensOf,
 } from './jaspers.ts'
 
@@ -225,14 +233,117 @@ test('a tool result or error that asks for a subscription or account access is r
   assert.equal(needsSubscription(null), false)
 })
 
-test('terms acceptance reads as true only when stored as boolean true', () => {
+test('terms acceptance reads as true only when stored as boolean true and matching the current terms version', () => {
   assert.equal(readTermsAccepted(true), true)
   for (const other of [false, undefined, null, 'true', 1, {}, []]) {
     assert.equal(readTermsAccepted(other), false)
   }
+
+  const v2 = 'Terms of Use\n\nEffective October 7, 2026. Jaspers, Inc.\n\n1. Relationship\n\nv.2 · October 21, 2026'
+  const v3 = 'Terms of Use\n\nEffective October 7, 2026. Jaspers, Inc.\n\n1. Relationship\n\nv.3 · October 21, 2026'
+  const v3Edited =
+    'Terms of Use\n\nEffective October 7, 2026. Jaspers, Inc.\n\n1. Updated clause\n\nv.3 · October 21, 2026'
+
+  assert.equal(readAcceptedTerms(v2), v2)
+  assert.equal(readAcceptedTerms('\uFEFF' + v2 + '\n'), v2)
+  assert.equal(readAcceptedTerms('<h1>502 Bad Gateway</h1>'), null)
+  assert.equal(readAcceptedTerms(null), null)
+
+  // Legacy unversioned boolean true requires re-accepting the current versioned terms.
+  assert.equal(readTermsAccepted(true, undefined, v3), false)
+  assert.equal(readTermsAccepted(true, null, v3), false)
+  // Accepted v2 requires re-accepting when the website updates to v3.
+  assert.equal(readTermsAccepted(true, v2, v3), false)
+  // Accepted v3 stays accepted when the website still serves v3.
+  assert.equal(readTermsAccepted(true, v3, v3), true)
+  // Any text change on the website requires re-acceptance even if the footer number was not bumped.
+  assert.equal(readTermsAccepted(true, v3, v3Edited), false)
+  assert.equal(readTermsAccepted(false, v3, v3), false)
 })
 
-test('the Windows installer is configured with the full Terms of Use from jsprai.com/terms in one-click mode', () => {
+test('Terms of Use URL defaults to jsprai.com/terms, honors JASPERS_TERMS_URL, and refuses non-http(s) overrides', () => {
+  assert.equal(termsUrl(undefined), TERMS_URL)
+  assert.equal(termsUrl('  '), TERMS_URL)
+  assert.equal(termsUrl('http://127.0.0.1:4100/terms/'), 'http://127.0.0.1:4100/terms')
+  assert.throws(() => termsUrl('not-a-url'), /JASPERS_TERMS_URL is not a URL/)
+  assert.throws(() => termsUrl('ftp://jsprai.com/terms'), /not http or https/)
+})
+
+test('parseTermsText normalizes HTML, Markdown, and BOM-prefixed license files and rejects error or captive-portal pages', () => {
+  const html = `<!DOCTYPE html><html><head><title>Terms</title></head><body><header>Nav</header><main>
+<h1>Terms of Use</h1>
+<p>Effective October 7, 2026. Agreement with Jaspers, Inc. ("Jaspers").</p>
+<ul><li>the websites at jsprai.com;</li><li>the App.</li></ul>
+<h2>1. Relationship to the Business Source License</h2>
+<p>Licensed under the <a href="https://github.com/JaspersAI/terminal/blob/main/LICENSE">Business Source License 1.1</a> and <code>@jaspers-ai/sdk</code>. <strong>Important</strong> — read &amp; agree.</p>
+<hr>
+<p>v.3 &middot; October 21, 2026</p>
+</main><footer>Footer</footer></body></html>`
+
+  const markdown = `---
+title: Terms of use
+last-updated: 2026-10-21
+---
+
+# Terms of Use
+
+Effective October 7, 2026. Agreement with Jaspers, Inc. ("Jaspers").
+
+- the websites at jsprai.com;
+- the App.
+
+## 1. Relationship to the Business Source License
+
+Licensed under the [Business Source License 1.1](https://github.com/JaspersAI/terminal/blob/main/LICENSE) and \`@jaspers-ai/sdk\`. **Important** — read & agree.
+
+---
+
+v.3 · October 21, 2026
+`
+
+  const fromHtml = parseTermsText(html)
+  const fromMd = parseTermsText(markdown)
+  assert.ok(fromHtml)
+  assert.equal(fromHtml, fromMd)
+  assert.equal(formatLicenseFile(fromHtml), `\uFEFF${fromHtml}\n`)
+  assert.equal(parseTermsText(formatLicenseFile(fromHtml)), fromHtml)
+  assert.equal(termsVersionNumber(fromHtml), 3)
+
+  // Non-terms HTML, proxy errors, and empty strings are rejected.
+  assert.equal(parseTermsText(''), null)
+  assert.equal(parseTermsText('<!DOCTYPE html><html><body><h1>502 Bad Gateway</h1></body></html>'), null)
+  assert.equal(parseTermsText('<main><h1>Sign in to Wi-Fi</h1><p>Welcome</p></main>'), null)
+})
+
+test('chooseTermsText and termsAfterFetch keep the newest terms and require re-acceptance when updated on the website', () => {
+  const v2 = 'Terms of Use\n\nEffective October 7, 2026. Jaspers, Inc.\n\n1. Relationship\n\nv.2 · October 21, 2026'
+  const v3 = 'Terms of Use\n\nEffective October 7, 2026. Jaspers, Inc.\n\n1. Relationship\n\nv.3 · October 21, 2026'
+  const v4Html = `<main><h1>Terms of Use</h1><p>Effective November 1, 2026. Jaspers, Inc.</p><h2>1. Relationship</h2><p>Updated.</p><hr><p>v.4 &middot; November 1, 2026</p></main>`
+  const v4 = parseTermsText(v4Html)!
+
+  // Cached website v4 wins over bundled v3; bundled v3 wins over stale cached v2 after an app upgrade.
+  assert.equal(chooseTermsText(v4, v3), v4)
+  assert.equal(chooseTermsText(v2, v3), v3)
+  assert.equal(chooseTermsText(undefined, '\uFEFF' + v3 + '\n'), v3)
+
+  // User accepted v3: fetching unchanged v3 keeps the same state reference and termsAccepted true.
+  const acceptedV3 = { termsAccepted: true, acceptedTerms: v3, termsText: v3 }
+  assert.equal(termsAfterFetch(acceptedV3, v3), acceptedV3)
+
+  // Invalid error page from a proxy leaves state untouched.
+  assert.equal(termsAfterFetch(acceptedV3, '<h1>503 Service Unavailable</h1>'), acceptedV3)
+
+  // Website updates to v4: termsText updates to v4 and termsAccepted becomes false so the next open prompts.
+  const afterUpdate = termsAfterFetch(acceptedV3, v4Html)
+  assert.deepEqual(afterUpdate, {
+    termsAccepted: false,
+    acceptedTerms: v3,
+    termsText: v4,
+  })
+  assert.equal(needsTermsAcceptance({ termsAccepted: afterUpdate.termsAccepted, onboardingComplete: true }, 1), true)
+})
+
+test('the Windows installer and build scripts pull the full Terms of Use from jsprai.com/terms in one-click mode', () => {
   const builder = fs.readFileSync(new URL('../../../electron-builder.yml', import.meta.url), 'utf8')
   const nsisBlock = builder.match(/^nsis:\n((?:(?:  .*|#.*)\n?)*)/m)?.[1] ?? ''
   const nsis = Object.fromEntries(
@@ -241,6 +352,12 @@ test('the Windows installer is configured with the full Terms of Use from jsprai
   assert.equal(nsis['license'], 'build/license.txt')
   assert.notEqual(nsis['oneClick'], 'false')
 
+  const pkg = JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as {
+    scripts: Record<string, string>
+  }
+  assert.match(pkg.scripts['prebuild'] ?? '', /pull-terms\.mjs/)
+  assert.match(pkg.scripts['predev'] ?? '', /pull-terms\.mjs/)
+
   const license = fs.readFileSync(new URL('../../../build/license.txt', import.meta.url), 'utf8')
   assert.match(license, /^\uFEFFTerms of Use\n\nEffective October 7, 2026\./)
   for (let section = 1; section <= 16; section++) {
@@ -248,7 +365,7 @@ test('the Windows installer is configured with the full Terms of Use from jsprai
   }
   assert.match(license, /1\. Relationship to the Business Source License/)
   assert.match(license, /16\. General/)
-  assert.match(license, /v\.2 · October 21, 2026\s*$/)
+  assert.match(license, /v\.3 · October 21, 2026\s*$/)
 })
 
 test('terms acceptance is asked on the main window until accepted, regardless of onboarding, and never on extension windows', () => {
