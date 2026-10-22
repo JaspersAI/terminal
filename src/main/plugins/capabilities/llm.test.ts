@@ -54,7 +54,7 @@ test('a request reaches the provider with its model, a capped token limit, the s
   const jaspersConfig = {
     provider: { id: 'jaspers', name: 'Jaspers' },
     baseUrl: 'https://account.jsprai.com/v1',
-    model: 'gemini-3.8-flash',
+    model: 'gemini-4-argon',
     token: null,
   } as unknown as NonNullable<ReturnType<LlmDeps['config']>>
   await createLlm({ ...d, config: () => jaspersConfig }).complete(request, signal)

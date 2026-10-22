@@ -36,7 +36,7 @@ test('a form shows what is saved for the saved provider, and the defaults for an
   }
   assert.deepEqual(providerFields(staleJaspers, jaspers), {
     baseUrl: 'https://account.jsprai.com/v1',
-    model: 'gemini-3.8-flash',
+    model: 'gemini-4-argon',
   })
 })
 
@@ -46,7 +46,7 @@ test('a form holds no change while it reads as what main would store, or when Ja
   const savedJaspers: ProviderSetting = {
     providerId: 'jaspers',
     baseUrl: 'https://account.jsprai.com/v1',
-    model: 'gemini-3.8-flash',
+    model: 'gemini-4-argon',
     hasToken: false,
   }
   assert.equal(
@@ -94,7 +94,7 @@ test('Amazon Bedrock is the Messages endpoint, with the region in its base URL',
 const JASPERS_LLM = {
   providerId: 'jaspers',
   baseUrl: 'https://account.jsprai.com/v1',
-  model: 'gemini-3.8-flash',
+  model: 'gemini-4-argon',
   token: 'sealed-key',
 }
 
@@ -125,7 +125,7 @@ test('voice on another provider stays, and any other language model leaves voice
 })
 
 test('Jaspers is one address for every kind, takes no key or user-selected model, and needs the sign-in', () => {
-  assert.equal(findProvider('llm', 'jaspers')!.model, 'gemini-3.8-flash')
+  assert.equal(findProvider('llm', 'jaspers')!.model, 'gemini-4-argon')
   assert.equal(findProvider('llm', 'jaspers')!.baseUrl, findProvider('voice', 'jaspers')!.baseUrl)
   assert.equal(signsIn(findProvider('llm', 'jaspers')!), true)
   assert.equal(signsIn(ANTHROPIC), false)
@@ -150,7 +150,7 @@ test('signing in sets Jaspers up wherever the user has no provider, and leaves e
     llm: {
       providerId: 'jaspers',
       baseUrl: 'https://account.jsprai.com/v1',
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-argon',
       token: null,
     },
     voice: {
