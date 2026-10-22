@@ -38,6 +38,7 @@ export interface StoredProvider {
 }
 
 export interface MainState {
+  termsAccepted: boolean
   onboardingComplete: boolean
   llm: StoredProvider | null
   voice: StoredProvider | null
@@ -158,6 +159,7 @@ export function toPublic(state: MainState): AppState {
   const strip = (p: StoredProvider | null) =>
     p ? { providerId: p.providerId, baseUrl: p.baseUrl, model: p.model, hasToken: p.token !== null } : null
   return {
+    termsAccepted: state.termsAccepted,
     onboardingComplete: state.onboardingComplete,
     llm: strip(state.llm),
     voice: strip(state.voice),

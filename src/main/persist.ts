@@ -26,7 +26,7 @@ import { findProvider } from '../shared/llm/providers'
 import type { Workspace, Budgets } from '../shared/state'
 import { isTheme, type Theme } from '../shared/app/theme'
 import { EYE_OFF, readEye, type StoredEye } from '../shared/app/eye'
-import { SIGNED_OUT, readStoredJaspers, type StoredJaspers } from '../shared/app/jaspers'
+import { SIGNED_OUT, readStoredJaspers, readTermsAccepted, type StoredJaspers } from '../shared/app/jaspers'
 import { PRO_MODE_OFF, readProMode, type ProMode } from '../shared/app/pro-mode'
 import { readAllowedApps } from '../shared/plugins/apps'
 import type { Task } from '../shared/tasks/tasks'
@@ -44,6 +44,7 @@ const SAVE_DELAY_MS = 300
 /** <userData>/state.json. Delete it to become a new user. */
 interface StateFile {
   version: 1
+  termsAccepted: boolean
   onboardingComplete: boolean
   llm: StoredProvider | null
   voice: StoredProvider | null
@@ -92,6 +93,7 @@ interface TasksFile {
 
 const EMPTY: StateFile = {
   version: 1,
+  termsAccepted: false,
   onboardingComplete: false,
   llm: null,
   voice: null,
@@ -169,6 +171,7 @@ export function load(): MainState {
     stateDirty = true
   }
   return {
+    termsAccepted: readTermsAccepted(state.termsAccepted),
     onboardingComplete: state.onboardingComplete,
     llm: state.llm,
     voice: state.voice,
@@ -357,6 +360,7 @@ function readSize(value: unknown): GridSize {
 export function save(next: MainState, prev: MainState): void {
   latest = next
   if (
+    next.termsAccepted !== prev.termsAccepted ||
     next.onboardingComplete !== prev.onboardingComplete ||
     next.llm !== prev.llm ||
     next.voice !== prev.voice ||
@@ -397,6 +401,7 @@ export function flush(): void {
   if (stateDirty) {
     const file: StateFile = {
       version: 1,
+      termsAccepted: latest.termsAccepted,
       onboardingComplete: latest.onboardingComplete,
       llm: latest.llm,
       voice: latest.voice,

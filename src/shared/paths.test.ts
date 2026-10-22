@@ -18,6 +18,7 @@ function fixture(): AppState {
   // Ids are unique across a workspace's windows: main seeds the counter, so here the second grid starts past the first.
   const other = placeView({ ...EMPTY_GRID, seq: grid.seq }, { content: { kind: 'frame' } }).grid
   return {
+    termsAccepted: true,
     onboardingComplete: true,
     llm: null,
     voice: null,

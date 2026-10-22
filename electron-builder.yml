@@ -71,3 +71,4 @@ win:
 # One-click and per-user, the defaults: an update installs without asking for an administrator.
 nsis:
   artifactName: Jaspers-Terminal-Setup-${version}.${ext}
+  license: build/license.txt
