@@ -9,6 +9,7 @@ import {
   type FolderFile,
 } from '../../../shared/agent/build/files.ts'
 import { isPluginId, RESERVED_PLUGIN_NAMES } from '../../../shared/plugins/id.ts'
+import { isNewerVersion } from '../../../shared/plugins/semver.ts'
 import { buildRoot, homePluginsRoot } from '../../home.ts'
 import { inside, isMissing, realpathLoose } from '../../plugins/confine.ts'
 
@@ -121,16 +122,29 @@ export async function writeBuildFile(folder: BuildFolder, raw: unknown, content:
   return { path: rel, size: Buffer.byteLength(written, 'utf8') }
 }
 
-/** Keeps package.json's dependencies when the builder writes package.json after install_plugin installed packages. */
+/** Keeps package.json's dependencies and any higher version when the builder rewrites package.json. */
 async function preserveDependencies(file: string, text: string): Promise<string> {
   try {
     const prev: unknown = JSON.parse(await fsp.readFile(file, 'utf8'))
     const next: unknown = JSON.parse(text)
-    if (!isObject(prev) || !isObject(next) || !isObject(prev['dependencies'])) return text
-    if ('dependencies' in next && (!isObject(next['dependencies']) || Object.keys(next['dependencies']).length > 0)) {
-      return text
-    }
-    return `${JSON.stringify({ ...next, dependencies: prev['dependencies'] }, null, 2)}\n`
+    if (!isObject(prev) || !isObject(next)) return text
+    const keepDeps =
+      isObject(prev['dependencies']) &&
+      !('dependencies' in next && (!isObject(next['dependencies']) || Object.keys(next['dependencies']).length > 0))
+    const keepVersion =
+      typeof prev['version'] === 'string' &&
+      typeof next['version'] === 'string' &&
+      isNewerVersion(prev['version'], next['version'])
+    if (!keepDeps && !keepVersion) return text
+    return `${JSON.stringify(
+      {
+        ...next,
+        ...(keepVersion ? { version: prev['version'] } : {}),
+        ...(keepDeps ? { dependencies: prev['dependencies'] } : {}),
+      },
+      null,
+      2,
+    )}\n`
   } catch {
     return text
   }

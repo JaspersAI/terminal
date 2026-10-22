@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { compareVersions, maxSatisfying, parseSpec, parseVersion, satisfies } from './semver.ts'
+import {
+  compareVersions,
+  isNewerVersion,
+  maxSatisfying,
+  nextPublishVersion,
+  parseSpec,
+  parseVersion,
+  satisfies,
+} from './semver.ts'
 
 test('a version parses to its numbers and prerelease, or not at all', () => {
   assert.deepEqual(parseVersion('1.2.3'), { major: 1, minor: 2, patch: 3, prerelease: [] })
@@ -79,4 +87,25 @@ test('a spec is a name and a range, scoped or not, with a bare name meaning late
   assert.deepEqual(parseSpec('name@'), { name: 'name', range: 'latest' })
   assert.throws(() => parseSpec('Bad Name@1'), /not an npm package name/)
   assert.throws(() => parseSpec('../x'), /not an npm package name/)
+})
+
+test('a candidate version is newer only when both parse and it sorts above the current one', () => {
+  assert.equal(isNewerVersion('1.0.1', '1.0.0'), true)
+  assert.equal(isNewerVersion('v1.2.0', '1.1.9'), true)
+  assert.equal(isNewerVersion('1.0.0', '1.0.0-beta.1'), true)
+  assert.equal(isNewerVersion('1.0.0', '1.0.0'), false)
+  assert.equal(isNewerVersion('0.9.9', '1.0.0'), false)
+  assert.equal(isNewerVersion('1.0.0-beta.1', '1.0.0'), false)
+  assert.equal(isNewerVersion('bad', '1.0.0'), false)
+  assert.equal(isNewerVersion('1.0.1', 'bad'), false)
+})
+
+test('publishing again raises the version past the highest one on Hub unless the local one is already above it', () => {
+  assert.equal(nextPublishVersion('1.0.0', []), '1.0.0')
+  assert.equal(nextPublishVersion('1.0.0', ['1.0.0']), '1.0.1')
+  assert.equal(nextPublishVersion('1.0.0', ['1.0.0', '1.2.0', '1.1.0']), '1.2.1')
+  assert.equal(nextPublishVersion('1.2.0', ['1.2.0']), '1.2.1')
+  assert.equal(nextPublishVersion('2.0.0', ['1.0.0', '1.2.0']), '2.0.0')
+  assert.equal(nextPublishVersion('1.0.0', ['1.0.0-beta.1']), '1.0.0')
+  assert.equal(nextPublishVersion('1.0.0', ['1.1.0-beta.1']), '1.1.1')
 })

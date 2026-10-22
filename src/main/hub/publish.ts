@@ -3,6 +3,7 @@ import path from 'node:path'
 import * as tar from 'tar'
 import { UPLOAD_BYTES, type HubMe, type HubPublished } from '../../shared/hub/hub.ts'
 import { checkManifest } from '../../shared/plugins/install.ts'
+import { nextPublishVersion } from '../../shared/plugins/semver.ts'
 import { parseSkill } from '../../shared/skills/skill-file.ts'
 import { isSkillName } from '../../shared/skills/skills.ts'
 import { RefusedError } from '../jaspers/session.ts'
@@ -61,17 +62,23 @@ export async function preparePublish({ kind, id }: PublishRequest, deps: Publish
     throw new Error(`${id} ${from}: only a ${kind} of your own is published to Hub.`)
   }
   if (!deps.signedIn()) throw new Error('Sign in with Jaspers to publish to Hub.')
-  const { name, version, devOnly } = await readPackage(kind, found.dir, id)
-  const { handle } = await deps.me()
+  const { name, version: stated, devOnly } = await readPackage(kind, found.dir, id)
+  const { handle, items } = await deps.me()
   if (handle === null) throw new NoHandleError()
+  const existing = items.find((item) => item.kind === kind && item.name === name)
+  const published = existing
+    ? [...existing.versions.map((one) => one.version), ...(existing.listed ? [existing.listed] : [])]
+    : []
+  const version = nextPublishVersion(stated, published)
   return { kind, id, name, version, handle, dir: found.dir, devOnly }
 }
 
 /** Packs what was prepared and sends it as the account. Hub's refusals are said in words that say what to do. */
 export async function sendPublish(
-  { kind, name, version, dir, devOnly }: PreparedPublish,
+  { kind, id, name, version, dir, devOnly }: PreparedPublish,
   deps: PublishDeps,
 ): Promise<HubPublished> {
+  await writeVersion(kind, dir, id, version)
   const body = await packFolder(dir, name, devOnly)
   try {
     return await deps.publishArchive(body)
@@ -160,6 +167,24 @@ async function readPackage(
       'SKILL.md needs a version to be published. Add it to the frontmatter, under metadata, like version: 1.0.0.',
     )
   return { name: meta.name !== null && isSkillName(meta.name) ? meta.name : id, version, devOnly: [] }
+}
+
+/** Writes the prepared version back to package.json or SKILL.md when Hub already had the version on disk. */
+async function writeVersion(kind: PublishRequest['kind'], dir: string, id: string, version: string): Promise<void> {
+  if (kind === 'plugin') {
+    const raw = await readManifest(dir)
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return
+    const record = raw as Record<string, unknown>
+    if (record['version'] === version) return
+    await fsp.writeFile(path.join(dir, 'package.json'), `${JSON.stringify({ ...record, version }, null, 2)}\n`, 'utf8')
+    return
+  }
+  const file = path.join(dir, 'SKILL.md')
+  const text = await fsp.readFile(file, 'utf8')
+  const { meta } = parseSkill(id, text)
+  if (meta.metadata['version'] === version) return
+  const updated = text.replace(/^(\s*version\s*:\s*).*$/m, `$1${version}`)
+  if (updated !== text) await fsp.writeFile(file, updated, 'utf8')
 }
 
 /** The packages a package.json lists in devDependencies and not in dependencies. */

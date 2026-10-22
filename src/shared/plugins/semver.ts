@@ -46,6 +46,29 @@ export function compareVersions(a: Version, b: Version): number {
   return 0
 }
 
+/** True when both parse as versions and `candidate` sorts above `current`. */
+export function isNewerVersion(candidate: string, current: string): boolean {
+  const next = parseVersion(candidate)
+  const had = parseVersion(current)
+  return next !== null && had !== null && compareVersions(next, had) > 0
+}
+
+/**
+ * The version to publish next: `local` when it already sorts above every version in `published`,
+ * else the next patch version past the highest of them (`<major>.<minor>.<patch + 1>`).
+ */
+export function nextPublishVersion(local: string, published: readonly string[]): string {
+  const localVersion = parseVersion(local)
+  if (!localVersion) return local
+  let highest: Version | null = null
+  for (const text of published) {
+    const parsed = parseVersion(text)
+    if (parsed && (!highest || compareVersions(parsed, highest) > 0)) highest = parsed
+  }
+  if (!highest || compareVersions(localVersion, highest) > 0) return local
+  return `${highest.major}.${highest.minor}.${highest.patch + 1}`
+}
+
 /** One bound: an operator and the version it is against. */
 interface Comparator {
   op: '>=' | '>' | '<' | '<=' | '='
