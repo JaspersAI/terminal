@@ -1,5 +1,11 @@
 import { useState, type ReactElement } from 'react'
-import { OUTPUT_DEFAULT, TIMEOUT_DEFAULT, type ApprovalMode, type ProMode } from '../../../shared/app/pro-mode'
+import {
+  OUTPUT_DEFAULT,
+  proFolderHint,
+  TIMEOUT_DEFAULT,
+  type ApprovalMode,
+  type ProMode,
+} from '../../../shared/app/pro-mode'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
 import { BUTTON, FIELD } from './Row'
@@ -133,10 +139,7 @@ export function ProModePane(): ReactElement {
             ))}
           </div>
         </Row>
-        <Row
-          label="Folder"
-          hint="The only place a command can write, and what it leaves is yours to open. It can also read your Desktop and Downloads, and change nothing there."
-        >
+        <Row label="Folder" hint={proFolderHint(window.app.platform)}>
           <button type="button" onClick={() => showFolder()} className={BUTTON}>
             Show folder
           </button>

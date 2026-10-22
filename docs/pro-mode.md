@@ -6,11 +6,11 @@ It is **off** by default (`PRO_MODE_OFF`) until you turn it on in **Settings > P
 
 ## Local Python, R, and CLI execution in `~/Jaspers/shell`
 
-With Pro mode on, the assistant can ask to run a script inside Jaspers's dedicated workspace folder, `~/Jaspers/shell` (with read-only grants for `~/Desktop` and `~/Downloads`).
+With Pro mode on, the assistant can ask to run a script in Jaspers's dedicated workspace folder, `~/Jaspers/shell` (with macOS `sandbox-exec` confinement and read-only grants for `~/Desktop` and `~/Downloads` on macOS).
 
-- **Multi-line scripts (`COMMAND_MAX = 10,000`):** A `run_shell` call is a script up to 10,000 characters. Multi-line scripts, `cd`, `&&`, `set -e`, pipes, and inline Python/R heredocs (`python3 - <<'PY'`, `Rscript -e`, `duckdb`, `sqlite3`, `curl`, `jq`, `grep`, `awk`, `sed`, `diff`, `git`) execute in one shell invocation (`${SHELL || '/bin/sh'} -c`), so a multi-step data pipeline or `.xlsx`/PDF export can be reviewed and approved as a single script.
+- **Multi-line scripts (`COMMAND_MAX = 10,000`):** A `run_shell` call is a script up to 10,000 characters. Multi-line scripts, `cd`, `&&`, `set -e`, pipes, and inline Python/R scripts execute in one shell invocation (`${SHELL || '/bin/sh'} -c` on macOS and Linux; `powershell.exe -NoLogo -NoProfile -NonInteractive -Command` with `ComSpec /d /s /c` fallback on Windows), so a multi-step data pipeline or `.xlsx`/PDF export can be reviewed and approved as a single script.
 - **Full script inspection:** Every script is shown in full before it runs, in a scrollable monospaced box under the question, together with the working directory (`~/Jaspers/shell`) and the timeout ceiling (`timeoutSeconds`). Nothing is shortened or hidden.
-- **Process-group lifecycle:** Each approved script runs in its own detached process group. If the script exceeds its timeout (`commandTimeout`, default `TIMEOUT_DEFAULT = 120` seconds, configurable from `TIMEOUT_MIN = 1` to `TIMEOUT_MAX = 600` seconds) or you press **Stop** in the composer, the app sends `SIGKILL` to the entire process group (`-child.pid`) so background child processes are terminated cleanly. Output returned to the model is capped at `outputMax` (`OUTPUT_DEFAULT = 100,000` characters, configurable from `OUTPUT_MIN = 1,000` to `OUTPUT_MAX = 1,000,000` characters via `capOutput`).
+- **Process-group and process-tree lifecycle:** On macOS and Linux, each approved script runs in its own detached process group, and on timeout (`commandTimeout`, default `TIMEOUT_DEFAULT = 120` seconds, configurable from `TIMEOUT_MIN = 1` to `TIMEOUT_MAX = 600` seconds) or when you press **Stop** in the composer, the app sends `SIGKILL` to the entire process group (`-child.pid`). On Windows, the app runs `taskkill /pid <pid> /t /f` (falling back to `child.kill('SIGKILL')`) to terminate the entire process tree. Output returned to the model is capped at `outputMax` (`OUTPUT_DEFAULT = 100,000` characters, configurable from `OUTPUT_MIN = 1,000` to `OUTPUT_MAX = 1,000,000` characters via `capOutput`).
 
 ## Approval tiers (`always`, `once`, `session`, and `task`)
 
@@ -54,15 +54,15 @@ A command is confined by the operating system kernel via `/usr/bin/sandbox-exec`
 - **Read-only folder grants (`readOnlyFolders`):** Scripts can read — and only read — `~/Desktop` and `~/Downloads`, so files you downloaded or placed on your Desktop can be inspected in place or copied into `~/Jaspers/shell`. Nothing in `~/Desktop` or `~/Downloads` can be modified or deleted. The first time a script reads either folder, macOS prompts for **System Settings > Privacy & Security > Files and Folders** permission.
 - **System and `PATH` toolchains:** Scripts can read system directories (`/usr`, `/bin`, `/sbin`, `/opt`, `/etc`, `/var`, `/private`, `/System`, `/Library`, `/Applications`) and any `/Users/...` directories present on your `PATH` (so Homebrew, pyenv, uv, Conda, R, or nvm toolchains load their libraries).
 - **Everything else under `/Users` is unreadable:** `~/.ssh`, `~/.aws`, `~/Documents`, browser profiles, and other repositories on disk are blocked by `(deny file-read* (subpath "/Users"))`.
-- **Fail-closed outside macOS:** Where `/usr/bin/sandbox-exec` is unavailable (non-macOS platforms), `run_shell` refuses to execute any command rather than running unconfined.
+- **Linux and Windows execution:** On Linux (`${SHELL || '/bin/sh'} -c`) and Windows (`powershell.exe -NoLogo -NoProfile -NonInteractive -Command`, falling back to `${ComSpec || 'cmd.exe'} /d /s /c`), commands run with `~/Jaspers/shell` as their working directory, sanitized environment variables (`commandEnv`), and explicit per-command approval, without macOS Seatbelt confinement.
 
 ## Sanitized environment (`commandEnv`)
 
 Inside `~/Jaspers/shell`, a script can use your installed tools and reach the network, so always read a script before approving it, especially when the assistant is working with untrusted web pages or filings.
 
 To prevent ambient credential leakage:
-- Your login shell profile is not sourced (`-c`, not `-lc`; your login `PATH` is already resolved once at startup by `src/main/app/shell-path.ts`).
-- `commandEnv` (`src/shared/app/pro-mode.ts`) strips the Electron process environment down to `ENV_KEPT` (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `TMPDIR`, `TZ`) plus `TERM=dumb`. Any provider API keys or tokens in the app's launch environment never enter the shell process, and OS keychain secrets (`safeStorage`) remain in the main process.
+- Your login shell profile is not sourced (`-c`, not `-lc`, on macOS and Linux; `-NoProfile` on Windows; your login `PATH` is already resolved once at startup by `src/main/app/shell-path.ts`).
+- `commandEnv` (`src/shared/app/pro-mode.ts`) strips the Electron process environment down to `ENV_KEPT` (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LC_ALL`, `TMPDIR`, `TZ`, plus standard Windows system and user variables such as `SystemRoot`, `ComSpec`, `PATHEXT`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, and `TMP`, matched case-insensitively) plus `TERM=dumb`. Any provider API keys or tokens in the app's launch environment never enter the shell process, and OS keychain secrets (`safeStorage`) remain in the main process.
 
 ## Settings
 
