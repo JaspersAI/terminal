@@ -111,7 +111,7 @@ function indexHtml(frames: readonly string[]): string {
 <script type="importmap" nonce="${nonce}">${JSON.stringify(IMPORT_MAP)}</script>
 <link rel="stylesheet" href="jaspers-host://runtime/theme.css">
 <link rel="stylesheet" href="./bundle.css">
-<style>html,body,#root{margin:0;height:100%;overflow:hidden}body{font:14px var(--jaspers-font-sans);color:var(--jaspers-foreground);background:var(--jaspers-background)}*{box-sizing:border-box}button,input,select,textarea{font:inherit;border-radius:0}</style>
+<style>html,body{margin:0;height:100%;overflow:hidden}#root{margin:0;height:100%;overflow:auto}body{font:14px var(--jaspers-font-sans);color:var(--jaspers-foreground);background:var(--jaspers-background)}*{box-sizing:border-box}button,input,select,textarea{font:inherit;border-radius:0}@media (max-width:640px){#root table:has(tr>:nth-child(4)){font-size:11px}#root table:has(tr>:nth-child(4)) :is(th,td){padding:3px 4px}}@media (max-width:680px){#root table:has(tr>:nth-child(6)){font-size:11px}#root table:has(tr>:nth-child(6)) :is(th,td){padding:3px 4px}}</style>
 </head><body><div id="root"></div><script type="module" src="jaspers-host://runtime/boot.js"></script></body></html>
 `
 }

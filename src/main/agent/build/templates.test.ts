@@ -48,9 +48,19 @@ test('the feed-table template has a view that renders its source', async () => {
     assert.ok(view, 'a view named table')
     assert.equal(view.renders?.length, 1)
     assert.ok(fs.existsSync(path.join(out, 'bundle.css')), 'its CSS is written beside the bundle')
+    const builtCss = await fsp.readFile(path.join(out, 'bundle.css'), 'utf8')
+    assert.ok(!builtCss.includes('padding-right: 36px'), 'no extra right padding on the last column')
   } finally {
     await fsp.rm(out, { recursive: true, force: true })
   }
+})
+
+test('plugin view frames scroll on #root, compact narrow multi-column tables, and docs drop 36px last-column padding', async () => {
+  const viewhost = await fsp.readFile(new URL('../../plugins/viewhost.ts', import.meta.url), 'utf8')
+  assert.match(viewhost, /#root\{[^}]*overflow:auto/)
+  assert.match(viewhost, /#root table:has\(tr>:nth-child\(4\)\)/)
+  const guide = await fsp.readFile(path.resolve(ROOT, '../writing-a-plugin.md'), 'utf8')
+  assert.ok(!guide.includes('padding-right: 36px'))
 })
 
 test("a plugin's code imports only its own files and its packages: an import from outside the folder fails the build", async () => {

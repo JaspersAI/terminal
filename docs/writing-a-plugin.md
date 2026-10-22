@@ -254,11 +254,6 @@ function List({ panel, tickers }: { panel: PanelRef; tickers: string[] }) {
   color: var(--jaspers-muted-foreground, #737373);
   font-weight: 500;
 }
-/* Room at the right edge of the last column. */
-.wl th:last-child,
-.wl td:last-child {
-  padding-right: 36px;
-}
 .wl-up {
   color: var(--jaspers-positive, #15803d);
 }

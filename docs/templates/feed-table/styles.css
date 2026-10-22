@@ -16,11 +16,6 @@
   color: var(--jaspers-muted-foreground, #737373);
   font-weight: 500;
 }
-/* Room at the right edge of the last column. */
-.ft th:last-child,
-.ft td:last-child {
-  padding-right: 36px;
-}
 .ft-number {
   font-family: var(--jaspers-font-mono, ui-monospace, monospace);
   text-align: right;
