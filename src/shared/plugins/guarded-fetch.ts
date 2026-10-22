@@ -1,3 +1,5 @@
+import { messageOf } from '../rpc.ts'
+
 // A fetch that reaches only the hosts a source declared. An empty list reaches nothing, which is what
 // a plugin's start and a source without hosts get. Redirects are followed by hand, one hop at a time,
 // so a declared host cannot send the request on to one that was not. Main runs built-in sources with
@@ -14,7 +16,12 @@ export function guardedFetch(hosts: string[], impl?: typeof fetch): typeof fetch
     for (let hop = 0; ; hop++) {
       if (!hosts.includes(url.hostname))
         throw new Error(`host not allowed: ${url.hostname}. Add it to the source's hosts.`)
-      const response = await send(hop === 0 ? input : url.href, { ...options, redirect: 'manual' })
+      let response: Response
+      try {
+        response = await send(hop === 0 ? input : url.href, { ...options, redirect: 'manual' })
+      } catch (err) {
+        throw withCause(err)
+      }
       const location = response.headers.get('location')
       if (response.status < 300 || response.status >= 400 || !location) return response
       if (hop >= MAX_REDIRECTS) throw new Error(`too many redirects from ${first}.`)
@@ -30,4 +37,18 @@ export function guardedFetch(hosts: string[], impl?: typeof fetch): typeof fetch
 
 function hrefOf(input: string | URL | Request): string {
   return typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+}
+
+/**
+ * Node's fetch throws `TypeError("fetch failed")` with the DNS or socket error on `error.cause`.
+ * Put that cause into `.message` too so a plugin or caller reading `err.message` sees why it failed.
+ */
+function withCause(err: unknown): unknown {
+  if (!(err instanceof Error)) return err
+  const message = messageOf(err)
+  if (message === err.message) return err
+  const wrapped =
+    err instanceof TypeError ? new TypeError(message, { cause: err.cause }) : new Error(message, { cause: err.cause })
+  wrapped.name = err.name
+  return wrapped
 }

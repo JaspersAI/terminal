@@ -40,3 +40,19 @@ test('a redirect loop ends', async () => {
   const s = server({ 'https://data.sec.gov/a': () => redirect('/a') })
   await assert.rejects(guardedFetch(['data.sec.gov'], s.fetch)('https://data.sec.gov/a'), /too many redirects/)
 })
+
+test('a fetch failure with an underlying cause includes the cause in its message and keeps error.cause', async () => {
+  const cause = Object.assign(new Error('getaddrinfo EAI_FAIL api.bls.gov'), { code: 'EAI_FAIL' })
+  const failing = (async () => {
+    throw new TypeError('fetch failed', { cause })
+  }) as typeof fetch
+  await assert.rejects(
+    guardedFetch(['api.bls.gov'], failing)('https://api.bls.gov/publicAPI/v2/timeseries/data/'),
+    (err: unknown) => {
+      assert.ok(err instanceof TypeError)
+      assert.equal(err.message, 'fetch failed (getaddrinfo EAI_FAIL api.bls.gov)')
+      assert.equal(err.cause, cause)
+      return true
+    },
+  )
+})

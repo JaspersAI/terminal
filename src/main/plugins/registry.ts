@@ -19,6 +19,7 @@ import {
 import { mapToolResult } from '../../shared/data/datasets'
 import { APP_VIEW, appSummary } from '../../shared/plugins/apps'
 import { qualifyConnection } from '../../shared/plugins/plugins'
+import { messageOf } from '../../shared/rpc'
 import { isMcpSource, type SourceDef } from '@jaspers-ai/sdk/define'
 import { call } from './mcp'
 import { getState, subscribe, update } from '../state'
@@ -193,9 +194,9 @@ const MCP_SOURCE: SourceDef = {
     try {
       result = await call(connection, tool, prepared)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = messageOf(error)
       const told = withParameters(message, declared)
-      throw told === message ? error : new Error(told, { cause: error })
+      throw error instanceof Error && error.message === told ? error : new Error(told, { cause: error })
     }
     const answer = result as { content?: unknown[]; isError?: boolean } | null
     if (answer && typeof answer === 'object' && answer.isError === true) {

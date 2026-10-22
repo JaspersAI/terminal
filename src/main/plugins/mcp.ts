@@ -26,6 +26,7 @@ import {
   resolveSecrets,
   type Connection,
 } from '../../shared/plugins/connections'
+import { messageOf } from '../../shared/rpc'
 import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { getConnection, missingOf, secretValues, setInfo, statusFor } from './connections'
 import { oauthProvider } from './oauth'
@@ -119,8 +120,7 @@ async function connectOne(id: string, retry = 0): Promise<void> {
     viaJaspers = spec.auth === 'oauth' && (await signsInThroughJaspers(resolved.connection.url!))
   } catch (err) {
     // The server could not say whose sign-in it takes: down, or out of reach. A connection that failed.
-    if (attempts.get(id) === attempt)
-      failed(id, redact(err instanceof Error ? err.message : String(err), values), retry)
+    if (attempts.get(id) === attempt) failed(id, redact(messageOf(err), values), retry)
     return
   }
   if (attempts.get(id) !== attempt) return
@@ -175,7 +175,7 @@ async function connectOne(id: string, retry = 0): Promise<void> {
   } catch (err) {
     await client.close().catch(() => undefined)
     if (attempts.get(id) !== attempt) return
-    const message = redact(err instanceof Error ? err.message : String(err), values)
+    const message = redact(messageOf(err), values)
     const unauthorized = err instanceof UnauthorizedError || /401|unauthoriz/i.test(message)
     if (err instanceof SignedOutError) setInfo(id, { status: 'needs-sign-in', error: null, tools: [] })
     else if (spec.auth === 'oauth' && !viaJaspers && unauthorized)
@@ -225,8 +225,7 @@ const NO_METADATA = /does not implement OAuth 2\.0 Protected Resource Metadata/
  */
 const reach: FetchLike = (url, init) =>
   fetch(url, init).catch((err: unknown) => {
-    const cause = err instanceof Error && err.cause instanceof Error ? ` (${err.cause.message})` : ''
-    throw new Error(`${err instanceof Error ? err.message : String(err)}${cause}`, { cause: err })
+    throw new Error(messageOf(err), { cause: err })
   })
 
 /** What an OAuth connection waits on before a client is built: the app's sign-in with Jaspers, or a sign-in of its own; nothing, with either in hand. */
@@ -374,7 +373,7 @@ export async function call(
     result = await asked(id, live, entry.spec, send, opts.signal)
   } catch (error) {
     if (from === 'model') {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = messageOf(error)
       const told = withParameters(message, declared())
       if (told !== message) throw new Error(told, { cause: error })
     }
