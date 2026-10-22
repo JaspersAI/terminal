@@ -7,6 +7,28 @@ import { everyText } from '../tasks/tasks.ts'
 import { plain, toolWords, type AgentOrigin } from './agent.ts'
 import { cap } from './prompt.ts'
 
+/** The rounds of tool calls a request gets, unless it says how many it needs. */
+export const MAX_ROUNDS = 40
+
+export const LAST_ROUND =
+  'That was the last round of tool calls this request gets. Answer now with what you have, and say what is left undone.'
+
+/**
+ * The round limit and the state note after a round's tool calls have run. A message the user added
+ * while the round was in flight joins this run instead of starting a new one, so it gets a full
+ * `limit` of rounds from here on; otherwise the last round tells the model its calls are spent.
+ */
+export function afterRound(
+  round: number,
+  most: number,
+  limit: number,
+  state: string,
+  added: number,
+): { most: number; riding: string } {
+  const next = added > 0 ? Math.max(most, round + limit) : most
+  return { most: next, riding: round === next ? `${state}\n${LAST_ROUND}` : state }
+}
+
 /**
  * One round's calls, grouped into the batches they run in. Calls that only read run side by side,
  * which is what makes asking five sources at once as fast as asking one. A call that changes

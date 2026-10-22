@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { batches, callLine, handoffReply, saidOf, thoughtLine, writingLine, WRITING_EVERY_MS } from './rounds.ts'
+import {
+  afterRound,
+  batches,
+  callLine,
+  handoffReply,
+  LAST_ROUND,
+  MAX_ROUNDS,
+  saidOf,
+  thoughtLine,
+  writingLine,
+  WRITING_EVERY_MS,
+} from './rounds.ts'
+import { STEPS_MAX } from './agent.ts'
 
 const names = (groups: { name: string }[][]): string[][] => groups.map((group) => group.map((call) => call.name))
 const call = (name: string): { name: string } => ({ name })
@@ -125,4 +137,26 @@ test('a source that is run is said as the plugin doing the work, and a connectio
     callLine('describe_source', { source: 'yfinance/price_history' }),
     'describe source: yfinance/price_history',
   )
+})
+
+test('a request gets 40 rounds of tool calls, and a message added mid-run gives a full budget from that round on', () => {
+  assert.equal(MAX_ROUNDS, 40)
+  assert.equal(MAX_ROUNDS, STEPS_MAX)
+  // A round with rounds still left leaves the state as it is.
+  assert.deepEqual(afterRound(1, MAX_ROUNDS, MAX_ROUNDS, 'grid', 0), { most: MAX_ROUNDS, riding: 'grid' })
+  // The last round tells the model its calls are spent.
+  assert.deepEqual(afterRound(MAX_ROUNDS, MAX_ROUNDS, MAX_ROUNDS, 'grid', 0), {
+    most: MAX_ROUNDS,
+    riding: `grid\n${LAST_ROUND}`,
+  })
+  // A message the user added while a round was in flight joins this run instead of starting a new one,
+  // so it gets a full budget of rounds from here on, even on what would have been the last round.
+  assert.deepEqual(afterRound(12, MAX_ROUNDS, MAX_ROUNDS, 'grid', 1), {
+    most: 12 + MAX_ROUNDS,
+    riding: 'grid',
+  })
+  assert.deepEqual(afterRound(MAX_ROUNDS, MAX_ROUNDS, MAX_ROUNDS, 'grid', 1), {
+    most: MAX_ROUNDS + MAX_ROUNDS,
+    riding: 'grid',
+  })
 })
