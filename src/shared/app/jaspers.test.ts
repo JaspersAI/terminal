@@ -12,6 +12,7 @@ import {
   gatewayUrl,
   nearExpiry,
   needsSubscription,
+  needsTermsAcceptance,
   readStoredJaspers,
   readTermsAccepted,
   readTokens,
@@ -244,4 +245,14 @@ test('the Windows installer is configured with the full Terms of Use from jsprai
   assert.match(license, /1\. Relationship to the Business Source License/)
   assert.match(license, /16\. General/)
   assert.match(license, /v\.2 · October 21, 2026\s*$/)
+})
+
+test('terms acceptance is asked on the main window until accepted, regardless of onboarding, and never on extension windows', () => {
+  assert.equal(needsTermsAcceptance({ termsAccepted: false, onboardingComplete: false }, 1), true)
+  assert.equal(needsTermsAcceptance({ termsAccepted: false, onboardingComplete: true }, 1), true)
+  assert.equal(needsTermsAcceptance({ termsAccepted: false, onboardingComplete: false }, 2), false)
+  assert.equal(needsTermsAcceptance({ termsAccepted: false, onboardingComplete: true }, 2), false)
+  assert.equal(needsTermsAcceptance({ termsAccepted: true, onboardingComplete: false }, 1), false)
+  assert.equal(needsTermsAcceptance({ termsAccepted: true, onboardingComplete: true }, 1), false)
+  assert.equal(needsTermsAcceptance({ termsAccepted: true, onboardingComplete: true }, 2), false)
 })

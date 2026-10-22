@@ -89,6 +89,9 @@ after(async () => {
 
 test('opens on the welcome screen', async () => {
   await page.waitForSelector('#root > *', { timeout: 30_000 })
+  const accept = page.getByRole('button', { name: 'Accept' })
+  await accept.waitFor({ timeout: 10_000 })
+  await accept.click()
   await page.getByRole('button', { name: 'Begin setup' }).waitFor({ timeout: 10_000 })
 })
 
