@@ -6,11 +6,28 @@ import { layoutOf, type Grid, type GridElement } from './grid.ts'
 
 export const BROWSER_VIEW = 'core/browser'
 export const BROWSER_PARTITION = 'persist:browser'
+export const DEFAULT_BROWSER_URL = 'https://www.bloomberg.com/'
+export const BROWSER_PLUGIN_ID = 'browser'
+export const BROWSER_PLUGIN_TITLE = 'Browser'
+export const BROWSER_PLUGIN_DESCRIPTION =
+  'Opens Bloomberg Television\u2019s live stream; unaffiliated with Bloomberg L.P.'
 
-export type BrowserAction = 'load' | 'back' | 'forward' | 'reload'
+export type BrowserAction =
+  'load' | 'back' | 'forward' | 'reload' | 'new-tab' | 'select-tab' | 'close-tab' | 'toggle-theater'
 
 export interface BrowserState {
   url: string
+}
+
+export interface BrowserTab {
+  id: string
+  url: string
+  title: string
+  loading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  theater: boolean
+  error: string | null
 }
 
 export interface BrowserOutput {
@@ -19,6 +36,8 @@ export interface BrowserOutput {
   loading: boolean
   canGoBack: boolean
   canGoForward: boolean
+  theater?: boolean
+  tabCount?: number
   error: string | null
 }
 
@@ -32,6 +51,8 @@ export interface BrowserBounds {
 export interface BrowserSnapshot extends BrowserOutput {
   workspaceId: string
   panelId: string
+  activeTabId?: string
+  tabs?: BrowserTab[]
   text: string | null
 }
 
@@ -89,11 +110,44 @@ export function isBrowserUrl(raw: unknown): raw is string {
   return normalized !== null && normalized !== ''
 }
 
-/** Reads a `core/browser` panel's state, normalizing its URL and falling back to `""` when unset or invalid. */
+/** True for video stream pages (`bloomberg.com/tv`, `bloomberg.com/live`, `youtube.com`, `youtu.be`) that open in theater mode by default. */
+export function isVideoPageUrl(raw: unknown): boolean {
+  const normalized = normalizeBrowserUrl(raw)
+  if (!normalized) return false
+  let parsed: URL
+  try {
+    parsed = new URL(normalized)
+  } catch {
+    return false
+  }
+  const host = parsed.hostname.toLowerCase()
+  const path = parsed.pathname.toLowerCase()
+  if (host === 'bloomberg.com' || host.endsWith('.bloomberg.com')) {
+    return /^\/(live|tv)(\/|$)/.test(path)
+  }
+  return (
+    host === 'youtube.com' ||
+    host.endsWith('.youtube.com') ||
+    host === 'youtu.be' ||
+    host === 'youtube-nocookie.com' ||
+    host.endsWith('.youtube-nocookie.com')
+  )
+}
+
+/** Strips Electron and app tokens from Chromium's User-Agent so sites with bot checks treat the view as standard Chrome. */
+export function browserUserAgent(raw: string): string {
+  return raw
+    .replace(/\s+Electron\/[^\s]+/gi, '')
+    .replace(/\s+jaspers[-_]?terminal\/[^\s]+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Reads a `core/browser` panel's state, normalizing its URL and falling back to `DEFAULT_BROWSER_URL` when unset or invalid. */
 export function readBrowserState(state: unknown): BrowserState {
-  if (!isRecord(state)) return { url: '' }
+  if (!isRecord(state)) return { url: DEFAULT_BROWSER_URL }
   const normalized = normalizeBrowserUrl(state['url'])
-  return { url: normalized ?? '' }
+  return { url: normalized || DEFAULT_BROWSER_URL }
 }
 
 /** Rounds finite bounds to integer pixels and clamps negative dimensions to 0; null for malformed input. */
@@ -176,7 +230,8 @@ export function shouldShowBrowser(options: {
 
 /** One line about a `core/browser` panel, for the model's grid map. */
 export function browserSummary(state: unknown, output: unknown): string {
-  const stateUrl = readBrowserState(state).url
+  const rawStateUrl = isRecord(state) ? normalizeBrowserUrl(state['url']) : null
+  const stateUrl = rawStateUrl ?? ''
   const out = isRecord(output) ? output : {}
   const outUrl = typeof out['url'] === 'string' ? (normalizeBrowserUrl(out['url']) ?? '') : ''
   const url = outUrl || stateUrl

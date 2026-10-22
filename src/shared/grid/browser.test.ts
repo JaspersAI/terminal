@@ -2,11 +2,17 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   BROWSER_PARTITION,
+  BROWSER_PLUGIN_DESCRIPTION,
+  BROWSER_PLUGIN_ID,
+  BROWSER_PLUGIN_TITLE,
   BROWSER_VIEW,
   browserStanding,
   browserSummary,
+  browserUserAgent,
   clipBounds,
+  DEFAULT_BROWSER_URL,
   isBrowserUrl,
+  isVideoPageUrl,
   normalizeBounds,
   normalizeBrowserUrl,
   readBrowserState,
@@ -55,11 +61,37 @@ test('normalizeBrowserUrl accepts http(s), adds https to bare hosts, and refuses
   assert.equal(isBrowserUrl('http://localhost:3000/stream'), true)
 })
 
-test('readBrowserState normalizes a valid URL and falls back to empty for missing or invalid state', () => {
+test('readBrowserState normalizes a valid URL and falls back to the default Bloomberg address when unset or invalid', () => {
+  assert.equal(DEFAULT_BROWSER_URL, 'https://www.bloomberg.com/')
+  assert.equal(BROWSER_PLUGIN_ID, 'browser')
+  assert.equal(BROWSER_PLUGIN_TITLE, 'Browser')
+  assert.equal(
+    BROWSER_PLUGIN_DESCRIPTION,
+    'Opens Bloomberg Television\u2019s live stream; unaffiliated with Bloomberg L.P.',
+  )
   assert.deepEqual(readBrowserState({ url: 'bloomberg.com/live' }), { url: 'https://bloomberg.com/live' })
-  assert.deepEqual(readBrowserState({ url: '' }), { url: '' })
-  assert.deepEqual(readBrowserState({ url: 'javascript:alert(1)' }), { url: '' })
-  assert.deepEqual(readBrowserState(null), { url: '' })
+  assert.deepEqual(readBrowserState({ url: '' }), { url: DEFAULT_BROWSER_URL })
+  assert.deepEqual(readBrowserState({ url: 'javascript:alert(1)' }), { url: DEFAULT_BROWSER_URL })
+  assert.deepEqual(readBrowserState(null), { url: DEFAULT_BROWSER_URL })
+})
+
+test('isVideoPageUrl detects Bloomberg TV/Live and YouTube pages for default theater mode, and browserUserAgent strips Electron tokens', () => {
+  assert.equal(isVideoPageUrl('https://www.bloomberg.com/tv'), true)
+  assert.equal(isVideoPageUrl('https://bloomberg.com/tv/us'), true)
+  assert.equal(isVideoPageUrl('https://www.bloomberg.com/live'), true)
+  assert.equal(isVideoPageUrl('https://www.bloomberg.com/live/us'), true)
+  assert.equal(isVideoPageUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ'), true)
+  assert.equal(isVideoPageUrl('https://youtu.be/dQw4w9WgXcQ'), true)
+  assert.equal(isVideoPageUrl('https://www.bloomberg.com/'), false)
+  assert.equal(isVideoPageUrl('https://www.bloomberg.com/markets'), false)
+  assert.equal(isVideoPageUrl('https://www.sec.gov/'), false)
+
+  const rawUa =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) jaspers-terminal/0.7.2 Chrome/136.0.0.0 Electron/44.3.0 Safari/537.36'
+  assert.equal(
+    browserUserAgent(rawUa),
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+  )
 })
 
 test('normalizeBounds rounds finite numbers and clipBounds confines a rectangle to the window viewport', () => {
