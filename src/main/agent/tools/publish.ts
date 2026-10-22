@@ -25,27 +25,7 @@ export const publishTools: Tool[] = [
       required: ['id'],
     },
     async run(input, context) {
-      refuseUnattended(context, 'a plugin')
-      const id = asId(input.id, 'Name the plugin by its id, as Plugins lists it.')
-      const prepared = await preparePublish({ kind: 'plugin', id }, publishing).catch((err: unknown) => {
-        if (err instanceof NoHandleError) {
-          throw new Error(
-            `${err.message} The user claims it in Settings > Plugins, from Publish to Hub on the plugin's page, which asks for it the first time; then ask again.`,
-          )
-        }
-        throw err
-      })
-      const question = publishQuestion(prepared)
-      const answer = await askUser(
-        question.text,
-        [PUBLISH, CANCEL],
-        context.signal,
-        question.code,
-        askedBy(context.runId),
-      )
-      if (!approvedInstall(answer, PUBLISH)) return notPublished(id, 'plugin')
-      const { handle, version, page } = await sendPublish(prepared, publishing)
-      return `Published ${prepared.name} ${version} to Jaspers Hub as ${handle}/${prepared.name}, pending review; once approved it is listed at ${page}. The user can follow the review under Your Hub items in Settings > Plugins.`
+      return runPublish('plugin', asId(input.id, 'Name the plugin by its id, as Plugins lists it.'), context)
     },
   },
   {
@@ -60,30 +40,28 @@ export const publishTools: Tool[] = [
       required: ['name'],
     },
     async run(input, context) {
-      refuseUnattended(context, 'a skill')
-      const name = asId(input.name, 'Name the skill as available_skills lists it.')
-      const prepared = await preparePublish({ kind: 'skill', id: name }, publishing).catch((err: unknown) => {
-        if (err instanceof NoHandleError) {
-          throw new Error(
-            `${err.message} The user claims it in Settings > Skills, from Publish to Hub on the skill's page, which asks for it the first time; then ask again.`,
-          )
-        }
-        throw err
-      })
-      const question = publishQuestion(prepared)
-      const answer = await askUser(
-        question.text,
-        [PUBLISH, CANCEL],
-        context.signal,
-        question.code,
-        askedBy(context.runId),
-      )
-      if (!approvedInstall(answer, PUBLISH)) return notPublished(name, 'skill')
-      const { handle, version, page } = await sendPublish(prepared, publishing)
-      return `Published ${prepared.name} ${version} to Jaspers Hub as ${handle}/${prepared.name}, pending review; once approved it is listed at ${page}. The user can follow the review under Your Hub items in Settings > Plugins.`
+      return runPublish('skill', asId(input.name, 'Name the skill as available_skills lists it.'), context)
     },
   },
 ]
+
+async function runPublish(kind: 'plugin' | 'skill', id: string, context: ToolContext): Promise<string> {
+  refuseUnattended(context, `a ${kind}`)
+  const pane = kind === 'plugin' ? 'Plugins' : 'Skills'
+  const prepared = await preparePublish({ kind, id }, publishing).catch((err: unknown) => {
+    if (err instanceof NoHandleError) {
+      throw new Error(
+        `${err.message} The user claims it in Settings > ${pane}, from Publish to Hub on the ${kind}'s page, which asks for it the first time; then ask again.`,
+      )
+    }
+    throw err
+  })
+  const question = publishQuestion(prepared)
+  const answer = await askUser(question.text, [PUBLISH, CANCEL], context.signal, question.code, askedBy(context.runId))
+  if (!approvedInstall(answer, PUBLISH)) return notPublished(id, kind)
+  const { handle, version, page } = await sendPublish(prepared, publishing)
+  return `Published ${prepared.name} ${version} to Jaspers Hub as ${handle}/${prepared.name}, pending review; once approved it is listed at ${page}. The user can follow the review under Your Hub items in Settings > Plugins.`
+}
 
 function refuseUnattended(context: ToolContext, what: string): void {
   if (context.task !== undefined) {
