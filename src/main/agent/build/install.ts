@@ -2,6 +2,7 @@ import {
   ALLOW,
   APPROVE,
   DECLINE,
+  approvalNotice,
   isApproved,
   trustQuestion,
   widenQuestion,
@@ -17,6 +18,7 @@ import {
 import type { PluginInfo } from '../../../shared/state.ts'
 import { readBuildRecordFile, writeBuildRecordFile } from '../../plugins/build-record.ts'
 import { fileContents, type BuildFolder } from './folder.ts'
+import { hasShellApproval, writeShellApproval } from '../../plugins/shell-approval.ts'
 
 // install_plugin: the one place a plugin the assistant wrote is put in front of the user. The first
 // time, the question shows the envelope and the files whole, and a yes writes the record, installs
@@ -33,6 +35,8 @@ export interface InstallDeps {
   home: string
   /** Puts the question to the user and answers with what they chose, or null when nobody answered. */
   ask(question: TrustQuestion): Promise<string | null>
+  /** Surfaces a notice when the build is waiting for approval. */
+  notice?(text: string): void
   land(folder: BuildFolder): Promise<BuildFolder>
   rebuild(id: string): void
   /** Waits for the plugin's build to settle and answers its entry. */
@@ -41,21 +45,26 @@ export interface InstallDeps {
   now(): string
 }
 
+/**
+ * Approves and lands a staged plugin, or approves a wider envelope for a live one. Installs requested
+ * packages and returns the build result, or null when plugin.tsx has not been written yet.
+ */
 export async function installPlugin(
   folder: BuildFolder,
   input: Record<string, unknown>,
   request: string,
   deps: InstallDeps,
-): Promise<{ folder: BuildFolder; info: PluginInfo }> {
+): Promise<{ folder: BuildFolder; info: PluginInfo | null }> {
   const purpose = typeof input['purpose'] === 'string' ? input['purpose'].trim() : ''
   if (!purpose || purpose.length > PURPOSE_MAX) {
     throw new Error(`purpose is one line, up to ${PURPOSE_MAX} characters, saying what the plugin is for.`)
   }
   const { envelope, packageSpecs } = envelopeFromInput(input)
   const files = await fileContents(folder)
-  if (!files.some((file) => file.path === 'plugin.tsx')) throw new Error('Write plugin.tsx first: nothing to install.')
+  const hasEntry = files.some((file) => file.path === 'plugin.tsx')
 
   if (!folder.live) {
+    deps.notice?.(approvalNotice(folder.id, purpose))
     const answer = await deps.ask(trustQuestion({ id: folder.id, purpose, envelope, files, home: deps.home }))
     if (!isApproved(answer, APPROVE)) {
       throw new Error(
@@ -63,16 +72,20 @@ export async function installPlugin(
           `The user did not approve building ${folder.id}. Say what you wanted to build and stop.`,
       )
     }
+    if (packageSpecs.length > 0) await deps.installPackages(folder.dir, packageSpecs)
     const record: BuildRecord = { purpose, request, at: deps.now(), approved: envelope }
     writeBuildRecordFile(folder.dir, record)
-    if (packageSpecs.length > 0) await deps.installPackages(folder.dir, packageSpecs)
+    writeShellApproval(folder.dir, envelope.shell === true)
     const live = await deps.land(folder)
-    return { folder: live, info: await deps.wait(live.id) }
+    return { folder: live, info: hasEntry ? await deps.wait(live.id) : null }
   }
 
   const record = readBuildRecordFile(folder.dir) ?? { purpose, request, at: deps.now(), approved: EMPTY_ENVELOPE }
+  // A copied build record cannot bypass the shell consent prompt.
+  record.approved = { ...record.approved, shell: hasShellApproval(folder.dir) }
   const lines = widened(envelope, record.approved)
   if (lines.length > 0) {
+    deps.notice?.(approvalNotice(folder.id, purpose))
     const answer = await deps.ask(widenQuestion(folder.id, lines))
     if (!isApproved(answer, ALLOW)) {
       throw new Error(
@@ -80,10 +93,13 @@ export async function installPlugin(
           `The user did not allow ${folder.id} to reach more: ${lines.join(', ')}. Keep to what was approved, or stop.`,
       )
     }
-    writeBuildRecordFile(folder.dir, { ...record, purpose, approved: union(record.approved, envelope) })
     const fresh = packageSpecs.filter((spec) => !record.approved.packages.includes(nameOf(spec)))
     if (fresh.length > 0) await deps.installPackages(folder.dir, fresh)
+    const approved = union(record.approved, envelope)
+    writeBuildRecordFile(folder.dir, { ...record, purpose, approved })
+    writeShellApproval(folder.dir, approved.shell === true)
   }
+  if (!hasEntry) return { folder, info: null }
   deps.rebuild(folder.id)
   return { folder, info: await deps.wait(folder.id) }
 }
@@ -109,6 +125,7 @@ function union(approved: Envelope, wanted: Envelope): Envelope {
     connections: merge(approved.connections, wanted.connections),
     packages: merge(approved.packages, wanted.packages),
     frames: merge(approved.frames, wanted.frames),
+    ...(approved.shell || wanted.shell ? { shell: true } : {}),
   }
 }
 

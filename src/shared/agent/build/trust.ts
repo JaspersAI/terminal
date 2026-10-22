@@ -32,6 +32,7 @@ export interface TrustQuestion {
   choices: string[]
 }
 
+/** Builds the approval question with the requested envelope, optional shell access, and a capped file preview. */
 export function trustQuestion(input: TrustInput): TrustQuestion {
   const files = input.files.map((file) => `${file.path} ${sizeText(file.size)}`).join(' · ')
   const head = [
@@ -53,8 +54,9 @@ export function trustQuestion(input: TrustInput): TrustQuestion {
     }
     code += block
   }
+  const shellNote = input.envelope.shell ? ` It asks for read-only access to ${input.home}/shell.` : ''
   return {
-    text: `Build the plugin ${input.id}? It is written to ${input.home}/plugins/${input.id} and runs in the app. The app holds it to what is listed below, and the builder may go on writing its files after you approve.`,
+    text: `Build the plugin ${input.id}? It is written to ${input.home}/plugins/${input.id} and runs in the app.${shellNote} The app holds it to what is listed below, and the builder may go on writing its files after you approve.`,
     code: cut ? `${code.trimEnd()}\n… (cut)` : code.trimEnd(),
     choices: [APPROVE, DECLINE],
   }
@@ -67,4 +69,12 @@ export function widenQuestion(id: string, lines: string[]): TrustQuestion {
     code: lines.map((line) => `+ ${line}`).join('\n'),
     choices: [ALLOW, DECLINE],
   }
+}
+
+/** One line for the inbox and answer box when a plugin build pauses on the user's approval. */
+export function approvalNotice(id: string, purpose?: string): string {
+  const summary = purpose?.trim()
+  return summary
+    ? `Plugin ${id} (${summary}) is waiting for your approval.`
+    : `Plugin ${id} is waiting for your approval.`
 }
