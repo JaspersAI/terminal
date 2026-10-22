@@ -1,3 +1,4 @@
+import { JASPERS } from '../../../shared/llm/providers'
 import { parseSlash, skillUsable } from '../../../shared/skills/skills'
 import {
   checkCommands,
@@ -121,7 +122,7 @@ const TOOLS: Tool[] = [
         at: ruleOf(input.on),
         speak: input.watch === true ? ('changed' as const) : ('always' as const),
         call: optional(input.call, asCall) ?? null,
-        model: optional(input.model, asPathString) ?? null,
+        model: getState().llm?.providerId === JASPERS ? null : (optional(input.model, asPathString) ?? null),
       }
       checkTask({ ...draft, commands: asCommands(input.commands) })
       const commands = await approveForTask(asCommands(input.commands), context)
@@ -164,7 +165,8 @@ const TOOLS: Tool[] = [
       if (given(input.on)) patch.at = ruleOf(input.on)
       if (given(input.call)) patch.call = asCall(input.call)
       if (typeof input.watch === 'boolean') patch.speak = input.watch ? 'changed' : 'always'
-      if (given(input.model)) patch.model = asPathString(input.model).trim() || null
+      if (given(input.model))
+        patch.model = getState().llm?.providerId === JASPERS ? null : asPathString(input.model).trim() || null
       if (typeof input.enabled === 'boolean') patch.enabled = input.enabled
       const id = asTaskId(input.taskId)
       if (input.commands !== undefined && input.commands !== null) {

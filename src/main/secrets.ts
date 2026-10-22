@@ -43,9 +43,9 @@ export function getProviderConfig<K extends ProviderKind>(kind: K): ProviderConf
   const stored = getState()[kind]
   const provider = stored && findProvider(kind, stored.providerId)
   if (!stored || !provider) return null
-  // The Jaspers provider's credential is the sign-in, and its address follows Account's: the gateway is a service of Account's own.
+  // The Jaspers provider's credential is the sign-in, and its address and model follow Account's: the gateway is a service of Account's own.
   if (signsIn(provider))
-    return { provider, baseUrl: gatewayAddress(), model: stored.model, token: null, fetch: asAccount }
+    return { provider, baseUrl: gatewayAddress(), model: provider.model, token: null, fetch: asAccount }
   return {
     provider,
     baseUrl: stored.baseUrl,

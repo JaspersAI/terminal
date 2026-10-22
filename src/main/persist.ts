@@ -22,7 +22,7 @@ import {
   type Loop,
   type Loops,
 } from '../shared/loops/loops'
-import { findProvider } from '../shared/llm/providers'
+import { findProvider, signsIn } from '../shared/llm/providers'
 import type { Workspace, Budgets } from '../shared/state'
 import { isTheme, type Theme } from '../shared/app/theme'
 import { EYE_OFF, readEye, type StoredEye } from '../shared/app/eye'
@@ -131,10 +131,11 @@ function workspacePath(workspaceId: string): string {
 /** Reads the tree. Files from older versions are patched into shape; no file is a new user. */
 export function load(): MainState {
   const state: StateFile = { ...EMPTY, ...(readJson<Partial<StateFile>>(statePath()) ?? {}) }
-  // Files written before the model field existed get the registry default.
+  // Files written before the model field existed, or with a stale model on Jaspers, get the registry default.
   for (const kind of ['llm', 'voice', 'search'] as const) {
     const stored = state[kind]
-    if (stored && !stored.model) stored.model = findProvider(kind, stored.providerId)?.model ?? ''
+    const provider = stored ? findProvider(kind, stored.providerId) : undefined
+    if (stored && (!stored.model || (provider && signsIn(provider)))) stored.model = provider?.model ?? ''
   }
   // Files written before workspaces existed get one, and the current id always points at a real workspace.
   // Either patch is written with the first change, since grids and tasks are filed under the id.

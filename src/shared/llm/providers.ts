@@ -27,10 +27,10 @@ export interface Provider<Api extends string = string> {
 }
 
 /**
- * Jaspers' own service, which serves every kind under the one sign-in with Jaspers: Gemini on Vertex AI
- * for language models and OpenRouter for voice and search, in OpenAI's shapes. The server is the
- * jaspers-account repo; the base URL here is the public gateway, and main follows Account's address
- * instead when the environment names another.
+ * Jaspers' own service, which serves every kind under the one sign-in with Jaspers: Google's Gemini
+ * models on Vertex AI (`gemini-3.8-flash` and `gemini-4-argon`) for language models and OpenRouter
+ * for voice and search, in OpenAI's shapes. The server is the jaspers-account repo; the base URL here
+ * is the public gateway, and main follows Account's address instead when the environment names another.
  */
 export const JASPERS = 'jaspers'
 const JASPERS_URL = gatewayUrl(JASPERS_ACCOUNT)
@@ -256,8 +256,9 @@ export function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }
 
-/** The base URL and model a form shows for a provider: what is saved when it is the saved provider, else its defaults. */
+/** The base URL and model a form shows for a provider: what is saved when it is the saved provider, else its defaults. Jaspers always uses its own. */
 export function providerFields(saved: ProviderSetting | null, provider: Provider): { baseUrl: string; model: string } {
+  if (signsIn(provider)) return { baseUrl: provider.baseUrl, model: provider.model }
   if (saved?.providerId === provider.id) return { baseUrl: saved.baseUrl, model: saved.model }
   return { baseUrl: provider.baseUrl, model: provider.model }
 }
@@ -292,15 +293,15 @@ export function withJaspersWhereNone<T extends SavedProvider>(providers: {
 
 /**
  * The voice setting to keep once `llm` is saved. The Jaspers sign-in serves voice as well, so a
- * language model on Jaspers sets voice up on the same service, keeping the voice model if voice was
- * on Jaspers already. Voice on another provider is the user's choice and stays.
+ * language model on Jaspers sets voice up on the same service on Jaspers' voice model. Voice on
+ * another provider is the user's choice and stays.
  */
 export function voiceWith<T extends { providerId: string; baseUrl: string; model: string }>(
   llm: T,
   voice: T | null,
 ): T | null {
   if (llm.providerId !== JASPERS || (voice !== null && voice.providerId !== JASPERS)) return voice
-  return { ...llm, model: voice?.model ?? findProvider('voice', JASPERS)!.model }
+  return { ...llm, model: findProvider('voice', JASPERS)!.model }
 }
 
 /**
@@ -316,14 +317,15 @@ export function searchWith<T extends { providerId: string; baseUrl: string; mode
   return { ...llm, model: '' }
 }
 
-/** Whether a provider runs on a model the user names: every one does but a search engine, which has none. */
+/** Whether a provider runs on a model the user names: every one does but a search engine, which has none, and Jaspers, which picks its own. */
 export function takesModel(kind: ProviderKind, provider: Provider): boolean {
-  return kind !== 'search' || provider.model !== ''
+  return !signsIn(provider) && (kind !== 'search' || provider.model !== '')
 }
 
 /** Whether saving a form would change anything: compared the way main stores it, and a key typed in always would. */
 export function providerChanged(saved: ProviderSetting | null, input: ProviderInput): boolean {
   if (saved?.providerId !== input.providerId) return true
+  if (input.providerId === JASPERS) return false
   return (
     normalizeBaseUrl(input.baseUrl) !== saved.baseUrl || input.model.trim() !== saved.model || input.token.trim() !== ''
   )

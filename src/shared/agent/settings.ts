@@ -3,7 +3,7 @@
 // is hard to take back (a plugin removed, the model or a provider switched) is asked of the user
 // first; the rest apply at once. Pro mode and Eye are not here: those switches are the user's alone.
 
-import { findProvider, PROVIDERS } from '../llm/providers.ts'
+import { findProvider, PROVIDERS, signsIn, takesModel } from '../llm/providers.ts'
 import type { Action, ProviderKind, ProviderSetting } from '../state'
 import { THEMES } from '../app/theme.ts'
 
@@ -123,10 +123,14 @@ function providerChange(input: Record<string, unknown>, now: SettingsNow): Setti
     )
   }
   const same = current?.providerId === provider.id
-  const model = optionalWords(input.model) ?? (same ? current.model : provider.model)
-  const baseUrl = optionalWords(input.base_url) ?? (same ? current.baseUrl : provider.baseUrl)
+  const model = signsIn(provider)
+    ? provider.model
+    : (optionalWords(input.model) ?? (same ? current.model : provider.model))
+  const baseUrl = signsIn(provider)
+    ? provider.baseUrl
+    : (optionalWords(input.base_url) ?? (same ? current.baseUrl : provider.baseUrl))
   if (!baseUrl) throw new Error(`${provider.name} needs base_url: it has no address of its own.`)
-  const label = model ? `${provider.name}, ${model}` : provider.name
+  const label = model && takesModel(which, provider) ? `${provider.name}, ${model}` : provider.name
   const starts = which === 'llm' ? ' The conversation goes on with it from the next request.' : ''
   return {
     action: { type: 'provider.set', kind: which, input: { providerId: provider.id, baseUrl, model, token: '' } },

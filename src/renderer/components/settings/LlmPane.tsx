@@ -202,35 +202,18 @@ function ProviderSection({ kind, title, blurb, onSaved }: SectionProps): ReactEl
           </>
         )}
         {provider && viaJaspers && (
-          <>
-            {takesModel(kind, provider) && (
-              <Row label="Model" htmlFor={id('model')}>
-                <input
-                  id={id('model')}
-                  name={`${kind}-model`}
-                  type="text"
-                  value={form.model}
-                  placeholder="model name"
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(event) => form.setModel(event.target.value)}
-                  className={`${FIELD} font-mono`}
-                />
-              </Row>
-            )}
-            <Row label="Account" hint={jaspers.reason ?? 'The sign-in is the credential: nothing to paste.'}>
-              <div className="flex flex-wrap items-center justify-end gap-3">
-                <span className="text-right text-sm">
-                  {jaspers.signedIn ? `Signed in as ${jaspers.email ?? 'a Jaspers account'}` : 'Not signed in'}
-                </span>
-                {jaspers.signedIn && (
-                  <button type="button" onClick={() => void dispatch({ type: 'jaspers.signOut' })} className={BUTTON}>
-                    Sign out
-                  </button>
-                )}
-              </div>
-            </Row>
-          </>
+          <Row label="Account" hint={jaspers.reason ?? 'The sign-in is the credential: nothing to paste.'}>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <span className="text-right text-sm">
+                {jaspers.signedIn ? `Signed in as ${jaspers.email ?? 'a Jaspers account'}` : 'Not signed in'}
+              </span>
+              {jaspers.signedIn && (
+                <button type="button" onClick={() => void dispatch({ type: 'jaspers.signOut' })} className={BUTTON}>
+                  Sign out
+                </button>
+              )}
+            </div>
+          </Row>
         )}
       </div>
 
