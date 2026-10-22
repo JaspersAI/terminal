@@ -8,7 +8,7 @@ import {
   replaceOnce,
   type FolderFile,
 } from '../../../shared/agent/build/files.ts'
-import { isPluginId } from '../../../shared/plugins/id.ts'
+import { isPluginId, RESERVED_PLUGIN_NAMES } from '../../../shared/plugins/id.ts'
 import { buildRoot, homePluginsRoot } from '../../home.ts'
 import { inside, isMissing, realpathLoose } from '../../plugins/confine.ts'
 
@@ -33,6 +33,7 @@ export async function openFolder(id: string, owner: Owner): Promise<BuildFolder>
   if (!isPluginId(id)) {
     throw new Error(`A plugin id is lower-case letters, digits, and dashes, at most 64; ${JSON.stringify(id)} is not.`)
   }
+  if (RESERVED_PLUGIN_NAMES.has(id)) throw new Error(`${id} is reserved for a Jaspers folder; choose another id.`)
   if (owner === 'other') {
     throw new Error(
       `There is already a plugin called ${id} that was not built here: it is the user's own or installed from a source. Choose another id, or ask the user.`,
@@ -114,9 +115,30 @@ export async function writeBuildFile(folder: BuildFolder, raw: unknown, content:
   if (!existing.some((f) => f.path === rel) && existing.length >= BUILD_LIMITS.files) {
     throw new Error(`A plugin folder holds at most ${BUILD_LIMITS.files} files; this one is full.`)
   }
+  const written = rel === 'package.json' ? await preserveDependencies(file, text) : text
   await fsp.mkdir(path.dirname(file), { recursive: true })
-  await fsp.writeFile(file, text, { encoding: 'utf8', mode: 0o644 })
-  return { path: rel, size: Buffer.byteLength(text, 'utf8') }
+  await fsp.writeFile(file, written, { encoding: 'utf8', mode: 0o644 })
+  return { path: rel, size: Buffer.byteLength(written, 'utf8') }
+}
+
+/** Keeps package.json's dependencies when the builder writes package.json after install_plugin installed packages. */
+async function preserveDependencies(file: string, text: string): Promise<string> {
+  try {
+    const prev: unknown = JSON.parse(await fsp.readFile(file, 'utf8'))
+    const next: unknown = JSON.parse(text)
+    if (!isObject(prev) || !isObject(next) || !isObject(prev['dependencies'])) return text
+    if ('dependencies' in next && (!isObject(next['dependencies']) || Object.keys(next['dependencies']).length > 0)) {
+      return text
+    }
+    return `${JSON.stringify({ ...next, dependencies: prev['dependencies'] }, null, 2)}\n`
+  } catch {
+    return text
+  }
+}
+
+/** Narrows manifest values to non-null objects, excluding arrays. */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Replaces one passage of a file, the rest left as it is, held to the rules a write is, and answers what was written. */
