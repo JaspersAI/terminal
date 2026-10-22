@@ -20,6 +20,7 @@ import {
   notPlaced,
   notStarted,
   readLoops,
+  refreshTarget,
   retagged,
   START,
   startQuestion,
@@ -610,4 +611,33 @@ test('a loop is started only when the user says Start to what it is and which pl
   // Not read loosely: a typed yes is words of the user's own, not Start.
   assert.notEqual(notStarted('yes'), null)
   assert.notEqual(notStarted('start'), null)
+})
+
+test('refreshTarget trims element and panel ids, prefers direct grid targets over matching loop names, and resolves open loops to their frame across windows', () => {
+  const grids = {
+    1: grid([1, frame, 'f1'], [11, view('core/table'), 'f1', undefined, { parent: 'e1' }]),
+    2: grid([4, frame, 'f2']),
+  }
+  const loops = [loop('f1', 'Screener'), loop('f2', 'Chart'), loop('f3', 'Frameless')]
+  assert.equal(refreshTarget(grids, loops, ' e11 '), 'e11')
+  assert.equal(refreshTarget(grids, loops, 'p11'), 'p11')
+  assert.equal(refreshTarget(grids, loops, ' p11 '), 'p11')
+  for (const target of ['loop_1', '@loop_1', 'f1', ' loop_1 ']) {
+    assert.equal(refreshTarget(grids, loops, target), 'e1', target)
+  }
+  const colliding = {
+    1: {
+      ...grids[1]!,
+      elements: [...grids[1]!.elements, { ...grids[1]!.elements[1]!, id: 'f1', panelId: 'loop_1' }],
+      panels: [...grids[1]!.panels, { ...grids[1]!.panels[1]!, id: 'loop_1', elementId: 'f1' }],
+    },
+  }
+  assert.equal(refreshTarget(colliding, loops, ' f1 '), 'f1')
+  assert.equal(refreshTarget(colliding, loops, ' loop_1 '), 'loop_1')
+  assert.equal(refreshTarget(colliding, loops, '@loop_1'), 'e1')
+  assert.equal(refreshTarget(grids, loops, 'loop_2'), 'e4')
+  assert.equal(refreshTarget(grids, loops, 'loop_3'), 'loop_3')
+  assert.equal(refreshTarget(grids, loops, ' f3 '), 'f3')
+  assert.equal(refreshTarget(grids, loops, 'loop_9'), 'loop_9')
+  assert.equal(refreshTarget(grids, loops, ' e99 '), 'e99')
 })
