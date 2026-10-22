@@ -7,6 +7,7 @@ import { useRows } from './data'
 import { useColorScheme } from '../lib/color-scheme'
 import {
   CHART_KINDS,
+  chartMessage,
   FORMATS,
   formatted,
   HEAT,
@@ -81,18 +82,14 @@ export function Chart({ panel }: ViewProps): ReactElement {
   usePublish(panel, { kind: shape, x: xColumn, y: yColumns, points: found.rows.length, error: found.error ?? short })
   usePublishText(panel, ready ? asText(title, xColumn, labels, found.rows, yColumns) : found.text)
 
-  const message =
-    found.error ??
-    short ??
-    (found.loading
-      ? 'Loading…'
-      : found.rows.length === 0
-        ? source || sql
-          ? 'Nothing came back.'
-          : 'Set source, or sql, and x and y.'
-        : yColumns.length === 0
-          ? 'No numeric column to plot. Set state.y to the columns to chart.'
-          : null)
+  const message = chartMessage({
+    error: found.error,
+    short,
+    loading: found.loading,
+    rowCount: found.rows.length,
+    yColumnCount: yColumns.length,
+    hasInput: Boolean(source || sql),
+  })
 
   return (
     <div className="flex h-full flex-col overflow-hidden">

@@ -41,3 +41,27 @@ export function isYearColumn(rows: Record<string, unknown>[], column: string): b
   const numbers = rows.map((row) => row[column]).filter((value): value is number => typeof value === 'number')
   return numbers.length > 0 && numbers.every((n) => Number.isInteger(n) && n >= YEAR_MIN && n <= YEAR_MAX)
 }
+
+export interface Rows {
+  rows: Record<string, unknown>[]
+  /** The columns in the order they should read, from the first row unless the query named them. */
+  columns: string[]
+  loading: boolean
+  error: string | null
+  /** What a source that answered in prose said, when there were no rows. */
+  text: string | null
+  truncated: boolean
+}
+
+export const EMPTY_ROWS: Rows = { rows: [], columns: [], loading: false, error: null, text: null, truncated: false }
+
+/**
+ * The state of a SQL query when it fails. A refresh of the same query that already had rows keeps
+ * showing those rows rather than dropping the view's columns and series on a transient error.
+ */
+export function sqlAfterFailure(previous: Rows, message: string, keepPrevious: boolean): Rows {
+  if (keepPrevious && previous.rows.length > 0) {
+    return { ...previous, loading: false, error: null }
+  }
+  return { ...EMPTY_ROWS, error: message }
+}

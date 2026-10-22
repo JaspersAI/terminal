@@ -79,6 +79,37 @@ export function missingColumns(kind: ChartKind, yColumns: string[], columns: str
   return `A ${kind} chart needs ${needs.what}.`
 }
 
+export interface ChartMessageInput {
+  error: string | null
+  short: string | null
+  loading: boolean
+  rowCount: number
+  yColumnCount: number
+  hasInput: boolean
+}
+
+/**
+ * What a chart says over its canvas, or null when the plot itself is what should show. While
+ * refreshing with rows already in hand, the plot stays visible rather than flashing Loading….
+ */
+export function chartMessage({
+  error,
+  short,
+  loading,
+  rowCount,
+  yColumnCount,
+  hasInput,
+}: ChartMessageInput): string | null {
+  if (error) return error
+  if (short) return short
+  if (rowCount === 0) {
+    if (loading) return 'Loading…'
+    return hasInput ? 'Nothing came back.' : 'Set source, or sql, and x and y.'
+  }
+  if (yColumnCount === 0) return 'No numeric column to plot. Set state.y to the columns to chart.'
+  return null
+}
+
 /** A number out of a cell, or null where there is nothing to plot. */
 export function numberOf(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
