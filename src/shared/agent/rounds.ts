@@ -80,7 +80,20 @@ export function writingLine(name: string, ms: number): string {
 /** The most of a name a call's line carries. */
 const NAMED_MAX = 48
 /** The arguments that name the thing a call is about, the likeliest first. */
-const NAMING = ['view', 'elementId', 'path', 'name', 'symbol', 'ticker', 'query', 'url', 'id', 'source', 'instructions']
+const NAMING = [
+  'view',
+  'elementId',
+  'panelId',
+  'path',
+  'name',
+  'symbol',
+  'ticker',
+  'query',
+  'url',
+  'id',
+  'source',
+  'instructions',
+]
 
 /**
  * One tool call as the status line says it: what it is doing, and to what. The argument that names

@@ -671,6 +671,22 @@ export function notStarted(answer: string | null): string | null {
 }
 
 /**
+ * The element or panel id `refresh_element` acts on: trimmed, an exact element or panel id on a grid
+ * as it is, and otherwise, when `id` names an open loop or its id, that loop's frame element id so
+ * refreshing a piece of work refreshes every view inside its tile.
+ */
+export function refreshTarget(grids: Record<number, Grid>, loops: readonly Loop[], id: string): string {
+  const trimmed = id.trim()
+  const direct = Object.values(grids).some(
+    (grid) =>
+      grid.elements.some((element) => element.id === trimmed) || grid.panels.some((panel) => panel.id === trimmed),
+  )
+  if (direct) return trimmed
+  const loop = named(loops, trimmed)
+  return (loop ? frameOf(grids, loop.id)?.element.id : undefined) ?? trimmed
+}
+
+/**
  * Why a loop's agent may not change this element, in words for its model, or null when it may: the
  * tile is its own. `id` is an element's or a panel's. One that is on no grid answers null too: the
  * tool says that in the words it always has.

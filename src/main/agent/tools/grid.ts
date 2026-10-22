@@ -19,9 +19,9 @@ import {
   type Size,
 } from '../../../shared/grid/grid'
 import { MAIN_WINDOW, windowNumbers, WINDOWS_MAX } from '../../../shared/grid/windows'
-import { frameOf, isTile, notPlaced } from '../../../shared/loops/loops'
+import { frameOf, isTile, notPlaced, refreshTarget } from '../../../shared/loops/loops'
 import { asWindow, placeChecked, refreshChecked, removeChecked } from '../../actions'
-import { notOwnFrame, ownTile } from '../../loops/loops'
+import { loopsOf, notOwnFrame, ownTile } from '../../loops/loops'
 import {
   changeGrid,
   changeGridOf,
@@ -355,11 +355,29 @@ export function gridTools(context?: ToolContext): Tool[] {
       name: 'refresh_element',
       description:
         "Make an element's view fetch its data again, fresh, without changing what it shows: for update, reload, or the latest. A view that draws its own data is live already and ignores it.",
-      parameters: { type: 'object', properties: { elementId: ELEMENT_ID }, required: ['elementId'] },
+      parameters: {
+        type: 'object',
+        properties: {
+          elementId: {
+            type: 'string',
+            description: 'An element, panel, or loop id, like e3, p3, or loop_1. Give elementId, panelId, or id.',
+          },
+          panelId: { type: 'string', description: 'A panel id, like p3, in place of elementId.' },
+          id: {
+            type: 'string',
+            description: 'An element, panel, or loop id, like e3, p3, or loop_1, in place of elementId.',
+          },
+        },
+      },
       async run(input, context) {
-        const id = asElementId(input.elementId)
+        const { workspaceId } = context
+        const id = refreshTarget(
+          getGrids(workspaceId),
+          loopsOf(workspaceId).list,
+          asElementId(input.elementId, input.panelId, input.id),
+        )
         ownTile(context, id)
-        const panel = refreshChecked(context.workspaceId, id)
+        const panel = refreshChecked(workspaceId, id)
         return JSON.stringify({ refreshed: panel.elementId, at: panel.refreshedAt })
       },
     },
@@ -414,8 +432,12 @@ export function asRect(raw: unknown): Rect {
   throw new Error('rect must be {"x", "y", "w", "h"} in cells.')
 }
 
-function asElementId(value: unknown): string {
-  if (typeof value === 'string' && value) return value
+/** A non-empty element, panel, or loop identifier from tool input, trimmed. */
+function asElementId(...values: unknown[]): string {
+  for (const value of values) {
+    const id = typeof value === 'string' ? value.trim() : ''
+    if (id) return id
+  }
   throw new Error('elementId must be an element id from the grid, like e3.')
 }
 

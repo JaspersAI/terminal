@@ -90,6 +90,8 @@ test('a call the model is still writing is said by its tool and how long, never 
 test('a call is said by what it does and the argument that names the thing, never a value', () => {
   assert.equal(callLine('place_view', { view: 'core/table', state: { rows: 3 } }), 'place view: core/table')
   assert.equal(callLine('refresh_element', { elementId: 'e4' }), 'refresh element: e4')
+  assert.equal(callLine('refresh_element', { panelId: 'p4' }), 'refresh element: p4')
+  assert.equal(callLine('refresh_element', { id: 'loop_1' }), 'refresh element: loop_1')
   assert.equal(callLine('set_secret', { name: 'fred-key', value: '[secret]' }), 'set secret: fred-key')
   assert.equal(callLine('query', { sql: 'select 1' }), 'query: the store')
   assert.equal(callLine('read_again', { call: 'c1' }), 'read again')
