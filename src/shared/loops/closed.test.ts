@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_GRID, type Grid, type GridElement, type Panel, type PanelContent } from '../grid/grid.ts'
 import { gone, loopName, readLoops, showsChat, shut, type Loop, type Loops } from './loops.ts'
-import { closedWithout, loopLog, reopened, withoutLoop } from './closed.ts'
+import { closedHolding, closedWithout, loopLog, reopened, withoutLoop } from './closed.ts'
 
 const loop = (id: string, desc: string, more: Partial<Loop> = {}): Loop => ({
   id,
@@ -94,6 +94,15 @@ test('closing a loop stops it without forgetting it; deleting one forgets it, op
   assert.equal(deleted.closed, undefined)
   assert.deepEqual(gone({ w: closed }, { w: deleted }), ['w/f1'])
   assert.equal(withoutLoop(closed, 'f9'), closed)
+})
+
+test('a closed loop is found by its tiles, their panels, or its name, and an open one is not', () => {
+  const before = workspace()
+  const closed = closedWithout(both, before, withoutFrame(before, 'e1'), 50)
+  for (const id of ['e2', 'p2', 'e1', ' e2 ', 'loop_1', 'f1'])
+    assert.equal(closedHolding(closed, id)?.loop.id, 'f1', id)
+  for (const id of ['e3', 'p3', 'loop_2', 'e9', '']) assert.equal(closedHolding(closed, id), undefined, id)
+  assert.equal(closedHolding(both, 'e2'), undefined)
 })
 
 test('a closed loop reopens where it was, with its tiles and their state, its ids, and its number', () => {

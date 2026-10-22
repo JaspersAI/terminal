@@ -2,11 +2,13 @@ import { ipcMain } from 'electron'
 import { taskNote } from '../../shared/agent/transcript'
 import { WELCOME_PREFACE } from '../../shared/agent/welcome'
 import { EXCHANGES_MAX } from '../../shared/data/store'
-import { addressed, LOOP_ID, loopName } from '../../shared/loops/loops'
+import { closedHolding } from '../../shared/loops/closed'
+import { addressed, LOOP_ID, loopName, named } from '../../shared/loops/loops'
 import { signsIn } from '../../shared/llm/providers'
 import type { Turn } from '../../shared/llm/llm'
 import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { withoutSecretPrompts } from '../actions'
+import { getGrids } from '../grid/grid'
 import { loopsOf } from '../loops/loops'
 import { getProviderConfig } from '../secrets'
 import { getState } from '../state'
@@ -154,10 +156,34 @@ export function runTaskCall(call: TaskCall, workspaceId: string): Promise<string
     if (EXCLUDED.has(call.tool)) throw new Error(`A task cannot call ${call.tool}.`)
     const tool = findTool(call.tool)
     if (!tool) throw new Error(`Unknown tool ${call.tool}.`)
+    const asleep = closedTarget(call, workspaceId)
+    if (asleep) return asleep
     // A task's call is its own, every time: nothing a run was allowed carries into the next.
     const id = `task call ${call.tool} ${Date.now()}`
     return tool.run(call.input, { runId: id, workspaceId, conversationId: id, unread: true, ...threadReads([]) })
   })
+}
+
+/**
+ * What a scheduled refresh says when the tile it refreshes is in a loop the user closed: nothing to
+ * do until the loop is reopened, which brings the tile back under its id. Not a failure, so it puts
+ * up no notice every run; null for any other call, which runs as it is.
+ */
+function closedTarget(call: TaskCall, workspaceId: string): string | null {
+  if (call.tool !== 'refresh_element') return null
+  const { elementId, panelId, id } = call.input
+  const target = [elementId, panelId, id].find((v): v is string => typeof v === 'string' && v.trim() !== '')?.trim()
+  if (!target) return null
+  // Still on a grid, by its own id or as an open loop's frame: the refresh runs.
+  const loops = loopsOf(workspaceId)
+  const grids = Object.values(getGrids(workspaceId))
+  if (grids.some((grid) => grid.elements.some((e) => e.id === target) || grid.panels.some((p) => p.id === target)))
+    return null
+  if (named(loops.list, target)) return null
+  const closed = closedHolding(loops, target)
+  if (!closed) return null
+  const name = loopName(closed.loop.id)
+  return `Skipped: ${target} is in ${name}, which is closed. It refreshes again once ${name} is reopened from View loops.`
 }
 
 /**

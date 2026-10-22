@@ -17,7 +17,16 @@ import {
   type GridSize,
   type Rect,
 } from '../grid/grid.ts'
-import { frameOf, loopName, loopNumber, type ClosedLoop, type Loop, type Loops, type LoopChange } from './loops.ts'
+import {
+  frameOf,
+  loopName,
+  loopNumber,
+  named,
+  type ClosedLoop,
+  type Loop,
+  type Loops,
+  type LoopChange,
+} from './loops.ts'
 
 /** The tags the tiles on a workspace's grids carry. */
 function tagsOn(grids: Record<number, Grid>): Set<string> {
@@ -75,6 +84,25 @@ export function withoutLoop(loops: Loops, id: string): Loops {
 /** The closed loop with this id, when there is one. */
 export function closedLoop(loops: Loops, id: string): ClosedLoop | undefined {
   return loops.closed?.find((one) => one.loop.id === id)
+}
+
+/**
+ * The closed loop that holds this element, panel, or loop (e59, p59, loop_19), when one does: what a
+ * scheduled refresh of a tile finds when its loop was closed after the task was set. The ids come
+ * back with the loop, so the task has nothing to refresh until it is reopened, rather than a failure.
+ */
+export function closedHolding(loops: Loops, id: string): ClosedLoop | undefined {
+  const trimmed = id.trim()
+  const closed = loops.closed ?? []
+  const byName = named(
+    closed.map((one) => one.loop),
+    trimmed,
+  )
+  if (byName) return closed.find((one) => one.loop.id === byName.id)
+  return closed.find(
+    (one) =>
+      one.elements.some((e) => e.id === trimmed) || one.panels.some((p) => p.id === trimmed || p.elementId === trimmed),
+  )
 }
 
 /** A rect moved and cut so it lies on a grid of this size. */

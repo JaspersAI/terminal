@@ -149,6 +149,7 @@ The scheduler (`src/main/tasks/tasks.ts` paired with `src/shared/tasks/tasks.ts`
   - Starting `instructions` with `/name` (for example `/morning-brief AAPL MSFT`) loads that Agent Skill on every scheduled run.
   - Each task can pin its own `model` (such as a local Ollama model or a smaller cloud model; see [Getting started](getting-started.md)) and counts against the daily task token budget in **Settings > Tasks**.
   - Tasks that need shell automation can attach up to `TASK_COMMANDS_MAX = 5` pre-approved [Pro mode](pro-mode.md) scripts (`commands`), approved once when the task is scheduled.
+- **Refreshes of a closed loop's tiles:** A `refresh_element` task whose tile is in a loop you closed skips its runs quietly instead of failing every interval (`closedHolding` in `src/shared/loops/closed.ts`), and refreshes again once the loop is reopened from **View loops**, which brings its tiles back under the same ids.
 
 ## SQLite delta watches (`speak: "changed"` & `delta.ts`)
 
