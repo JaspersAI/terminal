@@ -180,6 +180,32 @@ export function offersTool(connection: Connection, tool: string): boolean {
   return !connection.tools || connection.tools.includes(tool)
 }
 
+const AUTH_FAILURE = /\b(?:401|403)\b|unauthoriz|forbidden|insufficient_scope/i
+const STALE_HTTP_SESSION =
+  /error posting to endpoint|failed to open sse stream|sse stream disconnected|session (?:not found|expired|id)|(?:invalid|missing|unknown|no valid) session|mcp-session-id|not initialized|fetch failed|socket hang up|econnreset|econnrefused/i
+
+/**
+ * Whether an error from a call on a connection means an HTTP session or transport died under it and
+ * the connection should be established again. Auth refusals (401/403/OAuth) and ordinary tool errors
+ * are left alone; stdio connections have no HTTP session to renew.
+ */
+export function isStaleHttpSession(err: unknown, connection: Connection): boolean {
+  if (!connection.url || !(err instanceof Error)) return false
+  if (
+    err.name === 'AbortError' ||
+    err.name === 'UnauthorizedError' ||
+    err.name === 'SignedOutError' ||
+    err.name === 'RefusedError'
+  ) {
+    return false
+  }
+  const code = (err as { code?: unknown }).code
+  if (code === 401 || code === 403 || AUTH_FAILURE.test(err.message)) return false
+  if (err instanceof TypeError) return true
+  if (typeof code === 'number' && (code === 400 || code === 404 || (code >= 500 && code < 600))) return true
+  return STALE_HTTP_SESSION.test(err.message)
+}
+
 function texts(connection: Connection): string[] {
   return [
     ...(connection.url ? [connection.url] : []),

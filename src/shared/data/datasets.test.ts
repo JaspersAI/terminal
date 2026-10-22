@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { beginSourceRun, failSourceRun } from '../../../packages/sdk/src/hooks.ts'
 import { asTable, extractRows, mapToolResult } from './datasets.ts'
 
 test('an array of objects is the rows, with nothing around them', () => {
@@ -140,4 +141,38 @@ test("an answer in a server's own words is never rewritten, and neither is one t
   // One column a row, each its own: naming them all once and filling the gaps with null is the longer way to say it.
   const sparse = JSON.stringify(Array.from({ length: 30 }, (_, i) => ({ [`column_${i}`]: i })))
   assert.equal(asTable(sparse, 100), sparse)
+})
+
+test('a failed refresh for the same source and arguments keeps loaded data or text, while an initial or changed-argument failure reports the error', () => {
+  const idle = { data: undefined, loading: false, error: null, datasetId: null, meta: {} }
+  const error = new Error('Streamable HTTP error: Error POSTing to endpoint (HTTP 404)')
+
+  assert.deepEqual(failSourceRun(beginSourceRun(idle, false), error), {
+    ...idle,
+    error: error.message,
+  })
+
+  const loaded = {
+    data: [{ ticker: 'AAPL', price: 210 }],
+    loading: false,
+    error: null,
+    datasetId: 'ds_1',
+    meta: { count: 1 },
+  }
+  const refreshing = beginSourceRun(loaded, true)
+  assert.equal(refreshing.loading, true)
+  assert.equal(refreshing.error, null)
+  assert.deepEqual(failSourceRun(refreshing, error), loaded)
+
+  const prose = { ...idle, text: 'Seven companies matched.' }
+  assert.deepEqual(failSourceRun(beginSourceRun(prose, true), error), prose)
+
+  assert.deepEqual(failSourceRun(beginSourceRun(loaded, false), error), {
+    ...idle,
+    error: error.message,
+  })
+  assert.deepEqual(failSourceRun(loaded, error, false), {
+    ...idle,
+    error: error.message,
+  })
 })
