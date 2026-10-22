@@ -31,6 +31,10 @@ test('a free id opens a staging folder outside plugins, and a taken id of anothe
     assert.ok(fs.existsSync(folder.dir))
     await assert.rejects(openFolder('yfinance', 'other'), /already a plugin called yfinance/)
     await assert.rejects(openFolder('Bad Id', 'free'), /lower-case letters/)
+    for (const id of ['plugins', 'skills', 'shell']) {
+      await assert.rejects(openFolder(id, 'free'), /reserved/)
+      await assert.rejects(openFolder(id, 'built'), /reserved/)
+    }
   } finally {
     await fsp.rm(dir, { recursive: true, force: true })
   }
@@ -175,6 +179,38 @@ test('an edit replaces one passage of a file and leaves the rest, held to the ru
     await writeBuildFile(folder, 'package.json', '{"name":"rates"}')
     await assert.rejects(editBuildFile(folder, 'package.json', '{"name"', '{name'), /package.json has to be JSON/)
     assert.equal(await readBuildFile(folder, 'package.json'), '{"name":"rates"}')
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('writing package.json over one with pre-installed dependencies preserves dependencies', async () => {
+  const dir = await home()
+  try {
+    const folder = await openFolder('rates', 'free')
+    await fsp.writeFile(
+      path.join(folder.dir, 'package.json'),
+      `${JSON.stringify(
+        {
+          name: 'rates',
+          version: '1.0.0',
+          private: true,
+          type: 'module',
+          dependencies: { 'left-pad': '^1.3.0', 'pdf-lib': '^1.17.1' },
+        },
+        null,
+        2,
+      )}\n`,
+    )
+    await writeBuildFile(folder, 'package.json', '{"name":"rates","version":"1.0.0","private":true,"type":"module"}')
+    const parsed = JSON.parse(await readBuildFile(folder, 'package.json'))
+    assert.deepEqual(parsed, {
+      name: 'rates',
+      version: '1.0.0',
+      private: true,
+      type: 'module',
+      dependencies: { 'left-pad': '^1.3.0', 'pdf-lib': '^1.17.1' },
+    })
   } finally {
     await fsp.rm(dir, { recursive: true, force: true })
   }
