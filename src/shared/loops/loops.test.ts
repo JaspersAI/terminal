@@ -552,6 +552,13 @@ test('the orchestrator is offered nothing that drives a view, and a loop\u2019s 
   assert.equal(LOOP_EXCLUDED_TOOLS.includes('run_shell'), false)
   assert.equal(ORCHESTRATOR_TOOLS.includes('publish_plugin'), true)
   assert.equal(LOOP_EXCLUDED_TOOLS.includes('publish_plugin'), false)
+  for (const tool of ['read_loop', 'get', 'query']) {
+    assert.equal(ORCHESTRATOR_TOOLS.includes(tool), true, tool)
+    assert.equal(LOOP_EXCLUDED_TOOLS.includes(tool), false, tool)
+  }
+  for (const tool of ['run_source', 'describe_source']) {
+    assert.equal(ORCHESTRATOR_TOOLS.includes(tool), false, tool)
+  }
 })
 
 test('the orchestrator, a loop, and a scheduled task are all offered run_shell when Pro mode is on', () => {

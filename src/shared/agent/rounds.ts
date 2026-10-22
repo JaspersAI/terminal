@@ -48,19 +48,22 @@ export function batches<T>(calls: T[], readsOnly: (call: T) => boolean): T[][] {
 }
 
 /**
- * What a round that only handed the request over answers with: what each handoff said, in the order
- * asked. The work goes on in runs of its own, so there is nothing left for the model to say and it is
- * not asked again. Null when the round did anything else, or when a handoff failed: every result goes
- * back to the model then, which reads the failure and puts it right.
+ * What a round that only handed the request over answers with: what the model said above what each
+ * handoff said, in the order asked. The work goes on in runs of its own, so there is nothing left for
+ * the model to say and it is not asked again. Null when the round did anything else, or when a
+ * handoff failed: every result goes back to the model then, which reads the failure and puts it right.
  */
 export function handoffReply(
   calls: readonly { name: string }[],
   results: readonly { output: string; isError?: boolean }[],
   isHandoff: (name: string) => boolean,
+  said = '',
 ): string | null {
   if (calls.length === 0 || results.length !== calls.length) return null
   if (!calls.every((call) => isHandoff(call.name)) || results.some((one) => one.isError)) return null
-  return results.map((one) => one.output).join('\n')
+  const handed = results.map((one) => one.output).join('\n')
+  const words = said.trim()
+  return words ? `${words}\n\n${handed}` : handed
 }
 
 /** What of a model's reply a run says while it arrives. */

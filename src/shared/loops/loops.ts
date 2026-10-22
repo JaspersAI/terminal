@@ -588,9 +588,10 @@ export const LOOP_EXCLUDED_TOOLS: readonly string[] = [
 
 /**
  * What the orchestrator is offered of the tool families, by name: a tool not named here is a loop's.
- * It runs the app: the grid and its windows, the cells, keys, plugins, skills, tasks, the shell, and
- * memory, and it asks the user. It has no data tools and nothing that drives a view: work in a tile
- * does those. The tools that hold loops are added where it is run.
+ * It runs the app and oversees the workspace: the grid and its windows, the cells, keys, plugins,
+ * skills, tasks, the shell, memory, and reading loops, panels, and the store, and it asks the user.
+ * It has no plugin source tools and nothing that drives a view: work in a tile does those. The tools
+ * that hold loops are added where it is run.
  */
 export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'move_element',
@@ -610,6 +611,8 @@ export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'recall',
   'ask_user',
   'set_secret',
+  'get',
+  'query',
   'install_plugin',
   'install_skill',
   'add_connection',
