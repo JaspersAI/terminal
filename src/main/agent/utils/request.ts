@@ -31,6 +31,8 @@ export interface RoundRequest {
   /** Whether the reply is shown as it arrives: the user's own run, unless it runs quiet. */
   shown: boolean
   maxTokens?: number
+  timeoutMs?: number
+  effort?: Effort
 }
 
 /**
@@ -52,6 +54,8 @@ export async function request({
   tell,
   shown,
   maxTokens,
+  timeoutMs,
+  effort = EFFORT,
 }: RoundRequest): Promise<Completion> {
   const signal = entry.controller.signal
   const says = saidOf(entry.origin, shown)
@@ -67,8 +71,9 @@ export async function request({
         signal,
         stream: true,
         loop: true,
-        effort: EFFORT,
+        effort,
         maxTokens,
+        timeoutMs,
         onText: text ? (delta) => text.push(delta) : undefined,
         onThinking: says.thinking ? thinker(entry.runId) : undefined,
         onCall: call?.began,

@@ -1,5 +1,14 @@
 import { describeCatalog } from '../../shared/agent/prompt'
-import { SETUP_DEFINITION, SETUP_TOOL, setUpOf, setupRequest, setupSystem, type SetUp } from '../../shared/agent/setup'
+import {
+  SETUP_DEFINITION,
+  SETUP_EFFORT,
+  SETUP_TIMEOUT_MS,
+  SETUP_TOOL,
+  setUpOf,
+  setupRequest,
+  setupSystem,
+  type SetUp,
+} from '../../shared/agent/setup'
 import { usableSkills } from '../../shared/skills/skills'
 import { getState, toPublic } from '../state'
 import type { ToolContext } from './tools/types'
@@ -33,6 +42,8 @@ export async function setUpLoop(desc: string, brief: string, context: ToolContex
       run,
       tell: telling(context.runId, log),
       shown: false,
+      effort: SETUP_EFFORT,
+      timeoutMs: SETUP_TIMEOUT_MS,
     })
     const call = reply.toolCalls.find((one) => one.name === SETUP_TOOL)
     if (!call) throw new Error(`Setting up the work chose nothing${reply.text ? `: ${reply.text}` : '.'}`)
