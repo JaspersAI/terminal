@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { displayAddress, publishedOutput, rectsOverlap, viewportVisible } from './browser-view.ts'
+import { displayAddress, publishedOutput, rectsOverlap, tabLabel, viewportVisible } from './browser-view.ts'
 
 test('rectsOverlap detects overlapping rectangles and ignores touching edges or empty rects', () => {
   const tile = { x: 100, y: 100, width: 400, height: 300 }
@@ -37,12 +37,15 @@ test('displayAddress and publishedOutput combine panel state.url with the latest
     error: null,
     text: null,
   }
+  assert.equal(displayAddress('', empty), 'https://www.bloomberg.com/')
   assert.equal(displayAddress('bloomberg.com/live', empty), 'https://bloomberg.com/live')
   const navigated = {
     ...empty,
     url: 'https://www.bloomberg.com/live/us',
     title: 'Bloomberg TV',
     canGoBack: true,
+    theater: true,
+    tabCount: 2,
   }
   assert.equal(displayAddress('bloomberg.com/live', navigated), 'https://www.bloomberg.com/live/us')
   assert.deepEqual(publishedOutput('bloomberg.com/live', navigated), {
@@ -51,6 +54,11 @@ test('displayAddress and publishedOutput combine panel state.url with the latest
     loading: false,
     canGoBack: true,
     canGoForward: false,
+    theater: true,
+    tabCount: 2,
     error: null,
   })
+  assert.equal(tabLabel({ title: 'Bloomberg Live', url: 'https://www.bloomberg.com/live' }), 'Bloomberg Live')
+  assert.equal(tabLabel({ title: '', url: 'https://www.bloomberg.com/live' }), 'www.bloomberg.com/live')
+  assert.equal(tabLabel({ title: '', url: '' }), 'New tab')
 })

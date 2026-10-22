@@ -10,28 +10,48 @@ import {
 } from 'react'
 import { useData, usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
 import {
+  DEFAULT_BROWSER_URL,
+  isVideoPageUrl,
   normalizeBrowserUrl,
   type BrowserAction,
   type BrowserBounds,
   type BrowserSnapshot,
+  type BrowserTab,
 } from '../../shared/grid/browser'
 import { errorMessage } from '../lib/errors'
 import { useAppState } from '../lib/state'
-import { displayAddress, publishedOutput, viewportVisible } from './browser-view'
+import { displayAddress, publishedOutput, tabLabel, viewportVisible } from './browser-view'
 import type { ViewProps } from './index'
 
-// The built-in browser (`core/browser`). Renders navigation chrome and a viewport anchor element;
-// main positions a partitioned native `WebContentsView` over the anchor so sites that refuse iframe
-// embedding (such as Bloomberg Live TV) load and authenticate in a top-level browsing context.
+// The built-in browser (`core/browser`). Renders a switchable tab bar, navigation chrome (including
+// theater mode), and an inset viewport anchor element; main positions the active tab's partitioned
+// native `WebContentsView` over the anchor so sites that refuse iframe embedding (such as Bloomberg
+// Live TV) load and authenticate in a top-level browsing context while leaving the tile's resize
+// edges uncovered.
 
-const EMPTY_SNAPSHOT = (workspaceId: string, panelId: string): BrowserSnapshot => ({
+const EMPTY_SNAPSHOT = (workspaceId: string, panelId: string, initialUrl: string): BrowserSnapshot => ({
   workspaceId,
   panelId,
-  url: '',
+  url: initialUrl,
   title: '',
   loading: false,
   canGoBack: false,
   canGoForward: false,
+  theater: isVideoPageUrl(initialUrl),
+  tabCount: 1,
+  activeTabId: 't1',
+  tabs: [
+    {
+      id: 't1',
+      url: initialUrl,
+      title: '',
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      theater: isVideoPageUrl(initialUrl),
+      error: null,
+    },
+  ],
   error: null,
   text: null,
 })
@@ -40,15 +60,15 @@ const NAV_BUTTON =
   'flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent'
 
 export function Browser({ panel }: ViewProps): ReactElement {
-  const [stateUrl] = usePanelState<string>(panel, 'url', '')
+  const [stateUrl] = usePanelState<string>(panel, 'url', DEFAULT_BROWSER_URL)
   const refreshedAt = useData(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`)
   const grids = useAppState((s) => s.grids[panel.workspaceId])
-  const questions = useAppState((s) => s.questions)
-  const secretRequests = useAppState((s) => s.secretRequests)
-  const notices = useAppState((s) => s.notices)
 
-  const [snapshot, setSnapshot] = useState<BrowserSnapshot>(() => EMPTY_SNAPSHOT(panel.workspaceId, panel.id))
-  const [draft, setDraft] = useState(() => normalizeBrowserUrl(stateUrl) ?? stateUrl)
+  const initialAddress = normalizeBrowserUrl(stateUrl) || DEFAULT_BROWSER_URL
+  const [snapshot, setSnapshot] = useState<BrowserSnapshot>(() =>
+    EMPTY_SNAPSHOT(panel.workspaceId, panel.id, initialAddress),
+  )
+  const [draft, setDraft] = useState(() => initialAddress)
   const [editing, setEditing] = useState(false)
   const [inputError, setInputError] = useState<string | null>(null)
 
@@ -57,9 +77,33 @@ export function Browser({ panel }: ViewProps): ReactElement {
 
   const activeAddress = useMemo(() => displayAddress(stateUrl, snapshot), [stateUrl, snapshot])
   const output = useMemo(() => publishedOutput(stateUrl, snapshot), [stateUrl, snapshot])
+  const tabs: BrowserTab[] = useMemo(
+    () =>
+      snapshot.tabs && snapshot.tabs.length > 0
+        ? snapshot.tabs
+        : [
+            {
+              id: 't1',
+              url: activeAddress,
+              title: snapshot.title,
+              loading: snapshot.loading,
+              canGoBack: snapshot.canGoBack,
+              canGoForward: snapshot.canGoForward,
+              theater: output.theater ?? false,
+              error: snapshot.error,
+            },
+          ],
+    [snapshot, activeAddress, output.theater],
+  )
+  const activeTabId = snapshot.activeTabId || tabs[0]!.id
+  const theaterOn = output.theater === true
 
   usePublish(panel, output as unknown as Record<string, unknown>)
   usePublishText(panel, snapshot.text)
+
+  useEffect(() => {
+    setInputError(null)
+  }, [stateUrl])
 
   useEffect(() => {
     if (!editing) setDraft(activeAddress)
@@ -77,7 +121,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
     const anchor = viewportRef.current
     if (!anchor) return
     const bounds = rectOf(anchor)
-    const hasUrl = Boolean(normalizeBrowserUrl(stateUrl) || snapshot.url)
+    const hasUrl = Boolean(normalizeBrowserUrl(stateUrl) || snapshot.url || DEFAULT_BROWSER_URL)
     const visible =
       hasUrl &&
       inputError === null &&
@@ -85,7 +129,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
         bounds,
         inert: anchor.closest('[inert]') !== null,
         modalOpen: document.querySelector('[aria-modal="true"]') !== null,
-        dragging: document.getElementById('drag-ghost') !== null,
+        dragging: document.querySelector('[data-grid-drag], #drag-ghost') !== null,
         overlays: collectOverlays(anchor),
       })
     const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height},${visible},${stateUrl},${String(refreshedAt ?? '')}`
@@ -107,7 +151,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
 
   useLayoutEffect(() => {
     syncBounds()
-  }, [syncBounds, grids, questions, secretRequests, notices])
+  }, [syncBounds, grids])
 
   useEffect(() => {
     const anchor = viewportRef.current
@@ -164,9 +208,10 @@ export function Browser({ panel }: ViewProps): ReactElement {
       setInputError('Enter an https:// or http:// address.')
       return
     }
+    const target = normalized || DEFAULT_BROWSER_URL
     setEditing(false)
-    setDraft(normalized)
-    runAction('load', normalized)
+    setDraft(target)
+    runAction('load', target)
   }
 
   const shownError = inputError ?? snapshot.error
@@ -174,6 +219,59 @@ export function Browser({ panel }: ViewProps): ReactElement {
 
   return (
     <div className="flex h-full w-full flex-col bg-background select-none">
+      <div
+        role="tablist"
+        aria-label="Browser tabs"
+        className="flex h-6 shrink-0 items-center overflow-x-auto border-b border-border bg-muted/40 px-1"
+      >
+        {tabs.map((tab) => {
+          const active = tab.id === activeTabId
+          const label = tabLabel(tab)
+          return (
+            <div
+              key={tab.id}
+              className={`flex h-full max-w-48 min-w-20 shrink-0 items-center border-r border-border ${
+                active ? 'bg-background text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={active}
+                title={label}
+                onClick={() => runAction('select-tab', tab.id)}
+                className="flex h-full min-w-0 flex-1 items-center px-2 text-left text-xs"
+              >
+                <span className="truncate">{label}</span>
+              </button>
+              {tabs.length > 1 && (
+                <button
+                  type="button"
+                  aria-label={`Close ${label}`}
+                  title="Close tab"
+                  onClick={() => runAction('close-tab', tab.id)}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+                >
+                  <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2 w-2 stroke-current stroke-[1.5]">
+                    <path d="M2 2 8 8M8 2 2 8" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )
+        })}
+        <button
+          type="button"
+          aria-label="New tab"
+          title="New tab"
+          onClick={() => runAction('new-tab')}
+          className="flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+            <path d="M5 1.5v7M1.5 5h7" />
+          </svg>
+        </button>
+      </div>
       <header className="flex h-7 shrink-0 items-center gap-1 border-b border-border bg-background px-1.5">
         <button
           type="button"
@@ -220,7 +318,10 @@ export function Browser({ panel }: ViewProps): ReactElement {
             value={draft}
             placeholder="Enter an https:// address…"
             onFocus={() => setEditing(true)}
-            onBlur={() => setEditing(false)}
+            onBlur={() => {
+              setEditing(false)
+              setInputError(null)
+            }}
             onChange={(event) => {
               setDraft(event.target.value)
               if (inputError) setInputError(null)
@@ -234,6 +335,22 @@ export function Browser({ panel }: ViewProps): ReactElement {
             className="h-1.5 w-1.5 shrink-0 animate-dots bg-foreground motion-reduce:animate-none"
           />
         )}
+        <button
+          type="button"
+          aria-label="Theater mode"
+          aria-pressed={theaterOn}
+          title={theaterOn ? 'Exit theater mode' : 'Theater mode'}
+          onClick={() => runAction('toggle-theater')}
+          className={`flex h-6 w-6 shrink-0 items-center justify-center ${
+            theaterOn
+              ? 'bg-primary text-primary-foreground'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+          }`}
+        >
+          <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+            <rect x="1" y="2" width="8" height="6" />
+          </svg>
+        </button>
         {canOpenExternal && (
           <button
             type="button"
@@ -248,7 +365,12 @@ export function Browser({ panel }: ViewProps): ReactElement {
           </button>
         )}
       </header>
-      <div ref={viewportRef} data-browser-viewport={panel.id} className="relative min-h-0 flex-1 bg-background">
+      {/* Inset by 6px on left, right, and bottom so the tile's 5px resize edges and corners stay uncovered by the native view. */}
+      <div
+        ref={viewportRef}
+        data-browser-viewport={panel.id}
+        className="relative mx-1.5 mb-1.5 min-h-0 flex-1 bg-background"
+      >
         {shownError ? (
           <div className="flex h-full flex-col items-start justify-center gap-2 p-4 text-xs">
             <p className="text-destructive">{shownError}</p>
@@ -283,18 +405,12 @@ function rectOf(element: Element): BrowserBounds {
 }
 
 /**
- * Collects bounding boxes of floating UI layers that sit above this browser tile (menus, popovers,
- * the floating composer when open, and higher-z floating sibling tiles).
+ * Collects bounding boxes of dropdown menus, popovers, and higher-z floating sibling tiles that sit
+ * over this browser tile. The floating composer (superagent) is excluded so video playback remains
+ * visible while chatting with the assistant.
  */
 function collectOverlays(anchor: HTMLElement): BrowserBounds[] {
-  const selectors = [
-    '[role="menu"]',
-    '[role="dialog"]',
-    '#slash-menu',
-    '#composer > div:first-child:not([inert])',
-    '#composer > div:nth-child(2):not(:has(#composer-peek))',
-    '[id^="element-"][data-mode="floating"]',
-  ]
+  const selectors = ['[role="menu"]', '[role="dialog"]', '[id^="element-"][data-mode="floating"]']
   const overlays: BrowserBounds[] = []
   for (const node of document.querySelectorAll(selectors.join(', '))) {
     if (node.contains(anchor) || anchor.contains(node)) continue

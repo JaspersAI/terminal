@@ -1,4 +1,5 @@
 import { useId, useState, type ReactElement } from 'react'
+import { BROWSER_PLUGIN_DESCRIPTION, BROWSER_PLUGIN_ID, BROWSER_PLUGIN_TITLE } from '../../../shared/grid/browser'
 import type { HubItem } from '../../../shared/hub/hub'
 import { initials, itemKey, standing, useHubDirectory, type HubDirectory, type Standing } from '../../lib/hub-directory'
 import { useAppState } from '../../lib/state'
@@ -61,7 +62,7 @@ export function Directory({ installer, search }: { installer: Install; search: b
 
   const entry = (item: HubItem): EntryProps => ({
     item,
-    standing: standing(item, plugins),
+    standing: item.name === BROWSER_PLUGIN_ID ? 'installed' : standing(item, plugins),
     installing: installing === item.name,
     busy: installer.busy || installing !== null,
     onStart: begin,
@@ -95,22 +96,36 @@ interface PartProps {
   entry: (item: HubItem) => EntryProps
 }
 
-/** The plugins Hub features, as cards, in Hub's order. Nothing while they load, or when there are none. */
+/** Built-in Browser entry shown in the plugin setup directory for every version with browser support. */
+const CORE_BROWSER_ITEM: HubItem = {
+  handle: 'jaspers',
+  name: BROWSER_PLUGIN_ID,
+  kind: 'plugin',
+  title: BROWSER_PLUGIN_TITLE,
+  description: BROWSER_PLUGIN_DESCRIPTION,
+  version: '1.0.0',
+  tags: [],
+  stars: 0,
+  downloads: 0,
+  official: true,
+  reviewed: true,
+  featured: true,
+  page: '',
+}
+
+/** The plugins Hub features, as cards, in Hub's order, led by the built-in Browser. */
 function Featured({ directory, entry }: PartProps): ReactElement | null {
   const { featured, retryFeatured } = directory
-  if (!featured.error && featured.items.length === 0) return null
+  const items = [CORE_BROWSER_ITEM, ...featured.items.filter((one) => one.name !== BROWSER_PLUGIN_ID)]
   return (
     <div className="mt-5">
       <h4 className="text-xs text-muted-foreground">Featured</h4>
-      {featured.error ? (
-        <Unreachable error={featured.error} onRetry={retryFeatured} />
-      ) : (
-        <div className="mt-2 grid gap-4 @min-[44rem]:grid-cols-2">
-          {featured.items.map((item) => (
-            <FeatureCard key={itemKey(item)} {...entry(item)} />
-          ))}
-        </div>
-      )}
+      <div className="mt-2 grid gap-4 @min-[44rem]:grid-cols-2">
+        {items.map((item) => (
+          <FeatureCard key={itemKey(item)} {...entry(item)} />
+        ))}
+      </div>
+      {featured.error && <Unreachable error={featured.error} onRetry={retryFeatured} />}
     </div>
   )
 }
@@ -253,7 +268,8 @@ function Action({ item, standing: now, installing, busy, onStart }: EntryProps):
 }
 
 /** The item's page on Jaspers Hub, opened in the browser. */
-function Page({ item }: { item: HubItem }): ReactElement {
+function Page({ item }: { item: HubItem }): ReactElement | null {
+  if (!item.page) return null
   return (
     <button
       type="button"
