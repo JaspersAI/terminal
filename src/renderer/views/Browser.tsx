@@ -24,7 +24,8 @@ import type { ViewProps } from './index'
 // main positions a partitioned native `WebContentsView` over the anchor so sites that refuse iframe
 // embedding (such as Bloomberg Live TV) load and authenticate in a top-level browsing context.
 
-const EMPTY_SNAPSHOT = (panelId: string): BrowserSnapshot => ({
+const EMPTY_SNAPSHOT = (workspaceId: string, panelId: string): BrowserSnapshot => ({
+  workspaceId,
   panelId,
   url: '',
   title: '',
@@ -41,13 +42,12 @@ const NAV_BUTTON =
 export function Browser({ panel }: ViewProps): ReactElement {
   const [stateUrl] = usePanelState<string>(panel, 'url', '')
   const refreshedAt = useData(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`)
-  const currentWorkspaceId = useAppState((s) => s.currentWorkspaceId)
   const grids = useAppState((s) => s.grids[panel.workspaceId])
   const questions = useAppState((s) => s.questions)
   const secretRequests = useAppState((s) => s.secretRequests)
   const notices = useAppState((s) => s.notices)
 
-  const [snapshot, setSnapshot] = useState<BrowserSnapshot>(() => EMPTY_SNAPSHOT(panel.id))
+  const [snapshot, setSnapshot] = useState<BrowserSnapshot>(() => EMPTY_SNAPSHOT(panel.workspaceId, panel.id))
   const [draft, setDraft] = useState(() => normalizeBrowserUrl(stateUrl) ?? stateUrl)
   const [editing, setEditing] = useState(false)
   const [inputError, setInputError] = useState<string | null>(null)
@@ -68,45 +68,46 @@ export function Browser({ panel }: ViewProps): ReactElement {
   useEffect(
     () =>
       window.app.browser.onState((next) => {
-        if (next.panelId === panel.id) setSnapshot(next)
+        if (next.workspaceId === panel.workspaceId && next.panelId === panel.id) setSnapshot(next)
       }),
-    [panel.id],
+    [panel.workspaceId, panel.id],
   )
 
-  const syncBounds = useCallback(
-    (force = false): void => {
-      const anchor = viewportRef.current
-      if (!anchor) return
-      const bounds = rectOf(anchor)
-      const visible =
-        Boolean(normalizeBrowserUrl(stateUrl)) &&
-        inputError === null &&
-        viewportVisible({
-          bounds,
-          inert: anchor.closest('[inert]') !== null,
-          modalOpen: document.querySelector('[aria-modal="true"]') !== null,
-          dragging: document.getElementById('drag-ghost') !== null,
-          overlays: collectOverlays(anchor),
-        })
-      const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height},${visible},${stateUrl},${String(refreshedAt ?? '')}`
-      if (!force && lastSyncRef.current === key) return
-      lastSyncRef.current = key
-      window.app.browser.sync(panel.workspaceId, panel.id, bounds, visible).then(
-        (next) => setSnapshot(next),
-        (err: unknown) =>
-          setSnapshot((prev) => ({
-            ...prev,
-            loading: false,
-            error: errorMessage(err),
-          })),
-      )
-    },
-    [panel.workspaceId, panel.id, stateUrl, refreshedAt, inputError],
-  )
+  const syncBounds = useCallback((): void => {
+    const anchor = viewportRef.current
+    if (!anchor) return
+    const bounds = rectOf(anchor)
+    const hasUrl = Boolean(normalizeBrowserUrl(stateUrl) || snapshot.url)
+    const visible =
+      hasUrl &&
+      inputError === null &&
+      viewportVisible({
+        bounds,
+        inert: anchor.closest('[inert]') !== null,
+        modalOpen: document.querySelector('[aria-modal="true"]') !== null,
+        dragging: document.getElementById('drag-ghost') !== null,
+        overlays: collectOverlays(anchor),
+      })
+    const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height},${visible},${stateUrl},${String(refreshedAt ?? '')}`
+    if (lastSyncRef.current === key) return
+    lastSyncRef.current = key
+    window.app.browser.sync(panel.workspaceId, panel.id, bounds, visible).then(
+      (next) => setSnapshot(next),
+      (err: unknown) =>
+        setSnapshot((prev) => ({
+          ...prev,
+          loading: false,
+          error: errorMessage(err),
+        })),
+    )
+  }, [panel.workspaceId, panel.id, stateUrl, snapshot.url, refreshedAt, inputError])
+
+  const syncRef = useRef(syncBounds)
+  syncRef.current = syncBounds
 
   useLayoutEffect(() => {
-    syncBounds(true)
-  }, [syncBounds, currentWorkspaceId, grids, questions, secretRequests, notices])
+    syncBounds()
+  }, [syncBounds, grids, questions, secretRequests, notices])
 
   useEffect(() => {
     const anchor = viewportRef.current
@@ -116,10 +117,10 @@ export function Browser({ panel }: ViewProps): ReactElement {
       if (frameId !== null) return
       frameId = window.requestAnimationFrame(() => {
         frameId = null
-        syncBounds(false)
+        syncRef.current()
       })
     }
-    const resizeObserver = new ResizeObserver(() => syncBounds(false))
+    const resizeObserver = new ResizeObserver(() => syncRef.current())
     resizeObserver.observe(anchor)
     resizeObserver.observe(document.documentElement)
 
@@ -142,7 +143,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
       lastSyncRef.current = ''
       void window.app.browser.detach(panel.workspaceId, panel.id).catch(() => undefined)
     }
-  }, [panel.workspaceId, panel.id, syncBounds])
+  }, [panel.workspaceId, panel.id])
 
   function runAction(action: BrowserAction, targetUrl?: string): void {
     setInputError(null)
@@ -150,7 +151,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
       (next) => {
         setSnapshot(next)
         lastSyncRef.current = ''
-        syncBounds(true)
+        syncRef.current()
       },
       (err: unknown) => setInputError(errorMessage(err)),
     )
@@ -282,22 +283,28 @@ function rectOf(element: Element): BrowserBounds {
 }
 
 /**
- * Collects bounding boxes of floating UI layers that sit above grid tiles (menus, popovers, the
- * floating composer when open, and floating grid tiles other than this panel's own).
+ * Collects bounding boxes of floating UI layers that sit above this browser tile (menus, popovers,
+ * the floating composer when open, and higher-z floating sibling tiles).
  */
 function collectOverlays(anchor: HTMLElement): BrowserBounds[] {
-  const ownTile = anchor.closest('[id^="element-"]')
   const selectors = [
     '[role="menu"]',
     '[role="dialog"]',
     '#slash-menu',
     '#composer > div:first-child:not([inert])',
-    '#composer > div:nth-child(2):not(button)',
+    '#composer > div:nth-child(2):not(:has(#composer-peek))',
     '[id^="element-"][data-mode="floating"]',
   ]
   const overlays: BrowserBounds[] = []
   for (const node of document.querySelectorAll(selectors.join(', '))) {
-    if (anchor.contains(node) || (ownTile && ownTile === node)) continue
+    if (node.contains(anchor) || anchor.contains(node)) continue
+    if (node.id.startsWith('element-')) {
+      const ownAtLevel = Array.from(node.parentElement?.children ?? []).find((child) => child.contains(anchor))
+      if (!ownAtLevel) continue
+      const nodeZ = Number((node as HTMLElement).style.zIndex || 0)
+      const ownZ = Number((ownAtLevel as HTMLElement).style.zIndex || 0)
+      if (nodeZ <= ownZ) continue
+    }
     const bounds = rectOf(node)
     if (bounds.width > 0 && bounds.height > 0) overlays.push(bounds)
   }

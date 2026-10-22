@@ -27,6 +27,7 @@ test('viewportVisible hides the browser when inert, modal open, dragging, or ove
 
 test('displayAddress and publishedOutput combine panel state.url with the latest snapshot', () => {
   const empty = {
+    workspaceId: 'ws-1',
     panelId: 'p1',
     url: '',
     title: '',

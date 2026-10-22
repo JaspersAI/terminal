@@ -143,6 +143,8 @@ function createHarness() {
       const grid = state.grids[workspaceId]![1]!
       const updated = setPanelState(grid, panelId, ['url'], url).grid
       state = { ...state, grids: { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], 1: updated } } }
+      // Mirror main's synchronous state.ts:update subscriber notification.
+      manager.sweep(state)
     },
     focusElement: (workspaceId, elementId) => {
       focused.push({ workspaceId, elementId })
@@ -275,4 +277,44 @@ test('focusing an unfocused browser view focuses its grid element, and invalid I
     manager.sync(2, 'ws-1', placed.panel.id, { x: 0, y: 0, width: 100, height: 100 }, true),
     /not in this window/,
   )
+  await assert.rejects(
+    manager.sync(null, 'ws-1', placed.panel.id, { x: 0, y: 0, width: 100, height: 100 }, true),
+    /not in this window/,
+  )
+})
+
+test('navigate load does not double-load on synchronous sweep, ignores ERR_ABORTED, and reload retries a failed URL', async () => {
+  const { manager, placed, views } = createHarness()
+  await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  const view = views[0]!
+  assert.equal(view.history.length, 1)
+
+  // Navigating to a new URL via navigate('load') with synchronous sweep inside setPanelUrl loads once.
+  const loaded = await manager.navigate(1, 'ws-1', placed.panel.id, 'load', 'https://example.com/news')
+  assert.equal(loaded.workspaceId, 'ws-1')
+  assert.deepEqual(view.history, ['https://www.bloomberg.com/live', 'https://example.com/news'])
+
+  // Simulate a failed navigation to a new URL: title and URL reflect the failed target, and reload retries it.
+  let failNext = true
+  const origLoad = view.loadURL.bind(view)
+  view.loadURL = async (url: string) => {
+    if (failNext) {
+      failNext = false
+      view.events.onDidStartLoading()
+      view.events.onDidFailLoad(-105, 'ERR_NAME_NOT_RESOLVED', true)
+      view.events.onDidStopLoading()
+      return
+    }
+    return origLoad(url)
+  }
+  const failed = await manager.navigate(1, 'ws-1', placed.panel.id, 'load', 'https://unreached.example.com/live')
+  assert.equal(failed.url, 'https://unreached.example.com/live')
+  assert.equal(failed.error, 'ERR_NAME_NOT_RESOLVED')
+  assert.equal(view.visible, false)
+
+  // Clicking Try again (navigate 'reload') retries loading the failed target URL instead of reloading the old page.
+  const retried = await manager.navigate(1, 'ws-1', placed.panel.id, 'reload')
+  assert.equal(retried.url, 'https://unreached.example.com/live')
+  assert.equal(retried.error, null)
+  assert.equal(view.visible, true)
 })

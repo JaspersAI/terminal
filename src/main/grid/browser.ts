@@ -1,5 +1,5 @@
 import { ipcMain, session, WebContentsView, type BrowserWindow, type Session } from 'electron'
-import { BROWSER_PARTITION, isBrowserUrl, normalizeBrowserUrl } from '../../shared/grid/browser'
+import { BROWSER_PARTITION, isBrowserUrl } from '../../shared/grid/browser'
 import { PANEL_TEXT_MAX } from '../../shared/grid/grid'
 import { setPanelStateChecked } from '../actions'
 import { getState, subscribe } from '../state'
@@ -61,10 +61,9 @@ function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
   })
   // Popups and auth flows stay inside this view's persistent partition rather than spawning new windows.
   webContents.setWindowOpenHandler(({ url }) => {
-    const normalized = normalizeBrowserUrl(url)
-    if (normalized) {
+    if (isBrowserUrl(url)) {
       setImmediate(() => {
-        if (!webContents.isDestroyed()) void webContents.loadURL(normalized).catch(() => undefined)
+        if (!webContents.isDestroyed()) void webContents.loadURL(url).catch(() => undefined)
       })
     }
     return { action: 'deny' }
@@ -113,7 +112,7 @@ function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
       try {
         const text: unknown = await webContents.executeJavaScript(
           'typeof document !== "undefined" && document.body ? document.body.innerText : ""',
-          true,
+          false,
         )
         return typeof text === 'string' && text.trim() !== '' ? text.trim().slice(0, PANEL_TEXT_MAX) : null
       } catch {

@@ -34,18 +34,25 @@ test('normalizeBrowserUrl accepts http(s), adds https to bare hosts, and refuses
     'jaspers-plugin://foo/index.html',
     'jaspers-app://server.plugin/ui',
     'ftp://files.example.com',
+    'com.apple.mail:80/compose',
+    'vnd.youtube:80/watch',
     'https://user:secret@www.bloomberg.com/live',
     'not a url',
     '/relative/path',
     'justword',
   ]) {
-    assert.equal(normalizeBrowserUrl(bad), null, String(bad))
+    assert.equal(
+      normalizeBrowserUrl(bad),
+      bad === 'com.apple.mail:80/compose' || bad === 'vnd.youtube:80/watch' ? `https://${bad}` : null,
+      String(bad),
+    )
     assert.equal(isBrowserUrl(bad), false, String(bad))
   }
 
   assert.equal(isBrowserUrl(''), false)
+  assert.equal(isBrowserUrl('bloomberg.com/live'), false)
   assert.equal(isBrowserUrl('https://www.bloomberg.com/live'), true)
-  assert.equal(isBrowserUrl('bloomberg.com/live'), true)
+  assert.equal(isBrowserUrl('http://localhost:3000/stream'), true)
 })
 
 test('readBrowserState normalizes a valid URL and falls back to empty for missing or invalid state', () => {

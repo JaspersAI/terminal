@@ -30,6 +30,7 @@ export interface BrowserBounds {
 }
 
 export interface BrowserSnapshot extends BrowserOutput {
+  workspaceId: string
   panelId: string
   text: string | null
 }
@@ -81,8 +82,9 @@ export function normalizeBrowserUrl(raw: unknown): string | null {
   return parsed.toString()
 }
 
-/** True when `raw` is a non-empty `http:` or `https:` URL (or bare host that normalizes to one). */
+/** True when `raw` is a resolved `http://` or `https://` URL without credentials. */
 export function isBrowserUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string' || !/^https?:\/\//i.test(raw.trim())) return false
   const normalized = normalizeBrowserUrl(raw)
   return normalized !== null && normalized !== ''
 }

@@ -102,6 +102,7 @@ interface Entry {
   bounds: BrowserBounds | null
   rendererVisible: boolean
   attachedWindow: number | null
+  loadSeq: number
   destroyed: boolean
 }
 
@@ -114,8 +115,9 @@ const entryKey = (workspaceId: string, panelId: string): string => `${workspaceI
 export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   const entries = new Map<string, Entry>()
 
-  function emptySnapshot(panelId: string): BrowserSnapshot {
+  function emptySnapshot(workspaceId: string, panelId: string): BrowserSnapshot {
     return {
+      workspaceId,
       panelId,
       url: '',
       title: '',
@@ -129,9 +131,12 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
 
   function snapshotOf(entry: Entry): BrowserSnapshot {
     const liveUrl = entry.view.getURL()
-    const url = (isBrowserUrl(liveUrl) ? liveUrl : '') || entry.url || entry.stateUrl
-    const title = entry.view.getTitle() || entry.title
+    const committedUrl = isBrowserUrl(liveUrl) ? liveUrl : ''
+    const url =
+      entry.loading || entry.error !== null ? entry.url || entry.stateUrl : committedUrl || entry.url || entry.stateUrl
+    const title = entry.loading || entry.error !== null ? entry.title : entry.view.getTitle() || entry.title
     return {
+      workspaceId: entry.workspaceId,
       panelId: entry.panelId,
       url,
       title,
@@ -146,6 +151,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   function pushSnapshot(entry: Entry): void {
     if (entry.destroyed) return
     const state = deps.getState()
+    if (state.currentWorkspaceId !== entry.workspaceId) return
     const standing = browserStanding(state.grids[entry.workspaceId], entry.panelId)
     const winNumber = standing?.window ?? entry.attachedWindow
     if (winNumber === null) return
@@ -216,15 +222,20 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       onDidStopLoading() {
         if (!entry || entry.destroyed) return
         entry.loading = false
+        if (entry.error !== null) {
+          pushSnapshot(entry)
+          return
+        }
         const liveUrl = entry.view.getURL()
         if (isBrowserUrl(liveUrl)) entry.url = liveUrl
         const liveTitle = entry.view.getTitle()
         if (liveTitle) entry.title = liveTitle
         pushSnapshot(entry)
+        const loadId = entry.loadSeq
         void entry.view
           .readPageText()
           .then((text) => {
-            if (entry.destroyed || entry.text === text) return
+            if (entry.destroyed || entry.loadSeq !== loadId || entry.error !== null || entry.text === text) return
             entry.text = text
             pushSnapshot(entry)
           })
@@ -275,6 +286,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       bounds: null,
       rendererVisible: false,
       attachedWindow: null,
+      loadSeq: 0,
       destroyed: false,
     }
     entries.set(key, entry)
@@ -282,18 +294,35 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   }
 
   function loadAddress(entry: Entry, url: string): void {
+    const loadId = ++entry.loadSeq
     entry.url = url
+    entry.title = ''
+    entry.text = null
     entry.error = null
     entry.loading = true
     positionEntry(entry, deps.getState())
     pushSnapshot(entry)
     void entry.view.loadURL(url).catch((err: unknown) => {
-      if (entry.destroyed) return
+      if (entry.destroyed || entry.loadSeq !== loadId || isAbortedLoad(err)) return
       entry.loading = false
       entry.error = err instanceof Error ? err.message : String(err)
       positionEntry(entry, deps.getState())
       pushSnapshot(entry)
     })
+  }
+
+  function reloadEntry(entry: Entry): void {
+    const targetUrl = entry.url || entry.stateUrl
+    const liveUrl = entry.view.getURL()
+    if ((entry.error !== null || !isBrowserUrl(liveUrl) || liveUrl !== targetUrl) && targetUrl) {
+      loadAddress(entry, targetUrl)
+      return
+    }
+    entry.error = null
+    entry.loading = true
+    positionEntry(entry, deps.getState())
+    entry.view.reload()
+    pushSnapshot(entry)
   }
 
   function applyPanelState(entry: Entry, panel: Panel, stateUrl: string): void {
@@ -305,11 +334,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     }
     if (panel.refreshedAt !== null && panel.refreshedAt !== entry.refreshedAt) {
       entry.refreshedAt = panel.refreshedAt
-      entry.error = null
-      entry.loading = true
-      positionEntry(entry, deps.getState())
-      entry.view.reload()
-      pushSnapshot(entry)
+      reloadEntry(entry)
     }
   }
 
@@ -332,7 +357,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     if (panel.content.kind !== 'view' || panel.content.view !== BROWSER_VIEW) {
       throw new Error(`${rawPanelId} does not show a browser view.`)
     }
-    if (callerWindow !== null && callerWindow !== standing.window) {
+    if (callerWindow !== standing.window) {
       throw new Error('This panel is not in this window.')
     }
     return { state, workspaceId: rawWorkspaceId, panel, standing }
@@ -350,7 +375,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       if (!stateUrl) {
         const existing = entries.get(key)
         if (existing) destroyEntry(existing)
-        return emptySnapshot(panel.id)
+        return emptySnapshot(workspaceId, panel.id)
       }
 
       const entry = ensureEntry(workspaceId, panel)
@@ -372,14 +397,15 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       if (action === 'load') {
         const normalized = normalizeBrowserUrl(rawUrl)
         if (normalized === null) throw new Error('Enter an https:// or http:// address.')
-        deps.setPanelUrl(workspaceId, panel.id, normalized)
         if (normalized === '') {
           const existing = entries.get(key)
           if (existing) destroyEntry(existing)
-          return emptySnapshot(panel.id)
+          deps.setPanelUrl(workspaceId, panel.id, '')
+          return emptySnapshot(workspaceId, panel.id)
         }
         const entry = ensureEntry(workspaceId, panel)
         entry.stateUrl = normalized
+        deps.setPanelUrl(workspaceId, panel.id, normalized)
         loadAddress(entry, normalized)
         return snapshotOf(entry)
       }
@@ -387,26 +413,30 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       const entry = entries.get(key)
       if (!entry) {
         const stateUrl = readBrowserState(panel.state).url
-        if (!stateUrl) return emptySnapshot(panel.id)
+        if (!stateUrl) return emptySnapshot(workspaceId, panel.id)
         const created = ensureEntry(workspaceId, panel)
         created.stateUrl = stateUrl
         loadAddress(created, stateUrl)
         return snapshotOf(created)
       }
 
+      if (action === 'reload') {
+        reloadEntry(entry)
+        return snapshotOf(entry)
+      }
+
       entry.error = null
       if (action === 'back' && entry.view.canGoBack()) entry.view.goBack()
       else if (action === 'forward' && entry.view.canGoForward()) entry.view.goForward()
-      else if (action === 'reload') entry.view.reload()
       positionEntry(entry, deps.getState())
       pushSnapshot(entry)
       return snapshotOf(entry)
     },
 
     detach(callerWindow, rawWorkspaceId, rawPanelId) {
-      if (typeof rawWorkspaceId !== 'string' || typeof rawPanelId !== 'string') return
+      if (callerWindow === null || typeof rawWorkspaceId !== 'string' || typeof rawPanelId !== 'string') return
       const entry = entries.get(entryKey(rawWorkspaceId, rawPanelId))
-      if (entry && (callerWindow === null || entry.attachedWindow === null || entry.attachedWindow === callerWindow)) {
+      if (entry && (entry.attachedWindow === null || entry.attachedWindow === callerWindow)) {
         entry.rendererVisible = false
         detachFromWindow(entry)
       }
@@ -453,4 +483,14 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       for (const entry of [...entries.values()]) destroyEntry(entry)
     },
   }
+}
+
+function isAbortedLoad(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const record = err as { errno?: unknown; code?: unknown; message?: unknown }
+  return (
+    record.errno === ERR_ABORTED ||
+    record.code === 'ERR_ABORTED' ||
+    (typeof record.message === 'string' && record.message.includes('ERR_ABORTED'))
+  )
 }
