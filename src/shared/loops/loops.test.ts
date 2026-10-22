@@ -550,6 +550,8 @@ test('the orchestrator is offered nothing that drives a view, and a loop\u2019s 
   assert.equal(LOOP_EXCLUDED_TOOLS.includes('refresh_element'), false)
   assert.equal(ORCHESTRATOR_TOOLS.includes('run_shell'), true)
   assert.equal(LOOP_EXCLUDED_TOOLS.includes('run_shell'), false)
+  assert.equal(ORCHESTRATOR_TOOLS.includes('publish_plugin'), true)
+  assert.equal(LOOP_EXCLUDED_TOOLS.includes('publish_plugin'), false)
 })
 
 test('the orchestrator, a loop, and a scheduled task are all offered run_shell when Pro mode is on', () => {

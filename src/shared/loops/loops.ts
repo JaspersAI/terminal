@@ -614,6 +614,7 @@ export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'install_skill',
   'add_connection',
   'find_plugin',
+  'publish_plugin',
   'publish_skill',
   'schedule_task',
   'update_task',

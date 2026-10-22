@@ -23,15 +23,16 @@ export function approvedInstall(answer: string | null, yes: string = INSTALL): b
 
 /**
  * The plugin the model named, as a request the install takes: an item on Jaspers Hub by its
- * handle/name, or a link as typed (a GitHub repo, an archive, an item's page on Hub), for the
- * install's own parser to accept or refuse.
+ * handle/name, an installed plugin by its id to update from where it came, or a link as typed (a
+ * GitHub repo, an archive, an item's page on Hub), for the install's own parser to accept or refuse.
  */
 export function pluginRequest(value: unknown): InstallRequest {
   const text = typeof value === 'string' ? value.trim() : ''
   if (!text)
     throw new Error(
-      'source is the plugin to install: a GitHub repo, an https link to its archive, or a Jaspers Hub item as handle/name.',
+      'source is the plugin to install or update: a GitHub repo, an https link to its archive, a Jaspers Hub item as handle/name, or an installed plugin id to update.',
     )
+  if (isPluginId(text)) return { kind: 'update', id: text }
   const [handle, name, ...rest] = text.split('/')
   if (handle && name && rest.length === 0 && isHandle(handle) && isPluginId(name)) return { kind: 'hub', handle, name }
   return { kind: 'url', text }
