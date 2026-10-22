@@ -22,19 +22,28 @@ test('a limiter runs everything, never more than its limit at once, and passes f
   )
 })
 
-test('rate limits, server errors, and dropped connections are worth one more try; the rest are not', () => {
+test('rate limits, server errors, timeouts, and dropped connections are worth one more try; the rest are not', () => {
   for (const message of [
+    'Anthropic returned 408: request timeout',
     'Anthropic returned 429: rate limited',
     'OpenRouter returned 503: unavailable',
     'Anthropic returned 529: overloaded',
     'Ollama: fetch failed (ECONNRESET)',
+    'Jaspers: nothing arrived for 45 s',
+    'Jaspers: The operation was aborted due to timeout',
+    'OpenAI: Request timed out',
+    'Jaspers: terminated (other side closed)',
+    'Custom: premature close',
   ]) {
     assert.equal(isRetryable(message), true, message)
   }
   for (const message of [
     'Anthropic returned 401: invalid x-api-key',
     'OpenAI returned 400: bad request',
+    'OpenAI returned 400: connection terminated by filter',
+    'Anthropic returned 400: request timed out parameter is invalid',
     'This operation was aborted',
+    'Stopped.',
     'No language model is configured.',
   ]) {
     assert.equal(isRetryable(message), false, message)

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
+import { isRetryable } from '../../shared/llm/limits.ts'
 import type { Provider } from '../../shared/llm/providers.ts'
 import { post, ProviderError, sse } from './http.ts'
 
@@ -53,7 +54,7 @@ test('a stream is held to the silence between its pieces, not to how long the wh
   )
 })
 
-test('a stream that goes quiet is given up on, and says so', async () => {
+test('a stream that goes quiet is given up on, and says so, even if keep-alive comments arrive', async () => {
   await serving(
     (res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -61,6 +62,49 @@ test('a stream that goes quiet is given up on, and says so', async () => {
     },
     async (url) => {
       await assert.rejects(read(url, 60), /Test: .*nothing arrived for/)
+    },
+  )
+  await serving(
+    (res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      const timer = setInterval(() => res.write(': keep-alive\n\n'), 20).unref()
+      res.on('close', () => clearInterval(timer))
+    },
+    async (url) => {
+      await assert.rejects(read(url, 80), (err: unknown) => {
+        assert.ok(err instanceof ProviderError)
+        assert.match(err.message, /Test: .*nothing arrived for/)
+        assert.equal(isRetryable(err.message), true)
+        return true
+      })
+    },
+  )
+})
+
+test('a post that times out waiting on headers or body rejects with a ProviderError', async () => {
+  await serving(
+    () => {},
+    async (url) => {
+      await assert.rejects(post(WIRE, url, {}, '{}', 50), (err: unknown) => {
+        assert.ok(err instanceof ProviderError)
+        assert.match(err.message, /^Test: .*timeout/i)
+        assert.equal(isRetryable(err.message), true)
+        return true
+      })
+    },
+  )
+  await serving(
+    (res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.write('{"partial":')
+    },
+    async (url) => {
+      await assert.rejects(post(WIRE, url, {}, '{}', 50), (err: unknown) => {
+        assert.ok(err instanceof ProviderError)
+        assert.match(err.message, /^Test: .*timeout/i)
+        assert.equal(isRetryable(err.message), true)
+        return true
+      })
     },
   )
 })

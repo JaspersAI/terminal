@@ -19,10 +19,13 @@ export function createLimiter(max: number): <T>(run: () => Promise<T>) => Promis
   }
 }
 
-/** A provider's rate limit, its server failing or overloaded, or the connection dropping. Not a refusal, not an abort. */
+/** A provider's rate limit, its server failing or overloaded, a timeout, or the connection dropping. Not a refusal, not an abort. */
 export function isRetryable(message: string): boolean {
-  if (/returned (429|5\d\d)\b/.test(message)) return true
-  return /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|overloaded/i.test(message)
+  if (/returned (408|429|5\d\d)\b/.test(message)) return true
+  if (/returned 4\d\d\b/.test(message)) return false
+  return /fetch failed|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|overloaded|nothing arrived for \d+ s|aborted due to timeout|timed out|\bterminated\b|other side closed|premature close/i.test(
+    message,
+  )
 }
 
 /**
