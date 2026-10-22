@@ -37,7 +37,7 @@ export async function post<T>(
   url: string,
   headers: Record<string, string>,
   body: string | Blob | FormData,
-  timeoutMs = 120_000,
+  timeoutMs = 60_000,
   signal?: AbortSignal,
 ): Promise<T> {
   let response: Response
@@ -53,7 +53,12 @@ export async function post<T>(
     throw new ProviderError(`${provider.name}: ${describe(err)}`)
   }
   if (!response.ok) throw await refused(provider, response)
-  const text = await response.text()
+  let text: string
+  try {
+    text = await response.text()
+  } catch (err) {
+    throw new ProviderError(`${provider.name}: ${describe(err)}`)
+  }
   try {
     return JSON.parse(text) as T
   } catch {
@@ -114,18 +119,18 @@ function detail(text: string, status: number, statusText = ''): string {
   return status >= 500 ? 'server error' : 'no details'
 }
 
-/** How long a stream may say nothing before it is given up on. */
-const QUIET_MS = 5 * 60_000
+/** How long a stream may go without a `data:` frame before it is given up on. */
+const QUIET_MS = 30_000
 
 /**
  * POST to a provider and read back a server-sent event stream, one payload at a time. The errors are
  * the same shape as `post`'s, since the failure a caller has to explain is the same one: a provider
  * that refused, with whatever it said about why.
  *
- * The limit is on the silence between pieces, not on the whole stream, which is the point of
+ * The limit is on the silence between `data:` pieces, not on the whole stream, which is the point of
  * streaming a long reply: a model that thinks for ten minutes and says so as it goes is working, and
- * one that has sent nothing for five is not. A caller that stops reading (a `break`, or an error
- * thrown at it) cancels the body.
+ * one that has sent no `data:` frame for thirty seconds (even if a proxy sends keep-alive comments)
+ * is not. A caller that stops reading (a `break`, or an error thrown at it) cancels the body.
  */
 export async function* sse(
   { provider, fetch }: Wire,
@@ -162,15 +167,16 @@ export async function* sse(
       for (;;) {
         let chunk: ReadableStreamReadResult<string>
         try {
+          if (quiet.signal.aborted) throw quiet.signal.reason
           chunk = await reader.read()
         } catch (err) {
           throw new ProviderError(`${provider.name}: ${describe(err)}`)
         }
         if (chunk.done) break
-        heard()
         buffer += chunk.value
         const { data, rest } = sseFrames(buffer)
         buffer = rest
+        if (data.length > 0) heard()
         for (const payload of data) {
           if (payload === SSE_DONE) return
           yield payload
