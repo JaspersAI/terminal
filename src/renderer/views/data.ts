@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useBridge, useData, usePanel, type SourceData } from '@jaspers-ai/sdk'
 import { EMPTY_ROWS as EMPTY, sqlAfterFailure, type Rows } from './cells'
 
-export { sqlAfterFailure, type Rows } from './cells'
-
 // How a generic view gets its rows. Two ways in, one shape out: a source by registry id, which is
 // what a plugin's data is reached by, or SQL over the store, which is the only way to see further
 // back than the last call. A view takes one or the other, never both.
