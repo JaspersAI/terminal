@@ -27,8 +27,9 @@ test('only the one choice that goes ahead installs', () => {
   assert.equal(approvedInstall(ADD_CONNECTION, ADD_CONNECTION), true)
 })
 
-test("a plugin's source is a Hub item by handle/name, or a link as typed for the install to read", () => {
+test("a plugin's source is a Hub item by handle/name, an installed plugin id to update, or a link as typed for the install to read", () => {
   assert.deepEqual(pluginRequest('jaspers/screener-mcp'), { kind: 'hub', handle: 'jaspers', name: 'screener-mcp' })
+  assert.deepEqual(pluginRequest('screener-mcp'), { kind: 'update', id: 'screener-mcp' })
   assert.deepEqual(pluginRequest(' https://github.com/a/b '), { kind: 'url', text: 'https://github.com/a/b' })
   // An item's page on Hub is a link the install's own parser knows.
   assert.deepEqual(pluginRequest('https://hub.jsprai.com/jaspers/sec'), {

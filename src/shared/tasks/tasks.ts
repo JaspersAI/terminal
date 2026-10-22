@@ -43,8 +43,9 @@ export const TASK_EXCLUDED_TOOLS: readonly string[] = [
   'install_plugin',
   'install_skill',
   'add_connection',
-  // A skill: the user is asked before it is written, and before it is sent to Hub.
+  // A plugin or a skill: the user is asked before it is written, and before it is sent to Hub.
   'write_skill',
+  'publish_plugin',
   'publish_skill',
 ]
 
