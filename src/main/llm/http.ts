@@ -65,7 +65,7 @@ export async function post<T>(
 async function refused(provider: Provider, response: Response): Promise<ProviderError> {
   const text = await response.text().catch(() => '')
   return new ProviderError(
-    `${provider.name} returned ${response.status}: ${detail(text)}`,
+    `${provider.name} returned ${response.status}: ${detail(text, response.status, response.statusText)}`,
     response.status,
     retryAfter(response.headers.get('retry-after'), Date.now()),
   )
@@ -77,15 +77,41 @@ function describe(err: unknown): string {
   return err.cause instanceof Error ? `${err.message} (${err.cause.message})` : err.message
 }
 
-function detail(text: string): string {
+const STATUS_DETAIL: Readonly<Record<number, string>> = {
+  408: 'timed out',
+  429: 'rate limited',
+  500: 'server error',
+  502: 'bad gateway',
+  503: 'unavailable',
+  504: 'timed out',
+  520: 'unreachable',
+  521: 'unreachable',
+  522: 'timed out',
+  523: 'unreachable',
+  524: 'timed out',
+  525: 'unreachable',
+  526: 'unreachable',
+  529: 'overloaded',
+  530: 'unreachable',
+}
+
+function detail(text: string, status: number, statusText = ''): string {
   try {
     const parsed = JSON.parse(text) as { error?: { message?: string } | string; message?: string }
     const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error?.message ?? parsed.message)
-    if (message) return message
+    if (typeof message === 'string' && message.trim() && !/^\s*</.test(message)) return message.trim()
   } catch {
     // not JSON; fall through to the raw text
   }
-  return text.slice(0, 200) || 'no details'
+  const trimmed = text.trim()
+  // Cloudflare and nginx answer their own timeouts and limits with an HTML error page, which is not worth quoting.
+  if (trimmed && !trimmed.startsWith('<') && !/<(!doctype|html|head|body)\b/i.test(trimmed)) {
+    return trimmed.slice(0, 200)
+  }
+  if (STATUS_DETAIL[status]) return STATUS_DETAIL[status]
+  const phrase = statusText.trim()
+  if (phrase && phrase.toLowerCase() !== 'unknown') return phrase.toLowerCase()
+  return status >= 500 ? 'server error' : 'no details'
 }
 
 /** How long a stream may say nothing before it is given up on. */

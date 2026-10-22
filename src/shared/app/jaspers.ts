@@ -189,12 +189,13 @@ export function refusalMessage(status: number, body: string): string {
       typeof parsed.error === 'object' && parsed.error !== null
         ? parsed.error.message
         : (parsed.error_description ?? parsed.message ?? parsed.error)
-    if (typeof said === 'string' && said.trim()) return said.trim()
+    if (typeof said === 'string' && said.trim() && !/^\s*</.test(said)) return said.trim()
   } catch {
     // Not JSON: the text itself says what it says.
   }
-  const text = body.trim().slice(0, 200)
-  return text || `HTTP ${status}`
+  const text = body.trim()
+  if (!text || text.startsWith('<')) return `HTTP ${status}`
+  return text.slice(0, 200)
 }
 
 const SUBSCRIPTION_SIGNAL =
