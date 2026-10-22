@@ -1,6 +1,6 @@
 import { startOf } from '../../shared/agent/aside'
 import { dayOf, overBudget } from '../../shared/agent/budget'
-import { handoffReply } from '../../shared/agent/rounds'
+import { afterRound, handoffReply, MAX_ROUNDS } from '../../shared/agent/rounds'
 import { cutShort, windowFull } from '../../shared/agent/stop'
 import type { Completion, Turn } from '../../shared/llm/llm'
 import { recordUsage, spentToday } from '../data/store'
@@ -32,8 +32,6 @@ import { citedBy, mend, offered, putAway, restate, sentOf, shorten, userLine } f
 // they are in. A run that goes no further, or an app that closes under one, then leaves the
 // conversation as far as it got, for the next request to carry on from.
 
-/** The rounds of tool calls a request gets, unless it says how many it needs. */
-const MAX_ROUNDS = 16
 /** How often one run's thread may be mended before the refusal is the answer. Each time it is shorter, so this is a backstop. */
 const MENDS_MAX = 8
 /** How often one run may be cut off in the middle of a call before that is the answer. */
@@ -43,8 +41,6 @@ const CUT_TEXT_NOTE =
   'Your last reply ran past the output limit before it finished, so it was dropped. Keep your words short: make the tool calls the procedure names, and write text only for the final report.'
 const CUT_NOTE =
   'Your last reply ran past the output limit in the middle of a tool call, so it was dropped and nothing was run. Make the call again with less in it, or in parts.'
-const LAST_ROUND =
-  'That was the last round of tool calls this request gets. Answer now with what you have, and say what is left undone.'
 
 /** A turn of the user's. */
 export type UserTurn = Extract<Turn, { role: 'user' }>
@@ -114,7 +110,7 @@ async function loop({
   run: entry,
   quiet,
   maxTokens,
-  rounds: most = MAX_ROUNDS,
+  rounds: limit = MAX_ROUNDS,
   outOfRounds,
   added,
   keep,
@@ -128,6 +124,7 @@ async function loop({
   const signal = entry.controller.signal
   const day = dayOf(Date.now())
   const cost = { input: 0, output: 0 }
+  let most = limit
   let rounds = 0
   let mends = 0
   let cuts = 0
@@ -185,6 +182,7 @@ async function loop({
       if (windowFull(reply.stopReason) && mends < MENDS_MAX && shorten(history, sending, tell)) {
         mends++
         restate(history, prompt.round())
+        round--
         continue
       }
 
@@ -205,6 +203,7 @@ async function loop({
             : 'Reply cut off before any call: asking again',
         )
         restate(history, prompt.round(), reply.toolCalls.length > 0 ? CUT_NOTE : CUT_TEXT_NOTE)
+        round--
         continue
       }
 
@@ -244,15 +243,15 @@ async function loop({
       keep?.()
       // All results from one round go back together, in one turn, with the state they left behind.
       const results = await runCalls(reply.toolCalls, context, available, log, entry)
-      const state = prompt.round()
-      const riding = round === most ? `${state}\n${LAST_ROUND}` : state
       // What the user added while this round was in flight joins the thread after its results. The
       // state rides on the last turn of the round, so it is said once. A run stopped under its calls
       // takes nothing: what was added then is left for the run after it.
       const joined = signal.aborted ? [] : (added?.() ?? [])
-      history.push({ role: 'tool', results, ...(joined.length === 0 ? { context: riding } : {}) })
+      const next = afterRound(round, most, limit, prompt.round(), joined.length)
+      most = next.most
+      history.push({ role: 'tool', results, ...(joined.length === 0 ? { context: next.riding } : {}) })
       joined.forEach((turn, at) => {
-        history.push(at === joined.length - 1 ? { ...turn, context: riding } : turn)
+        history.push(at === joined.length - 1 ? { ...turn, context: next.riding } : turn)
         log(`user added: ${userLine(turn.text)}`)
       })
       keep?.()
