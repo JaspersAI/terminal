@@ -1,12 +1,14 @@
-// Coordinates one `WebContentsView` per `core/browser` panel across workspaces and windows. Kept
-// free of Electron imports so the lifecycle, bounds clipping, visibility, navigation, and sweep rules
-// run directly under Node's test runner.
+// Coordinates `WebContentsView` tabs per `core/browser` panel across workspaces and windows. Kept
+// free of Electron imports so the tab lifecycle, bounds clipping, visibility, navigation, theater
+// mode defaults, and sweep rules run directly under Node's test runner.
 
 import {
   BROWSER_VIEW,
   browserStanding,
   clipBounds,
+  DEFAULT_BROWSER_URL,
   isBrowserUrl,
+  isVideoPageUrl,
   normalizeBounds,
   normalizeBrowserUrl,
   readBrowserState,
@@ -15,6 +17,7 @@ import {
   type BrowserBounds,
   type BrowserSnapshot,
   type BrowserStanding,
+  type BrowserTab,
 } from '../../shared/grid/browser.ts'
 import { panelOf, type Grid, type Panel } from '../../shared/grid/grid.ts'
 
@@ -25,6 +28,7 @@ export interface BrowserViewEvents {
   onDidFailLoad(errorCode: number, errorDescription: string, isMainFrame: boolean): void
   onPageTitleUpdated(title: string): void
   onFocus(): void
+  onOpenWindow?(url: string): void
 }
 
 export interface ManagedBrowserView {
@@ -39,6 +43,7 @@ export interface ManagedBrowserView {
   isLoading(): boolean
   setBounds(bounds: BrowserBounds): void
   setVisible(visible: boolean): void
+  setTheaterMode?(theater: boolean, url: string): void
   readPageText(): Promise<string | null>
   destroy(): void
 }
@@ -63,6 +68,7 @@ export interface BrowserManagerDeps {
   createView(events: BrowserViewEvents): ManagedBrowserView
   setPanelUrl(workspaceId: string, panelId: string, url: string): void
   focusElement(workspaceId: string, elementId: string): void
+  publishPanel?(workspaceId: string, panelId: string, snapshot: BrowserSnapshot): void
 }
 
 export interface BrowserManager {
@@ -86,27 +92,46 @@ export interface BrowserManager {
   closeAll(): void
 }
 
-interface Entry {
-  key: string
-  workspaceId: string
-  panelId: string
+interface TabEntry {
+  id: string
   view: ManagedBrowserView
-  /** The last `panel.state.url` applied from the state tree, so in-page clicks are not overwritten on sync. */
-  stateUrl: string
   url: string
   title: string
   loading: boolean
+  theater: boolean
   error: string | null
   text: string | null
-  refreshedAt: number | null
-  bounds: BrowserBounds | null
-  rendererVisible: boolean
-  attachedWindow: number | null
   loadSeq: number
   destroyed: boolean
 }
 
-const ACTIONS = new Set<BrowserAction>(['load', 'back', 'forward', 'reload'])
+interface Entry {
+  key: string
+  workspaceId: string
+  panelId: string
+  tabs: TabEntry[]
+  activeTabId: string
+  nextTabSeq: number
+  /** The last `panel.state.url` applied from the state tree, so in-page clicks are not overwritten on sync. */
+  stateUrl: string
+  refreshedAt: number | null
+  bounds: BrowserBounds | null
+  rendererVisible: boolean
+  attachedWindow: number | null
+  attachedView: ManagedBrowserView | null
+  destroyed: boolean
+}
+
+const ACTIONS = new Set<BrowserAction>([
+  'load',
+  'back',
+  'forward',
+  'reload',
+  'new-tab',
+  'select-tab',
+  'close-tab',
+  'toggle-theater',
+])
 /** Chromium's `ERR_ABORTED`, fired when a redirect or a new navigation supersedes one in flight. */
 const ERR_ABORTED = -3
 
@@ -124,46 +149,88 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       loading: false,
       canGoBack: false,
       canGoForward: false,
+      theater: false,
+      tabCount: 0,
+      activeTabId: '',
+      tabs: [],
       error: null,
       text: null,
     }
   }
 
-  function snapshotOf(entry: Entry): BrowserSnapshot {
-    const liveUrl = entry.view.getURL()
+  function activeTab(entry: Entry): TabEntry {
+    return entry.tabs.find((one) => one.id === entry.activeTabId) ?? entry.tabs[0]!
+  }
+
+  function tabSnapshot(tab: TabEntry, fallbackUrl = ''): BrowserTab {
+    const liveUrl = tab.view.getURL()
     const committedUrl = isBrowserUrl(liveUrl) ? liveUrl : ''
-    const url =
-      entry.loading || entry.error !== null ? entry.url || entry.stateUrl : committedUrl || entry.url || entry.stateUrl
-    const title = entry.loading || entry.error !== null ? entry.title : entry.view.getTitle() || entry.title
+    const url = tab.loading || tab.error !== null ? tab.url || fallbackUrl : committedUrl || tab.url || fallbackUrl
+    const title = tab.loading || tab.error !== null ? tab.title : tab.view.getTitle() || tab.title
+    return {
+      id: tab.id,
+      url,
+      title,
+      loading: tab.loading || tab.view.isLoading(),
+      canGoBack: tab.view.canGoBack(),
+      canGoForward: tab.view.canGoForward(),
+      theater: tab.theater,
+      error: tab.error,
+    }
+  }
+
+  function snapshotOf(entry: Entry): BrowserSnapshot {
+    const active = activeTab(entry)
+    const activeSnap = tabSnapshot(active, entry.stateUrl)
+    const tabs = entry.tabs.map((tab) => (tab.id === active.id ? activeSnap : tabSnapshot(tab)))
     return {
       workspaceId: entry.workspaceId,
       panelId: entry.panelId,
-      url,
-      title,
-      loading: entry.loading || entry.view.isLoading(),
-      canGoBack: entry.view.canGoBack(),
-      canGoForward: entry.view.canGoForward(),
-      error: entry.error,
-      text: entry.text,
+      url: activeSnap.url,
+      title: activeSnap.title,
+      loading: activeSnap.loading,
+      canGoBack: activeSnap.canGoBack,
+      canGoForward: activeSnap.canGoForward,
+      theater: activeSnap.theater,
+      tabCount: tabs.length,
+      activeTabId: active.id,
+      tabs,
+      error: activeSnap.error,
+      text: active.text,
     }
   }
 
   function pushSnapshot(entry: Entry): void {
     if (entry.destroyed) return
+    const snap = snapshotOf(entry)
+    deps.publishPanel?.(entry.workspaceId, entry.panelId, snap)
     const state = deps.getState()
     if (state.currentWorkspaceId !== entry.workspaceId) return
     const standing = browserStanding(state.grids[entry.workspaceId], entry.panelId)
     const winNumber = standing?.window ?? entry.attachedWindow
     if (winNumber === null) return
-    deps.getWindow(winNumber)?.sendState(snapshotOf(entry))
+    deps.getWindow(winNumber)?.sendState(snap)
   }
 
   function detachFromWindow(entry: Entry): void {
-    entry.view.setVisible(false)
-    if (entry.attachedWindow !== null) {
-      deps.getWindow(entry.attachedWindow)?.detach(entry.view)
+    for (const tab of entry.tabs) tab.view.setVisible(false)
+    if (entry.attachedWindow !== null && entry.attachedView !== null) {
+      deps.getWindow(entry.attachedWindow)?.detach(entry.attachedView)
       entry.attachedWindow = null
+      entry.attachedView = null
     }
+  }
+
+  function destroyTab(entry: Entry, tab: TabEntry): void {
+    if (tab.destroyed) return
+    tab.destroyed = true
+    tab.view.setVisible(false)
+    if (entry.attachedView === tab.view && entry.attachedWindow !== null) {
+      deps.getWindow(entry.attachedWindow)?.detach(tab.view)
+      entry.attachedWindow = null
+      entry.attachedView = null
+    }
+    tab.view.destroy()
   }
 
   function destroyEntry(entry: Entry): void {
@@ -171,19 +238,28 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     entry.destroyed = true
     entries.delete(entry.key)
     detachFromWindow(entry)
-    entry.view.destroy()
+    for (const tab of entry.tabs) destroyTab(entry, tab)
   }
 
   function positionEntry(entry: Entry, state: BrowserManagerState): void {
-    if (entry.destroyed) return
+    if (entry.destroyed || entry.tabs.length === 0) return
+    const active = activeTab(entry)
+    for (const tab of entry.tabs) {
+      if (tab !== active) tab.view.setVisible(false)
+    }
     const standing = browserStanding(state.grids[entry.workspaceId], entry.panelId)
     if (!standing) {
       detachFromWindow(entry)
       return
     }
-    if (entry.attachedWindow !== null && entry.attachedWindow !== standing.window) {
-      deps.getWindow(entry.attachedWindow)?.detach(entry.view)
+    if (
+      entry.attachedView !== null &&
+      entry.attachedWindow !== null &&
+      (entry.attachedView !== active.view || entry.attachedWindow !== standing.window)
+    ) {
+      deps.getWindow(entry.attachedWindow)?.detach(entry.attachedView)
       entry.attachedWindow = null
+      entry.attachedView = null
     }
     const win = deps.getWindow(standing.window)
     const viewport = win?.viewport() ?? null
@@ -193,148 +269,183 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       visibleInGrid: standing.visibleInGrid,
       rendererVisible: entry.rendererVisible,
       bounds: clipped,
-      hasUrl: Boolean(entry.url || entry.stateUrl),
-      hasError: entry.error !== null,
+      hasUrl: Boolean(active.url || entry.stateUrl),
+      hasError: active.error !== null,
     })
     if (show && win && clipped) {
-      if (entry.attachedWindow !== win.number) {
-        win.attach(entry.view)
+      if (entry.attachedWindow !== win.number || entry.attachedView !== active.view) {
+        win.attach(active.view)
         entry.attachedWindow = win.number
+        entry.attachedView = active.view
       }
-      entry.view.setBounds(clipped)
-      entry.view.setVisible(true)
+      active.view.setBounds(clipped)
+      active.view.setVisible(true)
     } else {
       detachFromWindow(entry)
     }
+  }
+
+  function createTab(entry: Entry, initialUrl: string): TabEntry {
+    const id = `t${++entry.nextTabSeq}`
+    let tab!: TabEntry
+    const view = deps.createView({
+      onDidStartLoading() {
+        if (!tab || tab.destroyed || entry.destroyed) return
+        tab.loading = true
+        pushSnapshot(entry)
+      },
+      onDidStopLoading() {
+        if (!tab || tab.destroyed || entry.destroyed) return
+        tab.loading = false
+        if (tab.error !== null) {
+          pushSnapshot(entry)
+          return
+        }
+        const liveUrl = tab.view.getURL()
+        if (isBrowserUrl(liveUrl)) tab.url = liveUrl
+        const liveTitle = tab.view.getTitle()
+        if (liveTitle) tab.title = liveTitle
+        if (isVideoPageUrl(tab.url)) tab.theater = true
+        tab.view.setTheaterMode?.(tab.theater, tab.url)
+        pushSnapshot(entry)
+        const loadId = tab.loadSeq
+        void tab.view
+          .readPageText()
+          .then((text) => {
+            if (tab.destroyed || entry.destroyed || tab.loadSeq !== loadId || tab.error !== null || tab.text === text)
+              return
+            tab.text = text
+            pushSnapshot(entry)
+          })
+          .catch(() => undefined)
+      },
+      onDidNavigate(url) {
+        if (!tab || tab.destroyed || entry.destroyed) return
+        const normalized = normalizeBrowserUrl(url)
+        if (normalized) {
+          tab.url = normalized
+          tab.error = null
+          if (isVideoPageUrl(normalized)) tab.theater = true
+          tab.view.setTheaterMode?.(tab.theater, normalized)
+        }
+        const liveTitle = tab.view.getTitle()
+        if (liveTitle) tab.title = liveTitle
+        positionEntry(entry, deps.getState())
+        pushSnapshot(entry)
+      },
+      onDidFailLoad(errorCode, errorDescription, isMainFrame) {
+        if (!tab || tab.destroyed || entry.destroyed || !isMainFrame || errorCode === ERR_ABORTED) return
+        tab.loading = false
+        tab.error = errorDescription || `Load failed (${errorCode}).`
+        positionEntry(entry, deps.getState())
+        pushSnapshot(entry)
+      },
+      onPageTitleUpdated(title) {
+        if (!tab || tab.destroyed || entry.destroyed) return
+        tab.title = title
+        pushSnapshot(entry)
+      },
+      onFocus() {
+        if (!tab || tab.destroyed || entry.destroyed) return
+        const standing = browserStanding(deps.getState().grids[entry.workspaceId], entry.panelId)
+        if (standing && !standing.focused) deps.focusElement(entry.workspaceId, standing.element.id)
+      },
+      onOpenWindow(url) {
+        if (entry.destroyed) return
+        const normalized = normalizeBrowserUrl(url)
+        if (!normalized) return
+        const opened = createTab(entry, normalized)
+        entry.tabs.push(opened)
+        entry.activeTabId = opened.id
+        loadTabAddress(entry, opened, normalized)
+      },
+    })
+    tab = {
+      id,
+      view,
+      url: initialUrl,
+      title: '',
+      loading: false,
+      theater: isVideoPageUrl(initialUrl),
+      error: null,
+      text: null,
+      loadSeq: 0,
+      destroyed: false,
+    }
+    return tab
   }
 
   function ensureEntry(workspaceId: string, panel: Panel): Entry {
     const key = entryKey(workspaceId, panel.id)
     const existing = entries.get(key)
     if (existing) return existing
-    let entry!: Entry
-    const view = deps.createView({
-      onDidStartLoading() {
-        if (!entry || entry.destroyed) return
-        entry.loading = true
-        pushSnapshot(entry)
-      },
-      onDidStopLoading() {
-        if (!entry || entry.destroyed) return
-        entry.loading = false
-        if (entry.error !== null) {
-          pushSnapshot(entry)
-          return
-        }
-        const liveUrl = entry.view.getURL()
-        if (isBrowserUrl(liveUrl)) entry.url = liveUrl
-        const liveTitle = entry.view.getTitle()
-        if (liveTitle) entry.title = liveTitle
-        pushSnapshot(entry)
-        const loadId = entry.loadSeq
-        void entry.view
-          .readPageText()
-          .then((text) => {
-            if (entry.destroyed || entry.loadSeq !== loadId || entry.error !== null || entry.text === text) return
-            entry.text = text
-            pushSnapshot(entry)
-          })
-          .catch(() => undefined)
-      },
-      onDidNavigate(url) {
-        if (!entry || entry.destroyed) return
-        const normalized = normalizeBrowserUrl(url)
-        if (normalized) {
-          entry.url = normalized
-          entry.error = null
-        }
-        const liveTitle = entry.view.getTitle()
-        if (liveTitle) entry.title = liveTitle
-        positionEntry(entry, deps.getState())
-        pushSnapshot(entry)
-      },
-      onDidFailLoad(errorCode, errorDescription, isMainFrame) {
-        if (!entry || entry.destroyed || !isMainFrame || errorCode === ERR_ABORTED) return
-        entry.loading = false
-        entry.error = errorDescription || `Load failed (${errorCode}).`
-        positionEntry(entry, deps.getState())
-        pushSnapshot(entry)
-      },
-      onPageTitleUpdated(title) {
-        if (!entry || entry.destroyed) return
-        entry.title = title
-        pushSnapshot(entry)
-      },
-      onFocus() {
-        if (!entry || entry.destroyed) return
-        const standing = browserStanding(deps.getState().grids[entry.workspaceId], entry.panelId)
-        if (standing && !standing.focused) deps.focusElement(entry.workspaceId, standing.element.id)
-      },
-    })
-    entry = {
+    const entry: Entry = {
       key,
       workspaceId,
       panelId: panel.id,
-      view,
+      tabs: [],
+      activeTabId: '',
+      nextTabSeq: 0,
       stateUrl: '',
-      url: '',
-      title: '',
-      loading: false,
-      error: null,
-      text: null,
       refreshedAt: panel.refreshedAt,
       bounds: null,
       rendererVisible: false,
       attachedWindow: null,
-      loadSeq: 0,
+      attachedView: null,
       destroyed: false,
     }
+    const first = createTab(entry, '')
+    entry.tabs.push(first)
+    entry.activeTabId = first.id
     entries.set(key, entry)
     return entry
   }
 
-  function loadAddress(entry: Entry, url: string): void {
-    const loadId = ++entry.loadSeq
-    entry.url = url
-    entry.title = ''
-    entry.text = null
-    entry.error = null
-    entry.loading = true
+  function loadTabAddress(entry: Entry, tab: TabEntry, url: string): void {
+    const loadId = ++tab.loadSeq
+    tab.url = url
+    tab.title = ''
+    tab.text = null
+    tab.error = null
+    tab.loading = true
+    tab.theater = isVideoPageUrl(url)
+    tab.view.setTheaterMode?.(tab.theater, url)
     positionEntry(entry, deps.getState())
     pushSnapshot(entry)
-    void entry.view.loadURL(url).catch((err: unknown) => {
-      if (entry.destroyed || entry.loadSeq !== loadId || isAbortedLoad(err)) return
-      entry.loading = false
-      entry.error = err instanceof Error ? err.message : String(err)
+    void tab.view.loadURL(url).catch((err: unknown) => {
+      if (tab.destroyed || entry.destroyed || tab.loadSeq !== loadId || isAbortedLoad(err)) return
+      tab.loading = false
+      tab.error = err instanceof Error ? err.message : String(err)
       positionEntry(entry, deps.getState())
       pushSnapshot(entry)
     })
   }
 
-  function reloadEntry(entry: Entry): void {
-    const targetUrl = entry.url || entry.stateUrl
-    const liveUrl = entry.view.getURL()
-    if ((entry.error !== null || !isBrowserUrl(liveUrl) || liveUrl !== targetUrl) && targetUrl) {
-      loadAddress(entry, targetUrl)
+  function reloadTab(entry: Entry, tab: TabEntry): void {
+    const targetUrl = tab.url || entry.stateUrl
+    const liveUrl = tab.view.getURL()
+    if ((tab.error !== null || !isBrowserUrl(liveUrl) || liveUrl !== targetUrl) && targetUrl) {
+      loadTabAddress(entry, tab, targetUrl)
       return
     }
-    entry.error = null
-    entry.loading = true
+    tab.error = null
+    tab.loading = true
     positionEntry(entry, deps.getState())
-    entry.view.reload()
+    tab.view.reload()
     pushSnapshot(entry)
   }
 
   function applyPanelState(entry: Entry, panel: Panel, stateUrl: string): void {
+    const active = activeTab(entry)
     if (stateUrl !== entry.stateUrl) {
       entry.stateUrl = stateUrl
       entry.refreshedAt = panel.refreshedAt
-      loadAddress(entry, stateUrl)
+      loadTabAddress(entry, active, stateUrl)
       return
     }
     if (panel.refreshedAt !== null && panel.refreshedAt !== entry.refreshedAt) {
       entry.refreshedAt = panel.refreshedAt
-      reloadEntry(entry)
+      reloadTab(entry, active)
     }
   }
 
@@ -392,42 +503,83 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         throw new Error('Unknown browser action.')
       }
       const action = rawAction as BrowserAction
-      const key = entryKey(workspaceId, panel.id)
 
       if (action === 'load') {
         const normalized = normalizeBrowserUrl(rawUrl)
         if (normalized === null) throw new Error('Enter an https:// or http:// address.')
-        if (normalized === '') {
-          const existing = entries.get(key)
-          if (existing) destroyEntry(existing)
-          deps.setPanelUrl(workspaceId, panel.id, '')
-          return emptySnapshot(workspaceId, panel.id)
-        }
+        const target = normalized || DEFAULT_BROWSER_URL
         const entry = ensureEntry(workspaceId, panel)
-        entry.stateUrl = normalized
-        deps.setPanelUrl(workspaceId, panel.id, normalized)
-        loadAddress(entry, normalized)
+        entry.stateUrl = target
+        deps.setPanelUrl(workspaceId, panel.id, target)
+        loadTabAddress(entry, activeTab(entry), target)
         return snapshotOf(entry)
       }
 
-      const entry = entries.get(key)
-      if (!entry) {
+      const entry = ensureEntry(workspaceId, panel)
+      if (!entry.stateUrl) {
         const stateUrl = readBrowserState(panel.state).url
-        if (!stateUrl) return emptySnapshot(workspaceId, panel.id)
-        const created = ensureEntry(workspaceId, panel)
-        created.stateUrl = stateUrl
-        loadAddress(created, stateUrl)
-        return snapshotOf(created)
+        entry.stateUrl = stateUrl
+        loadTabAddress(entry, activeTab(entry), stateUrl)
+      }
+
+      if (action === 'new-tab') {
+        const target = (typeof rawUrl === 'string' ? normalizeBrowserUrl(rawUrl) : null) || DEFAULT_BROWSER_URL
+        const opened = createTab(entry, target)
+        entry.tabs.push(opened)
+        entry.activeTabId = opened.id
+        loadTabAddress(entry, opened, target)
+        return snapshotOf(entry)
+      }
+
+      if (action === 'select-tab') {
+        const targetId = typeof rawUrl === 'string' ? rawUrl : ''
+        const found = entry.tabs.find((one) => one.id === targetId)
+        if (found) {
+          entry.activeTabId = found.id
+          positionEntry(entry, deps.getState())
+          pushSnapshot(entry)
+        }
+        return snapshotOf(entry)
+      }
+
+      if (action === 'close-tab') {
+        const targetId = typeof rawUrl === 'string' && rawUrl ? rawUrl : entry.activeTabId
+        const index = entry.tabs.findIndex((one) => one.id === targetId)
+        if (index >= 0) {
+          if (entry.tabs.length <= 1) {
+            entry.stateUrl = DEFAULT_BROWSER_URL
+            deps.setPanelUrl(workspaceId, panel.id, DEFAULT_BROWSER_URL)
+            loadTabAddress(entry, entry.tabs[0]!, DEFAULT_BROWSER_URL)
+          } else {
+            const [removed] = entry.tabs.splice(index, 1)
+            if (removed) destroyTab(entry, removed)
+            if (entry.activeTabId === targetId) {
+              const nextTab = entry.tabs[Math.min(index, entry.tabs.length - 1)]!
+              entry.activeTabId = nextTab.id
+            }
+            positionEntry(entry, deps.getState())
+            pushSnapshot(entry)
+          }
+        }
+        return snapshotOf(entry)
+      }
+
+      const active = activeTab(entry)
+      if (action === 'toggle-theater') {
+        active.theater = !active.theater
+        active.view.setTheaterMode?.(active.theater, active.url || entry.stateUrl)
+        pushSnapshot(entry)
+        return snapshotOf(entry)
       }
 
       if (action === 'reload') {
-        reloadEntry(entry)
+        reloadTab(entry, active)
         return snapshotOf(entry)
       }
 
-      entry.error = null
-      if (action === 'back' && entry.view.canGoBack()) entry.view.goBack()
-      else if (action === 'forward' && entry.view.canGoForward()) entry.view.goForward()
+      active.error = null
+      if (action === 'back' && active.view.canGoBack()) active.view.goBack()
+      else if (action === 'forward' && active.view.canGoForward()) active.view.goForward()
       positionEntry(entry, deps.getState())
       pushSnapshot(entry)
       return snapshotOf(entry)
@@ -474,6 +626,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       for (const entry of entries.values()) {
         if (entry.attachedWindow === windowNumber) {
           entry.attachedWindow = null
+          entry.attachedView = null
           entry.rendererVisible = false
         }
       }

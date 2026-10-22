@@ -109,7 +109,11 @@ export async function fetchPage(
   if (!response) throw new Error(`${url.hostname} redirected more than ${MAX_HOPS} times.`)
   if (response.status < 200 || response.status >= 300) {
     response.cancel()
-    throw new Error(`${url.hostname} answered ${response.status} for ${url.pathname}.`)
+    const browserHint =
+      response.status === 401 || response.status === 403
+        ? ' Open this address in core/browser (place_view or set state.url) and read panels/<id>/text instead.'
+        : ''
+    throw new Error(`${url.hostname} answered ${response.status} for ${url.pathname}.${browserHint}`)
   }
   const body = await readCapped(response)
   const type = response.headers['content-type'] ?? ''

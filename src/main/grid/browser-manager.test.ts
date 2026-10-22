@@ -28,6 +28,7 @@ interface FakeView extends ManagedBrowserView {
   loading: boolean
   bounds: BrowserBounds | null
   visible: boolean
+  theater: boolean
   destroyed: boolean
   reloads: number
   pageText: string | null
@@ -89,6 +90,7 @@ function createHarness() {
         loading: false,
         bounds: null,
         visible: false,
+        theater: false,
         destroyed: false,
         reloads: 0,
         pageText: 'Bloomberg Live TV stream',
@@ -130,6 +132,9 @@ function createHarness() {
         },
         setVisible(visible) {
           view.visible = visible
+        },
+        setTheaterMode(theater) {
+          view.theater = theater
         },
         readPageText: async () => view.pageText,
         destroy() {
@@ -317,4 +322,42 @@ test('navigate load does not double-load on synchronous sweep, ignores ERR_ABORT
   assert.equal(retried.url, 'https://unreached.example.com/live')
   assert.equal(retried.error, null)
   assert.equal(view.visible, true)
+})
+
+test('popups and new-tab actions open switchable tabs inside the same panel, and video pages default to theater mode', async () => {
+  const { manager, placed, views, attached } = createHarness()
+  const initial = await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  assert.equal(initial.tabs?.length, 1)
+  assert.equal(initial.theater, true)
+  assert.equal(views[0]!.theater, true)
+
+  // A popup/window.open from inside the first tab opens a second tab and switches to it.
+  views[0]!.events.onOpenWindow?.('https://www.youtube.com/watch?v=live123')
+  assert.equal(views.length, 2)
+  assert.equal(views[0]!.visible, false)
+  assert.equal(attached.get(1)?.has(views[0]!), false)
+  assert.equal(views[1]!.visible, true)
+  assert.equal(attached.get(1)?.has(views[1]!), true)
+  assert.equal(views[1]!.getURL(), 'https://www.youtube.com/watch?v=live123')
+  assert.equal(views[1]!.theater, true)
+
+  // Toggling theater mode on the active tab flips its theater state.
+  const toggled = await manager.navigate(1, 'ws-1', placed.panel.id, 'toggle-theater')
+  assert.equal(toggled.theater, false)
+  assert.equal(views[1]!.theater, false)
+
+  // Switching back to the first tab detaches tab 2 and re-attaches tab 1.
+  const firstTabId = initial.tabs![0]!.id
+  const switched = await manager.navigate(1, 'ws-1', placed.panel.id, 'select-tab', firstTabId)
+  assert.equal(switched.activeTabId, firstTabId)
+  assert.equal(switched.url, 'https://www.bloomberg.com/live')
+  assert.equal(views[0]!.visible, true)
+  assert.equal(views[1]!.visible, false)
+
+  // Closing the second tab destroys its view and leaves the first tab active.
+  const secondTabId = switched.tabs![1]!.id
+  const afterClose = await manager.navigate(1, 'ws-1', placed.panel.id, 'close-tab', secondTabId)
+  assert.equal(afterClose.tabs?.length, 1)
+  assert.equal(views[1]!.destroyed, true)
+  assert.equal(views[0]!.visible, true)
 })

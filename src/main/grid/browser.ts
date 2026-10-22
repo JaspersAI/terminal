@@ -1,7 +1,7 @@
 import { ipcMain, session, WebContentsView, type BrowserWindow, type Session } from 'electron'
-import { BROWSER_PARTITION, isBrowserUrl } from '../../shared/grid/browser'
-import { PANEL_TEXT_MAX } from '../../shared/grid/grid'
-import { setPanelStateChecked } from '../actions'
+import { BROWSER_PARTITION, browserUserAgent, isBrowserUrl } from '../../shared/grid/browser'
+import { PANEL_TEXT_MAX, panelOf } from '../../shared/grid/grid'
+import { publishChecked, publishTextChecked, setPanelStateChecked } from '../actions'
 import { getState, subscribe } from '../state'
 import {
   createBrowserManager,
@@ -10,15 +10,52 @@ import {
   type ManagedBrowserView,
   type ManagedWindow,
 } from './browser-manager'
-import { focus } from './grid'
+import { findElement, focus } from './grid'
 import { windowNumberOf, windowOf } from './windows'
 
-// Electron's native `WebContentsView` backing for `core/browser` panels. Each view runs in the
-// persistent `persist:browser` session partition with sandboxed, context-isolated preferences so
-// user sign-ins persist across restarts while web pages have no access to Node or Terminal's state.
+// Electron's native `WebContentsView` backing for `core/browser` panels. Each tab runs in the
+// persistent `persist:browser` session partition with sandboxed, context-isolated preferences and a
+// clean Chrome User-Agent so user sign-ins persist across restarts without triggering bot blocks.
 
 /** Only media playback and fullscreen are granted to browsed pages; camera, mic, geolocation, and device APIs are denied. */
 const ALLOWED_PERMISSIONS = new Set(['fullscreen', 'mediaKeySystem'])
+
+const THEATER_SCRIPT = (theater: boolean): string => `
+(() => {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  const id = '__jaspers-theater-mode';
+  let style = document.getElementById(id);
+  if (${theater ? 'true' : 'false'}) {
+    if (!style) {
+      style = document.createElement('style');
+      style.id = id;
+      style.textContent = \`
+        video { max-width: 100% !important; }
+        [class*="live-player"], [class*="video-player"], [data-component*="video"], #player-theater-container, #full-bleed-container {
+          width: 100% !important;
+          max-width: 100% !important;
+          background: #000 !important;
+        }
+      \`;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    const flexy = document.querySelector('ytd-watch-flexy');
+    if (flexy && !flexy.hasAttribute('theater')) {
+      const btn = document.querySelector('.ytp-size-button');
+      if (btn instanceof HTMLElement) btn.click();
+      else flexy.setAttribute('theater', '');
+    }
+  } else {
+    if (style) style.remove();
+    const flexy = document.querySelector('ytd-watch-flexy');
+    if (flexy && flexy.hasAttribute('theater')) {
+      const btn = document.querySelector('.ytp-size-button');
+      if (btn instanceof HTMLElement) btn.click();
+      else flexy.removeAttribute('theater');
+    }
+  }
+})()
+`
 
 const nativeViews = new WeakMap<ManagedBrowserView, WebContentsView>()
 const watchedWindows = new WeakSet<BrowserWindow>()
@@ -28,6 +65,8 @@ let activeManager: BrowserManager | null = null
 function browserSession(): Session {
   if (configuredSession) return configuredSession
   const partition = session.fromPartition(BROWSER_PARTITION)
+  const cleanUa = browserUserAgent(partition.getUserAgent())
+  if (cleanUa) partition.setUserAgent(cleanUa)
   partition.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(ALLOWED_PERMISSIONS.has(permission))
   })
@@ -37,9 +76,10 @@ function browserSession(): Session {
 }
 
 function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
+  const part = browserSession()
   const raw = new WebContentsView({
     webPreferences: {
-      session: browserSession(),
+      session: part,
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
@@ -51,6 +91,8 @@ function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
   })
   raw.setVisible(false)
   const { webContents } = raw
+  const cleanUa = browserUserAgent(webContents.getUserAgent())
+  if (cleanUa) webContents.setUserAgent(cleanUa)
 
   webContents.on('will-attach-webview', (event) => event.preventDefault())
   webContents.on('will-navigate', (event) => {
@@ -59,12 +101,10 @@ function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
   webContents.on('will-redirect', (event) => {
     if (!isBrowserUrl(event.url)) event.preventDefault()
   })
-  // Popups and auth flows stay inside this view's persistent partition rather than spawning new windows.
+  // Additional browser windows open as switchable tabs inside the same browser panel rather than new windows or tiles.
   webContents.setWindowOpenHandler(({ url }) => {
     if (isBrowserUrl(url)) {
-      setImmediate(() => {
-        if (!webContents.isDestroyed()) void webContents.loadURL(url).catch(() => undefined)
-      })
+      setImmediate(() => events.onOpenWindow?.(url))
     }
     return { action: 'deny' }
   })
@@ -106,6 +146,21 @@ function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
     },
     setVisible: (visible) => {
       if (!webContents.isDestroyed()) raw.setVisible(visible)
+    },
+    setTheaterMode: (theater, url) => {
+      if (webContents.isDestroyed()) return
+      if (/youtube\.com|youtu\.be/i.test(url)) {
+        void part.cookies
+          .set({
+            url: 'https://www.youtube.com',
+            domain: '.youtube.com',
+            name: 'wide',
+            value: theater ? '1' : '0',
+            path: '/',
+          })
+          .catch(() => undefined)
+      }
+      void webContents.executeJavaScript(THEATER_SCRIPT(theater), false).catch(() => undefined)
     },
     readPageText: async () => {
       if (webContents.isDestroyed()) return null
@@ -171,6 +226,29 @@ function manager(): BrowserManager {
     },
     focusElement: (workspaceId, elementId) => {
       focus(workspaceId, elementId)
+    },
+    publishPanel: (workspaceId, panelId, snapshot) => {
+      try {
+        const panel = panelOf(findElement(workspaceId, panelId).grid, panelId)
+        const nextOutput = {
+          url: snapshot.url,
+          title: snapshot.title,
+          loading: snapshot.loading,
+          canGoBack: snapshot.canGoBack,
+          canGoForward: snapshot.canGoForward,
+          theater: snapshot.theater ?? false,
+          tabCount: snapshot.tabCount ?? 1,
+          error: snapshot.error,
+        }
+        if (JSON.stringify(panel.output) !== JSON.stringify(nextOutput)) {
+          publishChecked(workspaceId, panelId, nextOutput)
+        }
+        if (panel.text !== snapshot.text) {
+          publishTextChecked(workspaceId, panelId, snapshot.text)
+        }
+      } catch {
+        // Panel was removed concurrently.
+      }
     },
   })
   return activeManager
