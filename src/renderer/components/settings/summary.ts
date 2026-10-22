@@ -9,7 +9,7 @@ export function pluginLine(
   plugin: PluginInfo,
   connections: ConnectionInfo[],
 ): { version: string; status: string; alert: boolean } {
-  const version = plugin.install?.version ?? 'local'
+  const version = plugin.dir === 'built-in' ? 'built-in' : (plugin.install?.version ?? 'local')
   const has = (status: ConnectionInfo['status']): boolean => connections.some((c) => c.status === status)
   const say = (status: string, alert: boolean): { version: string; status: string; alert: boolean } => ({
     version,

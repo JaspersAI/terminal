@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { AgentEvent, AgentOrigin } from '../shared/agent/agent'
 import type { AppOpened } from '../shared/plugins/apps'
+import type { BrowserAction, BrowserBounds, BrowserSnapshot } from '../shared/grid/browser'
 import type { ConnectionForm } from '../shared/plugins/connection-plugin'
 import type { RunResult } from '../shared/data/datasets'
 import type { DragMove, DragOver } from '../shared/grid/drag'
@@ -215,6 +216,16 @@ const api = {
       tool: string,
       args: Record<string, unknown> | undefined,
     ): Promise<unknown> => ipcRenderer.invoke('app:call', workspaceId, panelId, from, tool, args),
+  },
+  /** The built-in `core/browser` view: syncs viewport bounds and visibility to main's `WebContentsView` and drives navigation. */
+  browser: {
+    sync: (workspaceId: string, panelId: string, bounds: BrowserBounds, visible: boolean): Promise<BrowserSnapshot> =>
+      ipcRenderer.invoke('browser:sync', workspaceId, panelId, bounds, visible),
+    navigate: (workspaceId: string, panelId: string, action: BrowserAction, url?: string): Promise<BrowserSnapshot> =>
+      ipcRenderer.invoke('browser:navigate', workspaceId, panelId, action, url ?? null),
+    detach: (workspaceId: string, panelId: string): Promise<void> =>
+      ipcRenderer.invoke('browser:detach', workspaceId, panelId),
+    onState: (listener: (snapshot: BrowserSnapshot) => void): (() => void) => on('browser:state', listener),
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:open-external', url),
   /** Settings: opens the signed-in account's page on Account in the browser. Takes no address; main knows where Account is. */

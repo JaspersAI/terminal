@@ -97,7 +97,12 @@ export function Board({ workspaceId, windowNumber, grid, frame, focused, waiting
       })}
       {draft && !draft.settling && (
         // Over every view while a drag lasts, so one in a frame cannot take the pointer and the cursor holds.
-        <div aria-hidden className="absolute inset-0" style={{ zIndex: top + 2, cursor: CURSORS[draft.handle] }} />
+        <div
+          aria-hidden
+          data-grid-drag
+          className="absolute inset-0"
+          style={{ zIndex: top + 2, cursor: CURSORS[draft.handle] }}
+        />
       )}
     </div>
   )

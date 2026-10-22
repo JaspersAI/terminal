@@ -37,6 +37,7 @@ import { startTasks, stopTasks, suspendTasks, wakeTasks } from './tasks/tasks'
 import { findTool } from './agent/tools'
 import { registerSchemes, registerViewHost } from './plugins/viewhost'
 import { registerVoiceIpc } from './llm/voice'
+import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
 import { anyInFront, isHttps, openAllStored, registerDragIpc, showAll, watchDisplays } from './grid/windows'
 import { installMenu } from './app/menu'
 import { accountPageAddress, onSignInChange } from './jaspers/jaspers'
@@ -66,6 +67,7 @@ app.whenReady().then(() => {
   onSignInChange(followSignIn)
   // The calls kept for the views that show a server's own page, less those whose panel is gone.
   startApps()
+  startBrowsers()
   // The user's skills; each plugin brings its own as it builds.
   startSkills()
   // What the assistant knows about the user, and what is always true.
@@ -93,6 +95,7 @@ app.whenReady().then(() => {
   })
   registerConnectionIpc()
   registerAppsIpc()
+  registerBrowserIpc()
   registerAgentIpc()
   // A loop that is gone stops what it was doing and is forgotten.
   watchLoops()
@@ -217,6 +220,7 @@ app.whenReady().then(() => {
 
 // The stdio servers are children of this process and go with it.
 app.on('will-quit', closeAll)
+app.on('will-quit', closeAllBrowsers)
 // So are plugins' hosts. Jobs still running get to save what they have first: the quit waits for
 // the hosts to stop them, once, then goes ahead.
 // Eye's session is complete once nothing more can be recorded into it, and only then may its

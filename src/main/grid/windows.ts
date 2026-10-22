@@ -216,6 +216,12 @@ export function openWindows(): { number: number; win: BrowserWindow }[] {
   return open
 }
 
+/** One open window by its number, or undefined when it is not open. */
+export function windowOf(n: number): BrowserWindow | undefined {
+  const win = windows.get(n)
+  return win && !win.isDestroyed() ? win : undefined
+}
+
 /** A window's content size as "1400×1000", for the prompt; null when it is not open. */
 export function windowSize(n: number): string | null {
   const win = windows.get(n)

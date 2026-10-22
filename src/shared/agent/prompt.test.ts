@@ -990,6 +990,15 @@ test("the tile primer says a piece of work's views are laid out inside its tile,
   assert.doesNotMatch(tile, /write_cells|Cells:/)
 })
 
+test('the rules instruct the assistant to launch the Browser view when the user asks for Bloomberg', () => {
+  assert.match(ROUTER_RULES, /Bloomberg/i)
+  assert.match(ROUTER_RULES, /Browser/i)
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /Bloomberg/i)
+    assert.match(rules, /core\/browser/)
+  }
+})
+
 test('a task preface lists allowed commands for run_shell only while Pro mode is on', () => {
   const withShell = taskPreface('t4', ['tail -40 out/run.log', 'cat out/summary.json'], true)
   assert.match(withShell, /^This request is scheduled task t4, running on its own at its time:/)

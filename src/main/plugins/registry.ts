@@ -1,6 +1,14 @@
 import { z, type ZodType } from 'zod'
+import {
+  BROWSER_PLUGIN_DESCRIPTION,
+  BROWSER_PLUGIN_ID,
+  BROWSER_VIEW,
+  browserSummary,
+  DEFAULT_BROWSER_URL,
+  normalizeBrowserUrl,
+} from '../../shared/grid/browser'
 import { CHAT_VIEW } from '../../shared/grid/grid'
-import type { ConnectionInfo, SourceInfo, ViewInfo } from '../../shared/state'
+import type { ConnectionInfo, PluginInfo, SourceInfo, ViewInfo } from '../../shared/state'
 import { prepareMcpArguments, readMcpCall } from '../../shared/data/arguments'
 import {
   parameterNames,
@@ -145,7 +153,14 @@ export function sourceInfos(): Record<string, SourceInfo> {
 /** The views and sources the app ships with. */
 export function registerBuiltins(): void {
   registerSources(null, { mcp: MCP_SOURCE })
-  registerViews(null, [NOTE, TABLE, METRIC, CHART, PLUGINS, TASKS, INBOX, CHAT, APP])
+  registerViews(null, [NOTE, TABLE, METRIC, CHART, PLUGINS, TASKS, INBOX, CHAT, APP, BROWSER])
+  update((state) => ({
+    ...state,
+    plugins: {
+      ...state.plugins,
+      [BROWSER_PLUGIN_ID]: BUILT_IN_BROWSER_PLUGIN,
+    },
+  }))
   // An MCP source is described by its tool, which its connection only lists once it is up: the
   // sources are projected again whenever a connection's tools change, so the catalog catches up.
   subscribe((next, prev) => {
@@ -390,6 +405,53 @@ const APP: ViewDef = {
   instructions:
     "A connection's own view of one of its tools: the server's page, showing what the tool answered, where the user can go on working with it. It is put on the grid for you when you call a tool that has a view with run_source on core/mcp, and that answer names the element. Place one yourself only to bring one back: state.connection is <plugin>/<name>, state.tool the tool, state.args its arguments, and the view makes the call itself. Changing state.args calls again, and so does refresh_element. Its text is what the page says it is showing; output.status is asking while the user has not yet allowed that connection's views.",
   summarize: appSummary,
+}
+
+const BROWSER: ViewDef = {
+  id: BROWSER_VIEW,
+  plugin: null,
+  title: 'Browser',
+  state: z.object({
+    url: z
+      .string()
+      .default(DEFAULT_BROWSER_URL)
+      .refine((url) => normalizeBrowserUrl(url) !== null, {
+        message: 'url must be an https:// or http:// address.',
+      }),
+  }),
+  output: z.object({
+    url: z.string(),
+    title: z.string(),
+    loading: z.boolean(),
+    canGoBack: z.boolean(),
+    canGoForward: z.boolean(),
+    theater: z.boolean().optional(),
+    tabCount: z.number().optional(),
+    error: z.string().nullable(),
+  }),
+  instructions: `${BROWSER_PLUGIN_DESCRIPTION} A web browser on the grid, for Bloomberg, live streams, and sites that need a sign-in or refuse to be framed. Launch this view whenever the user asks for Bloomberg (use https://www.bloomberg.com/live for Bloomberg Television's live stream, or ${DEFAULT_BROWSER_URL} by default). Additional windows open as switchable tabs inside the same view, so reuse an existing core/browser view in your tile rather than placing a second one. Set state.url to navigate; refresh_element reloads the page. output has the active url, title, loading, canGoBack, canGoForward, theater, tabCount, and error, and the page text is published to panels/<id>/text.`,
+  summarize: browserSummary,
+}
+
+const BUILT_IN_BROWSER_PLUGIN: PluginInfo = {
+  id: BROWSER_PLUGIN_ID,
+  dir: 'built-in',
+  status: 'ready',
+  version: 1,
+  sources: [],
+  views: [BROWSER_VIEW],
+  errors: [],
+  capabilities: [],
+  frames: [],
+  secrets: [],
+  connections: [],
+  skills: [],
+  host: 'none',
+  jobs: [],
+  usage: { calls: 0, input: 0, output: 0 },
+  origin: 'local',
+  install: null,
+  built: { purpose: BROWSER_PLUGIN_DESCRIPTION, at: '' },
 }
 
 /** A reference to a source that is not registered says so once, rather than reaching the model. */

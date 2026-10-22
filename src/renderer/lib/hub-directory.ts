@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { BROWSER_PLUGIN_DESCRIPTION, BROWSER_PLUGIN_ID, BROWSER_PLUGIN_TITLE } from '../../shared/grid/browser.ts'
 import type { HubItem } from '../../shared/hub/hub'
 import { describeSource } from '../../shared/plugins/install.ts'
 import type { AppState } from '../../shared/state'
@@ -50,6 +51,36 @@ export function standing(item: HubItem, plugins: AppState['plugins']): Standing 
 export function rest(featured: HubItem[], pages: HubItem[]): HubItem[] {
   const names = new Set(featured.map((item) => item.name))
   return pages.filter((item) => !names.has(item.name))
+}
+
+/** Built-in Browser entry shown among the Hub plugin list for every version with browser support. */
+export const CORE_BROWSER_ITEM: HubItem = {
+  handle: 'jaspers',
+  name: BROWSER_PLUGIN_ID,
+  kind: 'plugin',
+  title: BROWSER_PLUGIN_TITLE,
+  description: BROWSER_PLUGIN_DESCRIPTION,
+  version: '1.0.0',
+  tags: ['bloomberg', 'browser', 'video'],
+  stars: 0,
+  downloads: 0,
+  official: true,
+  reviewed: true,
+  featured: false,
+  page: '',
+}
+
+/** Includes the built-in Browser entry in the Hub plugin list when not searching or when the query matches it. */
+export function withBrowserItem(items: HubItem[], query = ''): HubItem[] {
+  const without = items.filter((one) => one.name !== BROWSER_PLUGIN_ID)
+  const q = query.trim().toLowerCase()
+  const matches =
+    q === '' ||
+    CORE_BROWSER_ITEM.name.toLowerCase().includes(q) ||
+    CORE_BROWSER_ITEM.title.toLowerCase().includes(q) ||
+    CORE_BROWSER_ITEM.description.toLowerCase().includes(q) ||
+    CORE_BROWSER_ITEM.tags.some((tag) => tag.toLowerCase().includes(q))
+  return matches ? [...without, CORE_BROWSER_ITEM] : without
 }
 
 /** The items shown so far with the next page after them. Stars change between requests, so an item already shown is not shown again. */
