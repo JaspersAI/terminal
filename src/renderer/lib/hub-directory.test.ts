@@ -8,7 +8,9 @@ import {
   failure,
   initials,
   loadPart,
+  othersPart,
   rest,
+  searchItems,
   standing,
   withBrowserItem,
 } from './hub-directory.ts'
@@ -166,4 +168,140 @@ test('withBrowserItem places the non-featured built-in Browser plugin in the Hub
     withBrowserItem(hubItems, 'treasury').map((one) => one.name),
     ['sec', 'fed'],
   )
+  assert.deepEqual(
+    withBrowserItem(hubItems, 'bloomberg video').map((one) => one.name),
+    ['sec', 'fed', 'browser'],
+  )
+  assert.deepEqual(
+    withBrowserItem(hubItems, 'browsers').map((one) => one.name),
+    ['sec', 'fed', 'browser'],
+  )
+})
+
+test('searchItems filters out non-matching semantic results and indexes plugin text, tags, handle, and word forms', () => {
+  const catalog = [
+    item('excel-export', {
+      handle: 'rym',
+      official: false,
+      title: 'Excel Export',
+      description: 'Builds .xlsx workbooks from supplied tables or grid panel data.',
+      tags: ['excel', 'xlsx', 'export'],
+    }),
+    item('tradingview', {
+      title: 'TradingView Chart',
+      description: "Shows TradingView's advanced chart widget in a frame.",
+      tags: ['tradingview', 'chart', 'charting', 'markets'],
+    }),
+    item('massive', {
+      handle: 'biseroff',
+      official: false,
+      title: 'Massive Market Data (Polygon.io)',
+      description:
+        'Market data plugin wrapping the Polygon.io/Massive REST API: bars, snapshots, options, and four chart/watchlist views.',
+      tags: ['market-data', 'polygon-io', 'charting', 'stocks'],
+    }),
+    item('yfinance', {
+      title: 'yfinance',
+      description:
+        'Free Yahoo Finance market data (quotes, history, fundamentals, options, news, movers) via a bundled MCP server, with five views.',
+      tags: ['market-data', 'yahoo-finance', 'watchlist', 'quotes'],
+    }),
+    item('sec', {
+      title: 'SEC EDGAR Filings, Facts, and Insider Forms',
+      description: "Gets one company's SEC filings, XBRL reported figures, and insider forms from SEC EDGAR.",
+      tags: ['sec', 'edgar', 'filings', 'xbrl'],
+    }),
+    item('finra', {
+      title: 'FINRA Short Interest',
+      description: "Gets a stock's twice-monthly short interest from FINRA's public API.",
+      tags: ['short-interest', 'finra', 'equities'],
+    }),
+  ]
+
+  // Plural "charts" matches "Chart", "chart", and "charting", ranking title matches ahead of description/tag matches.
+  assert.deepEqual(
+    searchItems(catalog, 'charts').map((one) => one.name),
+    ['tradingview', 'massive'],
+  )
+
+  // Words that only appear in a plugin's description text or tags are indexed and filter out unrelated items.
+  assert.deepEqual(
+    searchItems(catalog, 'movers').map((one) => one.name),
+    ['yfinance'],
+  )
+  assert.deepEqual(
+    searchItems(catalog, 'bundled mcp').map((one) => one.name),
+    ['yfinance'],
+  )
+  assert.deepEqual(
+    searchItems(catalog, 'four chart').map((one) => one.name),
+    ['massive'],
+  )
+  assert.deepEqual(
+    searchItems(catalog, 'watchlist').map((one) => one.name),
+    ['yfinance', 'massive'],
+  )
+
+  // Publisher handle and -y / -ies word forms match in both directions.
+  assert.deepEqual(
+    searchItems(catalog, 'biseroff').map((one) => one.name),
+    ['massive'],
+  )
+  assert.deepEqual(
+    searchItems(catalog, 'companies').map((one) => one.name),
+    ['sec'],
+  )
+  assert.deepEqual(
+    searchItems(catalog, 'equity').map((one) => one.name),
+    ['finra'],
+  )
+
+  // A query that matches no plugin's text returns an empty list even when Hub returned semantic neighbors.
+  assert.deepEqual(searchItems(catalog, 'databento'), [])
+  assert.deepEqual(searchItems(catalog, '???'), [])
+})
+
+test('othersPart filters already-loaded plugins immediately while searching and merges remote search results', () => {
+  const screener = item('screener-mcp', {
+    featured: true,
+    title: 'Jaspers Screener',
+    description: 'Screens US SEC registrants by fundamentals and filings.',
+    tags: ['stock-screener', 'sec-filings'],
+  })
+  const tv = item('tradingview', {
+    title: 'TradingView Chart',
+    description: "Shows TradingView's advanced chart widget.",
+    tags: ['chart'],
+  })
+  const sec = item('sec', {
+    title: 'SEC EDGAR Filings',
+    description: 'SEC filings from EDGAR.',
+    tags: ['sec'],
+  })
+  const featured = { items: [screener], loading: false, error: null }
+  const pages = { items: [screener, tv, sec], loading: false, error: null, more: false }
+
+  // Without a query, featured items are left out of others.
+  assert.deepEqual(
+    othersPart(featured, pages, null, '').items.map((one) => one.name),
+    ['tradingview', 'sec'],
+  )
+
+  // As the user types, loaded items (including featured ones) are filtered immediately without blanking to loading.
+  const whileTyping = othersPart(featured, pages, { items: [], loading: true, error: null }, 'sec filings')
+  assert.equal(whileTyping.loading, false)
+  assert.deepEqual(
+    whileTyping.items.map((one) => one.name),
+    ['sec', 'screener-mcp'],
+  )
+
+  // When nothing loaded matches yet and the search request is in flight, loading stays true until Hub answers.
+  const waitingNoMatch = othersPart(featured, pages, { items: [], loading: true, error: null }, 'databento')
+  assert.equal(waitingNoMatch.loading, true)
+  assert.deepEqual(waitingNoMatch.items, [])
+
+  // Once Hub answers with semantic results that do not match the query text, loading is false and items is empty.
+  const answeredNoMatch = othersPart(featured, pages, { items: [tv, sec], loading: false, error: null }, 'databento')
+  assert.equal(answeredNoMatch.loading, false)
+  assert.deepEqual(answeredNoMatch.items, [])
 })
