@@ -83,7 +83,7 @@ function watch(win: BrowserWindow): void {
   const number = (): number | null => (known ??= win.isDestroyed() ? null : windowNumberOf(win.webContents))
   queueMicrotask(() => void number())
   const say = (
-    kind: 'focus' | 'blur' | 'window' | 'unresponsive' | 'crash',
+    kind: 'focus' | 'blur' | 'window' | 'zoom' | 'unresponsive' | 'crash',
     more: Record<string, unknown> = {},
   ): void => {
     const n = number()
@@ -96,6 +96,9 @@ function watch(win: BrowserWindow): void {
   win.on('minimize', () => say('window', { name: 'minimized' }))
   win.on('restore', () => say('window', { name: 'restored' }))
   win.on('unresponsive', () => say('unresponsive'))
+  win.webContents.on('zoom-changed', (_event, direction) =>
+    say('zoom', { name: direction === 'in' ? 'in' : 'out', data: { factor: win.webContents.getZoomFactor() } }),
+  )
   let settling: NodeJS.Timeout | null = null
   const moved = (): void => {
     if (settling) clearTimeout(settling)

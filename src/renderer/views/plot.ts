@@ -214,3 +214,46 @@ export function tipOf(
     lines: hovered.map((one) => line(one.seriesName ?? '', one, rows[one.dataIndex] ?? {})),
   }
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+/** Extracts the start and end zoom percentages (0–100) from an ECharts `datazoom` event. */
+export function chartZoomOf(raw: unknown): { start: number; end: number } | null {
+  if (!isRecord(raw)) return null
+  const batch = Array.isArray(raw['batch']) && isRecord(raw['batch'][0]) ? raw['batch'][0] : raw
+  const start = batch['start']
+  const end = batch['end']
+  if (typeof start !== 'number' || !Number.isFinite(start) || typeof end !== 'number' || !Number.isFinite(end)) {
+    return null
+  }
+  return { start: clampPercent(start), end: clampPercent(end) }
+}
+
+/** Extracts the toggled series name and visibility from an ECharts `legendselectchanged` event. */
+export function chartLegendOf(raw: unknown): { series: string; shown: boolean } | null {
+  if (!isRecord(raw) || typeof raw['name'] !== 'string' || !raw['name'].trim()) return null
+  const name = raw['name'].trim()
+  const selected = raw['selected']
+  if (!isRecord(selected) || typeof selected[name] !== 'boolean') return null
+  return { series: name, shown: selected[name] as boolean }
+}
+
+/** Extracts the clicked data point index, label, and series from an ECharts `click` event. */
+export function chartPointOf(
+  raw: unknown,
+  labels: readonly string[],
+): { index: number; label: string | null; series: string | null } | null {
+  if (!isRecord(raw)) return null
+  const index = raw['dataIndex']
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) return null
+  const fromLabels = typeof labels[index] === 'string' && labels[index].trim() ? labels[index].trim() : null
+  const fromRaw = typeof raw['name'] === 'string' && raw['name'].trim() ? raw['name'].trim() : null
+  const series = typeof raw['seriesName'] === 'string' && raw['seriesName'].trim() ? raw['seriesName'].trim() : null
+  return { index, label: fromLabels ?? fromRaw, series }
+}
