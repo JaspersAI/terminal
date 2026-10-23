@@ -369,12 +369,27 @@ export function placeFramed(
 
 /**
  * Moves or resizes an element to exact cells. A tiled element needs them free, and the error names
- * what is in the way; a floating one goes anywhere; a maximized or a minimized one comes back to them.
+ * what is in the way; a floating one goes anywhere; a maximized one comes back to them; a minimized
+ * one stays minimized at h 1 with its restore spot moved along, or comes back at its full height.
  */
 export function setRect(grid: Grid, id: string, rect: Rect): { grid: Grid; element: GridElement } {
-  const target = checkRect(rect, grid.size)
-  const element = { ...restored(find(grid.elements, id)), rect: target }
-  if (element.mode === 'tiled') {
+  const current = find(grid.elements, id)
+  const stayMinimized = current.mode === 'minimized' && rect.h === 1
+  const target = checkRect(rect, grid.size, stayMinimized ? 1 : MIN_CELLS)
+  const home = homeRect(current)
+  const element: GridElement = stayMinimized
+    ? {
+        ...current,
+        rect: target,
+        restoreRect: {
+          x: target.x,
+          y: clamp(target.y, 0, grid.size.rows - home.h),
+          w: target.w,
+          h: home.h,
+        },
+      }
+    : { ...restored(current), rect: target }
+  if (footprint(element) !== null) {
     const blocking = grid.elements.filter((e) => e.id !== id && overlaps(footprint(e), target))
     if (blocking.length > 0) {
       const free =
@@ -398,9 +413,10 @@ export type Drop = { kind: 'rect'; rect: Rect } | { kind: 'swap'; other: string 
 /**
  * Resolves a drag by hand, the pointer `dx` and `dy` whole cells from where it went down and over
  * cell `at` now. A tiled element moved over another tiled one swaps with it. Otherwise the bar moves
- * the whole rect and an edge or corner only its own sides, inside the grid and at least 2×2. A
- * floating element takes that rect as it is; a tiled one takes the free rect nearest it on the way
- * there, so it stops against whatever is in the way and slides along it.
+ * the whole rect and an edge or corner only its own sides, inside the grid and at least 2×2 (or 1 row
+ * high for a minimized bar). A floating element takes that rect as it is; one that holds cells takes
+ * the free rect nearest it on the way there, so it stops against whatever is in the way and slides
+ * along it.
  */
 export function resolveDrag(
   grid: Grid,
@@ -416,9 +432,10 @@ export function resolveDrag(
     if (under) return { kind: 'swap', other: under.id }
   }
   const start = element.rect
-  const want = handle === 'move' ? moved(start, dx, dy, grid.size) : resized(start, handle, dx, dy, grid.size)
-  if (element.mode === 'floating') return { kind: 'rect', rect: want }
-  return { kind: 'rect', rect: freeOnTheWay(grid.elements, grid.size, id, start, want, handle === 'move') }
+  const move = handle === 'move' || element.mode === 'minimized'
+  const want = move ? moved(start, dx, dy, grid.size) : resized(start, handle, dx, dy, grid.size)
+  if (footprint(element) === null) return { kind: 'rect', rect: want }
+  return { kind: 'rect', rect: freeOnTheWay(grid.elements, grid.size, id, start, want, move) }
 }
 
 /**
@@ -804,9 +821,9 @@ export function freeRects(elements: GridElement[], size: GridSize, ignore?: stri
 }
 
 /** What keeps a rect off the grid, or null when it fits. */
-export function rectProblem({ x, y, w, h }: Rect, size: GridSize): string | null {
+export function rectProblem({ x, y, w, h }: Rect, size: GridSize, minH = MIN_CELLS): string | null {
   if (![x, y, w, h].every(Number.isInteger)) return 'x, y, w, and h are whole cells'
-  if (w < MIN_CELLS || h < MIN_CELLS) return `elements are at least ${MIN_CELLS}×${MIN_CELLS}`
+  if (w < MIN_CELLS || h < minH) return `elements are at least ${MIN_CELLS}×${MIN_CELLS}`
   if (x < 0 || y < 0 || x + w > size.cols || y + h > size.rows)
     return `it must lie inside the ${size.cols}×${size.rows} grid`
   return null
@@ -1084,8 +1101,8 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(Math.max(n, min), max)
 }
 
-function checkRect(r: Rect, size: GridSize): Rect {
-  const problem = rectProblem(r, size)
+function checkRect(r: Rect, size: GridSize, minH = MIN_CELLS): Rect {
+  const problem = rectProblem(r, size, minH)
   if (problem) throw new Error(`${formatRect(r, size)}: ${problem}.`)
   return r
 }

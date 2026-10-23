@@ -48,14 +48,15 @@ const ELEMENT_ID = {
 }
 
 /** The cells a rect may take, on the grid this round acts on: the workspace's size, not a constant. */
-function rectSchema({ cols, rows }: GridSize): Record<string, unknown> {
+function rectSchema({ cols, rows }: GridSize, allowMinimized = false): Record<string, unknown> {
+  const minH = allowMinimized ? 1 : MIN_CELLS
   return {
     type: 'object',
     properties: {
       x: { type: 'integer', minimum: 0, maximum: cols - MIN_CELLS },
-      y: { type: 'integer', minimum: 0, maximum: rows - MIN_CELLS },
+      y: { type: 'integer', minimum: 0, maximum: rows - minH },
       w: { type: 'integer', minimum: MIN_CELLS, maximum: cols },
-      h: { type: 'integer', minimum: MIN_CELLS, maximum: rows },
+      h: { type: 'integer', minimum: minH, maximum: rows },
     },
     required: ['x', 'y', 'w', 'h'],
   }
@@ -194,12 +195,12 @@ export function gridTools(context?: ToolContext): Tool[] {
       name: 'move_element',
       description: inside
         ? 'Move an element to new cells; pass its current w and h to keep its size. A tiled element needs the cells free, and the error names what is in the way. A floating one may overlap. A maximized one is restored there.'
-        : "Move an element to new cells; pass its current w and h to keep its size. With window, move it into another open window instead: rect there is optional, and it keeps its size where that fits. A piece of work's tile takes the views inside it along; a view inside one stays in its tile. A tiled element needs the cells free, and the error names what is in the way. A floating one may overlap. A maximized or a minimized one is restored there.",
+        : "Move an element to new cells; pass its current w and h to keep its size. With window, move it into another open window instead: rect there is optional, and it keeps its size where that fits. A piece of work's tile takes the views inside it along; a view inside one stays in its tile. A tiled element needs the cells free, and the error names what is in the way. A floating one may overlap. A maximized one is restored there; a minimized one stays minimized at h 1, or is restored at its full h.",
       parameters: {
         type: 'object',
         properties: {
           elementId: ELEMENT_ID,
-          rect: RECT,
+          rect: rectSchema(size, !inside),
           ...(inside ? {} : { window: { ...WINDOW, description: 'Another open window to move it into.' } }),
         },
         required: inside ? ['elementId', 'rect'] : ['elementId'],
