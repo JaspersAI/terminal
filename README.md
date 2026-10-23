@@ -1,14 +1,14 @@
-<p align="center">
-  <img src="docs/assets/logo.png" alt="Jaspers Terminal" width="160">
+<p align="left">
+  <img src="docs/assets/logo.png" alt="Jaspers Terminal" width="90">
 </p>
 
-<h1 align="center">Jaspers Terminal</h1>
+<h1 align="left">Jaspers Terminal</h1>
 
-<p align="center">
+<p align="left">
   Desktop terminal and spreadsheet grid for public-market research, source-available under BSL 1.1.
 </p>
 
-<p align="center">
+<p align="left">
   <a href="LICENSE"><img alt="BSL 1.1 license" src="https://img.shields.io/badge/license-BSL%201.1-black"></a>
   <a href="https://www.npmjs.com/package/@jaspers-ai/sdk"><img alt="@jaspers-ai/sdk on npm" src="https://img.shields.io/npm/v/@jaspers-ai/sdk?label=%40jaspers-ai%2Fsdk&color=black"></a>
   <img alt="Node 24" src="https://img.shields.io/badge/node-24-black">
