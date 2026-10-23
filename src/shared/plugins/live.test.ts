@@ -43,7 +43,7 @@ test('researchRoomOf reads the active room id of a research/room panel from its 
   assert.equal(
     researchRoomOf({
       content: { kind: 'view', view: 'research/room' },
-      state: {},
+      state: { room: 'missing-room' },
       output: { room: null },
     }),
     null,
@@ -126,4 +126,15 @@ test('researchLiveText formats a research room thread from its live room and mes
     researchLiveText(undefined, () => undefined),
     null,
   )
+  // Self-closing cite tags before paired cite tags are numbered in left-to-right order.
+  const mixed = researchLiveText({ seqs: [1] }, () => ({
+    seq: 1,
+    role: 'analyst',
+    name: 'Risk Analyst',
+    status: 'done',
+    text: 'First claim <cite document_id="10" chunk_id="1" quote="a"/> and <cite document_id="20" chunk_id="2" quote="b">second claim</cite>.',
+    error: null,
+    citations: [],
+  }))
+  assert.equal(mixed, '#1 [Risk Analyst]: First claim [1] and second claim [2].')
 })

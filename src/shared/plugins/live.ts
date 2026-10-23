@@ -47,6 +47,7 @@ export function liveKeyOf(path: string): string | null {
 /** The room id a research/room panel is showing, from its output or its state, or null when none is open. */
 export function researchRoomOf(panel: Pick<Panel, 'state' | 'output'> & { content: PanelContent }): string | null {
   if (panel.content.kind !== 'view' || panel.content.view !== RESEARCH_ROOM_VIEW) return null
+  if (panel.output && panel.output['room'] === null) return null
   const fromOutput = panel.output && typeof panel.output['room'] === 'string' ? panel.output['room'].trim() : ''
   if (fromOutput) return fromOutput
   const fromState = typeof panel.state['room'] === 'string' ? panel.state['room'].trim() : ''
@@ -115,8 +116,7 @@ export function researchLiveText(
   return blocks.length > 0 ? blocks.join('\n\n') : null
 }
 
-const CITE_TAG = /<(?:cite|dbcitation)\b([^>]*)>([\s\S]*?)<\/(?:cite|dbcitation)\s*>/gi
-const SELF_CITE_TAG = /<(?:cite|dbcitation)\b([^>]*?)\/\s*>/gi
+const CITE_TAG = /<(?:cite|dbcitation)\b([^>]*?)(?:\s*\/|>([\s\S]*?)<\/(?:cite|dbcitation)\s*)>/gi
 const CITE_ATTR = /([A-Za-z_][\w-]*)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^\s"'>]+))/g
 
 function stripCiteTags(text: string): string {
@@ -138,13 +138,11 @@ function stripCiteTags(text: string): string {
     seen.set(id, next)
     return next
   }
-  return text
-    .replace(CITE_TAG, (_full, attrs: string, inner: string) => {
-      const n = numberFor(attrs)
-      const trimmed = inner.trim()
-      return trimmed ? `${trimmed} [${n}]` : `[${n}]`
-    })
-    .replace(SELF_CITE_TAG, (_full, attrs: string) => `[${numberFor(attrs)}]`)
+  return text.replace(CITE_TAG, (_full, attrs: string, inner?: string) => {
+    const n = numberFor(attrs)
+    const trimmed = inner?.trim() ?? ''
+    return trimmed ? `${trimmed} [${n}]` : `[${n}]`
+  })
 }
 
 function formatCitation(raw: unknown, fallbackN: number): string | null {
