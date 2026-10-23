@@ -24,18 +24,18 @@ export function rectsOverlap(a: BrowserBounds, b: BrowserBounds): boolean {
 
 /**
  * Whether the browser's viewport anchor is unobstructed in the renderer DOM: not inside an `inert`
- * subtree, not under an open modal or drag overlay, with positive dimensions, and not overlapped by
- * a floating menu, dialog, or higher-z floating tile.
+ * subtree, not under an open modal, with positive dimensions, and not overlapped by a dropdown menu
+ * or dialog popover. Grid drags and resizes keep the browser visible so video playback stays stable.
  */
 export function viewportVisible(options: {
   bounds: BrowserBounds
   inert: boolean
   modalOpen: boolean
-  dragging: boolean
+  dragging?: boolean
   overlays: readonly BrowserBounds[]
 }): boolean {
-  const { bounds, inert, modalOpen, dragging, overlays } = options
-  if (inert || modalOpen || dragging || bounds.width <= 0 || bounds.height <= 0) return false
+  const { bounds, inert, modalOpen, overlays } = options
+  if (inert || modalOpen || bounds.width <= 0 || bounds.height <= 0) return false
   return !overlays.some((overlay) => rectsOverlap(bounds, overlay))
 }
 
@@ -61,4 +61,44 @@ export function publishedOutput(stateUrl: string, snapshot: BrowserSnapshot): Br
     tabCount: snapshot.tabs?.length || snapshot.tabCount || 1,
     error: snapshot.error,
   }
+}
+
+/** True when two browser snapshots carry identical state and tab metadata, so bounds-only syncs skip re-renders. */
+export function sameBrowserSnapshot(a: BrowserSnapshot, b: BrowserSnapshot): boolean {
+  if (
+    a.workspaceId !== b.workspaceId ||
+    a.panelId !== b.panelId ||
+    a.url !== b.url ||
+    a.title !== b.title ||
+    a.loading !== b.loading ||
+    a.canGoBack !== b.canGoBack ||
+    a.canGoForward !== b.canGoForward ||
+    (a.theater ?? false) !== (b.theater ?? false) ||
+    (a.tabCount ?? 1) !== (b.tabCount ?? 1) ||
+    (a.activeTabId ?? '') !== (b.activeTabId ?? '') ||
+    a.error !== b.error ||
+    a.text !== b.text
+  ) {
+    return false
+  }
+  const aTabs = a.tabs ?? []
+  const bTabs = b.tabs ?? []
+  if (aTabs.length !== bTabs.length) return false
+  for (let i = 0; i < aTabs.length; i++) {
+    const x = aTabs[i]!
+    const y = bTabs[i]!
+    if (
+      x.id !== y.id ||
+      x.url !== y.url ||
+      x.title !== y.title ||
+      x.loading !== y.loading ||
+      x.canGoBack !== y.canGoBack ||
+      x.canGoForward !== y.canGoForward ||
+      x.theater !== y.theater ||
+      x.error !== y.error
+    ) {
+      return false
+    }
+  }
+  return true
 }
