@@ -31,7 +31,7 @@ To keep prompt sizes bounded across local, open-weight, and cloud models, the ha
 </p>
 -->
 
-## The 7 Core Advantages
+## Core Features
 
 ### 1. Built-in Coding Agent (`build_plugin`)
 
