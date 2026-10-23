@@ -4,6 +4,10 @@ import {
   batchAccepted,
   batchesToDrop,
   captureBlocked,
+  CAPTURE_GAP_MS,
+  CAPTURE_SETTLE_MS,
+  captureDelay,
+  captureTrigger,
   DISK_MAX_BYTES,
   EYE_CONSENT,
   EYE_ENDPOINT,
@@ -13,6 +17,7 @@ import {
   eyeEndpoint,
   eventsPart,
   PART_MAX_CHARS,
+  pickCaptureWhy,
   FEEDBACK_TEXT_MAX,
   feedbackFileName,
   feedbackRecord,
@@ -263,4 +268,44 @@ test('a note read back is whole, or nothing', () => {
     { ...note, skipped: 1 },
   ])
     assert.equal(readFeedback(bad), null, JSON.stringify(bad)?.slice(0, 40))
+})
+
+test('frames are triggered by state changes, assistant messages, chart zoom/legend, zoom, notices, and errors', () => {
+  assert.equal(captureTrigger({ kind: 'session' }), 'start')
+  assert.equal(captureTrigger({ kind: 'run', name: 'user', run: 'r1' }), 'run')
+  assert.equal(captureTrigger({ kind: 'added', run: 'r1' }), 'added')
+  assert.equal(captureTrigger({ kind: 'said', run: 'r1' }), 'said')
+  assert.equal(captureTrigger({ kind: 'run-end', run: 'r1' }), 'run-end')
+  assert.equal(captureTrigger({ kind: 'change' }), 'change')
+  assert.equal(captureTrigger({ kind: 'chart', name: 'zoom' }), 'chart')
+  assert.equal(captureTrigger({ kind: 'chart', name: 'legend' }), 'chart')
+  assert.equal(captureTrigger({ kind: 'chart', name: 'hover' }), null)
+  assert.equal(captureTrigger({ kind: 'chart', name: 'point' }), null)
+  assert.equal(captureTrigger({ kind: 'zoom', name: 'in' }), 'zoom')
+  assert.equal(captureTrigger({ kind: 'error', name: 'view' }), 'error')
+  assert.equal(captureTrigger({ kind: 'crash', name: 'renderer' }), 'error')
+  assert.equal(captureTrigger({ kind: 'unresponsive' }), 'error')
+  assert.equal(captureTrigger({ kind: 'notice', name: 'screener' }), 'notice')
+  assert.equal(captureTrigger({ kind: 'metrics' }), null)
+  assert.equal(captureTrigger({ kind: 'click', name: 'Send' }), null)
+  assert.equal(captureTrigger({ kind: 'type', name: 'prompt' }), null)
+
+  // Background scheduled tasks do not wake frame capture while no window is focused.
+  const taskRuns = new Set(['t_run'])
+  assert.equal(captureTrigger({ kind: 'run', name: 'task', run: 't_run' }, { focused: false, taskRuns }), null)
+  assert.equal(captureTrigger({ kind: 'change', run: 't_run' }, { focused: false, taskRuns }), null)
+  assert.equal(captureTrigger({ kind: 'run-end', run: 't_run' }, { focused: false, taskRuns }), null)
+  assert.equal(captureTrigger({ kind: 'run', name: 'task', run: 't_run' }, { focused: true, taskRuns }), 'run')
+})
+
+test('coalesced frame triggers keep the highest-priority reason and wait for both settle and cooldown', () => {
+  assert.equal(pickCaptureWhy(null, 'change'), 'change')
+  assert.equal(pickCaptureWhy('change', 'run-end'), 'run-end')
+  assert.equal(pickCaptureWhy('run-end', 'change'), 'run-end')
+  assert.equal(pickCaptureWhy('chart', 'error'), 'error')
+  assert.equal(pickCaptureWhy('error', 'notice'), 'error')
+
+  assert.equal(captureDelay(10_000, null), CAPTURE_SETTLE_MS)
+  assert.equal(captureDelay(10_000, 5_000), CAPTURE_SETTLE_MS)
+  assert.equal(captureDelay(10_000, 9_500), CAPTURE_GAP_MS - 500)
 })

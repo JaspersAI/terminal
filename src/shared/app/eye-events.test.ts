@@ -12,6 +12,8 @@ import {
   quietAction,
   readNote,
   writtenTexts,
+  zoomKey,
+  zoomWheel,
   type EyeEvent,
   type Masking,
 } from './eye-events.ts'
@@ -319,4 +321,125 @@ test('a note becomes a line of the window that sent it', () => {
     noteEvent({ kind: 'error', name: 'renderer', message: 'm', stack: null, view: null, plugin: null }, null),
     { kind: 'error', name: 'renderer', data: { message: 'm', stack: null, view: null, plugin: null } },
   )
+})
+
+test('click, type, zoom, and chart notes carry view context, button details, and bounded chart data', () => {
+  const click = readNote({
+    kind: 'click',
+    name: 'Filter',
+    role: 'button',
+    x: 42.2,
+    y: 88.7,
+    button: 2,
+    detail: 2,
+    view: 'screener/table',
+    plugin: 'screener',
+    panel: 'p1',
+  })
+  assert.deepEqual(click, {
+    kind: 'click',
+    name: 'Filter',
+    role: 'button',
+    x: 42,
+    y: 89,
+    button: 2,
+    detail: 2,
+    view: 'screener/table',
+    plugin: 'screener',
+    panel: 'p1',
+  })
+  assert.deepEqual(noteEvent(click!, 1), {
+    kind: 'click',
+    name: 'Filter',
+    window: 1,
+    data: {
+      role: 'button',
+      x: 42,
+      y: 89,
+      button: 2,
+      detail: 2,
+      view: 'screener/table',
+      plugin: 'screener',
+      panel: 'p1',
+    },
+  })
+
+  const typed = readNote({
+    kind: 'type',
+    name: 'search',
+    count: 5,
+    view: 'screener/table',
+    plugin: 'screener',
+    panel: 'p1',
+  })
+  assert.deepEqual(noteEvent(typed!, 1), {
+    kind: 'type',
+    name: 'search',
+    count: 5,
+    window: 1,
+    data: { view: 'screener/table', plugin: 'screener', panel: 'p1' },
+  })
+
+  const zoom = readNote({
+    kind: 'zoom',
+    name: 'in',
+    factor: 1.25,
+    view: 'core/chart',
+    plugin: 'core',
+    panel: 'p2',
+  })
+  assert.deepEqual(noteEvent(zoom!, 1), {
+    kind: 'zoom',
+    name: 'in',
+    window: 1,
+    data: { factor: 1.25, view: 'core/chart', plugin: 'core', panel: 'p2' },
+  })
+
+  const chartZoom = readNote({
+    kind: 'chart',
+    name: 'zoom',
+    panel: 'p2',
+    chart: 'line',
+    start: 15.4,
+    end: 84.6,
+  })
+  assert.deepEqual(noteEvent(chartZoom!, 1), {
+    kind: 'chart',
+    name: 'zoom',
+    window: 1,
+    data: { panel: 'p2', kind: 'line', start: 15, end: 85 },
+  })
+
+  const chartLegend = readNote({
+    kind: 'chart',
+    name: 'legend',
+    panel: 'p2',
+    chart: 'line',
+    series: 'AAPL',
+    shown: false,
+  })
+  assert.deepEqual(noteEvent(chartLegend!, 1), {
+    kind: 'chart',
+    name: 'legend',
+    window: 1,
+    data: { panel: 'p2', kind: 'line', series: 'AAPL', shown: false },
+  })
+
+  assert.equal(readNote({ kind: 'zoom', name: 'sideways' }), null)
+  assert.equal(readNote({ kind: 'chart', name: 'zoom', panel: '', chart: 'line' }), null)
+})
+
+test('keyboard and wheel zoom gestures resolve to zoom in, out, or reset', () => {
+  assert.equal(zoomKey({ key: '=', metaKey: true }), 'in')
+  assert.equal(zoomKey({ key: '+', ctrlKey: true }), 'in')
+  assert.equal(zoomKey({ key: '-', metaKey: true }), 'out')
+  assert.equal(zoomKey({ key: '_', ctrlKey: true }), 'out')
+  assert.equal(zoomKey({ key: '0', metaKey: true }), 'reset')
+  assert.equal(zoomKey({ key: '=', metaKey: false, ctrlKey: false }), null)
+  assert.equal(zoomKey({ key: '=', metaKey: true, altKey: true }), null)
+
+  assert.equal(zoomWheel({ deltaY: -12, ctrlKey: true }), 'in')
+  assert.equal(zoomWheel({ deltaY: 12, metaKey: true }), 'out')
+  assert.equal(zoomWheel({ deltaY: 0, ctrlKey: true }), null)
+  assert.equal(zoomWheel({ deltaY: -12, ctrlKey: false, metaKey: false }), null)
 })

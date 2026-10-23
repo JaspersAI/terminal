@@ -25,6 +25,9 @@ export type EyeKind =
   | 'action'
   | 'click'
   | 'type'
+  | 'zoom'
+  | 'chart'
+  | 'source'
   | 'focus'
   | 'blur'
   | 'window'
@@ -100,6 +103,8 @@ const CAPS: Partial<Record<EyeKind, Record<string, number>>> = {
   added: { text: 8000 },
   tool: { input: 4000 },
   'tool-end': { output: 4000, error: 4000 },
+  source: { error: 4000 },
+  chart: { series: 80, label: 80 },
   llm: { message: 4000 },
   error: { message: 4000, stack: 4000 },
   notice: { text: 1000 },
@@ -303,10 +308,55 @@ function hidden<T>(value: T): T {
   return value
 }
 
-/** What a window may tell Eye: a click, how much was typed into a field, an error. Never the characters typed. */
+export const CHART_NOTE_NAMES = ['zoom', 'legend', 'point', 'hover'] as const
+export type ChartNoteName = (typeof CHART_NOTE_NAMES)[number]
+
+export const ZOOM_NOTE_NAMES = ['in', 'out', 'reset'] as const
+export type ZoomNoteName = (typeof ZOOM_NOTE_NAMES)[number]
+
+/** What a window may tell Eye: a click, how much was typed into a field, a zoom gesture, a chart interaction, an error. Never the characters typed. */
 export type Note =
-  | { kind: 'click'; name: string; role: string | null; x: number; y: number }
-  | { kind: 'type'; name: string; count: number }
+  | {
+      kind: 'click'
+      name: string
+      role: string | null
+      x: number
+      y: number
+      button?: number
+      detail?: number
+      view?: string | null
+      plugin?: string | null
+      panel?: string | null
+    }
+  | {
+      kind: 'type'
+      name: string
+      count: number
+      view?: string | null
+      plugin?: string | null
+      panel?: string | null
+    }
+  | {
+      kind: 'zoom'
+      name: ZoomNoteName
+      factor?: number | null
+      view?: string | null
+      plugin?: string | null
+      panel?: string | null
+    }
+  | {
+      kind: 'chart'
+      name: ChartNoteName
+      panel: string
+      chart: string
+      start?: number
+      end?: number
+      series?: string | null
+      shown?: boolean
+      label?: string | null
+      index?: number
+      points?: number
+    }
   | {
       kind: 'error'
       name: 'renderer' | 'view'
@@ -316,25 +366,97 @@ export type Note =
       plugin: string | null
     }
 
+function readViewContext(raw: Record<string, unknown>): {
+  view?: string | null
+  plugin?: string | null
+  panel?: string | null
+} {
+  const text = (value: unknown): string | null =>
+    typeof value === 'string' && value.trim() ? cut(value.trim(), NAME_MAX) : null
+  const view = text(raw['view'])
+  const plugin = text(raw['plugin'])
+  const panel = text(raw['panel'])
+  return {
+    ...(view !== null ? { view } : {}),
+    ...(plugin !== null ? { plugin } : {}),
+    ...(panel !== null ? { panel } : {}),
+  }
+}
+
 /** A note as a window sent it, every field of the right kind and capped, or null: the bridge is an input like any other. */
 export function readNote(raw: unknown): Note | null {
   if (!isRecord(raw) || typeof raw['name'] !== 'string') return null
   const name = raw['name']
   if (raw['kind'] === 'click') {
-    const { x, y, role } = raw
+    const { x, y, role, button, detail } = raw
     if (!isFinite(x) || !isFinite(y)) return null
+    const validButton =
+      typeof button === 'number' && Number.isInteger(button) && button >= 0 && button <= 4 ? button : undefined
+    const validDetail =
+      typeof detail === 'number' && Number.isInteger(detail) && detail >= 1 && detail <= 10 ? detail : undefined
     return {
       kind: 'click',
       name: cut(name, LABEL_MAX),
       role: typeof role === 'string' ? role.slice(0, 40) : null,
       x: Math.round(x),
       y: Math.round(y),
+      ...(validButton !== undefined ? { button: validButton } : {}),
+      ...(validDetail !== undefined ? { detail: validDetail } : {}),
+      ...readViewContext(raw),
     }
   }
   if (raw['kind'] === 'type') {
     const count = raw['count']
     if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return null
-    return { kind: 'type', name: cut(name, LABEL_MAX), count }
+    return { kind: 'type', name: cut(name, LABEL_MAX), count, ...readViewContext(raw) }
+  }
+  if (raw['kind'] === 'zoom') {
+    if (!ZOOM_NOTE_NAMES.includes(name as ZoomNoteName)) return null
+    const factor =
+      isFinite(raw['factor']) && raw['factor'] > 0 && raw['factor'] <= 10
+        ? Math.round(raw['factor'] * 100) / 100
+        : undefined
+    return {
+      kind: 'zoom',
+      name: name as ZoomNoteName,
+      ...(factor !== undefined ? { factor } : {}),
+      ...readViewContext(raw),
+    }
+  }
+  if (raw['kind'] === 'chart') {
+    if (!CHART_NOTE_NAMES.includes(name as ChartNoteName)) return null
+    if (typeof raw['panel'] !== 'string' || !raw['panel'].trim()) return null
+    if (typeof raw['chart'] !== 'string' || !raw['chart'].trim()) return null
+    const panel = cut(raw['panel'].trim(), NAME_MAX)
+    const chart = cut(raw['chart'].trim(), 40)
+    const pct = (v: unknown): number | undefined =>
+      isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : undefined
+    const start = pct(raw['start'])
+    const end = pct(raw['end'])
+    const series =
+      typeof raw['series'] === 'string' && raw['series'].trim() ? cut(raw['series'].trim(), LABEL_MAX) : undefined
+    const shown = typeof raw['shown'] === 'boolean' ? raw['shown'] : undefined
+    const label =
+      typeof raw['label'] === 'string' && raw['label'].trim() ? cut(raw['label'].trim(), LABEL_MAX) : undefined
+    const index =
+      typeof raw['index'] === 'number' && Number.isInteger(raw['index']) && raw['index'] >= 0 ? raw['index'] : undefined
+    const points =
+      typeof raw['points'] === 'number' && Number.isInteger(raw['points']) && raw['points'] >= 1
+        ? raw['points']
+        : undefined
+    return {
+      kind: 'chart',
+      name: name as ChartNoteName,
+      panel,
+      chart,
+      ...(start !== undefined ? { start } : {}),
+      ...(end !== undefined ? { end } : {}),
+      ...(series !== undefined ? { series } : {}),
+      ...(shown !== undefined ? { shown } : {}),
+      ...(label !== undefined ? { label } : {}),
+      ...(index !== undefined ? { index } : {}),
+      ...(points !== undefined ? { points } : {}),
+    }
   }
   if (raw['kind'] === 'error') {
     if ((name !== 'renderer' && name !== 'view') || typeof raw['message'] !== 'string') return null
@@ -355,11 +477,99 @@ export function readNote(raw: unknown): Note | null {
 export function noteEvent(note: Note, window: number | null): EyeEvent {
   const where = window === null ? {} : { window }
   if (note.kind === 'click') {
-    return { kind: 'click', name: note.name, ...where, data: { role: note.role, x: note.x, y: note.y } }
+    const { role, x, y, button, detail, view, plugin, panel } = note
+    return {
+      kind: 'click',
+      name: note.name,
+      ...where,
+      data: {
+        role,
+        x,
+        y,
+        ...(button !== undefined ? { button } : {}),
+        ...(detail !== undefined ? { detail } : {}),
+        ...(view ? { view } : {}),
+        ...(plugin ? { plugin } : {}),
+        ...(panel ? { panel } : {}),
+      },
+    }
   }
-  if (note.kind === 'type') return { kind: 'type', name: note.name, count: note.count, ...where }
+  if (note.kind === 'type') {
+    const { view, plugin, panel } = note
+    const hasContext = Boolean(view || plugin || panel)
+    return {
+      kind: 'type',
+      name: note.name,
+      count: note.count,
+      ...where,
+      ...(hasContext
+        ? {
+            data: {
+              ...(view ? { view } : {}),
+              ...(plugin ? { plugin } : {}),
+              ...(panel ? { panel } : {}),
+            },
+          }
+        : {}),
+    }
+  }
+  if (note.kind === 'zoom') {
+    const { factor, view, plugin, panel } = note
+    const data: Record<string, unknown> = {
+      ...(factor !== undefined && factor !== null ? { factor } : {}),
+      ...(view ? { view } : {}),
+      ...(plugin ? { plugin } : {}),
+      ...(panel ? { panel } : {}),
+    }
+    return {
+      kind: 'zoom',
+      name: note.name,
+      ...where,
+      ...(Object.keys(data).length > 0 ? { data } : {}),
+    }
+  }
+  if (note.kind === 'chart') {
+    const { panel, chart, start, end, series, shown, label, index, points } = note
+    return {
+      kind: 'chart',
+      name: note.name,
+      ...where,
+      data: {
+        panel,
+        kind: chart,
+        ...(start !== undefined ? { start } : {}),
+        ...(end !== undefined ? { end } : {}),
+        ...(series !== undefined && series !== null ? { series } : {}),
+        ...(shown !== undefined ? { shown } : {}),
+        ...(label !== undefined && label !== null ? { label } : {}),
+        ...(index !== undefined ? { index } : {}),
+        ...(points !== undefined ? { points } : {}),
+      },
+    }
+  }
   const { message, stack, view, plugin } = note
   return { kind: 'error', name: note.name, ...where, data: { message, stack, view, plugin } }
+}
+
+/** Whether a keyboard shortcut is a zoom in, zoom out, or zoom reset gesture. */
+export function zoomKey(event: {
+  key: string
+  metaKey?: boolean
+  ctrlKey?: boolean
+  altKey?: boolean
+}): ZoomNoteName | null {
+  if ((!event.metaKey && !event.ctrlKey) || event.altKey) return null
+  if (event.key === '+' || event.key === '=') return 'in'
+  if (event.key === '-' || event.key === '_') return 'out'
+  if (event.key === '0') return 'reset'
+  return null
+}
+
+/** Whether a wheel or trackpad pinch event is a zoom in or zoom out gesture. */
+export function zoomWheel(event: { deltaY: number; ctrlKey?: boolean; metaKey?: boolean }): 'in' | 'out' | null {
+  if (!event.ctrlKey && !event.metaKey) return null
+  if (!isFinite(event.deltaY) || event.deltaY === 0) return null
+  return event.deltaY < 0 ? 'in' : 'out'
 }
 
 function isFinite(value: unknown): value is number {

@@ -11,8 +11,86 @@ import { serviceUrl } from './jaspers.ts'
 // press on the dot, and it turns it on only when the user chooses to; "Not now" leaves it off and is
 // remembered. Nothing here is reachable from a tool: the assistant cannot start or stop recording.
 
-/** How often a frame is taken, in minutes. Fixed: the one setting Eye has is on or off. */
+/** How often performance metrics and queue retention run, in minutes. */
 export const INTERVAL_MINUTES = 1
+
+/** How long after a state change or interaction to wait before taking a frame, so views and charts finish painting. */
+export const CAPTURE_SETTLE_MS = 800
+/** Minimum gap between automatic frames, so a burst of changes takes one settled frame instead of many. */
+export const CAPTURE_GAP_MS = 3_000
+
+/** What triggered an automatic frame capture, ordered from highest priority to lowest when triggers coalesce. */
+export const CAPTURE_PRIORITY = [
+  'error',
+  'notice',
+  'run-end',
+  'chart',
+  'zoom',
+  'change',
+  'said',
+  'added',
+  'run',
+  'start',
+] as const
+export type CaptureWhy = (typeof CAPTURE_PRIORITY)[number]
+
+/**
+ * Whether a telemetry line should trigger a settled window screenshot, and under which reason.
+ * Background scheduled task runs (`name === 'task'`) and their changes/events do not wake frame
+ * capture when no window is focused (`focused === false`).
+ */
+export function captureTrigger(
+  event: { kind: string; name?: string; run?: string },
+  options?: { focused?: boolean; taskRuns?: ReadonlySet<string> },
+): CaptureWhy | null {
+  const unfocusedTask =
+    options?.focused === false &&
+    ((event.kind === 'run' && event.name === 'task') || Boolean(event.run && options.taskRuns?.has(event.run)))
+  if (unfocusedTask) return null
+  switch (event.kind) {
+    case 'session':
+      return 'start'
+    case 'run':
+      return 'run'
+    case 'added':
+      return 'added'
+    case 'said':
+      return 'said'
+    case 'run-end':
+      return 'run-end'
+    case 'change':
+      return 'change'
+    case 'chart':
+      return event.name === 'zoom' || event.name === 'legend' ? 'chart' : null
+    case 'zoom':
+      return 'zoom'
+    case 'error':
+    case 'crash':
+    case 'unresponsive':
+      return 'error'
+    case 'notice':
+      return 'notice'
+    default:
+      return null
+  }
+}
+
+/** Keeps the higher-priority trigger reason when multiple events arrive before a frame is taken. */
+export function pickCaptureWhy(current: CaptureWhy | null, next: CaptureWhy): CaptureWhy {
+  if (current === null) return next
+  return CAPTURE_PRIORITY.indexOf(current) <= CAPTURE_PRIORITY.indexOf(next) ? current : next
+}
+
+/** How long to wait from `now` before taking a frame: at least `settleMs`, and at least `gapMs` after `lastCaptureAt`. */
+export function captureDelay(
+  now: number,
+  lastCaptureAt: number | null,
+  settleMs: number = CAPTURE_SETTLE_MS,
+  gapMs: number = CAPTURE_GAP_MS,
+): number {
+  const sinceLast = lastCaptureAt === null ? Infinity : now - lastCaptureAt
+  return Math.max(settleMs, gapMs - sinceLast)
+}
 
 /**
  * Where a batch goes, unless `JASPERS_EYE_URL` says otherwise, and the token every copy of the app
