@@ -571,6 +571,52 @@ export function zoomWheel(event: { deltaY: number; ctrlKey?: boolean; metaKey?: 
   return event.deltaY < 0 ? 'in' : 'out'
 }
 
+/** A line for a non-cached data-source run: how long it took, how many rows came back, or why it failed. */
+export function sourceEvent(
+  source: string,
+  options: { workspace?: string | null; ms: number; ok: boolean; count?: number; error?: string },
+): EyeEvent {
+  return {
+    kind: 'source',
+    name: source,
+    ok: options.ok,
+    ms: options.ms,
+    ...(options.count !== undefined ? { count: options.count } : {}),
+    ...(options.workspace ? { workspace: options.workspace } : {}),
+    ...(options.ok || !options.error ? {} : { data: { error: options.error } }),
+  }
+}
+
+/** What a run in flight has spent so far, summed from its calls to the model, and how many tool calls it has made. */
+export interface PendingRun {
+  at: number
+  request: string
+  added: { at: number; text: string }[]
+  rounds: number
+  input: number
+  output: number
+  calls: number
+}
+
+/** The `run-end` line written when the app quits while a run is still in flight. */
+export function closedRunEvent(runId: string, begun: PendingRun, now: number = Date.now()): EyeEvent {
+  return {
+    kind: 'run-end',
+    run: runId,
+    name: 'stopped',
+    ok: false,
+    ms: Math.max(0, now - begun.at),
+    data: {
+      request: begun.request,
+      ...(begun.added.length > 0 ? { added: begun.added } : {}),
+      closed: true,
+      rounds: begun.rounds,
+      input: begun.input,
+      output: begun.output,
+    },
+  }
+}
+
 function isFinite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }

@@ -1,5 +1,5 @@
 import type { AgentEvent, AgentOrigin } from '../../../shared/agent/agent'
-import { clip, hidesCells, HIDDEN_CELLS } from '../../../shared/app/eye-events'
+import { clip, closedRunEvent, hidesCells, HIDDEN_CELLS, type PendingRun } from '../../../shared/app/eye-events'
 import { withRun } from '../../eye/cause'
 import { record } from '../../eye/eye'
 import type { Tile } from './runs'
@@ -14,21 +14,10 @@ import type { Tile } from './runs'
 // the end is masked against it, as a run's record always was. The tools that read and write cells
 // are kept without their payloads, which are what is written in cells.
 
-/** What a run in flight has spent so far, summed from its calls to the model, and how many tool calls it has made. */
-interface Pending {
-  at: number
-  request: string
-  added: { at: number; text: string }[]
-  rounds: number
-  input: number
-  output: number
-  calls: number
-}
-
 /** How much of what the user added mid-run is kept, each message. */
 const ADDED_MAX = 8000
 
-const pending = new Map<string, Pending>()
+const pending = new Map<string, PendingRun>()
 /** Tool calls of a run whose start was not seen, numbered apart. */
 let strays = 0
 
@@ -175,4 +164,13 @@ export function noteToolEnd(
 /** A run's loop, and whatever it starts, as that run's: what the tree's changes are said to come from. */
 export function asRun<T>(runId: string, fn: () => T): T {
   return withRun(runId, fn)
+}
+
+/** Closes any runs still in flight as the app quits, so their requests and steps are written before `session-end`. */
+export function closePendingRuns(): void {
+  const now = Date.now()
+  for (const [runId, begun] of pending) {
+    pending.delete(runId)
+    record(closedRunEvent(runId, begun, now))
+  }
 }

@@ -20,5 +20,6 @@ export function knownSecrets(): string[] {
     ...Object.keys(getState().secrets).flatMap((plugin) => Object.values(secretValues(plugin))),
     getProviderConfig('llm')?.token ?? '',
     getProviderConfig('voice')?.token ?? '',
+    getProviderConfig('search')?.token ?? '',
   ].filter((value) => value.length > 0)
 }

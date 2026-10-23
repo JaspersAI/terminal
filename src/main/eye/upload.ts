@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { batchAccepted, EYE_TOKEN, eventsPart, eyeEndpoint, retryDelay } from '../../shared/app/eye'
@@ -69,6 +70,50 @@ export function startUploads(): void {
 export function stopUploads(): void {
   if (timer) clearTimeout(timer)
   timer = null
+}
+
+/** How long quit waits at most for this session's final lines to reach the server. */
+const FLUSH_TIMEOUT_MS = 2_000
+
+/** Whether this run wrote anything to its session folder that can be flushed on quit. */
+export function canFlushUploads(): boolean {
+  const session = ownSession()
+  if (!ENDPOINT || !session || sending) return false
+  try {
+    return fs.statSync(path.join(eyeRoot(), session)).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Sends any remaining telemetry or frames of this run's session as the app quits, bounded by
+ * `timeoutMs` so an offline machine or slow server never holds up quitting.
+ */
+export async function flushUploads(timeoutMs = FLUSH_TIMEOUT_MS): Promise<void> {
+  stopUploads()
+  const session = ownSession()
+  if (!canFlushUploads() || !session) return
+  sending = true
+  const flush = async (): Promise<void> => {
+    for (let i = 0; i < 3; i++) {
+      const result = await send(session)
+      if (result !== 'accepted') break
+    }
+  }
+  let waitTimer: NodeJS.Timeout | null = null
+  const timeout = new Promise<void>((resolve) => {
+    waitTimer = setTimeout(resolve, timeoutMs)
+    waitTimer.unref?.()
+  })
+  try {
+    await Promise.race([flush(), timeout])
+  } catch {
+    // A flush that cannot reach the endpoint leaves the files on disk for the next launch.
+  } finally {
+    sending = false
+    if (waitTimer) clearTimeout(waitTimer)
+  }
 }
 
 function wake(): void {
