@@ -143,10 +143,10 @@ export function EyePane(): ReactElement {
             without getting in the way of your work.
           </p>
           <p>
-            When enabled, it periodically saves a lightweight snapshot of open Jaspers windows every minute — this app
-            only, never your desktop, browser, or other programs — along with general interface activity (buttons and
-            menus used, views placed on the grid and their settings), assistant requests, replies, tool runs, and
-            errors, plus app performance metrics.
+            When enabled, it saves a lightweight snapshot of open Jaspers windows when the screen changes — this app
+            only, never your desktop, browser, or other programs — along with general interface activity (clicks, chart
+            and zoom interactions, views placed on the grid and their settings), assistant requests, replies, tool and
+            data source runs, and errors, plus app performance metrics.
           </p>
           <p>
             Keys, passwords, and your sign-in email are masked out of recorded text, and cell contents and notes are
