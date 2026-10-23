@@ -22,6 +22,7 @@ import {
   CHAT_VIEW,
   EMPTY_GRID,
   parseRange,
+  readRectInput,
   writeCells,
   focusElement,
   formatRect,
@@ -632,6 +633,11 @@ test('a range reads as the labels show it, either corner first, and only where t
   assert.equal(parseRange('A1:B2:C3', SIZE), null)
   assert.equal(parseRange('total', SIZE), null)
   assert.equal(parseRange('', SIZE), null)
+  assert.deepEqual(readRectInput({ x: 0, y: 11, w: 4, h: 1 }, SIZE), r(0, 11, 4, 1))
+  assert.deepEqual(readRectInput('A12:D12', SIZE), r(0, 11, 4, 1))
+  assert.deepEqual(readRectInput('A10:D12', SIZE), r(0, 9, 4, 3))
+  assert.equal(readRectInput('not-a-rect', SIZE), null)
+  assert.equal(readRectInput({ x: 0, y: 0, w: 4 }, SIZE), null)
 })
 
 test('a block of rows is laid out from its top-left cell, and one that runs off the grid is refused', () => {
@@ -994,6 +1000,48 @@ test('moving, re-tiling, or sending a minimized element to another window brings
   assert.deepEqual([across.element.mode, across.element.rect.w, across.element.rect.h], ['tiled', 8, 6])
   // Only tiled elements swap places.
   assert.throws(() => swapElements(min, 'e1', 'e2'), /e1 is minimized; only tiled elements swap places\./)
+})
+
+test('a minimized element can be dragged and moved as a 1-row bar while staying minimized', () => {
+  const min = setMode(build({}, {}), 'e1', 'minimized').grid
+  assert.deepEqual(resolveDrag(min, 'e1', 'move', 0, 6, cell(0, 6)), { kind: 'rect', rect: r(0, 6, 8, 1) })
+  // Dragging over a tiled element stops against it rather than swapping with it.
+  assert.deepEqual(resolveDrag(min, 'e1', 'move', 8, 0, cell(8, 0)), { kind: 'rect', rect: r(0, 0, 8, 1) })
+  // Dropping or moving a minimized bar at h 1 keeps it minimized and updates where it restores to.
+  const moved = setRect(min, 'e1', r(0, 6, 8, 1))
+  assert.deepEqual(
+    [moved.element.mode, moved.element.rect, moved.element.restoreRect, moved.element.restoreMode],
+    ['minimized', r(0, 6, 8, 1), r(0, 6, 8, 6), 'tiled'],
+  )
+  assert.deepEqual(setMode(moved.grid, 'e1', 'tiled').element.rect, r(0, 6, 8, 6))
+  // Moving the bar to the bottom row clamps its restoreRect inside the grid.
+  const bottom = setRect(min, 'e1', r(8, 11, 8, 1))
+  assert.deepEqual(
+    [bottom.element.mode, bottom.element.rect, bottom.element.restoreRect],
+    ['minimized', r(8, 11, 8, 1), r(8, 6, 8, 6)],
+  )
+  // Moving with keepMinimized preserves the 1-row bar and restore height even when given a multi-row h.
+  const byBar = setRect(min, 'e1', r(0, 11, 4, 1), true).element
+  assert.deepEqual(
+    [byBar.mode, byBar.rect, byBar.restoreRect, byBar.restoreMode],
+    ['minimized', r(0, 11, 4, 1), r(0, 6, 4, 6), 'tiled'],
+  )
+  const secondMin = setMode(setRect(min, 'e1', r(0, 11, 4, 1), true).grid, 'e2', 'minimized').grid
+  const stacked = setRect(secondMin, 'e2', r(0, 10, 4, 6), true).element
+  assert.deepEqual([stacked.mode, stacked.rect, stacked.restoreRect], ['minimized', r(0, 10, 4, 1), r(0, 6, 4, 6)])
+  const threeRow = setRect(secondMin, 'e2', r(0, 9, 4, 3), true).element
+  assert.deepEqual([threeRow.mode, threeRow.rect, threeRow.restoreRect], ['minimized', r(0, 9, 4, 1), r(0, 6, 4, 6)])
+  // A tiled minimized bar still refuses to overlap another element's cells.
+  assert.throws(() => setRect(min, 'e1', r(8, 0, 8, 1)), /\[8,0 8×1\] overlaps e2\./)
+  assert.throws(() => setRect(secondMin, 'e2', r(0, 11, 4, 1), true), /\[0,11 4×1\] overlaps e1\./)
+  // A floating minimized bar moves over tiled elements and keeps floating as its restoreMode.
+  const minFloat = setMode(setMode(build({}, {}), 'e1', 'floating').grid, 'e1', 'minimized').grid
+  assert.deepEqual(resolveDrag(minFloat, 'e1', 'move', 8, 0, cell(8, 0)), { kind: 'rect', rect: r(8, 0, 8, 1) })
+  const movedFloat = setRect(minFloat, 'e1', r(8, 0, 8, 1)).element
+  assert.deepEqual(
+    [movedFloat.mode, movedFloat.rect, movedFloat.restoreRect, movedFloat.restoreMode],
+    ['minimized', r(8, 0, 8, 1), r(8, 0, 8, 6), 'floating'],
+  )
 })
 
 test('the map says a minimized element is one, and where it restores to', () => {
