@@ -3,11 +3,19 @@ import { test } from 'node:test'
 import {
   ALLOW_CONVERSATION,
   ALLOW_SESSION,
+  askCommand,
+  askTaskAtRunCommand,
+  askTaskCommand,
   commandEnv,
+  commandParameterDescription,
   commandTimeout,
   isReadOnlyCommand,
+  proFolderHint,
   readOnlyFolders,
+  runShellDescription,
+  SANDBOX_EXEC,
   sandboxProfile,
+  shellCommand,
   ALLOW_ONCE,
   ALLOW_TASK,
   approvalChoices,
@@ -221,4 +229,127 @@ test("a task's command is allowed for the task or not at all while it is made, a
   assert.equal(readTaskApproval(null, 'run'), 'denied')
   assert.equal(readTaskApproval(ALLOW_SESSION, 'run'), 'denied')
   assert.equal(readTaskApproval('allow for this task', 'run'), 'denied')
+})
+
+test('commandEnv preserves Windows system and user variables and case-insensitive Path while stripping secrets', () => {
+  const env = commandEnv({
+    Path: 'C:\\Windows\\System32;C:\\Windows\\System32\\WindowsPowerShell\\v1.0',
+    SYSTEMROOT: 'C:\\Windows',
+    SystemDrive: 'C:',
+    windir: 'C:\\Windows',
+    ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+    PATHEXT: '.COM;.EXE;.BAT;.CMD;.PS1',
+    USERPROFILE: 'C:\\Users\\alice',
+    APPDATA: 'C:\\Users\\alice\\AppData\\Roaming',
+    LOCALAPPDATA: 'C:\\Users\\alice\\AppData\\Local',
+    TEMP: 'C:\\Users\\alice\\AppData\\Local\\Temp',
+    TMP: 'C:\\Users\\alice\\AppData\\Local\\Temp',
+    ProgramFiles: 'C:\\Program Files',
+    'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+    OPENAI_API_KEY: 'sk-secret',
+    JASPERS_HOME: 'C:\\Users\\alice\\Jaspers',
+  })
+  assert.deepEqual(env, {
+    TERM: 'dumb',
+    PATH: 'C:\\Windows\\System32;C:\\Windows\\System32\\WindowsPowerShell\\v1.0',
+    SystemRoot: 'C:\\Windows',
+    SystemDrive: 'C:',
+    windir: 'C:\\Windows',
+    ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+    PATHEXT: '.COM;.EXE;.BAT;.CMD;.PS1',
+    USERPROFILE: 'C:\\Users\\alice',
+    APPDATA: 'C:\\Users\\alice\\AppData\\Roaming',
+    LOCALAPPDATA: 'C:\\Users\\alice\\AppData\\Local',
+    TEMP: 'C:\\Users\\alice\\AppData\\Local\\Temp',
+    TMP: 'C:\\Users\\alice\\AppData\\Local\\Temp',
+    ProgramFiles: 'C:\\Program Files',
+    'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+  })
+})
+
+test('shellCommand builds sandbox-exec on macOS, login shell -c on Linux, and PowerShell or ComSpec on Windows', () => {
+  const mac = shellCommand({
+    platform: 'darwin',
+    command: 'ls -la',
+    folder: '/Users/seth/Jaspers/shell',
+    home: '/Users/seth',
+    env: { SHELL: '/bin/zsh', PATH: '/usr/bin:/Users/seth/.nvm/bin' },
+    hasSandbox: true,
+  })
+  assert.equal(mac.confined, true)
+  assert.equal(mac.file, SANDBOX_EXEC)
+  assert.equal(mac.args[0], '-p')
+  assert.match(mac.args[1]!, /\(allow file-write\* \(subpath "\/Users\/seth\/Jaspers\/shell"\)/)
+  assert.deepEqual(mac.args.slice(2), ['/bin/zsh', '-c', 'ls -la'])
+
+  const linux = shellCommand({
+    platform: 'linux',
+    command: 'uname -a',
+    folder: '/home/seth/Jaspers/shell',
+    home: '/home/seth',
+    env: { SHELL: '/bin/bash', PATH: '/usr/bin' },
+    hasSandbox: false,
+  })
+  assert.deepEqual(linux, {
+    file: '/bin/bash',
+    args: ['-c', 'uname -a'],
+    confined: false,
+  })
+
+  const win = shellCommand({
+    platform: 'win32',
+    command: 'nslookup api.bls.gov',
+    folder: 'C:\\Users\\alice\\Jaspers\\shell',
+    home: 'C:\\Users\\alice',
+    env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    hasSandbox: false,
+  })
+  assert.deepEqual(win, {
+    file: 'powershell.exe',
+    args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'nslookup api.bls.gov'],
+    confined: false,
+  })
+
+  const winFallback = shellCommand({
+    platform: 'win32',
+    command: 'nslookup api.bls.gov',
+    folder: 'C:\\Users\\alice\\Jaspers\\shell',
+    home: 'C:\\Users\\alice',
+    env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    hasSandbox: false,
+    useCmdFallback: true,
+  })
+  assert.deepEqual(winFallback, {
+    file: 'C:\\Windows\\System32\\cmd.exe',
+    args: ['/d', '/s', '/c', 'nslookup api.bls.gov'],
+    confined: false,
+  })
+})
+
+test('approval prompts, tool descriptions, and folder hints match the platform and sandbox state', () => {
+  assert.match(askCommand('/Users/seth/Jaspers/shell', 120, true), /write only inside \/Users\/seth\/Jaspers\/shell/)
+  assert.equal(
+    askCommand('C:\\Users\\alice\\Jaspers\\shell', 120, false),
+    'Run this on your computer? It runs in C:\\Users\\alice\\Jaspers\\shell and is stopped after 120s.',
+  )
+  assert.match(
+    askTaskCommand('/Users/seth/Jaspers/shell', 120, true),
+    /write only inside \/Users\/seth\/Jaspers\/shell/,
+  )
+  assert.equal(
+    askTaskCommand('/home/seth/Jaspers/shell', 120, false),
+    'Let the scheduled task run this on your computer at each of its runs, without asking again? It runs in /home/seth/Jaspers/shell and is stopped after 120s.',
+  )
+  assert.equal(
+    askTaskAtRunCommand('t3', '/home/seth/Jaspers/shell', 120, false),
+    'Scheduled task t3 wants to run this on your computer. It runs in /home/seth/Jaspers/shell and is stopped after 120s.',
+  )
+
+  assert.match(runShellDescription('darwin', true), /only place it can write/)
+  assert.doesNotMatch(runShellDescription('linux', false), /only place it can write/)
+  assert.match(runShellDescription('win32', false), /PowerShell/)
+  assert.match(commandParameterDescription('darwin', true), /set -e/)
+  assert.match(commandParameterDescription('win32', false), /\$ErrorActionPreference = 'Stop'/)
+  assert.match(proFolderHint('darwin'), /only place a command can write/)
+  assert.doesNotMatch(proFolderHint('win32'), /only place a command can write/)
 })
