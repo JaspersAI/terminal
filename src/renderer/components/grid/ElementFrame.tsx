@@ -19,7 +19,7 @@ import {
 import { waitingViews } from '../../../shared/plugins/needs'
 import { useAppState } from '../../lib/state'
 import { Board } from './Board'
-import { EDGES } from './edges'
+import { canGrab, EDGES } from './edges'
 import { loopName, showsChat } from '../../../shared/loops/loops'
 import { barLabel, BORN, boxOpens, sameActivity, type Activity, type TileState } from './box'
 import { LoopBox } from './LoopBox'
@@ -191,7 +191,13 @@ export function ElementFrame({
         gridColumn: `${x + 1} / span ${w}`,
         gridRow: `${y + 1} / span ${h}`,
         // A minimized tile's menu hangs under its bar, over whatever is there: the tile goes on top while it is open.
-        zIndex: hangs ? HANGING : element.mode === 'floating' ? element.z + 1 : focused ? 1 : undefined,
+        zIndex: hangs
+          ? HANGING
+          : element.mode === 'floating' || (minimized && element.restoreMode === 'floating')
+            ? element.z + 1
+            : focused
+              ? 1
+              : undefined,
       }}
       className={`relative isolate flex min-h-0 min-w-0 flex-col ${hangs ? 'overflow-visible' : 'overflow-hidden'} bg-background ring-1 select-none ${
         focused ? 'ring-primary' : 'ring-border'
@@ -210,7 +216,7 @@ export function ElementFrame({
         }}
         className={`flex h-6 shrink-0 items-center border-b ${
           central ? 'border-central bg-central text-central-foreground' : 'border-border'
-        } ${maximized || minimized ? '' : 'cursor-grab'}`}
+        } ${canGrab(element.mode, 'move') ? 'cursor-grab' : ''}`}
       >
         <span
           className={`min-w-0 flex-1 truncate px-2 text-xs ${
