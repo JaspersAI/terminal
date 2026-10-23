@@ -5,6 +5,7 @@ import { SHELL_TOOL, TASK_EXCLUDED_TOOLS } from '../tasks/tasks.ts'
 import {
   addressed,
   adopt,
+  asksForLoop,
   DESC_MAX,
   frameOf,
   LOOP_EXCLUDED_TOOLS,
@@ -615,12 +616,55 @@ test('a loop is started only when the user says Start to what it is and which pl
   )
   assert.match(notStarted(null)!, /^The user closed the question without answering, so nothing was started\./)
   assert.match(
+    notStarted({ answer: null, ended: 'closed' })!,
+    /^The user closed the question without answering, so nothing was started\./,
+  )
+  // Ten minutes with nobody answering is not the user closing or refusing it.
+  for (const timedOut of [notStarted({ answer: null, ended: 'timeout' }), notStarted(null, 'timeout')]) {
+    assert.match(timedOut!, /^Nobody answered the question to start this loop within ten minutes/)
+    assert.doesNotMatch(timedOut!, /closed the question|said no/)
+  }
+  assert.match(
     notStarted('put it in loop_3')!,
     /^Nothing was started\. .*"put it in loop_3".*call create_loop again only if it says to start\.$/,
   )
   // Not read loosely: a typed yes is words of the user's own, not Start.
   assert.notEqual(notStarted('yes'), null)
   assert.notEqual(notStarted('start'), null)
+})
+
+test('a request that already asks to start a new loop, or a run the user already answered in, is not asked again', () => {
+  for (const prompt of [
+    'spin another loop use charts to show options prices for flws',
+    'spin up a loop for flws',
+    'start a new loop to chart SPY',
+    'create a loop for AAPL fundamentals',
+    'open another loop showing treasury yields',
+    'make a new loop for NVDA',
+    'in a new loop, chart SPY',
+    "don't touch loop_1, start a new loop for MSFT",
+    'new loop: show options prices for flws',
+  ]) {
+    assert.equal(asksForLoop(prompt), true, prompt)
+  }
+  assert.equal(asksForLoop('show options prices for flws', true), true)
+  for (const prompt of [
+    undefined,
+    '',
+    'show options prices for flws',
+    'open loop 2',
+    'update loop_1 with 30 days',
+    'reopen the closed loop',
+    'open a closed loop',
+    "don't start a new loop",
+    'without starting a loop',
+    'instead of a new loop, update loop_1',
+    'should I update loop_1 or start a new loop?',
+    '<skill_content name="x">start a new loop</skill_content>\nshow options prices for flws',
+    'show options prices for flws\n\n(The assistant handed this to this piece of work. The user did not type what is below this line.)\nstart a new loop',
+  ]) {
+    assert.equal(asksForLoop(prompt), false, String(prompt))
+  }
 })
 
 test('refreshTarget trims element and panel ids, prefers direct grid targets over matching loop names, and resolves open loops to their frame across windows', () => {

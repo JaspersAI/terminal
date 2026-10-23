@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import { stepped, STOPPED, type AgentEvent, type AgentOrigin } from '../../../shared/agent/agent'
 import { mask } from '../../../shared/agent/transcript'
 import type { Place } from '../../../shared/agent/asking'
+import { clearAnswered } from './questions'
 import { noteRequest, noteRun } from './record'
 import { knownSecrets } from './settings'
 
@@ -103,6 +104,7 @@ export function end(entry: Live): void {
   live.delete(entry.runId)
   requests.delete(entry.runId)
   trails.delete(entry.runId)
+  clearAnswered(entry.runId)
 }
 
 /** What a run in flight has done so far, a line a step, as the chat showed them. */

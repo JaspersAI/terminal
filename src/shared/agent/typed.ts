@@ -39,7 +39,7 @@ export function writtenPart(text: string): string | null {
  * skill whose own text carries the line is then cut short, its block left open: that too goes, to the
  * end, since a block that never closes is a skill's and never the user's.
  */
-function typedWords(text: string): string {
+export function typedWords(text: string): string {
   return stripSkillContent(typedPart(text)).replace(/<skill_content\b[\s\S]*$/, '')
 }
 
