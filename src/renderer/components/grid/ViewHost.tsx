@@ -214,7 +214,7 @@ function PluginView({
       for (const unsubscribe of subscriptions.values()) unsubscribe()
       subscriptions.clear()
     }
-  }, [workspaceId, plugin])
+  }, [workspaceId, plugin, name, panelId])
 
   // Nothing in the SDK reads this yet; it is the half of the protocol the host owns.
   useEffect(() => {

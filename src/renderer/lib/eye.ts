@@ -39,15 +39,128 @@ const CONTROL = [
 
 /** Starts listening, once per window. */
 export function watchUse(): void {
-  document.addEventListener('click', clicked, { capture: true })
-  document.addEventListener('auxclick', auxClicked, { capture: true })
-  document.addEventListener('contextmenu', contextClicked, { capture: true })
-  document.addEventListener('input', typedInto, { capture: true })
-  document.addEventListener('focusout', left, { capture: true })
-  document.addEventListener('wheel', wheeled, { capture: true, passive: true })
-  document.addEventListener('keydown', keyPressed, { capture: true })
+  watchDocumentUse(send, recording)
   window.addEventListener('error', (event) => noteError('renderer', event.error ?? event.message))
   window.addEventListener('unhandledrejection', (event) => noteError('renderer', event.reason))
+}
+
+/**
+ * Watches a document (the main window's or a plugin view iframe's) for clicks, field typing counts,
+ * and wheel/keyboard zoom gestures, handing each `Note` to `emit` when `enabled()` is true.
+ */
+export function watchDocumentUse(emit: (note: Note) => void, enabled: () => boolean = () => true): void {
+  let lastRightClickAt = -Infinity
+
+  const sendClick = (event: MouseEvent, button: number): void => {
+    if (!enabled() || !(event.target instanceof Element)) return
+    const detail = Math.max(1, event.detail || 1)
+    emit({
+      kind: 'click',
+      ...labelOf(event.target),
+      x: event.clientX,
+      y: event.clientY,
+      ...(button > 0 ? { button } : {}),
+      ...(detail > 1 ? { detail } : {}),
+      ...viewContextOf(event.target),
+    })
+  }
+
+  document.addEventListener('click', (event) => sendClick(event, event.button), { capture: true })
+  document.addEventListener(
+    'auxclick',
+    (event) => {
+      // Right-click fires contextmenu as well; keep auxclick for middle/auxiliary buttons unless contextmenu did not fire.
+      if (event.button === 2 && Date.now() - lastRightClickAt < 150) return
+      sendClick(event, event.button)
+    },
+    { capture: true },
+  )
+  document.addEventListener(
+    'contextmenu',
+    (event) => {
+      if (!enabled()) return
+      lastRightClickAt = Date.now()
+      sendClick(event, 2)
+    },
+    { capture: true },
+  )
+
+  const typed = new Map<Element, { count: number; context: { view?: string; plugin?: string; panel?: string } }>()
+  let typedTimer: number | null = null
+
+  const flushTyped = (): void => {
+    if (typedTimer !== null) window.clearTimeout(typedTimer)
+    typedTimer = null
+    for (const [field, { count, context }] of typed) {
+      if (enabled()) emit({ kind: 'type', name: fieldName(field), count, ...context })
+    }
+    typed.clear()
+  }
+
+  document.addEventListener(
+    'input',
+    (event) => {
+      const field = event.target
+      if (!enabled() || !(field instanceof Element) || !isField(field)) return
+      // A password field is not even counted.
+      if (field instanceof HTMLInputElement && field.type === 'password') return
+      const data = (event as InputEvent).data
+      const prev = typed.get(field)
+      typed.set(field, {
+        count: (prev?.count ?? 0) + (typeof data === 'string' ? data.length : 1),
+        context: prev?.context ?? viewContextOf(field),
+      })
+      typedTimer ??= window.setTimeout(flushTyped, TYPED_MS)
+    },
+    { capture: true },
+  )
+
+  document.addEventListener(
+    'focusout',
+    (event) => {
+      if (event.target instanceof Element && typed.has(event.target)) flushTyped()
+    },
+    { capture: true },
+  )
+
+  let pendingZoom: { name: ZoomNoteName; context: { view?: string; plugin?: string; panel?: string } } | null = null
+  let zoomTimer: number | null = null
+
+  const flushZoom = (): void => {
+    zoomTimer = null
+    if (!pendingZoom) return
+    const { name, context } = pendingZoom
+    pendingZoom = null
+    if (enabled()) emit({ kind: 'zoom', name, factor: window.devicePixelRatio, ...context })
+  }
+
+  document.addEventListener(
+    'wheel',
+    (event) => {
+      if (!enabled()) return
+      const dir = zoomWheel(event)
+      if (!dir) return
+      pendingZoom = {
+        name: dir,
+        context: event.target instanceof Element ? viewContextOf(event.target) : {},
+      }
+      if (zoomTimer !== null) window.clearTimeout(zoomTimer)
+      zoomTimer = window.setTimeout(flushZoom, ZOOM_MS)
+    },
+    { capture: true, passive: true },
+  )
+
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (!enabled()) return
+      const dir = zoomKey(event)
+      if (!dir) return
+      const context = event.target instanceof Element ? viewContextOf(event.target) : {}
+      emit({ kind: 'zoom', name: dir, factor: window.devicePixelRatio, ...context })
+    },
+    { capture: true },
+  )
 }
 
 function recording(): boolean {
@@ -60,39 +173,6 @@ function recording(): boolean {
 
 function send(note: Note): void {
   if (recording()) window.app.eye.note(note)
-}
-
-let lastRightClickAt = -Infinity
-
-function clicked(event: MouseEvent): void {
-  if (!recording() || !(event.target instanceof Element)) return
-  sendClick(event, event.button, Math.max(1, event.detail || 1))
-}
-
-function auxClicked(event: MouseEvent): void {
-  if (!recording() || !(event.target instanceof Element)) return
-  // Right-click fires contextmenu as well; keep auxclick for middle/auxiliary buttons unless contextmenu did not fire.
-  if (event.button === 2 && Date.now() - lastRightClickAt < 150) return
-  sendClick(event, event.button, Math.max(1, event.detail || 1))
-}
-
-function contextClicked(event: MouseEvent): void {
-  if (!recording() || !(event.target instanceof Element)) return
-  lastRightClickAt = Date.now()
-  sendClick(event, 2, Math.max(1, event.detail || 1))
-}
-
-function sendClick(event: MouseEvent, button: number, detail: number): void {
-  if (!(event.target instanceof Element)) return
-  send({
-    kind: 'click',
-    ...labelOf(event.target),
-    x: event.clientX,
-    y: event.clientY,
-    ...(button > 0 ? { button } : {}),
-    ...(detail > 1 ? { detail } : {}),
-    ...viewContextOf(event.target),
-  })
 }
 
 /** Which view and panel an element sits inside, when it is inside one on the grid. */
@@ -129,67 +209,6 @@ function labelOf(target: Element): { name: string; role: string | null } {
     return { name, role: labelled.getAttribute('role') ?? labelled.tagName.toLowerCase() }
   }
   return { name: target.tagName.toLowerCase(), role: target.getAttribute('role') }
-}
-
-const typed = new Map<Element, { count: number; context: { view?: string; plugin?: string; panel?: string } }>()
-let typedTimer: number | null = null
-
-function typedInto(event: Event): void {
-  const field = event.target
-  if (!recording() || !(field instanceof Element) || !isField(field)) return
-  // A password field is not even counted.
-  if (field instanceof HTMLInputElement && field.type === 'password') return
-  const data = (event as InputEvent).data
-  const prev = typed.get(field)
-  typed.set(field, {
-    count: (prev?.count ?? 0) + (typeof data === 'string' ? data.length : 1),
-    context: prev?.context ?? viewContextOf(field),
-  })
-  typedTimer ??= window.setTimeout(flushTyped, TYPED_MS)
-}
-
-function left(event: FocusEvent): void {
-  if (event.target instanceof Element && typed.has(event.target)) flushTyped()
-}
-
-function flushTyped(): void {
-  if (typedTimer !== null) window.clearTimeout(typedTimer)
-  typedTimer = null
-  for (const [field, { count, context }] of typed) {
-    send({ kind: 'type', name: fieldName(field), count, ...context })
-  }
-  typed.clear()
-}
-
-let pendingZoom: { name: ZoomNoteName; context: { view?: string; plugin?: string; panel?: string } } | null = null
-let zoomTimer: number | null = null
-
-function wheeled(event: WheelEvent): void {
-  if (!recording()) return
-  const dir = zoomWheel(event)
-  if (!dir) return
-  pendingZoom = {
-    name: dir,
-    context: event.target instanceof Element ? viewContextOf(event.target) : {},
-  }
-  if (zoomTimer !== null) window.clearTimeout(zoomTimer)
-  zoomTimer = window.setTimeout(flushZoom, ZOOM_MS)
-}
-
-function flushZoom(): void {
-  zoomTimer = null
-  if (!pendingZoom) return
-  const { name, context } = pendingZoom
-  pendingZoom = null
-  send({ kind: 'zoom', name, factor: window.devicePixelRatio, ...context })
-}
-
-function keyPressed(event: KeyboardEvent): void {
-  if (!recording()) return
-  const dir = zoomKey(event)
-  if (!dir) return
-  const context = event.target instanceof Element ? viewContextOf(event.target) : {}
-  send({ kind: 'zoom', name: dir, factor: window.devicePixelRatio, ...context })
 }
 
 /** Records a chart interaction (`zoom`, `legend`, `point`, `hover`) while recording is on. */

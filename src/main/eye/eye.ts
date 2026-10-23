@@ -31,10 +31,11 @@ import { appendEventLine } from './events'
 import { metricsData, startMetrics, stopMetrics } from './metrics'
 
 // Eye, recording. One folder per app run under `eyeRoot()`, holding that run's frames and its
-// telemetry; a timer takes a frame of every open window each minute while recording is on, and
-// nothing exists at all while it is off. A window that has not changed since the last tick gives the
-// same bytes, and that frame is not written: a copy a minute of the same screen says nothing new. The
-// rules it follows — how often, how wide, what blocks a frame, what the queue may hold — are in
+// telemetry; settled frames of every open window are taken when the app's state or the user's
+// interaction changes while recording is on, a 1-minute timer records how the app performs and trims
+// the disk queue, and nothing exists at all while recording is off. A window that has not changed
+// since the last frame gives the same bytes, and that frame is not written. The rules it follows —
+// when a frame is triggered, how wide, what blocks a frame, what the queue may hold — are in
 // `src/shared/app/eye.ts`, and what a line may hold in `eye-events.ts`, tested there; this file is
 // the disk and the clock.
 //
@@ -131,7 +132,7 @@ function snapshot(): void {
 
 /** The tree changed while recording: what changed, as JSON Patch, said with what it came from. */
 function changed(next: MainState): void {
-  if (tree === null) return
+  if (live === null || tree === null) return
   const now = eyeTree(toPublic(next))
   const ops = diff(tree, now)
   tree = now
@@ -200,7 +201,7 @@ function scheduleCapture(why: CaptureWhy): void {
 async function runCapture(): Promise<void> {
   captureTimer = null
   queuedAt = null
-  if (capturing || !getState().eye.recording || pendingWhy === null) return
+  if (live === null || capturing || !getState().eye.recording || pendingWhy === null) return
   const why = pendingWhy
   pendingWhy = null
   capturing = true
@@ -214,7 +215,7 @@ async function runCapture(): Promise<void> {
     console.warn('[eye] frame failed:', err)
   } finally {
     capturing = false
-    if (pendingWhy !== null && getState().eye.recording) {
+    if (live !== null && pendingWhy !== null && getState().eye.recording) {
       const nextWhy = pendingWhy
       pendingWhy = null
       scheduleCapture(nextWhy)
@@ -223,6 +224,7 @@ async function runCapture(): Promise<void> {
 }
 
 async function frames(at: number, why: CaptureWhy): Promise<void> {
+  if (live === null || !getState().eye.recording) return
   const blocked = captureBlocked(getState())
   if (blocked) {
     console.log(`[eye] frame skipped: ${blocked}`)
@@ -233,6 +235,7 @@ async function frames(at: number, why: CaptureWhy): Promise<void> {
   for (const { number, win } of openWindows()) {
     const written = await captureWindow(number, win.webContents, at)
     if (written === null) continue
+    if (live === null || !getState().eye.recording) return
     taken++
     record({ kind: 'frame', at, window: number, name: written.name, count: written.bytes, data: { why } })
   }
@@ -320,7 +323,7 @@ export async function sendFeedback(text: string, secrets: string[]): Promise<{ f
  * written, and a session whose closing line is missing reads as one that crashed.
  */
 export function record(event: EyeEvent): void {
-  if (!getState().eye.recording) return
+  if (live === null || !getState().eye.recording) return
   write(event)
 }
 
