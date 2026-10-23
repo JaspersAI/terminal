@@ -210,6 +210,9 @@ async function runCapture(): Promise<void> {
   try {
     if (snapshotDue) snapshot()
     await frames(at, why)
+    if (why === 'start' && live !== null && getState().eye.recording) {
+      record({ kind: 'metrics', data: metricsData(openWindows().length, inFlight) })
+    }
   } catch (err) {
     // A disk that will not take a frame is not a reason to stop recording: the next trigger tries again.
     console.warn('[eye] frame failed:', err)

@@ -77,8 +77,14 @@ export function Chart({ panel }: ViewProps): ReactElement {
   const short = found.loading ? null : missingColumns(shape, yColumns, found.columns)
   const ready = found.rows.length > 0 && yColumns.length > 0 && !short
 
-  const hover = useRef<{ indices: Set<number>; lastLabel: string | null; timer: number | null }>({
+  const hover = useRef<{
+    indices: Set<number>
+    lastIndex: number | null
+    lastLabel: string | null
+    timer: number | null
+  }>({
     indices: new Set(),
+    lastIndex: null,
     lastLabel: null,
     timer: null,
   })
@@ -94,6 +100,7 @@ export function Chart({ panel }: ViewProps): ReactElement {
     () => (index: number, head: string) => {
       const current = hover.current
       current.indices.add(index)
+      current.lastIndex = index
       current.lastLabel = head || current.lastLabel
       if (current.timer !== null) window.clearTimeout(current.timer)
       current.timer = window.setTimeout(() => {
@@ -134,7 +141,15 @@ export function Chart({ panel }: ViewProps): ReactElement {
       <div className="relative min-h-0 flex-1">
         {/* The canvas is always mounted, so the chart is never waiting on a container that a
             message replaced; what there is to say is said over it. */}
-        <Plot option={option} panelId={panel.id} shape={shape} labels={labels} />
+        <Plot
+          option={option}
+          panelId={panel.id}
+          shape={shape}
+          title={title}
+          labels={labels}
+          yColumns={yColumns}
+          lastHoveredIndex={() => hover.current.lastIndex}
+        />
         {message && (
           <p
             className={`absolute inset-0 flex items-center justify-center p-3 text-center text-xs ${found.error || short ? 'text-destructive' : 'text-muted-foreground'}`}
@@ -152,17 +167,23 @@ function Plot({
   option,
   panelId,
   shape,
+  title,
   labels,
+  yColumns,
+  lastHoveredIndex,
 }: {
   option: EChartsOption | null
   panelId: string
   shape: ChartKind
+  title: string | null
   labels: readonly string[]
+  yColumns: readonly string[]
+  lastHoveredIndex: () => number | null
 }): ReactElement {
   const chart = useRef<EChart | null>(null)
   const box = useRef<HTMLDivElement | null>(null)
-  const meta = useRef({ panelId, shape, labels })
-  meta.current = { panelId, shape, labels }
+  const meta = useRef({ panelId, shape, labels, yColumns, lastHoveredIndex })
+  meta.current = { panelId, shape, labels, yColumns, lastHoveredIndex }
 
   useEffect(() => {
     const element = box.current
@@ -171,6 +192,7 @@ function Plot({
     chart.current = instance
     let zoomTimer: number | null = null
     let pendingZoom: { start: number; end: number } | null = null
+    let pointClickedAt = -Infinity
     const flushZoom = (): void => {
       zoomTimer = null
       if (!pendingZoom) return
@@ -191,7 +213,37 @@ function Plot({
     })
     instance.on('click', (event: unknown) => {
       const point = chartPointOf(event, meta.current.labels)
-      if (point) noteChart({ name: 'point', panel: meta.current.panelId, chart: meta.current.shape, ...point })
+      if (!point) return
+      pointClickedAt = Date.now()
+      noteChart({ name: 'point', panel: meta.current.panelId, chart: meta.current.shape, ...point })
+    })
+    instance.getZr().on('click', (event: { offsetX?: number; offsetY?: number }) => {
+      if (Date.now() - pointClickedAt < 50) return
+      const {
+        labels: curLabels,
+        yColumns: curY,
+        shape: curShape,
+        panelId: curPanel,
+        lastHoveredIndex: getIdx,
+      } = meta.current
+      if (curLabels.length === 0) return
+      let idx = getIdx()
+      if (
+        typeof event.offsetX === 'number' &&
+        typeof event.offsetY === 'number' &&
+        instance.containPixel('grid', [event.offsetX, event.offsetY])
+      ) {
+        const converted = instance.convertFromPixel({ seriesIndex: 0 }, [event.offsetX, event.offsetY])
+        const candidate = Array.isArray(converted) ? converted[curShape === 'hbar' ? 1 : 0] : undefined
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+          idx = Math.max(0, Math.min(curLabels.length - 1, Math.round(candidate)))
+        }
+      } else {
+        return
+      }
+      if (idx === null || idx < 0 || idx >= curLabels.length) return
+      const point = chartPointOf({ dataIndex: idx, seriesName: curY[0] ?? '' }, curLabels)
+      if (point) noteChart({ name: 'point', panel: curPanel, chart: curShape, ...point })
     })
     const observer = new ResizeObserver(() => instance.resize())
     observer.observe(element)
@@ -212,7 +264,7 @@ function Plot({
     else instance.clear()
   }, [option])
 
-  return <div ref={box} className="h-full w-full" />
+  return <div ref={box} data-eye={title ? `Chart: ${title}` : `Chart (${shape})`} className="h-full w-full" />
 }
 
 /** An x value as the axis writes it: as its format says, or on auto, grouped unless the column is years. */
@@ -326,21 +378,26 @@ function buildOption({
         return tip ? tipElement(tip, paint) : ''
       },
     },
-    dataZoom: zoom
-      ? [
-          { type: 'inside' },
-          {
-            type: 'slider',
-            height: 16,
-            bottom: 6,
-            borderColor: paint.line,
-            textStyle: axisText,
-            // ECharts' own handles are white, which a dark chart shows as two glaring tabs.
-            handleStyle: { color: paint.surface, borderColor: paint.muted },
-            moveHandleStyle: { color: paint.muted },
-          },
-        ]
-      : undefined,
+    dataZoom:
+      isCartesian(shape) && shape !== 'heatmap'
+        ? [
+            { type: 'inside' },
+            ...(zoom
+              ? [
+                  {
+                    type: 'slider' as const,
+                    height: 16,
+                    bottom: 6,
+                    borderColor: paint.line,
+                    textStyle: axisText,
+                    // ECharts' own handles are white, which a dark chart shows as two glaring tabs.
+                    handleStyle: { color: paint.surface, borderColor: paint.muted },
+                    moveHandleStyle: { color: paint.muted },
+                  },
+                ]
+              : []),
+          ]
+        : undefined,
   }
 
   if (shape === 'pie') {
