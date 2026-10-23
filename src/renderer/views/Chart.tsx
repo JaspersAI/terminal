@@ -5,9 +5,13 @@ import type { ViewProps } from './index'
 import { cellText, isYearColumn } from './cells'
 import { useRows } from './data'
 import { useColorScheme } from '../lib/color-scheme'
+import { noteChart } from '../lib/eye'
 import {
   CHART_KINDS,
+  chartLegendOf,
   chartMessage,
+  chartPointOf,
+  chartZoomOf,
   FORMATS,
   formatted,
   HEAT,
@@ -73,10 +77,43 @@ export function Chart({ panel }: ViewProps): ReactElement {
   const short = found.loading ? null : missingColumns(shape, yColumns, found.columns)
   const ready = found.rows.length > 0 && yColumns.length > 0 && !short
 
+  const hover = useRef<{ indices: Set<number>; lastLabel: string | null; timer: number | null }>({
+    indices: new Set(),
+    lastLabel: null,
+    timer: null,
+  })
+
+  useEffect(() => {
+    const current = hover.current
+    return () => {
+      if (current.timer !== null) window.clearTimeout(current.timer)
+    }
+  }, [])
+
+  const onHover = useMemo(
+    () => (index: number, head: string) => {
+      const current = hover.current
+      current.indices.add(index)
+      current.lastLabel = head || current.lastLabel
+      if (current.timer !== null) window.clearTimeout(current.timer)
+      current.timer = window.setTimeout(() => {
+        current.timer = null
+        const points = current.indices.size
+        const lastLabel = current.lastLabel
+        current.indices.clear()
+        current.lastLabel = null
+        if (points > 0) noteChart({ name: 'hover', panel: panel.id, chart: shape, points, label: lastLabel })
+      }, 1500)
+    },
+    [panel.id, shape],
+  )
+
   const option = useMemo(
     () =>
-      ready ? buildOption({ shape, labels, rows: found.rows, yColumns, stack, log, zoom, yFormat: yAs, scheme }) : null,
-    [ready, shape, labels, found.rows, yColumns, stack, log, zoom, yAs, scheme],
+      ready
+        ? buildOption({ shape, labels, rows: found.rows, yColumns, stack, log, zoom, yFormat: yAs, scheme, onHover })
+        : null,
+    [ready, shape, labels, found.rows, yColumns, stack, log, zoom, yAs, scheme, onHover],
   )
 
   usePublish(panel, { kind: shape, x: xColumn, y: yColumns, points: found.rows.length, error: found.error ?? short })
@@ -97,7 +134,7 @@ export function Chart({ panel }: ViewProps): ReactElement {
       <div className="relative min-h-0 flex-1">
         {/* The canvas is always mounted, so the chart is never waiting on a container that a
             message replaced; what there is to say is said over it. */}
-        <Plot option={option} />
+        <Plot option={option} panelId={panel.id} shape={shape} labels={labels} />
         {message && (
           <p
             className={`absolute inset-0 flex items-center justify-center p-3 text-center text-xs ${found.error || short ? 'text-destructive' : 'text-muted-foreground'}`}
@@ -111,18 +148,55 @@ export function Chart({ panel }: ViewProps): ReactElement {
 }
 
 /** The chart itself: made once on its element, told the new option on every change, and resized with it. */
-function Plot({ option }: { option: EChartsOption | null }): ReactElement {
+function Plot({
+  option,
+  panelId,
+  shape,
+  labels,
+}: {
+  option: EChartsOption | null
+  panelId: string
+  shape: ChartKind
+  labels: readonly string[]
+}): ReactElement {
   const chart = useRef<EChart | null>(null)
   const box = useRef<HTMLDivElement | null>(null)
+  const meta = useRef({ panelId, shape, labels })
+  meta.current = { panelId, shape, labels }
 
   useEffect(() => {
     const element = box.current
     if (!element) return
     const instance = echarts.init(element, null, { renderer: 'svg' })
     chart.current = instance
+    let zoomTimer: number | null = null
+    let pendingZoom: { start: number; end: number } | null = null
+    const flushZoom = (): void => {
+      zoomTimer = null
+      if (!pendingZoom) return
+      const { start, end } = pendingZoom
+      pendingZoom = null
+      noteChart({ name: 'zoom', panel: meta.current.panelId, chart: meta.current.shape, start, end })
+    }
+    instance.on('datazoom', (event: unknown) => {
+      const zoomed = chartZoomOf(event)
+      if (!zoomed) return
+      pendingZoom = zoomed
+      if (zoomTimer !== null) window.clearTimeout(zoomTimer)
+      zoomTimer = window.setTimeout(flushZoom, 300)
+    })
+    instance.on('legendselectchanged', (event: unknown) => {
+      const toggled = chartLegendOf(event)
+      if (toggled) noteChart({ name: 'legend', panel: meta.current.panelId, chart: meta.current.shape, ...toggled })
+    })
+    instance.on('click', (event: unknown) => {
+      const point = chartPointOf(event, meta.current.labels)
+      if (point) noteChart({ name: 'point', panel: meta.current.panelId, chart: meta.current.shape, ...point })
+    })
     const observer = new ResizeObserver(() => instance.resize())
     observer.observe(element)
     return () => {
+      if (zoomTimer !== null) window.clearTimeout(zoomTimer)
       observer.disconnect()
       instance.dispose()
       chart.current = null
@@ -186,9 +260,21 @@ interface Build {
   zoom: boolean
   yFormat: Format
   scheme: Scheme
+  onHover?: (index: number, head: string) => void
 }
 
-function buildOption({ shape, labels, rows, yColumns, stack, log, zoom, yFormat, scheme }: Build): EChartsOption {
+function buildOption({
+  shape,
+  labels,
+  rows,
+  yColumns,
+  stack,
+  log,
+  zoom,
+  yFormat,
+  scheme,
+  onHover,
+}: Build): EChartsOption {
   const paint = ink()
   const palette = seriesColors(scheme)
   const many = yColumns.length > 1 || shape === 'pie'
@@ -234,6 +320,9 @@ function buildOption({ shape, labels, rows, yColumns, stack, log, zoom, yFormat,
         // The tooltip is where a value is read exactly, so it is never cut down to 391B.
         const write = (one: unknown): string => formatted(one, yFormat === 'compact' ? 'number' : yFormat)
         const tip = tipOf(shape, hovered, rows, labels, yColumns, write, paint.muted)
+        if (tip && hovered[0] && typeof hovered[0].dataIndex === 'number') {
+          onHover?.(hovered[0].dataIndex, tip.head)
+        }
         return tip ? tipElement(tip, paint) : ''
       },
     },

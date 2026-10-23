@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   CHART_KINDS,
+  chartLegendOf,
   chartMessage,
+  chartPointOf,
+  chartZoomOf,
   figure,
   FORMATS,
   formatted,
@@ -174,4 +177,35 @@ test('a chart says Loading only before rows arrive, keeping the plot visible whi
     chartMessage({ error: 'fetch failed', short: null, loading: false, rowCount: 0, yColumnCount: 0, hasInput: true }),
     'fetch failed',
   )
+})
+
+test('chart interactions extract zoom ranges, legend toggles, and clicked points from ECharts events', () => {
+  assert.deepEqual(chartZoomOf({ start: 12.4, end: 87.6 }), { start: 12, end: 88 })
+  assert.deepEqual(chartZoomOf({ batch: [{ start: 25.1, end: 74.9 }] }), { start: 25, end: 75 })
+  assert.deepEqual(chartZoomOf({ start: -5, end: 120 }), { start: 0, end: 100 })
+  assert.equal(chartZoomOf({}), null)
+  assert.equal(chartZoomOf(null), null)
+
+  assert.deepEqual(chartLegendOf({ name: 'AAPL', selected: { AAPL: false, MSFT: true } }), {
+    series: 'AAPL',
+    shown: false,
+  })
+  assert.deepEqual(chartLegendOf({ name: 'MSFT', selected: { AAPL: false, MSFT: true } }), {
+    series: 'MSFT',
+    shown: true,
+  })
+  assert.equal(chartLegendOf({ name: '', selected: {} }), null)
+  assert.equal(chartLegendOf(null), null)
+
+  assert.deepEqual(chartPointOf({ dataIndex: 1, seriesName: 'close', name: '2025' }, ['2024', '2025']), {
+    index: 1,
+    label: '2025',
+    series: 'close',
+  })
+  assert.deepEqual(chartPointOf({ dataIndex: 0, name: 'Slice A' }, ['']), {
+    index: 0,
+    label: 'Slice A',
+    series: null,
+  })
+  assert.equal(chartPointOf({ componentType: 'legend' }, ['2024']), null)
 })

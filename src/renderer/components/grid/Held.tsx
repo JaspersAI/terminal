@@ -15,7 +15,12 @@ export function Held({ workspaceId, elementId, panel, focused }: Props): ReactEl
     <div className="relative min-h-0 flex-1">
       {panel?.content.kind === 'view' && (
         // The view fills the room and keeps its own selection.
-        <div className="absolute inset-0 overflow-hidden select-text">
+        <div
+          data-eye-view={panel.content.view}
+          data-eye-plugin={panel.content.view.split('/')[0] ?? ''}
+          data-eye-panel={panel.id}
+          className="absolute inset-0 overflow-hidden select-text"
+        >
           <ViewHost
             workspaceId={workspaceId}
             panelId={panel.id}

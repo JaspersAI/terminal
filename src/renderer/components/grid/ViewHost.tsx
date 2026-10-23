@@ -8,7 +8,7 @@ import { subscribeLive } from '../../lib/live'
 import { useAppState } from '../../lib/state'
 import { BUILT_IN_VIEWS } from '../../views'
 import { send } from './send'
-import { noteError } from '../../lib/eye'
+import { noteError, noteFromView } from '../../lib/eye'
 
 interface Props {
   workspaceId: string
@@ -108,10 +108,20 @@ function PluginView({
       // Only this element's own frame. Its origin is opaque, or shared with every frame of its
       // plugin when the plugin frames a site, so the window is what identifies it.
       if (event.source !== iframe?.contentWindow) return
-      // An error in the view, told by the page the app put around it: for Eye, nothing to answer.
+      // An error or an interaction in the view, told by the page the app put around it: for Eye, nothing to answer.
       const told = event.data as { method?: unknown; params?: unknown } | null
       if (told?.method === 'view.error') {
         noteError('view', told.params, { view: `${plugin}/${name}`, plugin })
+        return
+      }
+      if (told?.method === 'view.eye' && typeof told.params === 'object' && told.params !== null) {
+        const raw = told.params as Record<string, unknown>
+        const box = iframe?.getBoundingClientRect()
+        const translated =
+          raw['kind'] === 'click' && typeof raw['x'] === 'number' && typeof raw['y'] === 'number' && box
+            ? { ...raw, x: raw['x'] + box.left, y: raw['y'] + box.top }
+            : raw
+        noteFromView(translated, { view: `${plugin}/${name}`, plugin, panel: panelId })
         return
       }
       const request = event.data as BridgeRequest
