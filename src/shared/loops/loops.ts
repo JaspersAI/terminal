@@ -8,6 +8,8 @@
 // Pure: the record, and every rule about names, tiles, and a saved workspace made whole. Main applies
 // them where tiles are placed and removed.
 
+import type { Asking } from '../agent/asking.ts'
+import { typedWords } from '../agent/typed.ts'
 import {
   CHAT_VIEW,
   EMPTY_GRID,
@@ -656,13 +658,46 @@ export function startQuestion(desc: string, plugins: readonly string[]): string 
 }
 
 /**
- * Why no loop was started, in words for the orchestrator's model, or null when the user said Start.
- * Only that one choice starts one: a no, a closed question, and words of the user's own all leave the
- * request where it was, and the words are the model's to follow.
+ * Whether the user's request already asks to start a new loop, or the run has already asked the
+ * user and been answered. Only the words the user typed count, never a skill's text or what the
+ * assistant handed over, and a clause that says not to start one, names an existing or closed loop,
+ * or asks which place to use still asks.
  */
-export function notStarted(answer: string | null): string | null {
+const START_LOOP_CLAUSE =
+  /\b(?:(?:spin(?:\s+up)?|start|create|open|make|add|launch|build|set\s+up|run)\s+(?:a|an|new|another|a\s+new|one\s+more|(?:a\s+)?separate|(?:a\s+)?fresh|(?:a\s+)?second)\s+loop|(?:in|on|as|into|with)\s+(?:a\s+new|another|a\s+separate|a\s+fresh|a\s+second|one\s+more)\s+loop)\b|^(?:a\s+)?(?:new|another|separate|fresh)\s+loop\s*(?:[:,;-]|\b(?:for|to|with|using|use|showing|show|that|where)\b)/i
+const NEGATED_LOOP_CLAUSE =
+  /\b(?:don'?t|do\s+not|doesn'?t|did\s+not|didn'?t|never|no|not|without|instead\s+of|rather\s+than|whether(?:\s+to)?|should\s+(?:i|we|you))\b/i
+
+export function asksForLoop(asked: string | undefined, answered = false): boolean {
+  if (answered) return true
+  if (!asked) return false
+  const text = typedWords(asked).trim()
+  if (!text) return false
+  for (const clause of text.split(/[.!?;,\n]+|\b(?:but|and|then)\b/i)) {
+    const trimmed = clause.trim()
+    if (!trimmed || NEGATED_LOOP_CLAUSE.test(trimmed)) continue
+    if (/\b(?:closed\s+loop|loop[\s_#-]*\d)\b/i.test(trimmed)) continue
+    if (START_LOOP_CLAUSE.test(trimmed)) return true
+  }
+  return false
+}
+
+/**
+ * Why no loop was started, in words for the orchestrator's model, or null when the user said Start.
+ * Only that one choice starts one: a no, a closed question, a question nobody answered in time, and
+ * words of the user's own all leave the request where it was, and the words are the model's to follow.
+ */
+export function notStarted(
+  asked: Asking | string | null,
+  ended?: Extract<Asking, { answer: null }>['ended'],
+): string | null {
+  const answer = typeof asked === 'object' && asked !== null ? asked.answer : asked
+  const why = typeof asked === 'object' && asked !== null && asked.answer === null ? asked.ended : ended
   if (answer === START) return null
   if (answer === null) {
+    if (why === 'timeout') {
+      return 'Nobody answered the question to start this loop within ten minutes, so nothing was started. The user did not close or refuse it; they may be away. Say it is waiting on their confirmation and that they can ask for it again.'
+    }
     return 'The user closed the question without answering, so nothing was started. Say what you would have started, and leave it to them.'
   }
   if (answer === NO) {

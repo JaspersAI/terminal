@@ -5,6 +5,13 @@
 import type { Question } from '../state'
 
 /**
+ * How a question ended: what the user said, or why nothing was: they closed it, its ten minutes ran
+ * out with nobody answering, or its run was stopped. A tool that asks tells the model which, since
+ * "you closed it" said of a question nobody looked at is a thing the user never did.
+ */
+export type Asking = { answer: string } | { answer: null; ended: 'closed' | 'timeout' | 'stopped' }
+
+/**
  * A tile, as the place something is asked: its workspace, and its element's id there. An element's
  * id is unique in its workspace and no further, so the id alone names a tile in every workspace.
  */
