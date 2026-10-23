@@ -4,6 +4,7 @@ import type { HubItem } from '../../../shared/hub/hub'
 import {
   initials,
   itemKey,
+  searchItems,
   standing,
   useHubDirectory,
   withBrowserItem,
@@ -128,7 +129,8 @@ function Featured({ directory, entry }: PartProps): ReactElement | null {
 function Others({ directory, entry, search }: PartProps & { search: boolean }): ReactElement {
   const { others, query, setQuery, more, retryOthers } = directory
   const searching = query.trim() !== ''
-  const items = withBrowserItem(others.items, query)
+  const withBrowser = withBrowserItem(others.items, query)
+  const items = searching ? searchItems(withBrowser, query) : withBrowser
   return (
     <div className="mt-8">
       <h4 className="text-xs text-muted-foreground">On Jaspers Hub</h4>
@@ -136,11 +138,18 @@ function Others({ directory, entry, search }: PartProps & { search: boolean }): 
         <input
           type="search"
           aria-label="Search Jaspers Hub"
+          data-owns-escape={query ? '' : undefined}
           value={query}
           placeholder="Search Jaspers Hub"
           autoComplete="off"
           spellCheck={false}
           onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape' || !query) return
+            event.preventDefault()
+            event.stopPropagation()
+            setQuery('')
+          }}
           // The browser's own clear button is drawn in its own colors, which are not the app's.
           className={`${FIELD} mt-2 [&::-webkit-search-cancel-button]:hidden`}
         />

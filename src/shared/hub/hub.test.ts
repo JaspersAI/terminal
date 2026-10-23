@@ -249,4 +249,7 @@ test('a search that found no plugin says Hub has none, so the model may build on
   assert.equal(hubFindings('weather', []), 'Jaspers Hub has no plugin for "weather".')
   const { items } = readItemList({ items: [{ ...SEC, kind: 'skill' }], more: false })
   assert.equal(hubFindings('sec', items), 'Jaspers Hub has no plugin for "sec".')
+  // Unrelated semantic neighbors returned by Hub are filtered out before telling the model.
+  const { items: neighbors } = readItemList({ items: [SEC], more: false })
+  assert.equal(hubFindings('fred', neighbors), 'Jaspers Hub has no plugin for "fred".')
 })
