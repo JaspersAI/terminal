@@ -43,7 +43,7 @@ The App includes a coding agent that can write plugin code at your request. Code
 
 7. Brokerage Connections and Order Execution
 
-Some plugins can connect to brokerage accounts (for example through a broker's API). Jaspers does not hold accounts or funds, does not route, place, or execute orders on its own systems, and receives no transaction-based compensation. Any order placed through a brokerage connection is placed by you, on your account, under your agreement with your broker, and at your sole risk. You are responsible for reviewing every order before it is submitted. Do not configure the Services to submit orders without your review.
+Some plugins can connect to brokerage accounts (for example through a broker's API). Jaspers does not hold accounts or funds, does not route, place, or execute orders on its own systems, and receives no transaction-based compensation. Any order placed through a brokerage connection is placed by you, on your account, under your agreement with your broker, and at your sole risk. You are responsible for reviewing every order before it is submitted. Any automated order submission you configure — through plugins, skills, scheduled tasks, or scripts — is your own system, assembled and operated by you, at your sole risk; Jaspers does not design, operate, supervise, or recommend it.
 
 8. Hosted Services
 
@@ -104,4 +104,4 @@ Miscellaneous. These Terms, the Privacy Policy, and the applicable source licens
 
 Contact. Jaspers, Inc., 2261 Market St., Ste 46118, San Francisco, CA 94114 · legal@jsprai.com
 
-v.3 · October 21, 2026
+v.4 · October 22, 2026
