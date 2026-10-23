@@ -921,11 +921,11 @@ export function publishChecked(workspaceId: string, panelId: string, output: Rec
   const summary = def?.summarize?.(panel.state, output) ?? null
   const room = researchRoomOf({ content: panel.content, state: panel.state, output })
   const roomText = room
-    ? researchLiveText(
+    ? (researchLiveText(
         getLive(RESEARCH_PLUGIN, `rooms/${room}`),
         (seq) => getLive(RESEARCH_PLUGIN, `rooms/${room}/m/${seq}`),
         getLive(RESEARCH_PLUGIN, 'analysts'),
-      )
+      ) ?? undefined)
     : output['room'] === null && panel.content.kind === 'view' && panel.content.view === 'research/room'
       ? null
       : undefined
