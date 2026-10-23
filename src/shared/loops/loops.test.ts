@@ -22,6 +22,7 @@ import {
   notPlaced,
   notStarted,
   readLoops,
+  elementTarget,
   refreshTarget,
   retagged,
   START,
@@ -701,4 +702,15 @@ test('refreshTarget trims element and panel ids, prefers direct grid targets ove
   assert.equal(refreshTarget(grids, loops, ' f3 '), 'f3')
   assert.equal(refreshTarget(grids, loops, 'loop_9'), 'loop_9')
   assert.equal(refreshTarget(grids, loops, ' e99 '), 'e99')
+  assert.equal(elementTarget(grids, loops, ' e11 '), 'e11')
+  assert.equal(elementTarget(grids, loops, ' p11 '), 'e11')
+  for (const target of ['loop_1', '@loop_1', 'f1', ' loop_1 ']) {
+    assert.equal(elementTarget(grids, loops, target), 'e1', target)
+  }
+  assert.equal(elementTarget(colliding, loops, ' f1 '), 'f1')
+  assert.equal(elementTarget(colliding, loops, ' loop_1 '), 'f1')
+  assert.equal(elementTarget(colliding, loops, '@loop_1'), 'e1')
+  assert.equal(elementTarget(grids, loops, 'loop_2'), 'e4')
+  assert.equal(elementTarget(grids, loops, 'loop_3'), 'loop_3')
+  assert.equal(elementTarget(grids, loops, ' e99 '), 'e99')
 })

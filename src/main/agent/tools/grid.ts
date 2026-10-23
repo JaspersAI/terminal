@@ -8,6 +8,7 @@ import {
   NAMED_SIZES,
   presetSlots,
   PRESET_NAMES,
+  readRectInput,
   setRect,
   type Anchor,
   type ElementMode,
@@ -19,7 +20,7 @@ import {
   type Size,
 } from '../../../shared/grid/grid'
 import { MAIN_WINDOW, windowNumbers, WINDOWS_MAX } from '../../../shared/grid/windows'
-import { frameOf, isTile, notPlaced, refreshTarget } from '../../../shared/loops/loops'
+import { elementTarget, frameOf, isTile, notPlaced, refreshTarget } from '../../../shared/loops/loops'
 import { asWindow, placeChecked, refreshChecked, removeChecked } from '../../actions'
 import { loopsOf, notOwnFrame, ownTile } from '../../loops/loops'
 import {
@@ -44,18 +45,18 @@ const MODES: ElementMode[] = ['tiled', 'floating', 'maximized', 'minimized']
 
 const ELEMENT_ID = {
   type: 'string',
-  description: 'An element id, like e3.',
+  description: 'An element or loop id, like e3 or loop_1.',
 }
 
 /** The cells a rect may take, on the grid this round acts on: the workspace's size, not a constant. */
-function rectSchema({ cols, rows }: GridSize): Record<string, unknown> {
+function rectSchema({ cols, rows }: GridSize, minH = MIN_CELLS): Record<string, unknown> {
   return {
     type: 'object',
     properties: {
       x: { type: 'integer', minimum: 0, maximum: cols - MIN_CELLS },
-      y: { type: 'integer', minimum: 0, maximum: rows - MIN_CELLS },
+      y: { type: 'integer', minimum: 0, maximum: rows - minH },
       w: { type: 'integer', minimum: MIN_CELLS, maximum: cols },
-      h: { type: 'integer', minimum: MIN_CELLS, maximum: rows },
+      h: { type: 'integer', minimum: minH, maximum: rows },
     },
     required: ['x', 'y', 'w', 'h'],
   }
@@ -123,6 +124,7 @@ export function gridTools(context?: ToolContext): Tool[] {
   const hidden = new Set([...(screens.all ? [] : ['use_all_screens']), ...(screens.one ? [] : ['use_one_screen'])])
   // A piece of work's agent lays its views out inside the work's own tile, wherever that is: it names no window.
   const inside = context?.loop !== undefined
+  const MOVE_RECT = inside ? RECT : rectSchema(size, 1)
   const where = inside
     ? `in your work's tile, on its own ${size.cols} columns × ${size.rows} rows`
     : `on the grid, ${size.cols} columns × ${size.rows} rows filling the window`
@@ -161,8 +163,8 @@ export function gridTools(context?: ToolContext): Tool[] {
         const placement = {
           size: optional(input.size, asSize),
           anchor: optional(input.anchor, asAnchor),
-          rect: optional(input.rect, asRect),
-          replace: optional(input.replace, asElementId),
+          rect: optional(input.rect, (raw) => asRect(raw, gridSizeOf(workspaceId))),
+          replace: optional(input.replace, (raw) => resolveElementId(workspaceId, raw)),
         }
         // A loop's agent takes the place of its own tiles only, and what it places is another of them.
         // The docked chat is no work's tile: it is the global conversation, and where it sits is the
@@ -194,37 +196,40 @@ export function gridTools(context?: ToolContext): Tool[] {
       name: 'move_element',
       description: inside
         ? 'Move an element to new cells; pass its current w and h to keep its size. A tiled element needs the cells free, and the error names what is in the way. A floating one may overlap. A maximized one is restored there.'
-        : "Move an element to new cells; pass its current w and h to keep its size. With window, move it into another open window instead: rect there is optional, and it keeps its size where that fits. A piece of work's tile takes the views inside it along; a view inside one stays in its tile. A tiled element needs the cells free, and the error names what is in the way. A floating one may overlap. A maximized or a minimized one is restored there.",
+        : "Move an element to new cells; pass its current w and h to keep its size. With window, move it into another open window instead: rect there is optional, and it keeps its size where that fits. A piece of work's tile takes the views inside it along; a view inside one stays in its tile. A tiled element needs the cells free, and the error names what is in the way. A floating one may overlap. A maximized one is restored there; a minimized one stays minimized on its 1-row bar (and is restored when moved into another window).",
       parameters: {
         type: 'object',
         properties: {
           elementId: ELEMENT_ID,
-          rect: RECT,
+          rect: MOVE_RECT,
           ...(inside ? {} : { window: { ...WINDOW, description: 'Another open window to move it into.' } }),
         },
         required: inside ? ['elementId', 'rect'] : ['elementId'],
       },
       async run(input, context) {
         const { workspaceId } = context
-        const id = asElementId(input.elementId)
+        const id = resolveElementId(workspaceId, input.elementId, input.panelId, input.id)
         ownTile(context, id)
+        const gridSize = gridSizeOf(workspaceId)
         const window = optional(input.window, asWindow)
         if (window !== undefined) {
           const { element, resolved, from } = moveElementAcross(workspaceId, id, window, {
-            rect: optional(input.rect, asRect),
+            rect: optional(input.rect, (raw) => asRect(raw, gridSize)),
           })
           return JSON.stringify({ elementId: element.id, window, from, rect: element.rect, resolved })
         }
         if (input.rect === undefined || input.rect === null)
           throw new Error('Give rect for new cells, or window for another window.')
-        const { element } = changeGridOf(workspaceId, id, (grid) => setRect(grid, id, asRect(input.rect)))
+        const { element } = changeGridOf(workspaceId, id, (grid) =>
+          setRect(grid, id, asRect(input.rect, grid.size), true),
+        )
         return JSON.stringify({ elementId: element.id, rect: element.rect })
       },
     },
     {
       name: 'resize_element',
       description:
-        'Resize an element; pass its current x and y to keep its top left corner. Same rules as move_element: a tiled element needs the cells free.',
+        'Resize an element; pass its current x and y to keep its top left corner. Same rules as move_element: a tiled element needs the cells free, and a maximized or a minimized one is restored there.',
       parameters: {
         type: 'object',
         properties: { elementId: ELEMENT_ID, rect: RECT },
@@ -232,9 +237,11 @@ export function gridTools(context?: ToolContext): Tool[] {
       },
       async run(input, context) {
         const { workspaceId } = context
-        const id = asElementId(input.elementId)
+        const id = resolveElementId(workspaceId, input.elementId, input.panelId, input.id)
         ownTile(context, id)
-        const { element } = changeGridOf(workspaceId, id, (grid) => setRect(grid, id, asRect(input.rect)))
+        const { element } = changeGridOf(workspaceId, id, (grid) =>
+          setRect(grid, id, asRect(input.rect, grid.size), false),
+        )
         return JSON.stringify({ elementId: element.id, rect: element.rect })
       },
     },
@@ -244,7 +251,7 @@ export function gridTools(context?: ToolContext): Tool[] {
       parameters: { type: 'object', properties: { elementId: ELEMENT_ID }, required: ['elementId'] },
       async run(input, context) {
         const { workspaceId } = context
-        const id = asElementId(input.elementId)
+        const id = resolveElementId(workspaceId, input.elementId, input.panelId, input.id)
         ownTile(context, id)
         notOwnFrame(context, id)
         removeChecked(workspaceId, id)
@@ -262,7 +269,7 @@ export function gridTools(context?: ToolContext): Tool[] {
       },
       async run(input, context) {
         const { workspaceId } = context
-        const id = asElementId(input.elementId)
+        const id = resolveElementId(workspaceId, input.elementId, input.panelId, input.id)
         ownTile(context, id)
         const { element, resolved } = changeMode(workspaceId, id, asMode(input.mode))
         return JSON.stringify({ elementId: element.id, mode: element.mode, rect: element.rect, resolved })
@@ -306,7 +313,7 @@ export function gridTools(context?: ToolContext): Tool[] {
       description: 'Focus an element. The focused element is what "that" and "it" mean.',
       parameters: { type: 'object', properties: { elementId: ELEMENT_ID }, required: ['elementId'] },
       async run(input, { workspaceId }) {
-        const id = asElementId(input.elementId)
+        const id = resolveElementId(workspaceId, input.elementId, input.panelId, input.id)
         focus(workspaceId, id)
         return JSON.stringify({ focused: id })
       },
@@ -421,14 +428,9 @@ export function asAnchor(raw: unknown): Anchor {
   throw new Error(`anchor must be one of ${EDGE_ANCHORS.join(', ')}, or {"beside" | "below" | "above": element id}.`)
 }
 
-export function asRect(raw: unknown): Rect {
-  const value = unstring(raw)
-  if (isRecord(value)) {
-    const { x, y, w, h } = value
-    if (typeof x === 'number' && typeof y === 'number' && typeof w === 'number' && typeof h === 'number') {
-      return { x, y, w, h }
-    }
-  }
+export function asRect(raw: unknown, size?: GridSize): Rect {
+  const rect = readRectInput(unstring(raw), size)
+  if (rect) return rect
   throw new Error('rect must be {"x", "y", "w", "h"} in cells.')
 }
 
@@ -439,6 +441,11 @@ function asElementId(...values: unknown[]): string {
     if (id) return id
   }
   throw new Error('elementId must be an element id from the grid, like e3.')
+}
+
+/** Resolves an element, panel, or loop identifier to an element id on the workspace's grids. */
+function resolveElementId(workspaceId: string, ...values: unknown[]): string {
+  return elementTarget(getGrids(workspaceId), loopsOf(workspaceId).list, asElementId(...values))
 }
 
 function asMode(value: unknown): ElementMode {
