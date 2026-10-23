@@ -51,10 +51,10 @@ registerSchemes()
 const primary = app.requestSingleInstanceLock()
 if (!primary) app.quit()
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!primary) return
   start()
-  const initialTerms = refreshTerms()
+  await refreshTerms()
   // Light, dark, or the system's, before the first window opens.
   startTheme()
   // What serves a plugin view's page and the runtime it borrows.
@@ -112,10 +112,7 @@ app.whenReady().then(() => {
 
   // The renderer reads the tree once on load and hears every change after that over
   // state:changed. It changes nothing itself: it dispatches, and the result comes back by push.
-  ipcMain.handle('state:get', async () => {
-    await initialTerms
-    return toPublic(getState())
-  })
+  ipcMain.handle('state:get', () => toPublic(getState()))
   ipcMain.handle('state:dispatch', (event, action: unknown) =>
     recordAction(event.sender, action, () => dispatch(action)),
   )

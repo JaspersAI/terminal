@@ -359,10 +359,12 @@ test('chooseTermsText and termsAfterFetch keep the newest terms and require re-a
     acceptedTerms: v2,
     termsText: v3,
   })
-  // A state.json with termsAccepted: true from before acceptedTerms existed adopts its stored/bundled terms and still prompts when the website updates.
-  const migrated = loadTermsState({ termsAccepted: true }, v3)
-  assert.equal(migrated.termsAccepted, true)
-  assert.equal(termsAfterFetch(migrated, v4Html).termsAccepted, false)
+  // A state.json with termsAccepted: true from before acceptedTerms existed (v2) requires re-accepting the current terms (v3).
+  assert.deepEqual(loadTermsState({ termsAccepted: true }, v3), {
+    termsAccepted: false,
+    acceptedTerms: null,
+    termsText: v3,
+  })
 })
 
 test('the Windows installer and build scripts pull the full Terms of Use from jsprai.com/terms in one-click mode', () => {
