@@ -12,6 +12,7 @@ import {
   normalizeBounds,
   normalizeBrowserUrl,
   readBrowserState,
+  scaleBounds,
   shouldShowBrowser,
   type BrowserAction,
   type BrowserBounds,
@@ -116,6 +117,8 @@ interface Entry {
   stateUrl: string
   refreshedAt: number | null
   bounds: BrowserBounds | null
+  boundsWindow: number | null
+  viewport: { width: number; height: number } | null
   rendererVisible: boolean
   attachedWindow: number | null
   attachedView: ManagedBrowserView | null
@@ -263,11 +266,13 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     }
     const win = deps.getWindow(standing.window)
     const viewport = win?.viewport() ?? null
-    const clipped = entry.bounds && viewport ? clipBounds(entry.bounds, viewport) : entry.bounds
+    const onBoundsWindow = entry.boundsWindow === standing.window
+    const scaled = onBoundsWindow && entry.bounds ? scaleBounds(entry.bounds, entry.viewport, viewport) : null
+    const clipped = scaled && viewport ? clipBounds(scaled, viewport) : scaled
     const show = shouldShowBrowser({
       onCurrentWorkspace: state.currentWorkspaceId === entry.workspaceId,
       visibleInGrid: standing.visibleInGrid,
-      rendererVisible: entry.rendererVisible,
+      rendererVisible: onBoundsWindow && entry.rendererVisible,
       bounds: clipped,
       hasUrl: Boolean(active.url || entry.stateUrl),
       hasError: active.error !== null,
@@ -389,6 +394,8 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       stateUrl: '',
       refreshedAt: panel.refreshedAt,
       bounds: null,
+      boundsWindow: null,
+      viewport: null,
       rendererVisible: false,
       attachedWindow: null,
       attachedView: null,
@@ -491,6 +498,8 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
 
       const entry = ensureEntry(workspaceId, panel)
       entry.bounds = bounds
+      entry.boundsWindow = callerWindow
+      entry.viewport = callerWindow !== null ? (deps.getWindow(callerWindow)?.viewport() ?? null) : null
       entry.rendererVisible = rendererVisible
       applyPanelState(entry, panel, stateUrl)
       positionEntry(entry, state)
@@ -588,9 +597,14 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     detach(callerWindow, rawWorkspaceId, rawPanelId) {
       if (callerWindow === null || typeof rawWorkspaceId !== 'string' || typeof rawPanelId !== 'string') return
       const entry = entries.get(entryKey(rawWorkspaceId, rawPanelId))
-      if (entry && (entry.attachedWindow === null || entry.attachedWindow === callerWindow)) {
-        entry.rendererVisible = false
-        detachFromWindow(entry)
+      if (
+        entry &&
+        (entry.boundsWindow === callerWindow ||
+          entry.attachedWindow === callerWindow ||
+          (entry.boundsWindow === null && entry.attachedWindow === null))
+      ) {
+        if (entry.boundsWindow === callerWindow || entry.boundsWindow === null) entry.rendererVisible = false
+        if (entry.attachedWindow === callerWindow || entry.attachedWindow === null) detachFromWindow(entry)
       }
       this.sweep()
     },
@@ -627,6 +641,10 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (entry.attachedWindow === windowNumber) {
           entry.attachedWindow = null
           entry.attachedView = null
+        }
+        if (entry.boundsWindow === windowNumber) {
+          entry.boundsWindow = null
+          entry.viewport = null
           entry.rendererVisible = false
         }
       }

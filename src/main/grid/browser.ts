@@ -1,5 +1,11 @@
 import { ipcMain, session, WebContentsView, type BrowserWindow, type Session } from 'electron'
-import { BROWSER_PARTITION, browserClientHintHeader, browserUserAgent, isBrowserUrl } from '../../shared/grid/browser'
+import {
+  BROWSER_PARTITION,
+  browserClientHintHeader,
+  browserUserAgent,
+  isBrowserUrl,
+  type BrowserBounds,
+} from '../../shared/grid/browser'
 import { PANEL_TEXT_MAX, panelOf } from '../../shared/grid/grid'
 import { publishChecked, publishTextChecked, setPanelStateChecked } from '../actions'
 import { getState, subscribe } from '../state'
@@ -25,15 +31,22 @@ const THEATER_SCRIPT = (theater: boolean): string => `
   if (typeof document === 'undefined' || !document.documentElement) return;
   const id = '__jaspers-theater-mode';
   let style = document.getElementById(id);
+  const w = window;
   if (${theater ? 'true' : 'false'}) {
     if (!style) {
       style = document.createElement('style');
       style.id = id;
       style.textContent = \`
-        video { max-width: 100% !important; }
+        video {
+          max-width: 100% !important;
+          max-height: 100vh !important;
+          object-fit: contain !important;
+        }
         [class*="live-player"], [class*="video-player"], [data-component*="video"], #player-theater-container, #full-bleed-container {
           width: 100% !important;
           max-width: 100% !important;
+          max-height: 100vh !important;
+          min-height: 0 !important;
           background: #000 !important;
         }
       \`;
@@ -45,8 +58,27 @@ const THEATER_SCRIPT = (theater: boolean): string => `
       if (btn instanceof HTMLElement) btn.click();
       else flexy.setAttribute('theater', '');
     }
+    if (!w.__jaspersTheaterResize) {
+      w.__jaspersTheaterResize = () => {
+        if (!document.getElementById(id)) return;
+        const target =
+          document.querySelector('#player-theater-container, #full-bleed-container, [class*="live-player"], [class*="video-player"], [data-component*="video"]') ||
+          document.querySelector('video');
+        if (target instanceof HTMLElement) {
+          const rect = target.getBoundingClientRect();
+          if (rect.height > 0 && (rect.top < -4 || rect.top > 4)) {
+            window.scrollBy({ top: rect.top, behavior: 'instant' });
+          }
+        }
+      };
+      window.addEventListener('resize', w.__jaspersTheaterResize, { passive: true });
+    }
   } else {
     if (style) style.remove();
+    if (w.__jaspersTheaterResize) {
+      window.removeEventListener('resize', w.__jaspersTheaterResize);
+      delete w.__jaspersTheaterResize;
+    }
     const flexy = document.querySelector('ytd-watch-flexy');
     if (flexy && flexy.hasAttribute('theater')) {
       const btn = document.querySelector('.ytp-size-button');
@@ -104,9 +136,12 @@ function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
       webSecurity: true,
       allowRunningInsecureContent: false,
       navigateOnDragDrop: false,
+      backgroundThrottling: false,
     },
   })
   raw.setVisible(false)
+  let lastBounds: BrowserBounds | null = null
+  let lastVisible = false
   const { webContents } = raw
   const cleanUa = browserUserAgent(webContents.getUserAgent())
   if (cleanUa) webContents.setUserAgent(cleanUa)
@@ -159,10 +194,25 @@ function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
     getTitle: () => (webContents.isDestroyed() ? '' : webContents.getTitle()),
     isLoading: () => !webContents.isDestroyed() && webContents.isLoading(),
     setBounds: (bounds) => {
-      if (!webContents.isDestroyed()) raw.setBounds(bounds)
+      if (webContents.isDestroyed()) return
+      if (
+        lastBounds &&
+        lastBounds.x === bounds.x &&
+        lastBounds.y === bounds.y &&
+        lastBounds.width === bounds.width &&
+        lastBounds.height === bounds.height
+      ) {
+        return
+      }
+      lastBounds = { ...bounds }
+      raw.setBounds(bounds)
     },
     setVisible: (visible) => {
-      if (!webContents.isDestroyed()) raw.setVisible(visible)
+      if (webContents.isDestroyed()) return
+      if (lastVisible === visible) return
+      lastVisible = visible
+      if (!visible) lastBounds = null
+      raw.setVisible(visible)
     },
     setTheaterMode: (theater, url) => {
       if (webContents.isDestroyed()) return
