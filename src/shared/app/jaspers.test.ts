@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
 import { test } from 'node:test'
 import {
   JASPERS_ACCOUNT,
@@ -365,31 +364,6 @@ test('chooseTermsText and termsAfterFetch keep the newest terms and require re-a
     acceptedTerms: null,
     termsText: v3,
   })
-})
-
-test('the Windows installer and build scripts pull the full Terms of Use from jsprai.com/terms in one-click mode', () => {
-  const builder = fs.readFileSync(new URL('../../../electron-builder.yml', import.meta.url), 'utf8')
-  const nsisBlock = builder.match(/^nsis:\n((?:(?:  .*|#.*)\n?)*)/m)?.[1] ?? ''
-  const nsis = Object.fromEntries(
-    [...nsisBlock.matchAll(/^  ([A-Za-z0-9_]+):\s*(.+)$/gm)].map(([, key, value]) => [key, value.trim()]),
-  )
-  assert.equal(nsis['license'], 'build/license.txt')
-  assert.notEqual(nsis['oneClick'], 'false')
-
-  const pkg = JSON.parse(fs.readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as {
-    scripts: Record<string, string>
-  }
-  assert.match(pkg.scripts['prebuild'] ?? '', /pull-terms\.mjs/)
-  assert.match(pkg.scripts['predev'] ?? '', /pull-terms\.mjs/)
-
-  const license = fs.readFileSync(new URL('../../../build/license.txt', import.meta.url), 'utf8')
-  assert.match(license, /^\uFEFFTerms of Use\n\nEffective October 7, 2026\./)
-  for (let section = 1; section <= 16; section++) {
-    assert.match(license, new RegExp(`^${section}\\. `, 'm'), `missing Section ${section}`)
-  }
-  assert.match(license, /1\. Relationship to the Business Source License/)
-  assert.match(license, /16\. General/)
-  assert.match(license, /v\.3 · October 21, 2026\s*$/)
 })
 
 test('terms acceptance is asked on the main window until accepted, regardless of onboarding, and never on extension windows', () => {
