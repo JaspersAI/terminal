@@ -20,7 +20,7 @@ import {
 } from '../../shared/grid/browser'
 import { errorMessage } from '../lib/errors'
 import { dispatch, useAppState } from '../lib/state'
-import { displayAddress, publishedOutput, tabLabel, viewportVisible } from './browser-view'
+import { displayAddress, publishedOutput, sameBrowserSnapshot, tabLabel, viewportVisible } from './browser-view'
 import type { ViewProps } from './index'
 
 // The built-in browser (`core/browser`). Renders a switchable tab bar, navigation chrome (including
@@ -62,7 +62,6 @@ const NAV_BUTTON =
 export function Browser({ panel }: ViewProps): ReactElement {
   const [stateUrl] = usePanelState<string>(panel, 'url', DEFAULT_BROWSER_URL)
   const refreshedAt = useData(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`)
-  const grids = useAppState((s) => s.grids[panel.workspaceId])
   const updateAvailable = useAppState((s) => (s.updates.status === 'ready' ? s.updates.available : null))
 
   const initialAddress = normalizeBrowserUrl(stateUrl) || DEFAULT_BROWSER_URL
@@ -113,7 +112,9 @@ export function Browser({ panel }: ViewProps): ReactElement {
   useEffect(
     () =>
       window.app.browser.onState((next) => {
-        if (next.workspaceId === panel.workspaceId && next.panelId === panel.id) setSnapshot(next)
+        if (next.workspaceId === panel.workspaceId && next.panelId === panel.id) {
+          setSnapshot((prev) => (sameBrowserSnapshot(prev, next) ? prev : next))
+        }
       }),
     [panel.workspaceId, panel.id],
   )
@@ -130,14 +131,13 @@ export function Browser({ panel }: ViewProps): ReactElement {
         bounds,
         inert: anchor.closest('[inert]') !== null,
         modalOpen: document.querySelector('[aria-modal="true"]') !== null,
-        dragging: document.querySelector('[data-grid-drag], #drag-ghost') !== null,
         overlays: collectOverlays(anchor),
       })
     const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height},${visible},${stateUrl},${String(refreshedAt ?? '')}`
     if (lastSyncRef.current === key) return
     lastSyncRef.current = key
     window.app.browser.sync(panel.workspaceId, panel.id, bounds, visible).then(
-      (next) => setSnapshot(next),
+      (next) => setSnapshot((prev) => (sameBrowserSnapshot(prev, next) ? prev : next)),
       (err: unknown) =>
         setSnapshot((prev) => ({
           ...prev,
@@ -152,7 +152,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
 
   useLayoutEffect(() => {
     syncBounds()
-  }, [syncBounds, grids])
+  })
 
   useEffect(() => {
     const anchor = viewportRef.current
@@ -377,11 +377,11 @@ export function Browser({ panel }: ViewProps): ReactElement {
           </button>
         )}
       </header>
-      {/* Inset by 6px on left, right, and bottom so the tile's 5px resize edges and corners stay uncovered by the native view. */}
+      {/* Inset by 10px on left, right, and bottom so the tile's 5px resize edges and 10px corners stay uncovered by the native view. */}
       <div
         ref={viewportRef}
         data-browser-viewport={panel.id}
-        className="relative mx-1.5 mb-1.5 min-h-0 flex-1 bg-background"
+        className="relative mx-2.5 mb-2.5 min-h-0 flex-1 bg-background"
       >
         {shownError ? (
           <div className="flex h-full flex-col items-start justify-center gap-2 p-4 text-xs">
@@ -417,22 +417,15 @@ function rectOf(element: Element): BrowserBounds {
 }
 
 /**
- * Collects bounding boxes of dropdown menus, popovers, and higher-z floating sibling tiles that sit
- * over this browser tile. The floating composer (superagent) is excluded so video playback remains
- * visible while chatting with the assistant.
+ * Collects bounding boxes of dropdown menus and dialog popovers that sit over this browser tile.
+ * Grid drags, floating tiles, and the floating composer are excluded so video playback remains
+ * stable across workspace manipulations.
  */
 function collectOverlays(anchor: HTMLElement): BrowserBounds[] {
-  const selectors = ['[role="menu"]', '[role="dialog"]', '[id^="element-"][data-mode="floating"]']
+  const selectors = ['[role="menu"]', '[role="dialog"]']
   const overlays: BrowserBounds[] = []
   for (const node of document.querySelectorAll(selectors.join(', '))) {
     if (node.contains(anchor) || anchor.contains(node)) continue
-    if (node.id.startsWith('element-')) {
-      const ownAtLevel = Array.from(node.parentElement?.children ?? []).find((child) => child.contains(anchor))
-      if (!ownAtLevel) continue
-      const nodeZ = Number((node as HTMLElement).style.zIndex || 0)
-      const ownZ = Number((ownAtLevel as HTMLElement).style.zIndex || 0)
-      if (nodeZ <= ownZ) continue
-    }
     const bounds = rectOf(node)
     if (bounds.width > 0 && bounds.height > 0) overlays.push(bounds)
   }

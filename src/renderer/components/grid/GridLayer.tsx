@@ -95,12 +95,7 @@ export function GridLayer({ workspaceId, windowNumber }: Props): ReactElement {
         )}
         {draft && !draft.settling && (
           // Over every element while a drag lasts, so a view in a frame cannot take the pointer and the cursor holds.
-          <div
-            aria-hidden
-            data-grid-drag
-            className="absolute inset-0"
-            style={{ zIndex: top + 2, cursor: CURSORS[draft.handle] }}
-          />
+          <div aria-hidden className="absolute inset-0" style={{ zIndex: top + 2, cursor: CURSORS[draft.handle] }} />
         )}
       </div>
     </div>
