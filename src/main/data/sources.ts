@@ -11,6 +11,8 @@ import { call } from '../plugins/mcp'
 import { runInHost } from '../plugins/plugin-host'
 import { getSource, type RegisteredSource } from '../plugins/registry'
 import { getState } from '../state'
+import { sourceEvent } from '../../shared/app/eye-events'
+import { record as recordEye } from '../eye/eye'
 import { keepCitations } from './citations'
 import { record } from './store'
 
@@ -77,6 +79,7 @@ export async function runSource(
     }
   }
 
+  const startedAt = Date.now()
   let value: unknown
   let text: string
   try {
@@ -93,6 +96,14 @@ export async function runSource(
       text: null,
       error: message,
     })
+    recordEye(
+      sourceEvent(source.id, {
+        workspace: workspaceId,
+        ms: Date.now() - startedAt,
+        ok: false,
+        error: message,
+      }),
+    )
     throw error instanceof Error && error.message === message ? error : new Error(message, { cause: error })
   }
 
@@ -100,6 +111,14 @@ export async function runSource(
   const now = Date.now()
   sweep(now)
   const found = extractRows(value)
+  recordEye(
+    sourceEvent(source.id, {
+      workspace: workspaceId,
+      ms: now - startedAt,
+      ok: true,
+      ...(found ? { count: found.rows.length } : {}),
+    }),
+  )
   if (!found) {
     const resultId = `r${++seq}`
     texts.set(resultId, text)

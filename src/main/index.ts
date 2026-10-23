@@ -29,8 +29,9 @@ import { compact, notifications, query, startStore, stats, stopOnQuit, usageToda
 import { startBackground, startsHidden } from './app/background'
 import { deleteRecordings, endSession, eyeFolder, startEye } from './eye/eye'
 import { recordAction, recordNote, startTelemetry } from './eye/taps'
+import { closePendingRuns } from './agent/utils/record'
 import { knownSecrets } from './agent/utils/settings'
-import { startUploads, stopUploads } from './eye/upload'
+import { canFlushUploads, flushUploads, startUploads, stopUploads } from './eye/upload'
 import { startTheme } from './app/theme'
 import { installUpdate, startUpdates } from './app/updates'
 import { startTasks, stopTasks, suspendTasks, wakeTasks } from './tasks/tasks'
@@ -235,8 +236,10 @@ app.on('will-quit', closeAllBrowsers)
 // A quit asked for again while the hosts are stopping waits with the first one.
 let hostsStopping = false
 let hostsStopped = false
+let uploadsFlushing = false
+let uploadsFlushed = false
 app.on('before-quit', (event) => {
-  if (hostsStopping) {
+  if (hostsStopping || uploadsFlushing) {
     event.preventDefault()
     return
   }
@@ -252,7 +255,17 @@ app.on('before-quit', (event) => {
   }
   // The quit goes ahead: a host that goes from here on goes with the app.
   quittingHosts()
+  closePendingRuns()
   endSession()
+  if (!uploadsFlushed && canFlushUploads()) {
+    event.preventDefault()
+    uploadsFlushing = true
+    void flushUploads().finally(() => {
+      uploadsFlushing = false
+      uploadsFlushed = true
+      app.quit()
+    })
+  }
 })
 app.on('will-quit', killAllHosts)
 app.on('will-quit', stopUploads)

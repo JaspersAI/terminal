@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import type { AppState } from '../state.ts'
 import {
   actionData,
+  closedRunEvent,
   eyeLine,
   eyeTree,
   hidesCells,
@@ -11,6 +12,7 @@ import {
   noteEvent,
   quietAction,
   readNote,
+  sourceEvent,
   writtenTexts,
   zoomKey,
   zoomWheel,
@@ -442,4 +444,52 @@ test('keyboard and wheel zoom gestures resolve to zoom in, out, or reset', () =>
   assert.equal(zoomWheel({ deltaY: 12, metaKey: true }), 'out')
   assert.equal(zoomWheel({ deltaY: 0, ctrlKey: true }), null)
   assert.equal(zoomWheel({ deltaY: -12, ctrlKey: false, metaKey: false }), null)
+})
+
+test('source runs and in-flight runs closed on quit become masked, capped telemetry lines', () => {
+  assert.deepEqual(sourceEvent('fred/series', { workspace: 'w1', ms: 240, ok: true, count: 50 }), {
+    kind: 'source',
+    name: 'fred/series',
+    workspace: 'w1',
+    ok: true,
+    ms: 240,
+    count: 50,
+  })
+  const failedSource = sourceEvent('sec/filings', {
+    workspace: null,
+    ms: 510,
+    ok: false,
+    error: 'Refused key sk-live-1234567890',
+  })
+  assert.deepEqual(parsed({ ...failedSource, at: 10 }, masking)['data'], {
+    error: 'Refused key ***',
+  })
+
+  const closed = closedRunEvent(
+    'r9',
+    {
+      at: 1000,
+      request: 'Screen with sk-live-1234567890',
+      added: [{ at: 1500, text: 'also check ana@example.com' }],
+      rounds: 2,
+      input: 400,
+      output: 80,
+      calls: 1,
+    },
+    3500,
+  )
+  const line = parsed({ ...closed, at: 3500 }, masking)
+  assert.equal(line['kind'], 'run-end')
+  assert.equal(line['run'], 'r9')
+  assert.equal(line['name'], 'stopped')
+  assert.equal(line['ok'], false)
+  assert.equal(line['ms'], 2500)
+  assert.deepEqual(line['data'], {
+    request: 'Screen with ***',
+    added: [{ at: 1500, text: 'also check ***' }],
+    closed: true,
+    rounds: 2,
+    input: 400,
+    output: 80,
+  })
 })
