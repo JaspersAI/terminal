@@ -15,6 +15,7 @@ import {
   emailOf,
   nearExpiry,
   needsSubscription,
+  parseTermsText,
   readTokens,
   refusalMessage,
   tokensOf,
@@ -329,6 +330,20 @@ export function createSession(deps: SessionDeps): Session {
     token,
     fetch: asAccount,
     call,
+  }
+}
+
+/** Pulls and validates the latest Terms of Use from `url`; null when unreachable or invalid. */
+export async function pullTerms(url: string, send: FetchLike = fetch, timeoutMs = 3_000): Promise<string | null> {
+  try {
+    const response = await send(url, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) })
+    if (response.status < 200 || response.status > 299) {
+      await response.body?.cancel()
+      return null
+    }
+    return parseTermsText(await text(response))
+  } catch {
+    return null
   }
 }
 

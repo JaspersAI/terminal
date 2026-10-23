@@ -3,11 +3,18 @@ import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
-import { SIGNED_OUT, type StoredJaspers } from '../../shared/app/jaspers.ts'
+import {
+  SIGNED_OUT,
+  loadTermsState,
+  needsTermsAcceptance,
+  parseTermsText,
+  termsAfterFetch,
+  type StoredJaspers,
+} from '../../shared/app/jaspers.ts'
 import { findProvider } from '../../shared/llm/providers.ts'
 import { openLoopback } from '../app/loopback.ts'
 import { post, ProviderError } from '../llm/http.ts'
-import { createSession, RefusedError, SignedOutError, type SessionDeps } from './session.ts'
+import { createSession, pullTerms, RefusedError, SignedOutError, type SessionDeps } from './session.ts'
 
 // The sign-in against an Account of the test's own: a server on a port that registers a client,
 // sends the browser back with a code, issues tokens, rotates refresh tokens and ends the grant when
@@ -659,5 +666,58 @@ test('a sign-in sealed elsewhere cannot be used here, and reads as signed out wi
     assert.equal(stored().reason, 'The sign-in could not be opened on this machine. Sign in again.')
   } finally {
     await account.close()
+  }
+})
+
+test('pullTerms fetches the latest Terms of Use from the website on open and requires re-acceptance when updated', async () => {
+  let servedStatus = 200
+  let servedBody = `<main><h1>Terms of Use</h1><p>Effective October 7, 2026. Jaspers, Inc.</p><h2>1. Relationship</h2><p>Original terms.</p><hr><p>v.3 &middot; October 21, 2026</p></main>`
+  const server = createServer((_req, res) => {
+    res.writeHead(servedStatus, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(servedBody)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/terms`
+
+  try {
+    const v3 = parseTermsText(servedBody)!
+    let state = loadTermsState({ termsAccepted: false }, v3)
+    assert.equal(needsTermsAcceptance({ termsAccepted: state.termsAccepted, onboardingComplete: false }, 1), true)
+
+    // First open pulls v3 from the website; user accepts v3.
+    const firstPulled = await pullTerms(url, fetch)
+    assert.equal(firstPulled, v3)
+    state = termsAfterFetch(state, firstPulled!)
+    state = { ...state, termsAccepted: true, acceptedTerms: state.termsText }
+    assert.equal(needsTermsAcceptance({ termsAccepted: state.termsAccepted, onboardingComplete: true }, 1), false)
+
+    // Next open while website still serves v3: remains accepted without prompting.
+    const unchangedPulled = await pullTerms(url, fetch)
+    assert.equal(unchangedPulled, v3)
+    assert.equal(termsAfterFetch(state, unchangedPulled!), state)
+    assert.equal(needsTermsAcceptance({ termsAccepted: state.termsAccepted, onboardingComplete: true }, 1), false)
+
+    // Outage or 502 error page on open: pullTerms returns null and prior acceptance is preserved.
+    servedStatus = 502
+    servedBody = '<html><body><h1>502 Bad Gateway</h1></body></html>'
+    assert.equal(await pullTerms(url, fetch), null)
+
+    // Website updates Terms of Use to v4: next open pulls v4 and requires the user to re-accept.
+    servedStatus = 200
+    servedBody = `<main><h1>Terms of Use</h1><p>Effective November 1, 2026. Jaspers, Inc.</p><h2>1. Relationship</h2><p>Updated terms on website.</p><hr><p>v.4 &middot; November 1, 2026</p></main>`
+    const v4 = parseTermsText(servedBody)!
+    const updatedPulled = await pullTerms(url, fetch)
+    assert.equal(updatedPulled, v4)
+    state = termsAfterFetch(state, updatedPulled!)
+    assert.equal(state.termsText, v4)
+    assert.equal(state.termsAccepted, false)
+    assert.equal(needsTermsAcceptance({ termsAccepted: state.termsAccepted, onboardingComplete: true }, 1), true)
+
+    // User accepts v4; subsequent open with v4 stays accepted.
+    state = { ...state, termsAccepted: true, acceptedTerms: state.termsText }
+    assert.equal(termsAfterFetch(state, (await pullTerms(url, fetch))!).termsAccepted, true)
+  } finally {
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
   }
 })

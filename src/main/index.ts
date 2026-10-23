@@ -40,7 +40,7 @@ import { registerVoiceIpc } from './llm/voice'
 import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
 import { anyInFront, isHttps, openAllStored, registerDragIpc, showAll, watchDisplays } from './grid/windows'
 import { installMenu } from './app/menu'
-import { accountPageAddress, onSignInChange } from './jaspers/jaspers'
+import { accountPageAddress, onSignInChange, refreshTerms } from './jaspers/jaspers'
 
 // The schemes a plugin view's iframe loads from have to be declared before the app is ready; their
 // handlers come after it, below.
@@ -54,6 +54,7 @@ if (!primary) app.quit()
 app.whenReady().then(() => {
   if (!primary) return
   start()
+  const initialTerms = refreshTerms()
   // Light, dark, or the system's, before the first window opens.
   startTheme()
   // What serves a plugin view's page and the runtime it borrows.
@@ -111,7 +112,10 @@ app.whenReady().then(() => {
 
   // The renderer reads the tree once on load and hears every change after that over
   // state:changed. It changes nothing itself: it dispatches, and the result comes back by push.
-  ipcMain.handle('state:get', () => toPublic(getState()))
+  ipcMain.handle('state:get', async () => {
+    await initialTerms
+    return toPublic(getState())
+  })
   ipcMain.handle('state:dispatch', (event, action: unknown) =>
     recordAction(event.sender, action, () => dispatch(action)),
   )
@@ -198,7 +202,11 @@ app.whenReady().then(() => {
     useOneScreen: () => oneScreenOrNotice(),
   })
 
-  startBackground({ showWindow: showAll, windowInFront: anyInFront, suspendTasks, wakeTasks, installUpdate })
+  const reopen = (): void => {
+    void refreshTerms()
+    showAll()
+  }
+  startBackground({ showWindow: reopen, windowInFront: anyInFront, suspendTasks, wakeTasks, installUpdate })
   // Eye, if the user has it on: a frame of the app's own windows every minute, and a line of
   // telemetry for what the app did. It records into a folder on this machine, and the uploader
   // sends each piece to Jaspers as soon as it is whole. Started here rather than with a window, so
@@ -213,9 +221,9 @@ app.whenReady().then(() => {
   // that exists rather than sitting off-screen. After the windows, since it moves them.
   watchDisplays()
 
-  app.on('second-instance', showAll)
+  app.on('second-instance', reopen)
   // The dock icon on macOS.
-  app.on('activate', showAll)
+  app.on('activate', reopen)
 })
 
 // The stdio servers are children of this process and go with it.

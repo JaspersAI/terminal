@@ -212,6 +212,8 @@ export interface BackgroundInfo {
 /** The tree as the renderer sees it. Main pushes the whole thing after every change. */
 export interface AppState {
   termsAccepted: boolean
+  /** The latest Terms of Use text, pulled from the website or fallen back to the bundled copy. */
+  termsText?: string
   onboardingComplete: boolean
   llm: ProviderSetting | null
   voice: ProviderSetting | null

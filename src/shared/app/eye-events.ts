@@ -257,7 +257,8 @@ export function eyeTree(state: AppState): Record<string, unknown> {
     ),
   )
   const { recording, asked, install } = state.eye
-  return { ...state, grids, eye: { recording, asked, install } }
+  const { termsText: _termsText, ...rest } = state
+  return { ...rest, grids, eye: { recording, asked, install } }
 }
 
 /** A panel as Eye keeps it: a note's every word hidden, typing into it no change; any other view as it is. */
