@@ -1,4 +1,11 @@
-import type { DragHandle, Rect } from '../../../shared/grid/grid.ts'
+import type { DragHandle, ElementMode, Rect } from '../../../shared/grid/grid.ts'
+
+/** Whether a drag by hand may take hold of an element in `mode` by `handle`. */
+export function canGrab(mode: ElementMode, handle: DragHandle): boolean {
+  if (mode === 'maximized') return false
+  if (mode === 'minimized') return handle === 'move'
+  return true
+}
 
 /** An edge or a corner an element is resized by. */
 export type Edge = Exclude<DragHandle, 'move'>
