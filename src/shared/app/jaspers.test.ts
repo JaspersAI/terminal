@@ -13,6 +13,7 @@ import {
   emailOf,
   formatLicenseFile,
   gatewayUrl,
+  loadTermsState,
   nearExpiry,
   needsSubscription,
   needsTermsAcceptance,
@@ -341,6 +342,27 @@ test('chooseTermsText and termsAfterFetch keep the newest terms and require re-a
     termsText: v4,
   })
   assert.equal(needsTermsAcceptance({ termsAccepted: afterUpdate.termsAccepted, onboardingComplete: true }, 1), true)
+
+  // Restoring from state.json: fresh install is unaccepted, accepted v3 stays accepted, and accepted v2 prompts on v3.
+  assert.deepEqual(loadTermsState({ termsAccepted: false }, v3), {
+    termsAccepted: false,
+    acceptedTerms: null,
+    termsText: v3,
+  })
+  assert.deepEqual(loadTermsState({ termsAccepted: true, acceptedTerms: v3, termsText: v3 }, v3), {
+    termsAccepted: true,
+    acceptedTerms: v3,
+    termsText: v3,
+  })
+  assert.deepEqual(loadTermsState({ termsAccepted: true, acceptedTerms: v2, termsText: v2 }, v3), {
+    termsAccepted: false,
+    acceptedTerms: v2,
+    termsText: v3,
+  })
+  // A state.json with termsAccepted: true from before acceptedTerms existed adopts its stored/bundled terms and still prompts when the website updates.
+  const migrated = loadTermsState({ termsAccepted: true }, v3)
+  assert.equal(migrated.termsAccepted, true)
+  assert.equal(termsAfterFetch(migrated, v4Html).termsAccepted, false)
 })
 
 test('the Windows installer and build scripts pull the full Terms of Use from jsprai.com/terms in one-click mode', () => {

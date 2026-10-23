@@ -39,6 +39,10 @@ export interface StoredProvider {
 
 export interface MainState {
   termsAccepted: boolean
+  /** The normalized Terms of Use text the user last accepted, or null when not yet accepted. */
+  acceptedTerms: string | null
+  /** The latest Terms of Use text, pulled from the website or fallen back to the cached/bundled copy. */
+  termsText: string
   onboardingComplete: boolean
   llm: StoredProvider | null
   voice: StoredProvider | null
@@ -160,6 +164,7 @@ export function toPublic(state: MainState): AppState {
     p ? { providerId: p.providerId, baseUrl: p.baseUrl, model: p.model, hasToken: p.token !== null } : null
   return {
     termsAccepted: state.termsAccepted,
+    termsText: state.termsText,
     onboardingComplete: state.onboardingComplete,
     llm: strip(state.llm),
     voice: strip(state.voice),

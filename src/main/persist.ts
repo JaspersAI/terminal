@@ -26,11 +26,12 @@ import { findProvider, signsIn } from '../shared/llm/providers'
 import type { Workspace, Budgets } from '../shared/state'
 import { isTheme, type Theme } from '../shared/app/theme'
 import { EYE_OFF, readEye, type StoredEye } from '../shared/app/eye'
-import { SIGNED_OUT, readStoredJaspers, readTermsAccepted, type StoredJaspers } from '../shared/app/jaspers'
+import { SIGNED_OUT, loadTermsState, readStoredJaspers, type StoredJaspers } from '../shared/app/jaspers'
 import { PRO_MODE_OFF, readProMode, type ProMode } from '../shared/app/pro-mode'
 import { readAllowedApps } from '../shared/plugins/apps'
 import type { Task } from '../shared/tasks/tasks'
 import { checkWindows, MAIN_WINDOW, withWindows } from '../shared/grid/windows'
+import bundledTerms from '../../build/license.txt?raw'
 import type { MainState, StoredOAuth, StoredProvider } from './state'
 
 // Where the tree lives between runs. state.json holds everything but the grids and the tasks. Each
@@ -45,6 +46,8 @@ const SAVE_DELAY_MS = 300
 interface StateFile {
   version: 1
   termsAccepted: boolean
+  acceptedTerms?: string | null
+  termsText?: string
   onboardingComplete: boolean
   llm: StoredProvider | null
   voice: StoredProvider | null
@@ -171,8 +174,11 @@ export function load(): MainState {
     eye.install = randomUUID()
     stateDirty = true
   }
+  const terms = loadTermsState(state, bundledTerms)
   return {
-    termsAccepted: readTermsAccepted(state.termsAccepted),
+    termsAccepted: terms.termsAccepted,
+    acceptedTerms: terms.acceptedTerms,
+    termsText: terms.termsText,
     onboardingComplete: state.onboardingComplete,
     llm: state.llm,
     voice: state.voice,
@@ -362,6 +368,8 @@ export function save(next: MainState, prev: MainState): void {
   latest = next
   if (
     next.termsAccepted !== prev.termsAccepted ||
+    next.acceptedTerms !== prev.acceptedTerms ||
+    next.termsText !== prev.termsText ||
     next.onboardingComplete !== prev.onboardingComplete ||
     next.llm !== prev.llm ||
     next.voice !== prev.voice ||
@@ -403,6 +411,8 @@ export function flush(): void {
     const file: StateFile = {
       version: 1,
       termsAccepted: latest.termsAccepted,
+      acceptedTerms: latest.acceptedTerms,
+      termsText: latest.termsText,
       onboardingComplete: latest.onboardingComplete,
       llm: latest.llm,
       voice: latest.voice,

@@ -628,7 +628,11 @@ export async function signInWithJaspers(): Promise<void> {
 }
 
 export function acceptTerms(): void {
-  update((state) => (state.termsAccepted ? state : { ...state, termsAccepted: true }))
+  update((state) =>
+    state.termsAccepted && state.acceptedTerms === state.termsText
+      ? state
+      : { ...state, termsAccepted: true, acceptedTerms: state.termsText },
+  )
 }
 
 export function completeOnboarding(): void {

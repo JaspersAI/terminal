@@ -52,6 +52,7 @@ export function Welcome({ resume, onBegin }: Props): ReactElement {
  * press on the backdrop dismisses it.
  */
 export function TermsDialog(): ReactElement {
+  const currentTerms = useAppState((s) => s.termsText) || termsText
   const acceptButton = useRef<HTMLButtonElement>(null)
   useEffect(() => acceptButton.current?.focus(), [])
 
@@ -95,7 +96,7 @@ export function TermsDialog(): ReactElement {
           aria-label="Terms of Use text"
           className="mt-4 min-h-0 flex-1 overflow-y-auto border border-border bg-muted p-4 text-xs leading-relaxed whitespace-pre-wrap text-foreground"
         >
-          {termsText.trim()}
+          {currentTerms.trim()}
         </div>
         <div className="mt-6 flex items-center justify-between gap-4">
           <p className="text-xs text-muted-foreground">By clicking Accept, you agree to the Terms of Use.</p>
