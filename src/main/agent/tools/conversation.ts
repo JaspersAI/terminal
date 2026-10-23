@@ -1,5 +1,5 @@
 import { cap } from '../../../shared/agent/prompt'
-import { unanswered } from '../utils/questions'
+import { noteAnswered, unanswered } from '../utils/questions'
 import { askUserFor, requestSecret, setSecret, waitForSecret } from '../../actions'
 import { askedBy } from '../utils/runs'
 import type { Tool } from './types'
@@ -29,6 +29,7 @@ export const conversationTools: Tool[] = [
         ? input.choices.filter((one): one is string => typeof one === 'string' && one.trim() !== '').slice(0, 5)
         : []
       const asked = await askUserFor(cap(question, 300), choices, signal, undefined, askedBy(runId))
+      if (asked.answer !== null) noteAnswered(runId, asked.answer)
       return asked.answer ?? unanswered(asked.ended)
     },
   },

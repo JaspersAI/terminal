@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Question } from '../../../shared/state'
-import { createQuestions, notApproved, QUESTION_WAIT_MS, unanswered } from './questions.ts'
+import {
+  answeredIn,
+  clearAnswered,
+  createQuestions,
+  notApproved,
+  noteAnswered,
+  QUESTION_WAIT_MS,
+  unanswered,
+} from './questions.ts'
 
 /** A queue whose screen is the last list it was told to show. Every test runs it on its own clock, so none leaves a real wait behind. */
 function queue() {
@@ -145,4 +153,21 @@ test('a question nobody answered is not told to the model as closed or refused',
   const away = notApproved('installing the plugin x', 'nothing was installed', { answer: null, ended: 'timeout' })
   assert.doesNotMatch(away, /did not approve|do not ask again/)
   assert.match(away, /did not refuse/)
+})
+
+test('a run records when the user has answered a question, ignores refusals, and clears that state when the run ends', () => {
+  assert.equal(answeredIn('run1'), false)
+  noteAnswered('run1', 'No')
+  assert.equal(answeredIn('run1'), false)
+  noteAnswered('run1', ' cancel ')
+  assert.equal(answeredIn('run1'), false)
+  noteAnswered('run1', 'use charts instead')
+  assert.equal(answeredIn('run1'), true)
+  assert.equal(answeredIn('run2'), false)
+  noteAnswered('run1', 'no')
+  assert.equal(answeredIn('run1'), false)
+  noteAnswered('run1')
+  assert.equal(answeredIn('run1'), true)
+  clearAnswered('run1')
+  assert.equal(answeredIn('run1'), false)
 })

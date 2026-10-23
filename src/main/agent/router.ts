@@ -1,6 +1,6 @@
 import { handedBy } from '../../shared/agent/typed'
-import { loopName, named, NO, notStarted, START, startQuestion, type Loop } from '../../shared/loops/loops'
-import { askUser, asWindow, closeLoop, createLoop, deleteLoop, reopenLoop, roomForLoop } from '../actions'
+import { asksForLoop, loopName, named, NO, notStarted, START, startQuestion, type Loop } from '../../shared/loops/loops'
+import { askUserFor, asWindow, closeLoop, createLoop, deleteLoop, reopenLoop, roomForLoop } from '../actions'
 import { gridSizeOf } from '../grid/grid'
 import { getState, toPublic } from '../state'
 import { handOver, sendToLoop } from './loop'
@@ -9,6 +9,7 @@ import { findLoop } from './tools/loops'
 import { asAnchor, asRect, asSize, placementProperties } from './tools/grid'
 import { optional, WINDOW } from './tools/input'
 import type { Tool, ToolContext } from './tools/types'
+import { answeredIn, noteAnswered } from './utils/questions'
 import { askedBy } from './utils/runs'
 
 // The orchestrator's tools that hold loops: one is started, handed a request, closed, reopened, or
@@ -134,18 +135,20 @@ function createLoopTool(context: ToolContext): Tool {
       roomForLoop(workspaceId, window, placement)
       const { plugins, skills } = await setUpLoop(desc, brief, ran)
       // No work goes on the grid unasked: the user is shown what it is and which plugins, and only
-      // Start starts it. A task's run is not asked, since nobody is at it and its instructions are
-      // the user's own words, written when they scheduled it. A refusal is a failed call, so the round
-      // goes back to the model to read rather than ending the run as a handoff would.
-      if (ran.task === undefined) {
-        const answer = await askUser(
+      // Start starts it, unless their request already asked to start a loop or they already answered
+      // a question in this run. A task's run is not asked, since nobody is at it and its instructions
+      // are the user's own words, written when they scheduled it. A refusal is a failed call, so the
+      // round goes back to the model to read rather than ending the run as a handoff would.
+      if (ran.task === undefined && !asksForLoop(ran.asked, answeredIn(ran.runId))) {
+        const asked = await askUserFor(
           startQuestion(desc, plugins),
           [START, NO],
           ran.signal,
           undefined,
           askedBy(ran.runId),
         )
-        const refused = notStarted(answer)
+        if (asked.answer !== null) noteAnswered(ran.runId, asked.answer)
+        const refused = notStarted(asked)
         if (refused !== null) throw new Error(refused)
       }
       const { loop } = createLoop(workspaceId, window, { desc, brief, plugins, skills }, placement)

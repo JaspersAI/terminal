@@ -1,16 +1,32 @@
 // The extension is explicit because Node's test runner resolves this import at run time.
-import { onScreen } from '../../../shared/agent/asking.ts'
+import { onScreen, type Asking } from '../../../shared/agent/asking.ts'
 import type { Question } from '../../../shared/state'
+
+export type { Asking }
 
 /** How long a question waits before the assistant carries on without an answer. */
 export const QUESTION_WAIT_MS = 10 * 60 * 1000
 
-/**
- * How a question ended: what the user said, or why nothing was: they closed it, its ten minutes ran
- * out with nobody answering, or its run was stopped. A tool that asks tells the model which, since
- * "you closed it" said of a question nobody looked at is a thing the user never did.
- */
-export type Asking = { answer: string } | { answer: null; ended: 'closed' | 'timeout' | 'stopped' }
+/** Runs in flight in which the user has already answered a question without refusing. */
+const answeredRuns = new Set<string>()
+const REFUSAL_ANSWER = /^(?:no|nope|cancel|stop|don'?t|do\s+not|never\s*mind)\.?$/i
+
+/** Records that the user answered a question in this run, so a follow-up create_loop does not ask again. */
+export function noteAnswered(runId: string, answer = 'Start'): void {
+  const trimmed = answer.trim()
+  if (!trimmed || REFUSAL_ANSWER.test(trimmed)) answeredRuns.delete(runId)
+  else answeredRuns.add(runId)
+}
+
+/** Whether the user has already answered a question in this run. */
+export function answeredIn(runId: string): boolean {
+  return answeredRuns.has(runId)
+}
+
+/** Clears the run's answered state when the run ends. */
+export function clearAnswered(runId: string): void {
+  answeredRuns.delete(runId)
+}
 
 /** What ask_user says when there is no answer. Ten minutes with nobody answering is not the user closing it. */
 export function unanswered(ended: Extract<Asking, { answer: null }>['ended']): string {
