@@ -180,6 +180,24 @@ export function clipBounds(bounds: BrowserBounds, viewport: { width: number; hei
   return { x: left, y: top, width: right - left, height: bottom - top }
 }
 
+/** Scales bounds proportionally when a window resizes before the renderer's next bounds sync arrives. */
+export function scaleBounds(
+  bounds: BrowserBounds,
+  from: { width: number; height: number } | null,
+  to: { width: number; height: number } | null,
+): BrowserBounds {
+  if (!from || !to || from.width <= 0 || from.height <= 0 || to.width <= 0 || to.height <= 0) return bounds
+  if (from.width === to.width && from.height === to.height) return bounds
+  const sx = to.width / from.width
+  const sy = to.height / from.height
+  return {
+    x: Math.round(bounds.x * sx),
+    y: Math.round(bounds.y * sy),
+    width: Math.max(0, Math.round(bounds.width * sx)),
+    height: Math.max(0, Math.round(bounds.height * sy)),
+  }
+}
+
 /**
  * Resolves the element and enclosing loop frame for a panel across a workspace's windows, whether the
  * tile is visible in its grid layout (not minimized and not covered by another maximized element),

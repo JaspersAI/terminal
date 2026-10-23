@@ -17,6 +17,7 @@ import {
   normalizeBounds,
   normalizeBrowserUrl,
   readBrowserState,
+  scaleBounds,
   shouldShowBrowser,
 } from './browser.ts'
 import { EMPTY_GRID, layoutOf, placeFramed, placeView, setMode, setRect, withLayout } from './grid.ts'
@@ -134,6 +135,24 @@ test('normalizeBounds rounds finite numbers and clipBounds confines a rectangle 
     width: 0,
     height: 100,
   })
+
+  // Scaling a right-half tile when the window shrinks from 1400×1000 to 700×500 keeps it in the right half instead of clipping to 0.
+  assert.deepEqual(
+    scaleBounds(
+      { x: 700, y: 100, width: 680, height: 800 },
+      { width: 1400, height: 1000 },
+      { width: 700, height: 500 },
+    ),
+    { x: 350, y: 50, width: 340, height: 400 },
+  )
+  assert.deepEqual(
+    scaleBounds(
+      { x: 700, y: 100, width: 680, height: 800 },
+      { width: 1400, height: 1000 },
+      { width: 1400, height: 1000 },
+    ),
+    { x: 700, y: 100, width: 680, height: 800 },
+  )
 })
 
 test('browserStanding resolves a panel inside a loop frame, its focus, and when minimize or maximize hides it', () => {

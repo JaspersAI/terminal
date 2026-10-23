@@ -4,6 +4,7 @@ import { BROWSER_VIEW, type BrowserBounds, type BrowserSnapshot } from '../../sh
 import {
   EMPTY_GRID,
   layoutOf,
+  moveAcross,
   placeFramed,
   refreshPanel,
   removeElement,
@@ -51,31 +52,35 @@ function createHarness() {
   }
   const views: FakeView[] = []
   const attached = new Map<number, Set<ManagedBrowserView>>()
+  const viewports = new Map<number, { width: number; height: number }>([
+    [1, { width: 1400, height: 1000 }],
+    [2, { width: 1200, height: 900 }],
+  ])
   const sent: { window: number; snapshot: BrowserSnapshot }[] = []
   const focused: { workspaceId: string; elementId: string }[] = []
 
+  const makeWindow = (n: number): ManagedWindow => ({
+    number: n,
+    viewport: () => viewports.get(n) ?? null,
+    attach: (view) => {
+      let set = attached.get(n)
+      if (!set) {
+        set = new Set()
+        attached.set(n, set)
+      }
+      set.add(view)
+    },
+    detach: (view) => {
+      attached.get(n)?.delete(view)
+    },
+    sendState: (snapshot) => {
+      sent.push({ window: n, snapshot })
+    },
+  })
+
   const windows = new Map<number, ManagedWindow>([
-    [
-      1,
-      {
-        number: 1,
-        viewport: () => ({ width: 1400, height: 1000 }),
-        attach: (view) => {
-          let set = attached.get(1)
-          if (!set) {
-            set = new Set()
-            attached.set(1, set)
-          }
-          set.add(view)
-        },
-        detach: (view) => {
-          attached.get(1)?.delete(view)
-        },
-        sendState: (snapshot) => {
-          sent.push({ window: 1, snapshot })
-        },
-      },
-    ],
+    [1, makeWindow(1)],
+    [2, makeWindow(2)],
   ])
 
   const manager = createBrowserManager({
@@ -165,6 +170,7 @@ function createHarness() {
     placed,
     views,
     attached,
+    viewports,
     sent,
     focused,
     getState: () => state,
@@ -360,4 +366,42 @@ test('popups and new-tab actions open switchable tabs inside the same panel, and
   assert.equal(afterClose.tabs?.length, 1)
   assert.equal(views[1]!.destroyed, true)
   assert.equal(views[0]!.visible, true)
+})
+
+test('keeps the browser view attached during window resize and across cross-window tile moves without stale detach races', async () => {
+  const { manager, placed, views, attached, viewports, getState, setState } = createHarness()
+  // Browser tile is on the right half of a 1400x1000 window.
+  await manager.sync(1, 'ws-1', placed.panel.id, { x: 700, y: 100, width: 680, height: 800 }, true)
+  const view = views[0]!
+  assert.equal(view.visible, true)
+  assert.equal(attached.get(1)?.has(view), true)
+
+  // Shrinking Window 1 to 650x500 before the renderer's ResizeObserver sync arrives scales the view instead of clipping to 0 and detaching.
+  viewports.set(1, { width: 650, height: 500 })
+  manager.sweep()
+  assert.equal(view.visible, true)
+  assert.equal(attached.get(1)?.has(view), true)
+  assert.ok(view.bounds && view.bounds.width > 0 && view.bounds.height > 0)
+
+  // Moving the loop frame from Window 1 to Window 2 detaches from Window 1, waits for Window 2's sync, and ignores late detach from Window 1.
+  const moved = moveAcross(getState().grids['ws-1']![1]!, EMPTY_GRID, placed.frame.id, {
+    rect: { x: 0, y: 0, w: 8, h: 6 },
+  })
+  setState({
+    ...getState(),
+    grids: { ...getState().grids, 'ws-1': { 1: moved.source, 2: moved.target } },
+  })
+  manager.sweep()
+  assert.equal(attached.get(1)?.has(view), false)
+  assert.equal(attached.get(2)?.has(view) ?? false, false)
+
+  // Window 2 mounts and syncs its bounds, then Window 1's unmount cleanup fires a late detach(1, ...): view stays visible in Window 2.
+  await manager.sync(2, 'ws-1', placed.panel.id, { x: 20, y: 60, width: 560, height: 400 }, true)
+  assert.equal(attached.get(2)?.has(view), true)
+  assert.equal(view.visible, true)
+
+  manager.detach(1, 'ws-1', placed.panel.id)
+  assert.equal(attached.get(2)?.has(view), true)
+  assert.equal(view.visible, true)
+  assert.equal(view.destroyed, false)
 })
