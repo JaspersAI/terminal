@@ -128,7 +128,7 @@ function createLoopTool(context: ToolContext): Tool {
       const placement = {
         size: optional(input.size, asSize),
         anchor: optional(input.anchor, asAnchor),
-        rect: optional(input.rect, asRect),
+        rect: optional(input.rect, (raw) => asRect(raw, gridSizeOf(workspaceId))),
       }
       const window = asWindow(input.window)
       // A tile with no room is refused here, before the work is set up or the user asked to start it.

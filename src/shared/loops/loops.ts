@@ -710,6 +710,22 @@ export function notStarted(
 }
 
 /**
+ * The element id a grid tool (`move_element`, `resize_element`, `set_mode`, `focus`, `remove_element`)
+ * acts on: trimmed, a direct element id as it is, a panel id on a grid resolved to its element id, and
+ * otherwise, when `id` names an open loop or its id, that loop's frame element id.
+ */
+export function elementTarget(grids: Record<number, Grid>, loops: readonly Loop[], id: string): string {
+  const trimmed = id.trim()
+  for (const grid of Object.values(grids)) {
+    if (grid.elements.some((element) => element.id === trimmed)) return trimmed
+    const panel = grid.panels.find((one) => one.id === trimmed)
+    if (panel) return panel.elementId
+  }
+  const loop = named(loops, trimmed)
+  return (loop ? frameOf(grids, loop.id)?.element.id : undefined) ?? trimmed
+}
+
+/**
  * The element or panel id `refresh_element` acts on: trimmed, an exact element or panel id on a grid
  * as it is, and otherwise, when `id` names an open loop or its id, that loop's frame element id so
  * refreshing a piece of work refreshes every view inside its tile.

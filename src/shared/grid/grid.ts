@@ -369,11 +369,50 @@ export function placeFramed(
 
 /**
  * Moves or resizes an element to exact cells. A tiled element needs them free, and the error names
- * what is in the way; a floating one goes anywhere; a maximized or a minimized one comes back to them.
+ * what is in the way; a floating one goes anywhere; a maximized one comes back to them. A minimized
+ * one stays minimized on its 1-row bar when moved (`keepMinimized`), and comes back to the cells when
+ * resized.
  */
-export function setRect(grid: Grid, id: string, rect: Rect): { grid: Grid; element: GridElement } {
+export function setRect(
+  grid: Grid,
+  id: string,
+  rect: Rect,
+  keepMinimized = false,
+): { grid: Grid; element: GridElement } {
+  const current = find(grid.elements, id)
+  if (keepMinimized && current.mode === 'minimized') {
+    checkRect(rect, grid.size, 1, true)
+    const bar: Rect = { x: rect.x, y: rect.y, w: rect.w, h: 1 }
+    const home = homeRect(current)
+    const restoreH = Math.min(home.h, grid.size.rows)
+    const restoreRect: Rect = {
+      x: rect.x,
+      y: clamp(rect.y, 0, grid.size.rows - restoreH),
+      w: rect.w,
+      h: restoreH,
+    }
+    const element: GridElement = {
+      ...current,
+      rect: bar,
+      restoreRect,
+      restoreMode: current.restoreMode ?? 'tiled',
+    }
+    if (element.restoreMode !== 'floating') {
+      const blocking = grid.elements.filter((e) => e.id !== id && overlaps(footprint(e), bar))
+      if (blocking.length > 0) {
+        const free =
+          freeRects(grid.elements, grid.size, id)
+            .map((r) => formatRect(r, grid.size))
+            .join(' ') || 'none'
+        throw new Error(
+          `${formatRect(bar, grid.size)} overlaps ${blocking.map((e) => e.id).join(', ')}. Free space: ${free}.`,
+        )
+      }
+    }
+    return { grid: withElement(grid, element), element }
+  }
   const target = checkRect(rect, grid.size)
-  const element = { ...restored(find(grid.elements, id)), rect: target }
+  const element = { ...restored(current), rect: target }
   if (element.mode === 'tiled') {
     const blocking = grid.elements.filter((e) => e.id !== id && overlaps(footprint(e), target))
     if (blocking.length > 0) {
@@ -804,10 +843,10 @@ export function freeRects(elements: GridElement[], size: GridSize, ignore?: stri
 }
 
 /** What keeps a rect off the grid, or null when it fits. */
-export function rectProblem({ x, y, w, h }: Rect, size: GridSize): string | null {
+export function rectProblem({ x, y, w, h }: Rect, size: GridSize, minH = MIN_CELLS, barOnly = false): string | null {
   if (![x, y, w, h].every(Number.isInteger)) return 'x, y, w, and h are whole cells'
-  if (w < MIN_CELLS || h < MIN_CELLS) return `elements are at least ${MIN_CELLS}×${MIN_CELLS}`
-  if (x < 0 || y < 0 || x + w > size.cols || y + h > size.rows)
+  if (w < MIN_CELLS || h < minH) return `elements are at least ${MIN_CELLS}×${minH}`
+  if (x < 0 || y < 0 || x + w > size.cols || (barOnly ? y >= size.rows || h > size.rows : y + h > size.rows))
     return `it must lie inside the ${size.cols}×${size.rows} grid`
   return null
 }
@@ -867,6 +906,21 @@ export function parseRange(text: string, size: GridSize): Rect | null {
 }
 
 /**
+ * The rect a tool argument names: `{"x", "y", "w", "h"}` in cells, or a cell range like `D3:I6` when
+ * `size` is given. Null when it is neither.
+ */
+export function readRectInput(value: unknown, size?: GridSize): Rect | null {
+  if (typeof value === 'string' && size) return parseRange(value, size)
+  if (isPlainObject(value)) {
+    const { x, y, w, h } = value
+    if (typeof x === 'number' && typeof y === 'number' && typeof w === 'number' && typeof h === 'number') {
+      return { x, y, w, h }
+    }
+  }
+  return null
+}
+
+/**
  * A block of rows as cells to write, laid out from a top-left cell: the first row runs right from it,
  * the next one below, so a table reads as it was written. A shorter row simply stops; a block that
  * would run off the grid is refused rather than clipped, since half a table is worse than none.
@@ -901,7 +955,7 @@ export function cellSummary(grid: Grid): string | null {
 /** The tool notation, then the name the user sees. A rect that is not on the grid has no name. */
 export function formatRect(rect: Rect, size: GridSize): string {
   const cells = cellsOf(rect)
-  return rectProblem(rect, size) ? cells : `${cells} ${rangeName(rect)}`
+  return rectProblem(rect, size, 1) ? cells : `${cells} ${rangeName(rect)}`
 }
 
 /**
@@ -1084,8 +1138,8 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(Math.max(n, min), max)
 }
 
-function checkRect(r: Rect, size: GridSize): Rect {
-  const problem = rectProblem(r, size)
+function checkRect(r: Rect, size: GridSize, minH = MIN_CELLS, barOnly = false): Rect {
+  const problem = rectProblem(r, size, minH, barOnly)
   if (problem) throw new Error(`${formatRect(r, size)}: ${problem}.`)
   return r
 }

@@ -22,6 +22,7 @@ import {
   CHAT_VIEW,
   EMPTY_GRID,
   parseRange,
+  readRectInput,
   writeCells,
   focusElement,
   formatRect,
@@ -632,6 +633,11 @@ test('a range reads as the labels show it, either corner first, and only where t
   assert.equal(parseRange('A1:B2:C3', SIZE), null)
   assert.equal(parseRange('total', SIZE), null)
   assert.equal(parseRange('', SIZE), null)
+  assert.deepEqual(readRectInput({ x: 0, y: 11, w: 4, h: 1 }, SIZE), r(0, 11, 4, 1))
+  assert.deepEqual(readRectInput('A12:D12', SIZE), r(0, 11, 4, 1))
+  assert.deepEqual(readRectInput('A10:D12', SIZE), r(0, 9, 4, 3))
+  assert.equal(readRectInput('not-a-rect', SIZE), null)
+  assert.equal(readRectInput({ x: 0, y: 0, w: 4 }, SIZE), null)
 })
 
 test('a block of rows is laid out from its top-left cell, and one that runs off the grid is refused', () => {
@@ -982,10 +988,28 @@ test('a floating element minimized holds no cells, and floats again when restore
   )
 })
 
-test('moving, re-tiling, or sending a minimized element to another window brings it back first', () => {
+const moveMinimized = (grid: Grid, id: string, rect: Rect) => setRect(grid, id, rect, true)
+
+test('moving a minimized element keeps it minimized on its 1-row bar, and re-tiling or sending it to another window brings it back first', () => {
   const min = setMode(build({}, {}), 'e1', 'minimized').grid
-  const moved = setRect(min, 'e1', r(0, 6, 8, 6)).element
-  assert.deepEqual([moved.mode, moved.rect, moved.restoreRect], ['tiled', r(0, 6, 8, 6), undefined])
+  // Moving by its 1-row bar or by its full restore height keeps it minimized and shifts its home.
+  const byBar = moveMinimized(min, 'e1', r(0, 11, 4, 1)).element
+  assert.deepEqual(
+    [byBar.mode, byBar.rect, byBar.restoreRect, byBar.restoreMode],
+    ['minimized', r(0, 11, 4, 1), r(0, 6, 4, 6), 'tiled'],
+  )
+  // Another minimized bar can stack directly on the row above it without overlapping its restore height.
+  const secondMin = setMode(moveMinimized(min, 'e1', r(0, 11, 4, 1)).grid, 'e2', 'minimized').grid
+  const stacked = moveMinimized(secondMin, 'e2', r(0, 10, 4, 6)).element
+  assert.deepEqual([stacked.mode, stacked.rect, stacked.restoreRect], ['minimized', r(0, 10, 4, 1), r(0, 6, 4, 6)])
+  // A multi-row rect smaller than its restore height still keeps it minimized on its 1-row bar and preserves its restore height.
+  const threeRow = moveMinimized(secondMin, 'e2', r(0, 9, 4, 3)).element
+  assert.deepEqual([threeRow.mode, threeRow.rect, threeRow.restoreRect], ['minimized', r(0, 9, 4, 1), r(0, 6, 4, 6)])
+  // Overlap is checked on the 1-row bar, not the restore rect.
+  assert.throws(() => moveMinimized(secondMin, 'e2', r(0, 11, 4, 1)), /\[0,11 4×1\] A12:D12 overlaps e1/)
+  // Resizing (setRect) still brings a minimized element back first.
+  const resized = setRect(min, 'e1', r(0, 6, 8, 6)).element
+  assert.deepEqual([resized.mode, resized.rect, resized.restoreRect], ['tiled', r(0, 6, 8, 6), undefined])
   const two = PRESET_NAMES.find((name) => presetSlots(name, SIZE).length === 2)!
   const arranged = arrange(min, two).grid
   assert.ok(arranged.elements.every((e) => e.mode === 'tiled' && e.restoreRect === undefined && e.rect.h > 1))
@@ -998,8 +1022,7 @@ test('moving, re-tiling, or sending a minimized element to another window brings
 
 test('the map says a minimized element is one, and where it restores to', () => {
   const min = setMode(build({}), 'e1', 'minimized').grid
-  // The row it keeps is said in cells alone: it is not a rect an element could be given.
-  assert.match(gridMap(min).split('\n')[0]!, /^e1 \[0,0 8×1\] minimized, restores to \[0,0 8×6\] A1:H6 view /)
+  assert.match(gridMap(min).split('\n')[0]!, /^e1 \[0,0 8×1\] A1:H1 minimized, restores to \[0,0 8×6\] A1:H6 view /)
 })
 
 test('maximizing a minimized element finds it a home first, so it never comes down on cells another took', () => {
