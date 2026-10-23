@@ -102,8 +102,8 @@ export interface TermsState {
 /**
  * Restores the Terms of Use state from `state.json` and the bundled `build/license.txt`.
  * Cached website terms are kept unless the bundled file has a newer version number. A state file
- * from before `acceptedTerms` existed that had `termsAccepted: true` is treated as having accepted
- * the terms that were stored or bundled with it, so a later website update still asks again.
+ * from before `acceptedTerms` existed has no versioned acceptance record and asks the user to accept
+ * the current Terms of Use.
  */
 export function loadTermsState(
   stored: { termsAccepted?: unknown; acceptedTerms?: unknown; termsText?: unknown },
@@ -111,11 +111,7 @@ export function loadTermsState(
 ): TermsState {
   const bundledNorm = parseTermsText(bundled) ?? bundled.replace(/^\uFEFF/, '').trim()
   const termsText = chooseTermsText(stored.termsText, bundledNorm)
-  const fallbackAccepted =
-    stored.termsAccepted === true && stored.acceptedTerms === undefined
-      ? ((typeof stored.termsText === 'string' ? parseTermsText(stored.termsText) : null) ?? bundledNorm)
-      : null
-  const acceptedTerms = readAcceptedTerms(stored.acceptedTerms) ?? fallbackAccepted
+  const acceptedTerms = readAcceptedTerms(stored.acceptedTerms)
   return {
     termsAccepted: readTermsAccepted(stored.termsAccepted, acceptedTerms, termsText),
     acceptedTerms,
