@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { checkLiveKey, checkLiveValue, liveKeyOf } from './live.ts'
+import { checkLiveKey, checkLiveValue, liveKeyOf, researchLiveText, researchRoomOf } from './live.ts'
 
 test('a key is names joined by slashes', () => {
   assert.equal(checkLiveKey('rooms/flws-credit-7k2p/m/000001'), 'rooms/flws-credit-7k2p/m/000001')
@@ -21,4 +21,109 @@ test('a view names a live value with live/, and any other path is not one', () =
   assert.equal(liveKeyOf('live/analysts'), 'analysts')
   assert.equal(liveKeyOf('panels/e1/state'), null)
   assert.throws(() => liveKeyOf('live/'), /A live key/)
+})
+
+test('researchRoomOf reads the active room id of a research/room panel from its output or state', () => {
+  assert.equal(
+    researchRoomOf({
+      content: { kind: 'view', view: 'research/room' },
+      state: {},
+      output: { room: 'flws-3-year-risk' },
+    }),
+    'flws-3-year-risk',
+  )
+  assert.equal(
+    researchRoomOf({
+      content: { kind: 'view', view: 'research/room' },
+      state: { room: 'flws-3-year-risk' },
+      output: null,
+    }),
+    'flws-3-year-risk',
+  )
+  assert.equal(
+    researchRoomOf({
+      content: { kind: 'view', view: 'research/room' },
+      state: {},
+      output: { room: null },
+    }),
+    null,
+  )
+  assert.equal(
+    researchRoomOf({
+      content: { kind: 'view', view: 'core/table' },
+      state: { room: 'flws-3-year-risk' },
+      output: null,
+    }),
+    null,
+  )
+})
+
+test('researchLiveText formats a research room thread from its live room and message values, stripping cite tags to markers', () => {
+  const messages = new Map<number, unknown>([
+    [
+      1,
+      {
+        seq: 1,
+        role: 'user',
+        text: 'Compare FLWS 3-year risk factor language.',
+        to: ['basic', 'risk'],
+      },
+    ],
+    [
+      2,
+      {
+        seq: 2,
+        role: 'analyst',
+        name: 'Basic Analyst',
+        status: 'error',
+        text: '',
+        error: 'Cannot read properties of undefined',
+        citations: [],
+      },
+    ],
+    [
+      3,
+      {
+        seq: 3,
+        role: 'analyst',
+        name: 'Risk Analyst',
+        status: 'done',
+        text: 'Cumulative impairments come to **$273.4M**. <cite document_id="44" chunk_id="1" quote="minimum liquidity test">Existing covenants were replaced by a minimum liquidity test.</cite>',
+        error: null,
+        citations: [
+          {
+            n: 1,
+            title: '8-K · 2026-09-10 · FLWS',
+            documentId: '44',
+            verified: true,
+            url: 'https://www.sec.gov/Archives/edgar/data/1084869/8k.htm',
+          },
+        ],
+      },
+    ],
+  ])
+  const analysts = [
+    { id: 'basic', name: 'Basic Analyst' },
+    { id: 'risk', name: 'Risk Analyst' },
+  ]
+  const text = researchLiveText({ seqs: [1, 2, 3] }, (seq) => messages.get(seq), analysts)
+  assert.equal(
+    text,
+    [
+      '#1 [You → Basic Analyst, Risk Analyst]: Compare FLWS 3-year risk factor language.',
+      '',
+      '#2 [Basic Analyst] (error): (error: Cannot read properties of undefined)',
+      '',
+      '#3 [Risk Analyst]: Cumulative impairments come to **$273.4M**. Existing covenants were replaced by a minimum liquidity test. [1]',
+      'Sources: [1] 8-K · 2026-09-10 · FLWS · verified · https://www.sec.gov/Archives/edgar/data/1084869/8k.htm',
+    ].join('\n'),
+  )
+  assert.equal(
+    researchLiveText({ seqs: [] }, () => undefined),
+    null,
+  )
+  assert.equal(
+    researchLiveText(undefined, () => undefined),
+    null,
+  )
 })

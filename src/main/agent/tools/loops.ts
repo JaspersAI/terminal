@@ -1,12 +1,13 @@
 import { describeLoop, describePlugin } from '../../../shared/agent/prompt'
-import { loopChat, loopName, named, type Loop } from '../../../shared/loops/loops'
+import { layoutOf } from '../../../shared/grid/grid'
+import { frameOf, loopChat, loopName, named, type Loop } from '../../../shared/loops/loops'
 import type { AppState } from '../../../shared/state'
 import { usePlugin } from '../../loops/loops'
-import { getView } from '../../plugins/registry'
 import { getState, toPublic } from '../../state'
 import { statusNow } from '../utils/status'
 import { exchanges } from '../utils/thread'
 import { asPathString } from './input'
+import { syncResearchPanelText } from './state'
 import type { Tool, ToolContext } from './types'
 
 // The tools that are about loops themselves: either agent reading one, and a loop's agent learning
@@ -44,13 +45,24 @@ const readLoop: Tool = {
     },
     required: ['loop'],
   },
-  async run(input, { workspaceId }) {
+  async run(input, { workspaceId, signal }) {
+    const wanted = asPathString(input.loop)
+    const loop = findLoop(toPublic(getState()), workspaceId, wanted)
+    const grids = getState().grids[workspaceId] ?? {}
+    const frame = frameOf(grids, loop.id)
+    if (frame) {
+      const grid = grids[frame.window]
+      if (grid) {
+        for (const panel of layoutOf(grid, frame.element.id).panels) {
+          await syncResearchPanelText(workspaceId, panel, signal)
+        }
+      }
+    }
     const state = toPublic(getState())
-    const loop = findLoop(state, workspaceId, asPathString(input.loop))
     const status = statusNow(state, workspaceId, loop.id)
     // The log as the chat reads it, every key the app holds masked out of it.
     const said = await exchanges(loopChat(workspaceId, loop.id), READ_EXCHANGES)
-    return describeLoop(state, workspaceId, loop, status, said, (id) => getView(id)?.instructions)
+    return describeLoop(state, workspaceId, loop, status, said, () => undefined)
   },
 }
 

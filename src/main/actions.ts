@@ -93,7 +93,9 @@ import { dismissNotice } from './app/notices'
 import { authorize } from './plugins/oauth'
 import { signIn, signOut, signedIn } from './jaspers/jaspers'
 import { allowApps } from './plugins/app-consent'
+import { getLive } from './plugins/live'
 import { getView } from './plugins/registry'
+import { RESEARCH_PLUGIN, researchLiveText, researchRoomOf } from '../shared/plugins/live'
 import { seal } from './secrets'
 import { getState, update, subscribe } from './state'
 import { setOpenAtLogin } from './app/background'
@@ -913,7 +915,20 @@ export function publishChecked(workspaceId: string, panelId: string, output: Rec
     if (!result.success) throw new Error(`Invalid output for ${def.id}: ${issues(result.error)}`)
   }
   const summary = def?.summarize?.(panel.state, output) ?? null
-  return changeGridOf(workspaceId, panel.id, (grid) => publishOutput(grid, panel.id, output, summary)).panel
+  const room = researchRoomOf({ content: panel.content, state: panel.state, output })
+  const roomText = room
+    ? researchLiveText(
+        getLive(RESEARCH_PLUGIN, `rooms/${room}`),
+        (seq) => getLive(RESEARCH_PLUGIN, `rooms/${room}/m/${seq}`),
+        getLive(RESEARCH_PLUGIN, 'analysts'),
+      )
+    : output['room'] === null && panel.content.kind === 'view' && panel.content.view === 'research/room'
+      ? null
+      : undefined
+  return changeGridOf(workspaceId, panel.id, (grid) => {
+    const next = publishOutput(grid, panel.id, output, summary)
+    return roomText !== undefined ? publishText(next.grid, panel.id, roomText) : next
+  }).panel
 }
 
 /** The whole of what the view shows as text, for a model to read at length. The engine cuts what is past its cap. */

@@ -581,7 +581,7 @@ test('the orchestrator is told to oversee the loops and route work, by the tools
   assert.match(ROUTER_RULES, /read_loop[^.]*get[^.]*query/)
   assert.match(
     ROUTER_RULES,
-    /Never send a question about what a loop shows or why it looks the way it does to update_loop/,
+    /Never send a question about what a loop shows or why it looks the way it does, or a request to summarize, explain, or compare what a loop or its views already show, to update_loop/,
   )
 })
 
