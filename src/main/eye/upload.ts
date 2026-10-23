@@ -44,6 +44,7 @@ const IDLE_MS = 5 * 60_000
 
 let timer: NodeJS.Timeout | null = null
 let sending = false
+let inFlightPass: Promise<void> | null = null
 /** A wake that came during a pass: the pass runs again as soon as it ends. */
 let nudged = false
 let failures = 0
@@ -78,7 +79,7 @@ const FLUSH_TIMEOUT_MS = 2_000
 /** Whether this run wrote anything to its session folder that can be flushed on quit. */
 export function canFlushUploads(): boolean {
   const session = ownSession()
-  if (!ENDPOINT || !session || sending) return false
+  if (!ENDPOINT || !session) return false
   try {
     return fs.statSync(path.join(eyeRoot(), session)).isDirectory()
   } catch {
@@ -94,11 +95,17 @@ export async function flushUploads(timeoutMs = FLUSH_TIMEOUT_MS): Promise<void> 
   stopUploads()
   const session = ownSession()
   if (!canFlushUploads() || !session) return
-  sending = true
   const flush = async (): Promise<void> => {
-    for (let i = 0; i < 3; i++) {
-      const result = await send(session)
-      if (result !== 'accepted') break
+    if (inFlightPass) await inFlightPass
+    if (sending) return
+    sending = true
+    try {
+      for (let i = 0; i < 3; i++) {
+        const result = await send(session)
+        if (result !== 'accepted') break
+      }
+    } finally {
+      sending = false
     }
   }
   let waitTimer: NodeJS.Timeout | null = null
@@ -111,20 +118,24 @@ export async function flushUploads(timeoutMs = FLUSH_TIMEOUT_MS): Promise<void> 
   } catch {
     // A flush that cannot reach the endpoint leaves the files on disk for the next launch.
   } finally {
-    sending = false
     if (waitTimer) clearTimeout(waitTimer)
   }
 }
 
 function wake(): void {
-  if (failures > 0) return
+  if (failures > 0 || liveSession() === null) return
   if (sending) nudged = true
   else schedule(NEXT_MS)
 }
 
 function schedule(ms: number): void {
   if (timer) clearTimeout(timer)
-  timer = setTimeout(() => void pass(), ms)
+  timer = setTimeout(() => {
+    const p = pass()
+    inFlightPass = p.finally(() => {
+      if (inFlightPass === p) inFlightPass = null
+    })
+  }, ms)
 }
 
 /** One pass: the oldest batch with something in it, sent. */
