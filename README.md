@@ -17,7 +17,7 @@
 
 ---
 
-**Jaspers Terminal** is an Electron desktop application and spreadsheet grid for public-market research on macOS and Windows. It connects local, open-weight, and cloud language models to MCP servers, TypeScript plugins, and a local SQLite store. Prebuilt installers are available at [jsprai.com/terminal](https://jsprai.com/terminal). It is a research tool, not investment advice: see [DISCLAIMER.md](DISCLAIMER.md) and the [Terms of Use](https://jsprai.com/terms).
+**Jaspers Terminal** is an Electron desktop application and spreadsheet grid for public-market research on macOS, Windows and Linux. It connects local, open-weight, and cloud language models to MCP servers, TypeScript plugins, and a local SQLite store. Prebuilt installers are available at [jsprai.com/terminal](https://jsprai.com/terminal). It is a research tool, not investment advice: see [DISCLAIMER.md](DISCLAIMER.md) and the [Terms of Use](https://jsprai.com/terms).
 
 To keep prompt sizes bounded across local, open-weight, and cloud models, the harness separates data storage, panel state, and per-tile execution from the main conversation thread:
 
