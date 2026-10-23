@@ -70,17 +70,91 @@ export const CORE_BROWSER_ITEM: HubItem = {
   page: '',
 }
 
+function wordForms(word: string): string[] {
+  const forms = new Set([word])
+  if (word.endsWith('ies') && word.length > 4 && word !== 'series') {
+    forms.add(`${word.slice(0, -3)}y`)
+  } else if (/(?:s|x|z|ch|sh)es$/.test(word) && word.length > 4) {
+    forms.add(word.slice(0, -2))
+  } else if (word.endsWith('s') && !word.endsWith('ss') && word.length > 3) {
+    forms.add(word.slice(0, -1))
+  }
+  if (word.endsWith('y') && word.length > 3) {
+    forms.add(`${word.slice(0, -1)}ies`)
+  }
+  if (word.endsWith('ing') && word.length > 5) {
+    const base = word.slice(0, -3)
+    forms.add(base)
+    forms.add(`${base}e`)
+  }
+  return [...forms]
+}
+
+function fieldHas(text: string, word: string): boolean {
+  return wordForms(word).some((form) => text.includes(form))
+}
+
+function itemTier(item: HubItem, query: string): number | null {
+  const q = query.trim().toLowerCase()
+  if (!q) return 0
+  const words = q.split(/[^a-z0-9]+/).filter(Boolean)
+  if (words.length === 0) return null
+  const name = item.name.toLowerCase()
+  const title = item.title.toLowerCase()
+  const handle = item.handle.toLowerCase()
+  const tags = item.tags.join(' ').toLowerCase()
+  const description = item.description.toLowerCase()
+  const full = [name, title, description, handle, tags, item.official ? 'official' : ''].join(' ')
+  if (!words.every((w) => fieldHas(full, w))) return null
+  if (name === q || title === q) return 0
+  if (name.startsWith(q) || title.startsWith(q)) return 1
+  if (words.every((w) => fieldHas(`${name} ${title}`, w))) return 2
+  if (words.every((w) => fieldHas(`${name} ${title} ${handle} ${tags}`, w))) return 3
+  if (description.includes(q)) return 4
+  return 5
+}
+
 /** Includes the built-in Browser entry in the Hub plugin list when not searching or when the query matches it. */
 export function withBrowserItem(items: HubItem[], query = ''): HubItem[] {
   const without = items.filter((one) => one.name !== BROWSER_PLUGIN_ID)
+  return itemTier(CORE_BROWSER_ITEM, query) !== null ? [...without, CORE_BROWSER_ITEM] : without
+}
+
+/** Filters and ranks Hub plugins by matching every query word against their name, title, description, publisher, and tags. */
+export function searchItems(items: HubItem[], query: string): HubItem[] {
   const q = query.trim().toLowerCase()
-  const matches =
-    q === '' ||
-    CORE_BROWSER_ITEM.name.toLowerCase().includes(q) ||
-    CORE_BROWSER_ITEM.title.toLowerCase().includes(q) ||
-    CORE_BROWSER_ITEM.description.toLowerCase().includes(q) ||
-    CORE_BROWSER_ITEM.tags.some((tag) => tag.toLowerCase().includes(q))
-  return matches ? [...without, CORE_BROWSER_ITEM] : without
+  if (!q) return [...items]
+  return items
+    .map((item, index) => ({ item, tier: itemTier(item, q), index }))
+    .filter((entry): entry is { item: HubItem; tier: number; index: number } => entry.tier !== null)
+    .sort((a, b) => a.tier - b.tier || a.index - b.index)
+    .map((entry) => entry.item)
+}
+
+/** The directory's non-featured list, or what a search finds across loaded and searched items. */
+export function othersPart(
+  featured: Part,
+  pages: Part & { more: boolean },
+  found: Part | null,
+  query = '',
+): Part & { more: boolean } {
+  const q = query.trim()
+  if (!q) {
+    return {
+      items: rest(featured.items, pages.items),
+      loading: pages.loading,
+      error: pages.error,
+      more: pages.more,
+    }
+  }
+  const loaded = appendPage(featured.items, pages.items)
+  const candidates = found ? appendPage(found.items, loaded) : loaded
+  const items = searchItems(candidates, q)
+  const hasMatch = items.length > 0 || itemTier(CORE_BROWSER_ITEM, q) !== null
+  const waiting = found === null || found.loading
+  const loading = waiting && (!hasMatch || pages.loading || pages.more)
+  const error = found?.error ?? (!hasMatch ? pages.error : null)
+  return { items, loading, error, more: false }
 }
 
 /** The items shown so far with the next page after them. Stars change between requests, so an item already shown is not shown again. */
@@ -167,7 +241,7 @@ export function useHubDirectory({ search }: { search: boolean }): HubDirectory {
       return
     }
     // What was found for the last text stays while the next search is on its way.
-    setFound((was) => was ?? LOADING)
+    setFound((was) => (was ? { ...was, loading: true, error: null } : LOADING))
     const timer = setTimeout(() => {
       void loadPart(() => window.app.hub.search(q)).then((part) => {
         if (latest.current.found === asked) setFound(part)
@@ -178,20 +252,13 @@ export function useHubDirectory({ search }: { search: boolean }): HubDirectory {
 
   return {
     featured,
-    others: found
-      ? { ...found, more: false }
-      : {
-          items: rest(featured.items, pages.items),
-          loading: pages.loading,
-          error: pages.error,
-          more: pages.more,
-        },
+    others: othersPart(featured, pages, found, search ? query : ''),
     query,
     setQuery,
     more: () => loadPage(pages.page + 1),
     retryFeatured: loadFeatured,
     retryOthers: () => {
-      if (!found) return loadPage(pages.page + 1)
+      if (!search || !query.trim()) return loadPage(pages.page + 1)
       setFound(LOADING)
       setSearches((n) => n + 1)
     },
