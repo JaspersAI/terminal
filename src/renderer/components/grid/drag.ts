@@ -11,6 +11,7 @@ import {
 } from '../../../shared/grid/grid'
 import type { Action } from '../../../shared/state'
 import { dispatch, get } from '../../lib/state'
+import { canGrab } from './edges'
 
 // Moving and resizing by hand. The pointer is counted in whole cells, the engine says where that
 // lands, and the element is drawn there while the drag lasts. Letting go asks main for the same
@@ -72,8 +73,8 @@ export function useDrag(
   const grab = useCallback(
     (event: ReactPointerEvent<HTMLElement>, element: GridElement, handle: DragHandle, shown?: Rect): void => {
       const box = layer.current
-      // A maximized element fills the window and a minimized one is its bar: neither is moved or resized by hand.
-      if (event.button !== 0 || element.mode === 'maximized' || element.mode === 'minimized' || !box) return
+      // A maximized element fills the window, and a minimized one is only its bar: it moves, and is not resized.
+      if (event.button !== 0 || !canGrab(element.mode, handle) || !box) return
       const bounds = box.getBoundingClientRect()
       // The grid this window shows, so the pointer counts in its cells and not in a fixed 16 × 12.
       const size = (get().grids[workspaceId]?.[windowNumber] ?? EMPTY_GRID).size
@@ -92,6 +93,7 @@ export function useDrag(
         x: clamp(pressed.x - element.rect.x, 0, element.rect.w - 1),
         y: clamp(pressed.y - element.rect.y, 0, element.rect.h - 1),
       }
+      const homeSize = element.restoreRect ?? element.rect
       const home: Draft = {
         elementId: element.id,
         handle,
@@ -112,8 +114,8 @@ export function useDrag(
           window.app.drag.move({
             workspaceId,
             elementId: element.id,
-            w: element.rect.w,
-            h: element.rect.h,
+            w: homeSize.w,
+            h: homeSize.h,
             offset,
             screenX: e.screenX,
             screenY: e.screenY,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { insideEdges } from './edges.ts'
+import { canGrab, insideEdges } from './edges.ts'
 
 const whole = { x: 0, y: 0, w: 16, h: 12 }
 
@@ -32,4 +32,14 @@ test("the tile's own sides are those of the cells its views span, wherever in th
   const cut = { x: 2, y: 3, w: 14, h: 9 }
   assert.deepEqual(insideEdges({ x: 2, y: 3, w: 6, h: 9 }, cut), ['e'])
   assert.deepEqual(insideEdges({ x: 8, y: 3, w: 8, h: 9 }, cut), ['w'])
+})
+
+test('a minimized element can be grabbed by its bar to move, and not by an edge or while maximized', () => {
+  assert.equal(canGrab('tiled', 'move'), true)
+  assert.equal(canGrab('tiled', 'se'), true)
+  assert.equal(canGrab('floating', 'move'), true)
+  assert.equal(canGrab('minimized', 'move'), true)
+  assert.equal(canGrab('minimized', 'se'), false)
+  assert.equal(canGrab('maximized', 'move'), false)
+  assert.equal(canGrab('maximized', 'se'), false)
 })
