@@ -1,10 +1,14 @@
-import { formatPath, parsePath, readPath, textPart } from '../../../shared/paths'
+import { formatPath, panelIn, parsePath, readPath, textPart, type StorePath } from '../../../shared/paths'
 import { cap } from '../../../shared/agent/prompt'
 import { coerceViewState, schemaAt } from '../../../shared/agent/view-state'
-import { panelOf } from '../../../shared/grid/grid'
-import { setPanelStateChecked } from '../../actions'
+import { panelOf, type Panel } from '../../../shared/grid/grid'
+import { RESEARCH_PLUGIN, RESEARCH_THREAD_SOURCE, researchLiveText, researchRoomOf } from '../../../shared/plugins/live'
+import { publishTextChecked, setPanelStateChecked } from '../../actions'
+import { runSource } from '../../data/sources'
 import { ownTile } from '../../loops/loops'
 import { findElement } from '../../grid/grid'
+import { getLive } from '../../plugins/live'
+import { getSource } from '../../plugins/registry'
 import { getState, toPublic } from '../../state'
 import type { Tool } from './types'
 import { optional, asPathString, asOffset } from './input'
@@ -14,6 +18,52 @@ const STATE_MAX = 16_000
 const VALUE_MAX = 32_000
 
 const TEXT_PAGE = 50_000
+
+/**
+ * Ensures a research/room panel's `text` reflects the room's full thread (via `research/thread` or
+ * its live values in memory) before `get` or `read_loop` reads the panel.
+ */
+export async function syncResearchPanelText(workspaceId: string, panel: Panel, signal?: AbortSignal): Promise<void> {
+  const room = researchRoomOf(panel)
+  if (!room) return
+  if (getSource(RESEARCH_THREAD_SOURCE)) {
+    try {
+      const result = await runSource(RESEARCH_THREAD_SOURCE, { room }, { workspaceId, signal })
+      const text = result.text.trim()
+      if (text && text !== 'The room has no messages yet.') {
+        publishTextChecked(workspaceId, panel.id, result.text)
+        return
+      }
+    } catch {
+      // Fall back to the room's live values in memory.
+    }
+  }
+  const liveText = researchLiveText(
+    getLive(RESEARCH_PLUGIN, `rooms/${room}`),
+    (seq) => getLive(RESEARCH_PLUGIN, `rooms/${room}/m/${seq}`),
+    getLive(RESEARCH_PLUGIN, 'analysts'),
+  )
+  if (liveText !== null) publishTextChecked(workspaceId, panel.id, liveText)
+}
+
+async function syncPathPanels(workspaceId: string, path: StorePath, signal?: AbortSignal): Promise<void> {
+  if (path.kind !== 'panel' && path.kind !== 'panelEntry' && path.kind !== 'panels') return
+  const targetWorkspace = path.workspaceId ?? workspaceId
+  const grids = getState().grids[targetWorkspace]
+  if (!grids) return
+  if (path.kind === 'panels') {
+    for (const grid of Object.values(grids)) {
+      for (const panel of grid.panels) await syncResearchPanelText(targetWorkspace, panel, signal)
+    }
+    return
+  }
+  try {
+    const { panel } = panelIn(grids, path.panelId)
+    await syncResearchPanelText(targetWorkspace, panel, signal)
+  } catch {
+    // Unknown panel: readPath will throw its standard error.
+  }
+}
 
 export const stateTools: Tool[] = [
   {
@@ -33,8 +83,9 @@ export const stateTools: Tool[] = [
       },
       required: ['path'],
     },
-    async run(input, { workspaceId }) {
+    async run(input, { workspaceId, signal }) {
       const path = parsePath(asPathString(input.path))
+      await syncPathPanels(workspaceId, path, signal)
       const value = readPath(toPublic(getState()), workspaceId, path)
       if (path.kind === 'panel' && path.field === 'text' && typeof value === 'string') {
         return JSON.stringify({

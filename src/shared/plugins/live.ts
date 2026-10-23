@@ -2,10 +2,16 @@
 // rules both ends check: what a key looks like, how large a value may be, and how a view names one.
 // Pure; the store itself is main's.
 
+import type { Panel, PanelContent } from '../grid/grid.ts'
+
 /** One megabyte of JSON. Past it, a value belongs in several keys or in a file. */
 export const LIVE_VALUE_MAX = 1024 * 1024
 const KEY_MAX = 200
 const SEGMENT = /^[A-Za-z0-9._-]+$/
+
+export const RESEARCH_PLUGIN = 'research'
+export const RESEARCH_ROOM_VIEW = 'research/room'
+export const RESEARCH_THREAD_SOURCE = 'research/thread'
 
 export function checkLiveKey(key: unknown): string {
   if (
@@ -36,4 +42,118 @@ export function checkLiveValue(value: unknown): void {
 /** The key a view's `live/<key>` path names, or null for any other path. */
 export function liveKeyOf(path: string): string | null {
   return path.startsWith('live/') ? checkLiveKey(path.slice('live/'.length)) : null
+}
+
+/** The room id a research/room panel is showing, from its output or its state, or null when none is open. */
+export function researchRoomOf(panel: Pick<Panel, 'state' | 'output'> & { content: PanelContent }): string | null {
+  if (panel.content.kind !== 'view' || panel.content.view !== RESEARCH_ROOM_VIEW) return null
+  const fromOutput = panel.output && typeof panel.output['room'] === 'string' ? panel.output['room'].trim() : ''
+  if (fromOutput) return fromOutput
+  const fromState = typeof panel.state['room'] === 'string' ? panel.state['room'].trim() : ''
+  return fromState || null
+}
+
+/**
+ * Formats a research room's messages from the live values the research plugin publishes
+ * (`rooms/<id>` and `rooms/<id>/m/<seq>`), so `panels/<id>/text` holds the room's thread even when
+ * the view itself only called `usePublish`.
+ */
+export function researchLiveText(
+  roomLive: unknown,
+  messageAt: (seq: number) => unknown,
+  analystsLive?: unknown,
+): string | null {
+  if (typeof roomLive !== 'object' || roomLive === null) return null
+  const live = roomLive as Record<string, unknown>
+  if (typeof live['text'] === 'string' && live['text'].trim()) return live['text']
+  const seqs = Array.isArray(live['seqs'])
+    ? live['seqs'].filter((seq): seq is number => typeof seq === 'number' && Number.isInteger(seq))
+    : []
+  if (seqs.length === 0) return null
+  const names = new Map<string, string>()
+  if (Array.isArray(analystsLive)) {
+    for (const entry of analystsLive) {
+      if (typeof entry === 'object' && entry !== null) {
+        const one = entry as Record<string, unknown>
+        if (typeof one['id'] === 'string' && typeof one['name'] === 'string') names.set(one['id'], one['name'])
+      }
+    }
+  }
+  const blocks: string[] = []
+  for (const seq of seqs) {
+    const raw = messageAt(seq)
+    if (typeof raw !== 'object' || raw === null) continue
+    const msg = raw as Record<string, unknown>
+    if (msg['role'] === 'user') {
+      const to = Array.isArray(msg['to'])
+        ? msg['to']
+            .filter((id): id is string => typeof id === 'string')
+            .map((id) => names.get(id) ?? id)
+            .join(', ')
+        : ''
+      const text = typeof msg['text'] === 'string' ? msg['text'] : ''
+      blocks.push(`#${seq} [You → ${to}]: ${text}`)
+      continue
+    }
+    if (msg['role'] === 'analyst') {
+      const name = typeof msg['name'] === 'string' ? msg['name'] : 'Analyst'
+      const status = typeof msg['status'] === 'string' && msg['status'] !== 'done' ? ` (${msg['status']})` : ''
+      const rawText = typeof msg['text'] === 'string' ? msg['text'] : ''
+      const error = typeof msg['error'] === 'string' && msg['error'] ? msg['error'] : null
+      const citations = Array.isArray(msg['citations']) ? msg['citations'] : []
+      const text = stripCiteTags(rawText).trim() || (error ? `(error: ${error})` : '(nothing yet)')
+      const sources = citations
+        .map((c, index) => formatCitation(c, index + 1))
+        .filter((line): line is string => line !== null)
+      blocks.push(
+        [`#${seq} [${name}]${status}: ${text}`, ...(sources.length > 0 ? [`Sources: ${sources.join(' ')}`] : [])].join(
+          '\n',
+        ),
+      )
+    }
+  }
+  return blocks.length > 0 ? blocks.join('\n\n') : null
+}
+
+const CITE_TAG = /<(?:cite|dbcitation)\b([^>]*)>([\s\S]*?)<\/(?:cite|dbcitation)\s*>/gi
+const SELF_CITE_TAG = /<(?:cite|dbcitation)\b([^>]*?)\/\s*>/gi
+const CITE_ATTR = /([A-Za-z_][\w-]*)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^\s"'>]+))/g
+
+function stripCiteTags(text: string): string {
+  const seen = new Map<string, number>()
+  const numberFor = (rawAttrs: string): number => {
+    const attrs: Record<string, string> = {}
+    for (const match of rawAttrs.matchAll(CITE_ATTR)) {
+      const key = match[1]?.toLowerCase()
+      const val = match[2] ?? match[3] ?? match[4] ?? ''
+      if (key) attrs[key] = val
+    }
+    const doc = attrs['document_id'] ?? attrs['panel'] ?? ''
+    const loc = attrs['chunk_id'] ?? attrs['section_key'] ?? ''
+    const quote = attrs['quote'] ?? ''
+    const id = `${doc}:${loc}:${quote}`
+    const existing = seen.get(id)
+    if (existing !== undefined) return existing
+    const next = seen.size + 1
+    seen.set(id, next)
+    return next
+  }
+  return text
+    .replace(CITE_TAG, (_full, attrs: string, inner: string) => {
+      const n = numberFor(attrs)
+      const trimmed = inner.trim()
+      return trimmed ? `${trimmed} [${n}]` : `[${n}]`
+    })
+    .replace(SELF_CITE_TAG, (_full, attrs: string) => `[${numberFor(attrs)}]`)
+}
+
+function formatCitation(raw: unknown, fallbackN: number): string | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const c = raw as Record<string, unknown>
+  const n = typeof c['n'] === 'number' ? c['n'] : fallbackN
+  const docId = typeof c['documentId'] === 'string' && c['documentId'] ? c['documentId'] : '?'
+  const title = typeof c['title'] === 'string' && c['title'] ? c['title'] : `document ${docId}`
+  const state = c['verified'] === true ? 'verified' : c['verified'] === false ? 'unverified' : 'unchecked'
+  const url = typeof c['url'] === 'string' && c['url'] ? c['url'] : ''
+  return `[${n}] ${[title, state, url].filter(Boolean).join(' · ')}`
 }
