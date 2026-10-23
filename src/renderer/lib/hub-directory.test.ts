@@ -304,4 +304,10 @@ test('othersPart filters already-loaded plugins immediately while searching and 
   const answeredNoMatch = othersPart(featured, pages, { items: [tv, sec], loading: false, error: null }, 'databento')
   assert.equal(answeredNoMatch.loading, false)
   assert.deepEqual(answeredNoMatch.items, [])
+
+  // Searching "discover" matches the Jaspers Screener (jaspers/screener-mcp).
+  assert.deepEqual(
+    othersPart(featured, pages, null, 'discover').items.map((one) => one.name),
+    ['screener-mcp'],
+  )
 })

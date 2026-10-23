@@ -128,13 +128,79 @@ export function readClaimed(json: unknown): string {
   return handle
 }
 
+function wordForms(word: string): string[] {
+  const forms = new Set([word])
+  if (word.endsWith('ies') && word.length > 4 && word !== 'series') {
+    forms.add(`${word.slice(0, -3)}y`)
+  } else if (/(?:s|x|z|ch|sh)es$/.test(word) && word.length > 4) {
+    forms.add(word.slice(0, -2))
+  } else if (word.endsWith('s') && !word.endsWith('ss') && word.length > 3) {
+    forms.add(word.slice(0, -1))
+  }
+  if (word.endsWith('y') && word.length > 3) {
+    forms.add(`${word.slice(0, -1)}ies`)
+  }
+  if (word.endsWith('ing') && word.length > 5) {
+    const base = word.slice(0, -3)
+    forms.add(base)
+    forms.add(`${base}e`)
+  }
+  return [...forms]
+}
+
+function fieldHas(text: string, word: string): boolean {
+  return wordForms(word).some((form) => text.includes(form))
+}
+
+export function hubItemTier(item: HubItem, query: string): number | null {
+  const q = query.trim().toLowerCase()
+  if (!q) return 0
+  const words = q.split(/[^a-z0-9]+/).filter(Boolean)
+  if (words.length === 0) return null
+  const name = item.name.toLowerCase()
+  const title = item.title.toLowerCase()
+  const handle = item.handle.toLowerCase()
+  const tags = item.tags.join(' ').toLowerCase()
+  const description = item.description.toLowerCase()
+  const full = [
+    name,
+    title,
+    description,
+    handle,
+    tags,
+    item.official ? 'official' : '',
+    item.name === 'screener-mcp' ? 'discover' : '',
+  ].join(' ')
+  if (!words.every((w) => fieldHas(full, w))) return null
+  if (name === q || title === q) return 0
+  if (name.startsWith(q) || title.startsWith(q)) return 1
+  if (name.includes(q) || title.includes(q) || words.every((w) => fieldHas(`${name} ${title}`, w))) return 2
+  if (words.every((w) => fieldHas(`${name} ${title} ${handle} ${tags}`, w))) return 3
+  if (description.includes(q)) return 4
+  return 5
+}
+
+/** Filters and ranks Hub items by matching every query word against their name, title, description, publisher, and tags. */
+export function searchHubItems(items: readonly HubItem[], query: string): HubItem[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return [...items]
+  return items
+    .map((item, index) => ({ item, tier: hubItemTier(item, q), index }))
+    .filter((entry): entry is { item: HubItem; tier: number; index: number } => entry.tier !== null)
+    .sort((a, b) => a.tier - b.tier || a.index - b.index)
+    .map((entry) => entry.item)
+}
+
 /**
  * What a search of Hub found, in words for the assistant's model: each plugin by name and title, who
  * published it, whether Hub reviewed it, and what it says it does, so the model can tell the user of
  * one before building its own. `installed` are the ids of the plugins already in the app.
  */
 export function hubFindings(query: string, items: readonly HubItem[], installed: readonly string[] = []): string {
-  const plugins = items.filter((item) => item.kind === 'plugin')
+  const plugins = searchHubItems(
+    items.filter((item) => item.kind === 'plugin'),
+    query,
+  )
   if (plugins.length === 0) return `Jaspers Hub has no plugin for "${query}".`
   const have = new Set(installed)
   const lines = plugins.map((item) => {
