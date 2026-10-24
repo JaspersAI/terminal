@@ -426,7 +426,7 @@ export async function deleteMemory(target: {
 export async function queryMemorySql(
   sql: string,
   params?: readonly unknown[] | Record<string, unknown>,
-  readonly = false,
+  readonly = true,
 ): Promise<{
   command: string
   columns: string[]

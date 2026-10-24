@@ -322,6 +322,51 @@ export function readPrismWriteInput(input: Record<string, unknown>): PrismWriteR
   return { action: 'delete', ids, where }
 }
 
+/** Prefixes a plugin's document id with `<pluginId>/` when not already prefixed. */
+export function scopePluginId(pluginId: string, rawId: string): string {
+  const trimmed = rawId.trim()
+  if (!trimmed) throw new Error('A non-empty document id is required.')
+  return trimmed.startsWith(`${pluginId}/`) ? trimmed : `${pluginId}/${trimmed}`
+}
+
+/** Scopes a plugin's `source` column value to `<pluginId>` or `<pluginId>/<source>`. */
+export function scopePluginSource(pluginId: string, rawSource?: unknown): string {
+  const trimmed = typeof rawSource === 'string' ? rawSource.trim() : ''
+  if (!trimmed || trimmed === pluginId) return pluginId
+  return trimmed.startsWith(`${pluginId}/`) ? trimmed : `${pluginId}/${trimmed}`
+}
+
+/** Scopes a plugin's `ctx.prism.delete(target)` call to the plugin's own namespace. */
+export function scopePluginDelete(
+  pluginId: string,
+  target: unknown,
+): { ids?: string[]; where?: Record<string, string | number | null | (string | number | null)[]> } {
+  if (typeof target === 'string') {
+    return { ids: [scopePluginId(pluginId, target)] }
+  }
+  if (Array.isArray(target)) {
+    const ids = target
+      .filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+      .map((x) => scopePluginId(pluginId, x))
+    if (ids.length === 0) throw new Error('ctx.prism.delete requires at least one document id.')
+    return { ids }
+  }
+  if (typeof target === 'object' && target !== null) {
+    const raw = target as Record<string, unknown>
+    const rawSource = raw.source
+    const scopedSource = Array.isArray(rawSource)
+      ? rawSource.map((s) => scopePluginSource(pluginId, s))
+      : scopePluginSource(pluginId, rawSource)
+    return {
+      where: {
+        ...(raw as Record<string, string | number | null | (string | number | null)[]>),
+        source: scopedSource,
+      },
+    }
+  }
+  throw new Error('ctx.prism.delete takes an id, an array of ids, or a filter object.')
+}
+
 /**
  * True when a SQL statement is a read-only SELECT or EXPLAIN SELECT against the Prism DB
  * `documents` table (`~/Jaspers/data/memory.prism`).

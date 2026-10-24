@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { formatMemorySummary, readPrismWriteInput, readSearchInput } from './store.ts'
+import {
+  formatMemorySummary,
+  readPrismWriteInput,
+  readSearchInput,
+  scopePluginDelete,
+  scopePluginId,
+  scopePluginSource,
+} from './store.ts'
 
 test('readSearchInput normalizes hybrid search, typed filters, recency, rerank, and latest-N options', () => {
   const req = readSearchInput({
@@ -95,4 +102,25 @@ test('readPrismWriteInput validates upsert, index, and delete actions for prism_
   })
 
   assert.throws(() => readPrismWriteInput({ action: 'bogus' }), /action must be/)
+})
+
+test('scopePluginId, scopePluginSource, and scopePluginDelete isolate plugin writes and deletes to the plugin namespace', () => {
+  assert.equal(scopePluginId('notes-sync', 'item-1'), 'notes-sync/item-1')
+  assert.equal(scopePluginId('notes-sync', 'notes-sync/item-1'), 'notes-sync/item-1')
+
+  assert.equal(scopePluginSource('notes-sync', undefined), 'notes-sync')
+  assert.equal(scopePluginSource('notes-sync', 'notes-sync'), 'notes-sync')
+  assert.equal(scopePluginSource('notes-sync', 'notes-sync/doc.md'), 'notes-sync/doc.md')
+  assert.equal(scopePluginSource('notes-sync', 'doc.md'), 'notes-sync/doc.md')
+
+  assert.deepEqual(scopePluginDelete('notes-sync', 'item-1'), { ids: ['notes-sync/item-1'] })
+  assert.deepEqual(scopePluginDelete('notes-sync', ['item-1', 'notes-sync/item-2']), {
+    ids: ['notes-sync/item-1', 'notes-sync/item-2'],
+  })
+  assert.deepEqual(scopePluginDelete('notes-sync', { kind: 'note' }), {
+    where: { kind: 'note', source: 'notes-sync' },
+  })
+  assert.deepEqual(scopePluginDelete('notes-sync', { source: 'doc.md', kind: 'file' }), {
+    where: { source: 'notes-sync/doc.md', kind: 'file' },
+  })
 })

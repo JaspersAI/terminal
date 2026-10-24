@@ -175,10 +175,10 @@ export function createContextFactory(rpc: Rpc, capabilities: Capability[], plugi
 
   const prismFor = (workspace: string | null): BackendContext['prism'] => ({
     async search(options) {
-      return (await rpc.request('prism.search', { options, workspaceId: workspace })) as PrismHit[]
+      return (await rpc.request('prism.search', { options })) as PrismHit[]
     },
     async query(sql, params) {
-      return (await rpc.request('prism.query', { sql, params, workspaceId: workspace })) as {
+      return (await rpc.request('prism.query', { sql, params })) as {
         command: string
         columns: string[]
         rows: Record<string, unknown>[]

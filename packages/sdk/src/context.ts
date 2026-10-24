@@ -156,7 +156,7 @@ export interface PrismHit {
 export interface Prism {
   /** Search or list documents from Prism DB by meaning, keywords, recency, and filters. */
   search(options: PrismSearchOptions): Promise<PrismHit[]>
-  /** Run a Prism SQL statement (`SELECT ... FROM documents ORDER BY HYBRID(...)`, `INSERT`, `REPLACE`, `DELETE`, `EXPLAIN`). */
+  /** Run a read-only Prism SQL statement (`SELECT ... FROM documents ORDER BY HYBRID(...)` or `EXPLAIN SELECT ...`). */
   query(
     sql: string,
     params?: unknown[] | Record<string, unknown>,
@@ -180,7 +180,7 @@ export interface Prism {
   }): Promise<{ chunks: number; skipped: boolean }>
   /** Look up a document by id. */
   get(id: string): Promise<PrismHit | null>
-  /** Delete documents by id(s) or by filter (`{ source, kind, ... }`). */
+  /** Delete this plugin's documents by id(s) or by filter (`{ source, kind, ... }`). */
   delete(target: string | string[] | Record<string, string | number | null | (string | number | null)[]>): Promise<{
     upserted: number
     deleted: number
