@@ -243,6 +243,45 @@ test('where that message is refused the state goes in the turn itself, kept, and
   assert.equal(betas.includes('mid-conversation-system-clear-at-2026-08-21'), false)
 })
 
+test('a tool loop marks the stable prefix before the first long tool answer, and skips caching a newest round that will be set aside next', () => {
+  const call = (id: string, name = 'run_source'): Turn => ({
+    role: 'assistant',
+    text: '',
+    toolCalls: [{ id, name, input: {} }],
+    raw: [{ type: 'tool_use', id, name, input: {} }],
+  })
+  const answer = (callId: string, output: string): Turn => ({
+    role: 'tool',
+    results: [{ callId, output, isError: false }],
+  })
+  const history: Turn[] = [
+    { role: 'user', text: 'Analyze FLWS.' },
+    call('tu_1'),
+    answer('tu_1', '[Set aside: 45,000 characters of run_source, kept whole. read_again "tu_1" brings it back.]'),
+    call('tu_2'),
+    answer('tu_2', 'x'.repeat(5_000)),
+    call('tu_3'),
+    answer('tu_3', 'ok'),
+  ]
+  const { body } = anthropicRequest('claude-opus-5', ['S'], history, [GET], LOOP, NONE, 32_000)
+  const messages = body.messages as { role: string; content: Record<string, unknown>[] }[]
+  const marked = messages
+    .map((m, i) => (m.role === 'user' && m.content.at(-1)?.cache_control ? i : -1))
+    .filter((i) => i >= 0)
+  // Message 2 is tu_1's set-aside note (before tu_2's 5,000-char live answer); message 6 is the final user/tool turn.
+  assert.deepEqual(marked, [2, 6])
+
+  // When the newest round's answer exceeds WHOLE_MAX (60,000), it will be set aside on the very next round,
+  // so the cache mark stays on the user/tool message before it instead of paying cache_write on the mega-output.
+  const mega: Turn[] = [{ role: 'user', text: 'Download 10-K.' }, call('tu_1'), answer('tu_1', 'x'.repeat(70_000))]
+  const { body: megaBody } = anthropicRequest('claude-opus-5', ['S'], mega, [GET], LOOP, NONE, 32_000)
+  const megaMessages = megaBody.messages as { role: string; content: Record<string, unknown>[] }[]
+  const megaMarked = megaMessages
+    .map((m, i) => (m.role === 'user' && m.content.at(-1)?.cache_control ? i : -1))
+    .filter((i) => i >= 0)
+  assert.deepEqual(megaMarked, [0])
+})
+
 test('a state message is left out where the turn after it is not the assistant, which the provider refuses', () => {
   const history: Turn[] = [
     { role: 'user', text: 'Earlier, summarized.', context: 'grid: old' },
