@@ -2,7 +2,17 @@ import path from 'node:path'
 import { app, utilityProcess, type UtilityProcess } from 'electron'
 import { jaspersHome } from '../home'
 import { createRpc, type Rpc } from '../../shared/rpc'
-import type { QueryRequest, QueryResult, RunRecord, StoreStats } from '../../shared/data/store'
+import type {
+  MemoryHit,
+  MemoryRecord,
+  MemorySearchRequest,
+  MemoryStats,
+  MemoryUpsertDoc,
+  QueryRequest,
+  QueryResult,
+  RunRecord,
+  StoreStats,
+} from '../../shared/data/store'
 import { dayOf, type Spent } from '../../shared/agent/budget'
 import type { Exchange } from '../../shared/agent/transcript'
 
@@ -36,6 +46,10 @@ export function storeFile(): string {
   return path.join(jaspersHome(), 'data', 'jaspers.db')
 }
 
+export function memoryFile(): string {
+  return path.join(jaspersHome(), 'data', 'memory.prism')
+}
+
 /** Starts the store, unless one is running or one died a moment ago. Safe to call again. */
 export function startStore(): void {
   if (live || stopping) return
@@ -58,8 +72,9 @@ export function startStore(): void {
   })
 
   const file = storeFile()
+  const prismFile = memoryFile()
   const ready = rpc
-    .request('init', { file })
+    .request('init', { file, prismFile })
     .then((stats) => {
       const { runs, bytes, sources } = stats as StoreStats
       for (const source of sources) seen.add(source)
@@ -318,6 +333,114 @@ export async function compact(): Promise<StoreStats> {
   const current = running()
   await current.ready
   return (await current.rpc.request('compact', undefined, timeout(QUERY_TIMEOUT_MS))) as StoreStats
+}
+
+/**
+ * Indexes one item (note, command, web page, file, tool output, or message) into `memory.prism`
+ * in the background. Best effort: never throws and never waits on the caller's behalf.
+ */
+export function indexMemory(record: MemoryRecord): void {
+  if (!record.text.trim()) return
+  const current = live
+  if (!current) return
+  void current.ready
+    .then(() => current.rpc.request('memory.index', record, timeout(RECORD_TIMEOUT_MS)))
+    .catch((error: unknown) => console.warn(`[prism] index ${record.source}: ${message(error)}`))
+}
+
+/** Removes all chunks for `source` from `memory.prism`. Best effort. */
+export function removeMemorySource(source: string): void {
+  const current = live
+  if (!current) return
+  void current.ready
+    .then(() => current.rpc.request('memory.remove', { source }, timeout(RECORD_TIMEOUT_MS)))
+    .catch((error: unknown) => console.warn(`[prism] remove ${source}: ${message(error)}`))
+}
+
+/** Searches `memory.prism` by hybrid meaning + keywords, recency, and typed filters. */
+export async function searchMemory(request: MemorySearchRequest): Promise<MemoryHit[]> {
+  const current = running()
+  await current.ready
+  try {
+    return (await current.rpc.request('memory.search', request, timeout(QUERY_TIMEOUT_MS))) as MemoryHit[]
+  } catch (error) {
+    throw new Error(message(error))
+  }
+}
+
+/** Stats of `memory.prism`, for Settings > Data. */
+export async function memoryStats(): Promise<MemoryStats> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.stats', undefined, timeout(RECORD_TIMEOUT_MS))) as MemoryStats
+}
+
+/** Awaited transactional source indexing into `memory.prism` (for `prism_write` and `ctx.prism.index`). */
+export async function indexMemorySync(record: MemoryRecord): Promise<{ chunks: number; skipped: boolean }> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.indexSync', record, timeout(QUERY_TIMEOUT_MS))) as {
+    chunks: number
+    skipped: boolean
+  }
+}
+
+/** Awaited document upsert into `memory.prism` (for `prism_write` and `ctx.prism.upsert`). */
+export async function upsertMemory(
+  docs: MemoryUpsertDoc[],
+): Promise<{ upserted: number; deleted: number; version: number }> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.upsert', { docs }, timeout(QUERY_TIMEOUT_MS))) as {
+    upserted: number
+    deleted: number
+    version: number
+  }
+}
+
+/** Look up one document by id in `memory.prism` (for `ctx.prism.get`). */
+export async function getMemory(
+  id: string,
+): Promise<(MemoryHit & { metadata?: Record<string, unknown> | null }) | null> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.get', { id }, timeout(RECORD_TIMEOUT_MS))) as
+    (MemoryHit & { metadata?: Record<string, unknown> | null }) | null
+}
+
+/** Delete documents by id(s) or filter in `memory.prism` (for `prism_write` and `ctx.prism.delete`). */
+export async function deleteMemory(target: {
+  ids?: string[]
+  where?: Record<string, string | number | null | (string | number | null)[]>
+}): Promise<{ upserted: number; deleted: number; version: number }> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.delete', target, timeout(QUERY_TIMEOUT_MS))) as {
+    upserted: number
+    deleted: number
+    version: number
+  }
+}
+
+/** Run a Prism SQL statement on `memory.prism` (for `ctx.prism.query`). */
+export async function queryMemorySql(
+  sql: string,
+  params?: readonly unknown[] | Record<string, unknown>,
+  readonly = true,
+): Promise<{
+  command: string
+  columns: string[]
+  rows: Record<string, unknown>[]
+  rowCount: number
+}> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.sql', { sql, params, readonly }, timeout(QUERY_TIMEOUT_MS))) as {
+    command: string
+    columns: string[]
+    rows: Record<string, unknown>[]
+    rowCount: number
+  }
 }
 
 /** Closes the file and stops the process. Called on quit, and on a query that outstayed its welcome. */

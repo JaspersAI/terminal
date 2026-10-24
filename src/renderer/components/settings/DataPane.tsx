@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
-import type { StoreStats } from '../../../shared/data/store'
+import { formatMemorySummary, type MemoryStats, type StoreStats } from '../../../shared/data/store'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
 import { BUTTON, FIELD, Row } from './Row'
@@ -15,12 +15,14 @@ type Usage = { origin: string; input: number; output: number; runs: number }
 
 export function DataPane(): ReactElement {
   const [stats, setStats] = useState<StoreStats | null>(null)
+  const [memory, setMemory] = useState<MemoryStats | null>(null)
   const [usage, setUsage] = useState<Usage[] | null>(null)
   const budget = useAppState((s) => s.budgets.dailyTokens)
   const [draft, setDraft] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [copiedPrism, setCopiedPrism] = useState(false)
 
   const read = useCallback((): void => {
     window.app.store
@@ -30,6 +32,10 @@ export function DataPane(): ReactElement {
         setError(null)
       })
       .catch((err: unknown) => setError(errorMessage(err)))
+    window.app.store
+      .memoryStats()
+      .then(setMemory)
+      .catch(() => undefined)
     window.app.store
       .usage()
       .then(setUsage)
@@ -42,7 +48,10 @@ export function DataPane(): ReactElement {
     setBusy(true)
     window.app.store
       .compact()
-      .then(setStats)
+      .then((found) => {
+        setStats(found)
+        return window.app.store.memoryStats().then(setMemory, () => undefined)
+      })
       .catch((err: unknown) => setError(errorMessage(err)))
       .finally(() => setBusy(false))
   }
@@ -52,6 +61,14 @@ export function DataPane(): ReactElement {
     void window.app.copyText(stats.path).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  function copyPrism(): void {
+    if (!memory) return
+    void window.app.copyText(memory.path).then(() => {
+      setCopiedPrism(true)
+      setTimeout(() => setCopiedPrism(false), 2000)
     })
   }
 
@@ -92,6 +109,17 @@ export function DataPane(): ReactElement {
         <Row label="Oldest run">
           <span className="text-right text-sm text-muted-foreground">
             {stats ? (stats.oldest ? when(stats.oldest) : 'Nothing filed yet') : '…'}
+          </span>
+        </Row>
+        <Row label="Prism DB" hint="Local hybrid vector and BM25 retrieval store (memory.prism)">
+          <p className="font-mono text-xs break-all text-muted-foreground">{memory?.path ?? '…'}</p>
+          <button type="button" disabled={!memory} onClick={copyPrism} className={`${BUTTON} self-end`}>
+            {copiedPrism ? 'Copied' : 'Copy path'}
+          </button>
+        </Row>
+        <Row label="Retrieval index" hint="Indexed messages, tool outputs, notes, files, commands, and web pages">
+          <span className="text-right text-sm text-muted-foreground">
+            {memory ? `${formatMemorySummary(memory)} · ${size(memory.bytes)}` : '…'}
           </span>
         </Row>
         <Row label="Spent today" hint="What the assistant's own calls cost, by what asked for them">

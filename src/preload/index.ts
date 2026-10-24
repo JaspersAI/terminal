@@ -11,7 +11,7 @@ import type { Memory } from '../shared/agent/memory'
 import type { SkillInstallRequest, SkillPrepareResult } from '../shared/skills/skill-install'
 import type { SkillFile } from '../shared/skills/skills'
 import type { Action, AppState } from '../shared/state'
-import type { QueryResult, StoreStats } from '../shared/data/store'
+import type { MemoryHit, MemorySearchRequest, MemoryStats, QueryResult, StoreStats } from '../shared/data/store'
 import type { Exchange } from '../shared/agent/transcript'
 import type { Note } from '../shared/app/eye-events'
 import { MAIN_WINDOW, WINDOWS_MAX } from '../shared/grid/windows'
@@ -177,10 +177,12 @@ const api = {
     /** It was let go over this window. */
     onDrop: (listener: (over: DragOver) => void): (() => void) => on('drag:drop', listener),
   },
-  /** The store: what is in the file every source run is filed to, and reclaiming its space. */
+  /** The store: what is in the files every source run and memory item is filed to, and reclaiming their space. */
   store: {
     query: (sql: string, limit?: number): Promise<QueryResult> => ipcRenderer.invoke('store:query', sql, limit),
+    search: (request: MemorySearchRequest): Promise<MemoryHit[]> => ipcRenderer.invoke('store:search', request),
     stats: (): Promise<StoreStats> => ipcRenderer.invoke('store:stats'),
+    memoryStats: (): Promise<MemoryStats> => ipcRenderer.invoke('store:memory-stats'),
     /** What each kind of run has spent today. */
     usage: (): Promise<{ origin: string; input: number; output: number; runs: number }[]> =>
       ipcRenderer.invoke('store:usage'),

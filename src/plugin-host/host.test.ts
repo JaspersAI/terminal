@@ -386,3 +386,66 @@ test("a source's fetch carries the plugin's secrets main sent, and fails naming 
     /BLS failed: fetch failed \(.*api\.invalid.*\)/,
   )
 })
+
+const PRISM_PLUGIN = `
+const { definePlugin, defineSource } = require('@jaspers-ai/sdk')
+const { z } = require('zod')
+module.exports = definePlugin({
+  id: 'notes-sync',
+  sources: {
+    sync: defineSource({
+      description: 'Write and read from Prism DB',
+      input: z.object({ q: z.string() }),
+      run: async (args, ctx) => {
+        const up = await ctx.prism.upsert({ id: 'item-1', text: 'Semiconductor wafer fab equipment demand', columns: { kind: 'note' } })
+        const idx = await ctx.prism.index({ source: 'notes-sync/doc', text: 'Long form analysis of WFE spend', kind: 'file' })
+        const hits = await ctx.prism.search({ text: args.q, limit: 5 })
+        const one = await ctx.prism.get('notes-sync/item-1')
+        const sql = await ctx.prism.query("SELECT id FROM documents WHERE source = ?", ['notes-sync/doc'])
+        const del = await ctx.prism.delete('notes-sync/item-1')
+        return { up, idx, hits, one, sql, del }
+      },
+    }),
+  },
+})
+`
+
+test('a plugin can write to and read from Prism DB through ctx.prism', async () => {
+  const { main } = start()
+  const calls: [string, unknown][] = []
+  main.handle('prism.upsert', async (params) => {
+    calls.push(['upsert', params])
+    return { upserted: 1, deleted: 0, version: 2 }
+  })
+  main.handle('prism.index', async (params) => {
+    calls.push(['index', params])
+    return { chunks: 1, skipped: false }
+  })
+  main.handle('prism.search', async (params) => {
+    calls.push(['search', params])
+    return [{ id: 'notes-sync/item-1', score: 0.9, text: 'Semiconductor wafer fab equipment demand' }]
+  })
+  main.handle('prism.get', async (params) => {
+    calls.push(['get', params])
+    return { id: 'notes-sync/item-1', score: 0, text: 'Semiconductor wafer fab equipment demand' }
+  })
+  main.handle('prism.query', async (params) => {
+    calls.push(['query', params])
+    return { command: 'SELECT', columns: ['id'], rows: [{ id: 'notes-sync/doc#0' }], rowCount: 1 }
+  })
+  main.handle('prism.delete', async (params) => {
+    calls.push(['delete', params])
+    return { upserted: 0, deleted: 1, version: 3 }
+  })
+  await main.request('init', { id: 'notes-sync', code: PRISM_PLUGIN, capabilities: [] })
+  const out = (await main.request('source.run', {
+    name: 'sync',
+    args: { q: 'wafer fab' },
+    workspaceId: 'w1',
+  })) as Record<string, unknown>
+  assert.deepEqual(out.up, { upserted: 1, deleted: 0, version: 2 })
+  assert.deepEqual(out.idx, { chunks: 1, skipped: false })
+  assert.equal(calls.length, 6)
+  assert.equal(calls[0]![0], 'upsert')
+  assert.equal(calls[2]![0], 'search')
+})

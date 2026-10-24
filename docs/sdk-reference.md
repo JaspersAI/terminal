@@ -78,6 +78,7 @@ A plugin with `start` gets its process when it loads. One without gets it on its
 | `skills`      | `skills`       | `catalog()`, `activate(name)`, `read(name, path)`: the skills the assistant may load, for the plugin's own model; see [Skills](skills.md#skills-in-a-plugin) |
 | `live`        |                | `set(key, value)`: JSON the plugin's views read with `useData('live/<key>')`, held in memory; `delete(key)` takes it away                       |
 | `jobs`        |                | `start(key, run)`: work that outlives the call, its `run(signal)` aborted when the process stops or by `abort(key)`; `running()` lists the keys |
+| `prism`       |                | `search(opts)`, `query(sql, params?)`, `upsert(docs)`, `index(record)`, `get(id)`, `delete(target)`: read and write the local Prism DB (`~/Jaspers/data/memory.prism`) |
 | `notify`      |                | `notify(text)`: a line for the user, labelled with the plugin: kept in the inbox, and a system notification while the app is not in front; never shown over the app                            |
 | `workspace`   |                | the workspace the call came from, or `null` in `start`                                                                                          |
 

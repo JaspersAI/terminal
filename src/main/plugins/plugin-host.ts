@@ -19,6 +19,15 @@ import { activateSkill, readSkillFile, skillCatalog } from '../skills/skills'
 import { getProviderConfig } from '../secrets'
 import { getState, toPublic } from '../state'
 import { record } from '../eye/eye'
+import {
+  readSearchInput,
+  scopePluginDelete,
+  scopePluginId,
+  scopePluginSource,
+  type MemoryKind,
+  type MemoryUpsertDoc,
+} from '../../shared/data/store'
+import { deleteMemory, getMemory, indexMemorySync, queryMemorySql, searchMemory, upsertMemory } from '../data/store'
 
 // Plugins' hosts, from main's side. A plugin with code of its own to run gets one utility process,
 // on its latest good build. A plugin that defines start gets it with each build, since start's work
@@ -441,6 +450,77 @@ function serve(host: Host, capabilities: Capability[]): void {
   rpc.onNotification('notify', (params) =>
     attempt(id, 'notify', () => fileNotice(id, String(asRecord(params)['text'] ?? ''))),
   )
+  rpc.handle('prism.search', (params) => {
+    const { options } = asRecord(params)
+    return searchMemory(readSearchInput(asRecord(options)))
+  })
+  rpc.handle('prism.query', (params) => {
+    const { sql, params: sqlParams } = asRecord(params)
+    if (typeof sql !== 'string' || !sql.trim()) throw new Error('ctx.prism.query takes a SQL string.')
+    const p =
+      Array.isArray(sqlParams) || (typeof sqlParams === 'object' && sqlParams !== null)
+        ? (sqlParams as readonly unknown[] | Record<string, unknown>)
+        : undefined
+    return queryMemorySql(sql, p, true)
+  })
+  rpc.handle('prism.upsert', (params) => {
+    const { docs: rawDocs, workspaceId } = asRecord(params)
+    const list = Array.isArray(rawDocs) ? rawDocs : []
+    const docs: MemoryUpsertDoc[] = list.map((item) => {
+      const rec = asRecord(item)
+      const rawId = typeof rec.id === 'string' ? rec.id.trim() : ''
+      if (!rawId) throw new Error('ctx.prism.upsert requires each document to have a non-empty id.')
+      const docId = scopePluginId(id, rawId)
+      const cols = asRecord(rec.columns) as Record<string, string | number | boolean | null>
+      return {
+        id: docId,
+        text: typeof rec.text === 'string' ? rec.text : '',
+        ...(Array.isArray(rec.vector) ? { vector: rec.vector as number[] } : {}),
+        columns: {
+          kind: cols.kind ?? 'note',
+          ...(typeof workspaceId === 'string' && workspaceId && cols.project === undefined
+            ? { project: workspaceId }
+            : {}),
+          ...cols,
+          source: scopePluginSource(id, cols.source),
+        },
+        ...(typeof rec.metadata === 'object' && rec.metadata !== null && !Array.isArray(rec.metadata)
+          ? { metadata: rec.metadata as Record<string, unknown> }
+          : {}),
+      }
+    })
+    return upsertMemory(docs)
+  })
+  rpc.handle('prism.index', (params) => {
+    const { record: rawRec, workspaceId } = asRecord(params)
+    const rec = asRecord(rawRec)
+    const rawSource = typeof rec.source === 'string' ? rec.source.trim() : ''
+    if (!rawSource) throw new Error('ctx.prism.index requires a source string.')
+    const source = scopePluginSource(id, rawSource)
+    const text = typeof rec.text === 'string' ? rec.text : ''
+    const kind = (typeof rec.kind === 'string' ? rec.kind : 'file') as MemoryKind
+    return indexMemorySync({
+      source,
+      text,
+      kind,
+      session: typeof rec.session === 'string' ? rec.session : null,
+      project: typeof rec.project === 'string' ? rec.project : typeof workspaceId === 'string' ? workspaceId : null,
+      role: typeof rec.role === 'string' ? rec.role : null,
+      createdAt: typeof rec.createdAt === 'number' ? rec.createdAt : Date.now(),
+    })
+  })
+  rpc.handle('prism.get', async (params) => {
+    const { id: rawId } = asRecord(params)
+    if (typeof rawId !== 'string' || !rawId.trim()) throw new Error('ctx.prism.get takes a document id.')
+    const trimmed = rawId.trim()
+    const found = await getMemory(trimmed)
+    if (found || trimmed.startsWith(`${id}/`)) return found
+    return getMemory(scopePluginId(id, trimmed))
+  })
+  rpc.handle('prism.delete', (params) => {
+    const { target } = asRecord(params)
+    return deleteMemory(scopePluginDelete(id, target))
+  })
 }
 
 /** A plugin's model calls this session, counted in the tree so spend is visible. */

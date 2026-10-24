@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises'
 import fs from 'node:fs'
 import path from 'node:path'
 import { jaspersHome } from '../home'
+import { indexMemory, removeMemorySource } from '../data/store'
 import { getState, update } from '../state'
 import { checkMemory, isMemoryName, memoryFile, parseMemory, type Memory } from '../../shared/agent/memory'
 import { clean, type Standing } from '../../shared/agent/standing'
@@ -46,6 +47,12 @@ export async function writeMemory(name: string, about: string, body: string): Pr
   await fsp.mkdir(memoryRoot(), { recursive: true })
   await fsp.writeFile(path.join(memoryRoot(), `${name}.md`), memoryFile(about, body), { mode: 0o600 })
   await scan()
+  indexMemory({
+    source: `memory/${name}.md`,
+    kind: 'note',
+    text: `${about}\n\n${body}`,
+    createdAt: Date.now(),
+  })
   console.log(`[memory] wrote ${name}`)
   return null
 }
@@ -59,6 +66,7 @@ async function removeMemory(name: string): Promise<boolean> {
     return false
   }
   await scan()
+  removeMemorySource(`memory/${name}.md`)
   console.log(`[memory] forgot ${name}`)
   return true
 }
@@ -67,6 +75,14 @@ async function removeMemory(name: string): Promise<boolean> {
 export async function scan(): Promise<void> {
   const memories = await readAll()
   update((state) => ({ ...state, memories }))
+  for (const one of memories) {
+    indexMemory({
+      source: `memory/${one.name}.md`,
+      kind: 'note',
+      text: `${one.about}\n\n${one.body}`,
+      createdAt: one.at,
+    })
+  }
 }
 
 async function readAll(): Promise<Memory[]> {
@@ -132,12 +148,21 @@ async function readStanding(workspaceId: string | null): Promise<string> {
 async function writeStanding(workspaceId: string | null, text: string): Promise<void> {
   if (text.length > STANDING_WRITE_MAX) throw new Error(`AGENT.md is longer than ${STANDING_WRITE_MAX} characters.`)
   const file = standingPath(workspaceId ?? undefined)
+  const source = workspaceId ? `workspaces/${workspaceId}/AGENT.md` : 'AGENT.md'
   if (!text.trim()) {
     await fsp.rm(file, { force: true })
+    removeMemorySource(source)
     return
   }
   await fsp.mkdir(path.dirname(file), { recursive: true })
   await fsp.writeFile(file, text, { mode: 0o600 })
+  indexMemory({
+    source,
+    kind: 'note',
+    project: workspaceId,
+    text,
+    createdAt: Date.now(),
+  })
 }
 
 /**

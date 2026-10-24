@@ -25,7 +25,18 @@ import { jaspersHome } from './home'
 import { registerMemoryIpc, startMemory } from './agent/memory'
 import { startThreads } from './agent/thread-file'
 import { startInbox } from './app/notices'
-import { compact, notifications, query, startStore, stats, stopOnQuit, usageToday } from './data/store'
+import { readSearchInput } from '../shared/data/store'
+import {
+  compact,
+  memoryStats,
+  notifications,
+  query,
+  searchMemory,
+  startStore,
+  stats,
+  stopOnQuit,
+  usageToday,
+} from './data/store'
 import { startBackground, startsHidden } from './app/background'
 import { deleteRecordings, endSession, eyeFolder, startEye } from './eye/eye'
 import { recordAction, recordNote, startTelemetry } from './eye/taps'
@@ -144,7 +155,14 @@ app.whenReady().then(async () => {
     if (typeof sql !== 'string') throw new Error('sql has to be a string.')
     return query({ sql, limit: typeof limit === 'number' ? limit : undefined })
   })
+  ipcMain.handle('store:search', (_event, request: unknown) => {
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+      throw new Error('search takes an options object.')
+    }
+    return searchMemory(readSearchInput(request as Record<string, unknown>))
+  })
   ipcMain.handle('store:stats', () => stats())
+  ipcMain.handle('store:memory-stats', () => memoryStats())
   ipcMain.handle('store:usage', () => usageToday())
   ipcMain.handle('inbox:list', (_event, limit: unknown) => notifications(typeof limit === 'number' ? limit : 200))
   ipcMain.handle('store:compact', () => compact())

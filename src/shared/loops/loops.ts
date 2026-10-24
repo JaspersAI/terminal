@@ -615,6 +615,8 @@ export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'set_secret',
   'get',
   'query',
+  'search',
+  'prism_write',
   'install_plugin',
   'install_skill',
   'add_connection',

@@ -1,0 +1,63 @@
+export { connect, Connection } from './connection.ts'
+export {
+  BGE_QUERY_INSTRUCTION,
+  BGE_SMALL_EN_FINGERPRINT,
+  localEmbedder,
+  localReranker,
+  reembed,
+  type LocalEmbedderOptions,
+  type LocalRerankerOptions,
+  type ReembedOptions,
+} from './embed.ts'
+export { PrismError, type PrismErrorCode } from './errors.ts'
+export { setFaultHook, setFaultHook as _setFaultHook, slackForDim, type FaultHook } from './native.ts'
+export {
+  chunk,
+  createIngestionQueue,
+  indexSource,
+  type ChunkOptions,
+  type IndexSourceInput,
+  type IndexSourceResult,
+  type IngestionProgress,
+  type IngestionQueue,
+  type IngestionQueueOptions,
+  type TextChunk,
+} from './ingest.ts'
+export { escapeIdentifier, escapeLiteral } from './sql.ts'
+export { tokenize, tokenizeV1, tokenizeV2, type TokenizerVersion } from './tokenizer.ts'
+export type {
+  ColumnDef,
+  ColumnSpec,
+  ColumnType,
+  ColumnValue,
+  ConnectOptions,
+  CreateOptions,
+  Document,
+  EmbedFunction,
+  EmbedKind,
+  Embedder,
+  GetOptions,
+  Hit,
+  ListOptions,
+  Metadata,
+  OptimizeResult,
+  QueryOptions,
+  QueryResult,
+  QueryStats,
+  RangeFilter,
+  RecencyOptions,
+  Reranker,
+  Row,
+  SearchMode,
+  SearchOptions,
+  SortDirection,
+  SqlCommand,
+  SqlParams,
+  Stats,
+  StoredColumnValue,
+  Transaction,
+  Vector,
+  Where,
+  WhereCondition,
+  WriteResult,
+} from './types.ts'

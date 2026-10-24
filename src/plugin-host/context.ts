@@ -2,6 +2,8 @@ import type {
   BackendContext,
   Capability,
   FileEntry,
+  PrismDocument,
+  PrismHit,
   SkillEntry,
   SkillFilePart,
   ToolEntry,
@@ -171,6 +173,44 @@ export function createContextFactory(rpc: Rpc, capabilities: Capability[], plugi
     rpc.notify('notify', { text: String(text) })
   }
 
+  const prismFor = (workspace: string | null): BackendContext['prism'] => ({
+    async search(options) {
+      return (await rpc.request('prism.search', { options })) as PrismHit[]
+    },
+    async query(sql, params) {
+      return (await rpc.request('prism.query', { sql, params })) as {
+        command: string
+        columns: string[]
+        rows: Record<string, unknown>[]
+        rowCount: number
+      }
+    },
+    async upsert(docs) {
+      const list = (Array.isArray(docs) ? docs : [docs]) as PrismDocument[]
+      return (await rpc.request('prism.upsert', { docs: list, workspaceId: workspace })) as {
+        upserted: number
+        deleted: number
+        version: number
+      }
+    },
+    async index(record) {
+      return (await rpc.request('prism.index', { record, workspaceId: workspace })) as {
+        chunks: number
+        skipped: boolean
+      }
+    },
+    async get(id) {
+      return (await rpc.request('prism.get', { id })) as PrismHit | null
+    },
+    async delete(target) {
+      return (await rpc.request('prism.delete', { target })) as {
+        upserted: number
+        deleted: number
+        version: number
+      }
+    },
+  })
+
   return {
     forCall: (hosts, workspace, secrets = {}) => ({
       workspace,
@@ -183,6 +223,7 @@ export function createContextFactory(rpc: Rpc, capabilities: Capability[], plugi
       state: stateFor(workspace),
       skills,
       jobs,
+      prism: prismFor(workspace),
     }),
     async abortJobs(reason) {
       const settling = [...running.values()].map(({ controller, done }) => {

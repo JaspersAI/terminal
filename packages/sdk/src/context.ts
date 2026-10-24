@@ -100,6 +100,94 @@ export interface Jobs {
   running(): string[]
 }
 
+/** One document written into the local Prism DB (`~/Jaspers/data/memory.prism`). */
+export interface PrismDocument {
+  /** Unique document id (scoped with `<plugin id>/` when not already prefixed). */
+  id: string
+  /** Text: stored, keyword-indexed (BM25), and embedded with `bge-small-en-v1.5` when `vector` is omitted. */
+  text: string
+  /** Optional 384-dimensional vector. */
+  vector?: number[]
+  /** Filter column values (`source`, `kind`, `session`, `project`, `role`, `createdAt`). */
+  columns?: Record<string, string | number | boolean | null>
+  /** Arbitrary JSON metadata returned with hits. */
+  metadata?: Record<string, unknown>
+}
+
+export interface PrismSearchOptions {
+  /** Query text for hybrid (meaning + BM25), vector, or keyword search. Omit for latest-N listing. */
+  text?: string
+  mode?: 'hybrid' | 'vector' | 'keyword'
+  kind?: string | string[]
+  source?: string | string[]
+  session?: string | string[]
+  project?: string | string[]
+  role?: string | string[]
+  /** Inclusive lower bound on `createdAt` (ms since epoch or ISO-8601 string). */
+  since?: number | string
+  /** Exclusive upper bound on `createdAt` (ms since epoch or ISO-8601 string). */
+  until?: number | string
+  recencyHalfLifeMs?: number
+  recencyWeight?: number
+  rerank?: number
+  orderBy?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
+}
+
+export interface PrismHit {
+  id: string
+  score: number
+  retrievalScore?: number
+  text: string
+  source: string | null
+  kind: string | null
+  session: string | null
+  project: string | null
+  role: string | null
+  createdAt: number | null
+  metadata?: Record<string, unknown> | null
+}
+
+/**
+ * The local Prism DB (`~/Jaspers/data/memory.prism`): hybrid vector + BM25 retrieval and document
+ * storage shared across the terminal and its plugins.
+ */
+export interface Prism {
+  /** Search or list documents from Prism DB by meaning, keywords, recency, and filters. */
+  search(options: PrismSearchOptions): Promise<PrismHit[]>
+  /** Run a read-only Prism SQL statement (`SELECT ... FROM documents ORDER BY HYBRID(...)` or `EXPLAIN SELECT ...`). */
+  query(
+    sql: string,
+    params?: unknown[] | Record<string, unknown>,
+  ): Promise<{
+    command: string
+    columns: string[]
+    rows: Record<string, unknown>[]
+    rowCount: number
+  }>
+  /** Add or replace one or more documents in one atomic commit (embedded automatically when `vector` is omitted). */
+  upsert(docs: PrismDocument | PrismDocument[]): Promise<{ upserted: number; deleted: number; version: number }>
+  /** Chunk and index long text by `source` in one transaction, skipping if its content hash is unchanged. */
+  index(record: {
+    source: string
+    text: string
+    kind?: 'message' | 'tool_output' | 'file' | 'command' | 'note' | 'web'
+    session?: string | null
+    project?: string | null
+    role?: string | null
+    createdAt?: number
+  }): Promise<{ chunks: number; skipped: boolean }>
+  /** Look up a document by id. */
+  get(id: string): Promise<PrismHit | null>
+  /** Delete this plugin's documents by id(s) or by filter (`{ source, kind, ... }`). */
+  delete(target: string | string[] | Record<string, string | number | null | (string | number | null)[]>): Promise<{
+    upserted: number
+    deleted: number
+    version: number
+  }>
+}
+
 /** What a plugin's backend code reaches the app through: a function source's `run`, and `start`. */
 export interface BackendContext {
   /**
@@ -126,6 +214,8 @@ export interface BackendContext {
    */
   skills: Skills
   jobs: Jobs
+  /** Read and write access to the local Prism DB (`~/Jaspers/data/memory.prism`). */
+  prism: Prism
 }
 
 /** The name function sources were first written against. */

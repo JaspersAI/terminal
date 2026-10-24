@@ -1,5 +1,6 @@
 import { formatResults } from '../../../shared/agent/web/search'
 import { remember, wasGiven } from '../../../shared/agent/web'
+import { indexMemory } from '../../data/store'
 import { fetchPage } from '../web/page-fetch'
 import { searchAvailable, searchWeb } from '../web/search'
 import type { Tool, ToolContext } from './types'
@@ -70,7 +71,18 @@ export function webFetchTool(
       const refused = refusal(input.url, context)
       if (refused) throw new Error(refused)
       const offset = typeof input.offset === 'number' && Number.isFinite(input.offset) ? input.offset : 0
-      return fetchPage(input.url, offset, context.signal)
+      const page = await fetchPage(input.url, offset, context.signal)
+      if (offset === 0) {
+        indexMemory({
+          source: input.url.trim(),
+          kind: 'web',
+          session: context.conversationId,
+          project: context.workspaceId,
+          text: page,
+          createdAt: Date.now(),
+        })
+      }
+      return page
     },
   }
 }

@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { isSkillName, SKILL_NAME_MAX } from '../../shared/skills/skills'
+import { indexMemory } from '../data/store'
 import { homeSkillsRoot } from '../home'
 import { setPluginInfo } from '../plugins/plugin-info'
 import { createSkillRegistry } from './skill-registry'
@@ -60,6 +61,12 @@ export async function createSkill(name: string, text: string): Promise<string> {
   await fsp.mkdir(dir)
   await fsp.writeFile(path.join(dir, 'SKILL.md'), text, { mode: 0o644, flag: 'wx' })
   rescanUserSkill(name)
+  indexMemory({
+    source: `skills/${name}/SKILL.md`,
+    kind: 'file',
+    text,
+    createdAt: Date.now(),
+  })
   console.log(`[skills] created ${name}`)
   return name
 }
