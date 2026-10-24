@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { callOf, cutFrom, LARGE, makeRoom, sent, setAside, startOf, WHOLE_MAX } from './aside.ts'
+import { callOf, cutFrom, INSTRUCTIONS, LARGE, makeRoom, sent, setAside, startOf, WHOLE_MAX } from './aside.ts'
 import type { ToolCall, Turn } from '../llm/llm.ts'
 
 type Assistant = Extract<Turn, { role: 'assistant' }>
@@ -83,15 +83,19 @@ test('the request at work is sent whole, however long its answers', () => {
   assert.equal(out[2], turns[2])
 })
 
-test("an answer the run goes by is never set aside: a skill's instructions are not what it found", () => {
+test("an answer the run goes by is never set aside: a skill's instructions and a plugin's files are not what it found", () => {
   const turns: Turn[] = [
     asked('backtest it'),
     calling('skill', 'activate_skill', { name: 'backtest' }),
     answer('skill', big(12_000)),
+    calling('file', 'read_file', { path: 'plugin.tsx' }),
+    answer('file', big(8_000)),
     replied('Loaded.'),
     asked('go on'),
   ]
-  assert.equal(sent(turns, startOf(turns), new Set(['activate_skill']))[2], turns[2])
+  const out = sent(turns, startOf(turns), INSTRUCTIONS)
+  assert.equal(out[2], turns[2])
+  assert.equal(out[4], turns[4])
 })
 
 test("an earlier request's call goes with its long arguments cut short, and the rest of it as it was made", () => {
@@ -418,14 +422,20 @@ test('an earlier request has nothing more to give: what it found already goes as
   assert.equal(makeRoom(turns, startOf(turns)), null)
 })
 
-test("a skill's instructions are neither set aside nor withheld", () => {
-  const kept = new Set(['activate_skill'])
-  const turns: Turn[] = [asked('go'), calling('skill', 'activate_skill'), answer('skill', big(12_000))]
-  assert.equal(makeRoom(turns, { asked: 0, aside: 0 }, kept), null)
+test("a skill's instructions and a plugin's read_file are neither set aside nor withheld", () => {
+  const turns: Turn[] = [
+    asked('go'),
+    calling('skill', 'activate_skill'),
+    answer('skill', big(12_000)),
+    calling('file', 'read_file', { path: 'ChartView.tsx' }),
+    answer('file', big(10_000)),
+  ]
+  assert.equal(makeRoom(turns, { asked: 0, aside: 0 }, INSTRUCTIONS), null)
   const then: Turn[] = [...turns, calling('c1', 'run_source'), answer('c1', big(40_000))]
-  const made = makeRoom(then, { asked: 0, aside: 0 }, kept)!
+  const made = makeRoom(then, { asked: 0, aside: 0 }, INSTRUCTIONS)!
   assert.equal(outputs(made.turns)[0]!.length, 12_000)
-  assert.match(outputs(made.turns)[1]!, /Not shown/)
+  assert.equal(outputs(made.turns)[1]!.length, 10_000)
+  assert.match(outputs(made.turns)[2]!, /Not shown/)
 })
 
 test('a call is found by its id, with what it answered', () => {
