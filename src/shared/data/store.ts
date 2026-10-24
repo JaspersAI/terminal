@@ -42,10 +42,78 @@ export interface StoreStats {
   sources: string[]
 }
 
+/** Content kinds indexed into the local Prism DB (`~/Jaspers/data/memory.prism`, SPEC §13). */
+export type MemoryKind = 'message' | 'tool_output' | 'file' | 'command' | 'note' | 'web'
+
+export interface MemoryRecord {
+  /** Stable identifier for this item (`<source>#<chunk>` in Prism DB). */
+  source: string
+  kind: MemoryKind
+  text: string
+  session?: string | null
+  project?: string | null
+  role?: string | null
+  createdAt?: number
+}
+
+export interface MemorySearchRequest {
+  text?: string
+  mode?: 'hybrid' | 'vector' | 'keyword'
+  kind?: MemoryKind | readonly MemoryKind[]
+  source?: string | readonly string[]
+  session?: string | readonly string[]
+  project?: string | readonly string[]
+  role?: string | readonly string[]
+  /** Inclusive lower bound on `createdAt` (ms since epoch or ISO-8601 string). */
+  since?: number | string
+  /** Exclusive upper bound on `createdAt` (ms since epoch or ISO-8601 string). */
+  until?: number | string
+  /** Exponential recency decay half-life in milliseconds. */
+  recencyHalfLifeMs?: number
+  /** Share of recency in the score (0..1). Default `0.15` when `recencyHalfLifeMs` is set. */
+  recencyWeight?: number
+  /** Stage-2 rerank candidate count (`rerank: 50`). */
+  rerank?: number
+  /** Order unranked results by `createdAt` (`'desc'` for latest-N). */
+  orderBy?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
+}
+
+export interface MemoryHit {
+  id: string
+  score: number
+  retrievalScore?: number
+  text: string
+  source: string | null
+  kind: string | null
+  session: string | null
+  project: string | null
+  role: string | null
+  createdAt: number | null
+}
+
+export interface MemoryStats {
+  path: string
+  bytes: number
+  docs: number
+  segments: number
+  model: string
+}
+
 export const QUERY_LIMIT_DEFAULT = 500
 export const QUERY_LIMIT_MAX = 2000
 /** The most exchanges of a chat one read answers with. A reader asks again for the ones before them. */
 export const EXCHANGES_MAX = 1000
+
+/**
+ * True when a SQL statement is a read-only SELECT or EXPLAIN SELECT against the Prism DB
+ * `documents` table (`~/Jaspers/data/memory.prism`).
+ */
+export function isPrismQuery(sql: string): boolean {
+  const trimmed = sql.trim().replace(/;+$/, '').trim()
+  return /^(?:explain\s+(?:analyze\s+)?)?select\b[\s\S]*\bfrom\s+(?:"documents"|`documents`|documents\b)/i.test(trimmed)
+}
 
 /**
  * Whether a statement may run. The connection is read only and refuses a write on its own; this is
@@ -55,7 +123,9 @@ export const EXCHANGES_MAX = 1000
 export function checkQuery(sql: string): string | null {
   const trimmed = sql.trim().replace(/;+$/, '').trim()
   if (!trimmed) return 'Write a SELECT.'
-  if (!/^(select|with)\b/i.test(trimmed)) return 'Only SELECT (or WITH … SELECT) can be run here.'
+  if (!/^(select|with)\b/i.test(trimmed) && !isPrismQuery(trimmed)) {
+    return 'Only SELECT (or WITH … SELECT) can be run here.'
+  }
   if (hasStatementBreak(trimmed)) return 'One statement at a time.'
   return null
 }
