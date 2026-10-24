@@ -63,7 +63,7 @@ async function execute(
     if (!tool) throw new Error(`Unknown tool "${call.name}".`)
     // The wait ends when the run does, whether or not the tool itself knows how to be stopped.
     const answer = await untilAborted(tool.run(call.input, context), signal)
-    // Rows are never cut: a source's answer and a query's are the data, and all of it was asked for.
+    // A tool that caps or formats its own answer (or brings back a stored one whole) sets `whole`.
     const output = tool.whole ? answer : capOutput(answer)
     // A skill's instructions and files are long and already on disk; the log keeps their start.
     const shownOutput =

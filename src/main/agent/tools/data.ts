@@ -1,5 +1,5 @@
 import { untilAborted } from '../../../shared/abort'
-import { capOutput, sourceOutput } from '../../../shared/agent/history'
+import { sourceOutput } from '../../../shared/agent/history'
 import { readInput, readMcpCall } from '../../../shared/data/arguments'
 import { QUERY_LIMIT_DEFAULT, QUERY_LIMIT_MAX } from '../../../shared/data/store'
 import { findConnectionTool, resolveConnectionSource, sourceParameters } from '../../../shared/data/tool-parameters'
@@ -40,7 +40,7 @@ export function storeTools(): Tool[] {
       },
       async run(input) {
         const result = await query({ sql: asPathString(input.sql), limit: optional(input.limit, asOffset) })
-        return capOutput(JSON.stringify(result))
+        return JSON.stringify(result)
       },
     },
   ]
