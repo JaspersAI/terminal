@@ -83,7 +83,6 @@ rpc.handle('memory.index', (params) => {
 rpc.handle('memory.remove', (params) => openMem().removeSource((params as { source: string }).source))
 rpc.handle('memory.search', (params) => openMem().search(params as MemorySearchRequest))
 rpc.handle('memory.stats', () => openMem().stats())
-rpc.handle('memory.compact', () => openMem().compact())
 rpc.handle('saveThread', (params) => {
   const { chat, at, model, turns } = params as { chat: string; at: number; model: string; turns: string }
   open().saveThread(chat, { at, model, turns })

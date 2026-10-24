@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, test } from 'node:test'
 import {
+  _setFaultHook,
   chunk,
   connect,
   createIngestionQueue,
@@ -200,6 +201,13 @@ test('typed columns, Where ranges, latest-N list, recency, two-stage rerank, and
   )
   assert.deepEqual(sqlRange.rows, [{ id: 'm2', createdAt: t0 + 2 * day, tokens: 350 }])
 
+  // Combining id IN (...) with range filters on typed columns
+  const sqlIdAndRange = await db.query(
+    "SELECT id, createdAt FROM documents WHERE id IN ('m1', 'm2') AND createdAt >= '2026-10-02T00:00:00Z'",
+  )
+  assert.deepEqual(sqlIdAndRange.rows, [{ id: 'm2', createdAt: t0 + 2 * day }])
+  assert.equal(typeof _setFaultHook, 'function')
+
   const sqlLatest = await db.query('SELECT id FROM documents ORDER BY createdAt DESC LIMIT 2')
   assert.deepEqual(sqlLatest.rows, [{ id: 'm3' }, { id: 'm2' }])
 
@@ -277,7 +285,7 @@ test('ingestion helpers: chunk(), indexSource() with content-hash deduplication,
     text: 'Second background note on MSFT',
     columns: { kind: 'note', createdAt: Date.now() },
   })
-  await queue.Flush()
+  await queue.flush()
   assert.ok(events.length >= 2)
   assert.equal(await db.count({ kind: 'note' }), 2)
 

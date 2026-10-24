@@ -10,6 +10,7 @@ export {
   type ReembedOptions,
 } from './embed.ts'
 export { PrismError, type PrismErrorCode } from './errors.ts'
+export { setFaultHook, setFaultHook as _setFaultHook, slackForDim, type FaultHook } from './native.ts'
 export {
   chunk,
   createIngestionQueue,

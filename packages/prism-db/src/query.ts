@@ -260,6 +260,35 @@ class Exec {
       const str = v === undefined ? null : String(v)
       if (!set.has(str)) return false
     }
+    for (const [name, range] of f.ranges) {
+      const raw = row.columns[name]
+      if (raw === undefined || raw === null) return false
+      const val = BigInt(this.conn._encodeColumnValue(name, raw as ColumnValue, () => `WHERE ${name}`))
+      if (
+        range.gt !== undefined &&
+        !(val > BigInt(this.conn._encodeColumnValue(name, range.gt, () => `WHERE ${name}`)))
+      ) {
+        return false
+      }
+      if (
+        range.gte !== undefined &&
+        !(val >= BigInt(this.conn._encodeColumnValue(name, range.gte, () => `WHERE ${name}`)))
+      ) {
+        return false
+      }
+      if (
+        range.lt !== undefined &&
+        !(val < BigInt(this.conn._encodeColumnValue(name, range.lt, () => `WHERE ${name}`)))
+      ) {
+        return false
+      }
+      if (
+        range.lte !== undefined &&
+        !(val <= BigInt(this.conn._encodeColumnValue(name, range.lte, () => `WHERE ${name}`)))
+      ) {
+        return false
+      }
+    }
     return true
   }
 

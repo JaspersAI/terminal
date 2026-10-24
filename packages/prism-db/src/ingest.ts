@@ -48,7 +48,6 @@ export function chunk(text: string, options: ChunkOptions = {}): TextChunk[] {
     .map((b) => b.trim())
     .filter(Boolean)
 
-  const wordsList: string[] = []
   const chunks: TextChunk[] = []
 
   const emitChunk = (words: string[]): void => {
@@ -74,19 +73,16 @@ export function chunk(text: string, options: ChunkOptions = {}): TextChunk[] {
       const step = Math.max(1, maxTokens - overlap)
       for (let i = 0; i < blockWords.length; i += step) {
         const slice = blockWords.slice(i, i + maxTokens)
-        if (slice.length === maxTokens || i + maxTokens >= blockWords.length) {
-          if (i + maxTokens < blockWords.length) {
-            emitChunk(slice)
-          } else {
-            current = slice
-          }
+        if (i + maxTokens < blockWords.length) {
+          emitChunk(slice)
+        } else {
+          current = slice
         }
         if (i + maxTokens >= blockWords.length) break
       }
     }
   }
   if (current.length > 0) emitChunk(current)
-  void wordsList
   return chunks.length > 0 ? chunks : [{ index: 0, text: trimmed, tokens: countTokens(trimmed) }]
 }
 
@@ -183,8 +179,6 @@ export interface IngestionQueueOptions {
 export interface IngestionQueue<M extends Metadata = Metadata> {
   enqueue(item: IndexSourceInput<M>): void
   flush(): Promise<void>
-  /** Alias for flush(). */
-  Flush(): Promise<void>
   cancel(): void
   readonly pending: number
 }
@@ -243,7 +237,6 @@ export function createIngestionQueue<M extends Metadata = Metadata>(
       pump()
     },
     flush,
-    Flush: flush,
     cancel() {
       queue.length = 0
       notifyIdle()
