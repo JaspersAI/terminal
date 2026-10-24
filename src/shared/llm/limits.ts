@@ -37,8 +37,8 @@ export function retryLine(message: string, waitMs: number): string {
 }
 
 /** How many times one request is tried again before its failure is the answer. */
-export const RETRIES_MAX = 4
-const STEP_MS = 1000
+export const RETRIES_MAX = 6
+const STEP_MS = 2000
 const WAIT_MAX_MS = 60_000
 
 /**
