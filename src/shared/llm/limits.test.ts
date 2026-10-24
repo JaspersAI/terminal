@@ -57,17 +57,25 @@ test('a provider that says it is overloaded part way through a stream is worth a
 
 test('each try waits about twice as long as the last, never past a minute, and then there are no more', () => {
   const middle = (): number => 0.5
-  assert.equal(retryWait(0, null, middle), 750)
-  assert.equal(retryWait(1, null, middle), 1500)
-  assert.equal(retryWait(2, null, middle), 3000)
-  // Jitter spreads the tries of many clients out, between half the step and the whole of it.
+  assert.equal(RETRIES_MAX, 6)
+  assert.equal(retryWait(0, null, middle), 1500)
+  assert.equal(retryWait(1, null, middle), 3000)
+  assert.equal(retryWait(2, null, middle), 6000)
+  assert.equal(retryWait(3, null, middle), 12_000)
+  assert.equal(retryWait(4, null, middle), 24_000)
+  assert.equal(retryWait(5, null, middle), 48_000)
+  // Jitter spreads the tries of many clients out, between half the step and the whole of it, capped at a minute.
   assert.equal(
     retryWait(0, null, () => 0),
-    500,
+    1000,
   )
   assert.equal(
     retryWait(0, null, () => 1),
-    1000,
+    2000,
+  )
+  assert.equal(
+    retryWait(5, null, () => 1),
+    60_000,
   )
   assert.equal(retryWait(RETRIES_MAX, null, middle), null)
 })
