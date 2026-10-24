@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { capOutput, closeOff, portable, recent, withoutThinking } from './history.ts'
+import {
+  BUILDER_OUTPUT_MAX,
+  capOutput,
+  closeOff,
+  OUTPUT_MAX,
+  portable,
+  recent,
+  sourceOutput,
+  withoutThinking,
+} from './history.ts'
 import type { Turn } from '../llm/llm.ts'
 import { taskNote } from './transcript.ts'
 
@@ -121,6 +130,28 @@ test('an answer too long to read in one go keeps its start and says how much was
   assert.ok(cut.startsWith(big(100)))
   assert.match(cut, /150 more characters/)
   assert.ok(cut.length < 400)
+})
+
+test('a source run caps its table for the model or the builder, leaves unread runs whole, and keeps its dataset and app footers', () => {
+  assert.equal(OUTPUT_MAX, 100_000)
+  assert.equal(BUILDER_OUTPUT_MAX, 20_000)
+  const longText = JSON.stringify(
+    Array.from({ length: 3_000 }, (_, i) => ({ ticker: 'FLWS', idx: i, text: 'x'.repeat(50) })),
+  )
+  const dataset = { kind: 'dataset' as const, text: longText, datasetId: 'd21', rowCount: 3_000 }
+
+  const forModel = sourceOutput(dataset, { unread: false, builder: false, shown: 'Placed core/table at e2.' })
+  assert.match(forModel, /more characters, cut because this is more than can be read at once/)
+  assert.ok(forModel.endsWith('\n{"datasetId":"d21","rowCount":3000}\nPlaced core/table at e2.'))
+  assert.ok(forModel.length < OUTPUT_MAX + 500)
+
+  const forBuilder = sourceOutput(dataset, { unread: false, builder: true, shown: '' })
+  assert.match(forBuilder, /more characters, cut because this is more than can be read at once/)
+  assert.ok(forBuilder.endsWith('\n{"datasetId":"d21","rowCount":3000}'))
+  assert.ok(forBuilder.length < BUILDER_OUTPUT_MAX + 500)
+
+  const unread = sourceOutput(dataset, { unread: true, builder: false, shown: '' })
+  assert.equal(unread, `${longText}\n{"datasetId":"d21","rowCount":3000}`)
 })
 
 test('a run that ended early is closed off on an assistant turn, whatever it was in the middle of', () => {

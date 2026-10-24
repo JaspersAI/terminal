@@ -1,6 +1,6 @@
 import { untilAborted } from '../../../shared/abort'
+import { capOutput, sourceOutput } from '../../../shared/agent/history'
 import { readInput, readMcpCall } from '../../../shared/data/arguments'
-import { asTable } from '../../../shared/data/datasets'
 import { QUERY_LIMIT_DEFAULT, QUERY_LIMIT_MAX } from '../../../shared/data/store'
 import { findConnectionTool, resolveConnectionSource, sourceParameters } from '../../../shared/data/tool-parameters'
 import { MCP_SOURCE } from '../../../shared/plugins/apps'
@@ -17,7 +17,6 @@ export function storeTools(): Tool[] {
     {
       name: 'query',
       readsOnly: true,
-      whole: true,
       description: [
         'Read everything every source has ever answered, with SQL (SQLite). This is the only way to compare sources, or to see anything older than the last call.',
         "runs(id, source, args, args_hash, workspace, fetched_at ms, row_count, meta, text, error) is one call of one source. run_rows(run_id, idx, data) is what came back, one row per row, data being JSON: reach into it with json_extract(data, '$.field'), and into a nested array with json_each(data, '$.field'). Providers name fields their own way, so coalesce them: coalesce(json_extract(data, '$.symbol'), json_extract(data, '$.ticker')).",
@@ -41,7 +40,7 @@ export function storeTools(): Tool[] {
       },
       async run(input) {
         const result = await query({ sql: asPathString(input.sql), limit: optional(input.limit, asOffset) })
-        return JSON.stringify(result)
+        return capOutput(JSON.stringify(result))
       },
     },
   ]
@@ -134,18 +133,12 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
           signal,
           ...(page ? { fresh: true, raw: (raw: unknown) => (answer = raw) } : {}),
         })
-        // A source answers with all of what it returned, and none of it is cut, however long it is.
-        // A long answer that is rows written as JSON names every column again on every row, so it goes
-        // to the model as a table: the same rows in under half the room, on every round that re-sends
-        // them. Words stay as they are, and so does what a task's own call compares with its last.
-        const text = unread ? result.text : asTable(result.text)
-        const line =
-          result.kind === 'dataset'
-            ? `\n${JSON.stringify({ datasetId: result.datasetId, rowCount: result.rowCount })}`
-            : ''
-        const shown =
-          page && loop !== undefined && answer !== undefined ? `\n${showApp(workspaceId, page, answer, loop)}` : ''
-        return `${text}${line}${shown}`
+        // Everything the source returned is already filed in SQLite and Prism by runSource; the inline
+        // text handed to the model is formatted as a compact table and capped so a multi-megabyte
+        // filing or bar series never crowds the context window, while keeping the dataset and app
+        // footers intact at the end.
+        const shown = page && loop !== undefined && answer !== undefined ? showApp(workspaceId, page, answer, loop) : ''
+        return sourceOutput(result, { unread, builder: !ask, shown })
       },
     },
     {
