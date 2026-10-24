@@ -50,7 +50,9 @@ const SEEN =
 const APP_SHOWN =
   "A connection's tool marked (has a view) puts its server's own view of the answer on the grid when you call it with run_source on core/mcp, and the answer names the element: do not place a table or a document for the same result."
 const SKILL_SAYS = 'A skill you load says how to go about a request; the plugins still do the work it describes.'
-const COMMON = [SEEN, APP_SHOWN, SKILL_SAYS].join(' ')
+const PRISM_SAYS =
+  'Everything that passes through the terminal (messages, tool outputs, notes, files, commands, web pages, and plugin data) is indexed in the local Prism DB (`memory.prism`): call search to find items by meaning, keywords, recency, or filters, query with SELECT … FROM documents for SQL over it, or prism_write to index, upsert, or delete documents in it.'
+const COMMON = [SEEN, APP_SHOWN, SKILL_SAYS, PRISM_SAYS].join(' ')
 const BUILD =
   "When no installed plugin does what the user asks and a plugin could (a data source, a view, something that makes a document, a connection to a service), first call find_plugin to search Jaspers Hub, the library of published plugins. When it finds one that does it, do not build: tell the user its id and title, and install it with install_plugin when they say so; build only when they would rather have one built. When Hub has none that does it, call build_plugin with the whole request: it asks the user before writing anything and takes a few minutes. It has the SDK's documentation, so never search the web for the Jaspers SDK yourself."
 
@@ -63,7 +65,7 @@ const APP_RUN =
   "When a connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. When the user asks to run a command or script on this computer, call run_shell yourself when it is in your tools — it asks the user to approve before running — rather than starting a loop or scheduling a task for it; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
 
 /** What the orchestrator goes by: it routes, where its reply shows, how much of the conversation it is sent, and the app it runs. */
-export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, APP_RUN].join(' ')
+export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, APP_RUN, PRISM_SAYS].join(' ')
 
 // A loop that is not a deep research one has its conversation all the same, folded behind the label
 // in its bar, and its views are what is seen first. So the reply is short, and what is to be looked at

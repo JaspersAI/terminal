@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { formatMemorySummary, readSearchInput } from './store.ts'
+import { formatMemorySummary, readPrismWriteInput, readSearchInput } from './store.ts'
 
 test('readSearchInput normalizes hybrid search, typed filters, recency, rerank, and latest-N options', () => {
   const req = readSearchInput({
@@ -56,4 +56,43 @@ test('formatMemorySummary formats Prism DB chunk counts, segments, and model nam
     }),
     '1 chunk in 1 segment · bge-small-en-v1.5',
   )
+})
+
+test('readPrismWriteInput validates upsert, index, and delete actions for prism_write', () => {
+  assert.deepEqual(
+    readPrismWriteInput({
+      action: 'index',
+      source: 'notes/thesis.md',
+      text: 'Long-term thesis on semiconductor equipment',
+      kind: 'note',
+    }),
+    {
+      action: 'index',
+      source: 'notes/thesis.md',
+      text: 'Long-term thesis on semiconductor equipment',
+      kind: 'note',
+      session: undefined,
+      project: undefined,
+      role: undefined,
+    },
+  )
+
+  assert.deepEqual(
+    readPrismWriteInput({
+      action: 'upsert',
+      documents: [{ id: 'custom-1', text: 'Custom plugin row', columns: { kind: 'note', source: 'custom' } }],
+    }),
+    {
+      action: 'upsert',
+      documents: [{ id: 'custom-1', text: 'Custom plugin row', columns: { kind: 'note', source: 'custom' } }],
+    },
+  )
+
+  assert.deepEqual(readPrismWriteInput({ action: 'delete', ids: ['custom-1'] }), {
+    action: 'delete',
+    ids: ['custom-1'],
+    where: undefined,
+  })
+
+  assert.throws(() => readPrismWriteInput({ action: 'bogus' }), /action must be/)
 })

@@ -101,6 +101,34 @@ export interface MemoryStats {
   model: string
 }
 
+export interface MemoryUpsertDoc {
+  id: string
+  text: string
+  vector?: number[]
+  columns?: Record<string, string | number | boolean | null>
+  metadata?: Record<string, unknown>
+}
+
+export type PrismWriteRequest =
+  | {
+      action: 'index'
+      source: string
+      text: string
+      kind: MemoryKind
+      session?: string
+      project?: string
+      role?: string
+    }
+  | {
+      action: 'upsert'
+      documents: MemoryUpsertDoc[]
+    }
+  | {
+      action: 'delete'
+      ids?: string[]
+      where?: Record<string, string | number | null | (string | number | null)[]>
+    }
+
 export const QUERY_LIMIT_DEFAULT = 500
 export const QUERY_LIMIT_MAX = 2000
 /** The most exchanges of a chat one read answers with. A reader asks again for the ones before them. */
@@ -221,6 +249,77 @@ export function formatMemorySummary(stats: MemoryStats): string {
   const chunks = `${stats.docs.toLocaleString()} chunk${stats.docs === 1 ? '' : 's'}`
   const segs = `${stats.segments.toLocaleString()} segment${stats.segments === 1 ? '' : 's'}`
   return `${chunks} in ${segs} · ${shortModel}`
+}
+
+/**
+ * Validates and normalizes arguments for the `prism_write` tool (`~/Jaspers/data/memory.prism`).
+ */
+export function readPrismWriteInput(input: Record<string, unknown>): PrismWriteRequest {
+  const action = input.action
+  if (action !== 'index' && action !== 'upsert' && action !== 'delete') {
+    throw new Error('action must be "index", "upsert", or "delete".')
+  }
+  if (action === 'index') {
+    const source = typeof input.source === 'string' ? input.source.trim() : ''
+    if (!source) throw new Error('index requires a non-empty source string.')
+    if (typeof input.text !== 'string' || !input.text.trim()) {
+      throw new Error('index requires non-empty text.')
+    }
+    const kind = input.kind ?? 'note'
+    if (!isMemoryKind(kind)) {
+      throw new Error(`kind must be one of: ${MEMORY_KINDS.join(', ')}.`)
+    }
+    return {
+      action: 'index',
+      source,
+      text: input.text,
+      kind,
+      session: typeof input.session === 'string' && input.session.trim() ? input.session.trim() : undefined,
+      project: typeof input.project === 'string' && input.project.trim() ? input.project.trim() : undefined,
+      role: typeof input.role === 'string' && input.role.trim() ? input.role.trim() : undefined,
+    }
+  }
+  if (action === 'upsert') {
+    const rawDocs = Array.isArray(input.documents) ? input.documents : input.document ? [input.document] : []
+    if (rawDocs.length === 0) throw new Error('upsert requires a non-empty documents array.')
+    const documents: MemoryUpsertDoc[] = rawDocs.map((d, i) => {
+      if (typeof d !== 'object' || d === null || Array.isArray(d)) {
+        throw new Error(`documents[${i}] must be an object.`)
+      }
+      const rec = d as Record<string, unknown>
+      const id = typeof rec.id === 'string' ? rec.id.trim() : ''
+      if (!id) throw new Error(`documents[${i}].id must be a non-empty string.`)
+      const text = typeof rec.text === 'string' ? rec.text : ''
+      if (!text.trim() && !Array.isArray(rec.vector)) {
+        throw new Error(`documents[${i}] requires text or vector.`)
+      }
+      return {
+        id,
+        text,
+        ...(Array.isArray(rec.vector) ? { vector: rec.vector as number[] } : {}),
+        ...(typeof rec.columns === 'object' && rec.columns !== null && !Array.isArray(rec.columns)
+          ? { columns: rec.columns as Record<string, string | number | boolean | null> }
+          : {}),
+        ...(typeof rec.metadata === 'object' && rec.metadata !== null && !Array.isArray(rec.metadata)
+          ? { metadata: rec.metadata as Record<string, unknown> }
+          : {}),
+      }
+    })
+    return { action: 'upsert', documents }
+  }
+  const ids = Array.isArray(input.ids)
+    ? input.ids.filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+    : typeof input.ids === 'string' && input.ids.trim() !== ''
+      ? [input.ids.trim()]
+      : undefined
+  const where =
+    typeof input.where === 'object' && input.where !== null && !Array.isArray(input.where)
+      ? (input.where as Record<string, string | number | null | (string | number | null)[]>)
+      : undefined
+  if ((!ids || ids.length === 0) && (!where || Object.keys(where).length === 0)) {
+    throw new Error('delete requires ids or a non-empty where filter.')
+  }
+  return { action: 'delete', ids, where }
 }
 
 /**

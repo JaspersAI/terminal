@@ -124,6 +124,31 @@ test('openMemory creates memory.prism with 0600 permissions, bge-small-en-v1.5, 
   await mem.removeSource('memory/figures-in-millions.md')
   assert.equal((await mem.stats()).docs, 3)
 
+  // Plugin / agent direct upsert, get, SQL, and delete
+  const up = await mem.upsert([
+    {
+      id: 'my-plugin/item-1',
+      text: 'Custom plugin observation on semiconductor wafer capacity',
+      columns: { source: 'my-plugin', kind: 'note', project: 'w1', createdAt: t0 + 4 * day },
+      metadata: { custom: true },
+    },
+  ])
+  assert.equal(up.upserted, 1)
+  const got = await mem.get('my-plugin/item-1')
+  assert.equal(got?.source, 'my-plugin')
+  assert.deepEqual(got?.metadata, { custom: true })
+
+  const pluginSql = await mem.runSql(
+    "SELECT id, source FROM documents WHERE source = ? ORDER BY HYBRID('wafer capacity')",
+    ['my-plugin'],
+  )
+  assert.equal(pluginSql.rowCount, 1)
+  assert.equal(pluginSql.rows[0]!.id, 'my-plugin/item-1')
+
+  const del = await mem.delete({ ids: ['my-plugin/item-1'] })
+  assert.equal(del.deleted, 1)
+  assert.equal(await mem.get('my-plugin/item-1'), null)
+
   await mem.compact()
   await mem.close()
 })

@@ -7,6 +7,7 @@ import {
   isPrismQuery,
   type MemoryRecord,
   type MemorySearchRequest,
+  type MemoryUpsertDoc,
   type QueryRequest,
   type RunRecord,
 } from '../shared/data/store.ts'
@@ -79,6 +80,24 @@ rpc.handle('query', async (params) => {
 rpc.handle('memory.index', (params) => {
   openMem().enqueue(params as MemoryRecord)
   return null
+})
+rpc.handle('memory.indexSync', (params) => openMem().index(params as MemoryRecord))
+rpc.handle('memory.upsert', (params) => openMem().upsert((params as { docs: MemoryUpsertDoc[] }).docs))
+rpc.handle('memory.get', (params) => openMem().get((params as { id: string }).id))
+rpc.handle('memory.delete', (params) =>
+  openMem().delete(params as { ids?: string[]; where?: Record<string, string | number | null> }),
+)
+rpc.handle('memory.sql', (params) => {
+  const {
+    sql,
+    params: sqlParams,
+    readonly,
+  } = params as {
+    sql: string
+    params?: readonly unknown[] | Record<string, unknown>
+    readonly?: boolean
+  }
+  return openMem().runSql(sql, sqlParams, { readonly })
 })
 rpc.handle('memory.remove', (params) => openMem().removeSource((params as { source: string }).source))
 rpc.handle('memory.search', (params) => openMem().search(params as MemorySearchRequest))

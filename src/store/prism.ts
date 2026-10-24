@@ -22,6 +22,7 @@ import {
   type MemoryRecord,
   type MemorySearchRequest,
   type MemoryStats,
+  type MemoryUpsertDoc,
   type QueryRequest,
   type QueryResult,
 } from '../shared/data/store.ts'
@@ -41,6 +42,23 @@ export interface MemoryStore {
   flush(): Promise<void>
   /** Remove all chunks belonging to `source`. */
   removeSource(source: string): Promise<number>
+  /** Upsert one or more documents directly. */
+  upsert(docs: MemoryUpsertDoc[]): Promise<{ upserted: number; deleted: number; version: number }>
+  /** Look up one document by id. */
+  get(id: string): Promise<(MemoryHit & { metadata?: Record<string, unknown> | null }) | null>
+  /** Delete documents by id(s) or by filter. */
+  delete(target: { ids?: string[]; where?: Where }): Promise<{ upserted: number; deleted: number; version: number }>
+  /** Run a Prism SQL statement (read-only or read-write for plugins). */
+  runSql(
+    sql: string,
+    params?: readonly unknown[] | Record<string, unknown>,
+    options?: { readonly?: boolean },
+  ): Promise<{
+    command: string
+    columns: string[]
+    rows: Record<string, unknown>[]
+    rowCount: number
+  }>
   /** Search or list documents from `memory.prism`. */
   search(request: MemorySearchRequest): Promise<MemoryHit[]>
   /** Run a read-only Prism SQL statement (`SELECT ... FROM documents` or `EXPLAIN SELECT ...`). */
@@ -131,6 +149,57 @@ export async function openMemory(file: string): Promise<MemoryStore> {
     async removeSource(source) {
       const res = await db.deleteWhere({ source })
       return res.deleted
+    },
+
+    async upsert(docs) {
+      await queue.flush()
+      const now = Date.now()
+      return db.upsert(
+        docs.map((d) => ({
+          id: d.id,
+          text: d.text,
+          ...(d.vector ? { vector: d.vector } : {}),
+          columns: {
+            source: d.columns?.source ?? d.id,
+            kind: d.columns?.kind ?? 'note',
+            createdAt: d.columns?.createdAt ?? now,
+            ...d.columns,
+          },
+          ...(d.metadata !== undefined ? { metadata: d.metadata } : {}),
+        })),
+      )
+    },
+
+    async get(id) {
+      await queue.flush()
+      const row = await db.get(id)
+      if (!row) return null
+      return {
+        ...toHit(row),
+        metadata: (row.metadata as Record<string, unknown> | null) ?? null,
+      }
+    },
+
+    async delete(target) {
+      await queue.flush()
+      if (target.ids && target.ids.length > 0) {
+        return db.delete(target.ids)
+      }
+      if (target.where && Object.keys(target.where).length > 0) {
+        return db.deleteWhere(target.where)
+      }
+      return { upserted: 0, deleted: 0, version: (await db.stats()).version }
+    },
+
+    async runSql(sql, params, options) {
+      await queue.flush()
+      const res = await db.query(sql, params, { readonly: options?.readonly ?? false, maxRows: QUERY_LIMIT_MAX })
+      return {
+        command: res.command,
+        columns: res.columns,
+        rows: res.rows,
+        rowCount: res.rowCount,
+      }
     },
 
     async search(request) {

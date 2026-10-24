@@ -7,6 +7,7 @@ import type {
   MemoryRecord,
   MemorySearchRequest,
   MemoryStats,
+  MemoryUpsertDoc,
   QueryRequest,
   QueryResult,
   RunRecord,
@@ -372,6 +373,74 @@ export async function memoryStats(): Promise<MemoryStats> {
   const current = running()
   await current.ready
   return (await current.rpc.request('memory.stats', undefined, timeout(RECORD_TIMEOUT_MS))) as MemoryStats
+}
+
+/** Awaited transactional source indexing into `memory.prism` (for `prism_write` and `ctx.prism.index`). */
+export async function indexMemorySync(record: MemoryRecord): Promise<{ chunks: number; skipped: boolean }> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.indexSync', record, timeout(QUERY_TIMEOUT_MS))) as {
+    chunks: number
+    skipped: boolean
+  }
+}
+
+/** Awaited document upsert into `memory.prism` (for `prism_write` and `ctx.prism.upsert`). */
+export async function upsertMemory(
+  docs: MemoryUpsertDoc[],
+): Promise<{ upserted: number; deleted: number; version: number }> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.upsert', { docs }, timeout(QUERY_TIMEOUT_MS))) as {
+    upserted: number
+    deleted: number
+    version: number
+  }
+}
+
+/** Look up one document by id in `memory.prism` (for `ctx.prism.get`). */
+export async function getMemory(
+  id: string,
+): Promise<(MemoryHit & { metadata?: Record<string, unknown> | null }) | null> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.get', { id }, timeout(RECORD_TIMEOUT_MS))) as
+    (MemoryHit & { metadata?: Record<string, unknown> | null }) | null
+}
+
+/** Delete documents by id(s) or filter in `memory.prism` (for `prism_write` and `ctx.prism.delete`). */
+export async function deleteMemory(target: {
+  ids?: string[]
+  where?: Record<string, string | number | null | (string | number | null)[]>
+}): Promise<{ upserted: number; deleted: number; version: number }> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.delete', target, timeout(QUERY_TIMEOUT_MS))) as {
+    upserted: number
+    deleted: number
+    version: number
+  }
+}
+
+/** Run a Prism SQL statement on `memory.prism` (for `ctx.prism.query`). */
+export async function queryMemorySql(
+  sql: string,
+  params?: readonly unknown[] | Record<string, unknown>,
+  readonly = false,
+): Promise<{
+  command: string
+  columns: string[]
+  rows: Record<string, unknown>[]
+  rowCount: number
+}> {
+  const current = running()
+  await current.ready
+  return (await current.rpc.request('memory.sql', { sql, params, readonly }, timeout(QUERY_TIMEOUT_MS))) as {
+    command: string
+    columns: string[]
+    rows: Record<string, unknown>[]
+    rowCount: number
+  }
 }
 
 /** Closes the file and stops the process. Called on quit, and on a query that outstayed its welcome. */

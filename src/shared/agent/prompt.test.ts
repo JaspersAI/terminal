@@ -567,7 +567,16 @@ test('the rules say how much of the conversation the orchestrator is sent, by th
 })
 
 test('the orchestrator is told to oversee the loops and route work, by the tools that inspect and hold work, and of no tool that drives a view', () => {
-  for (const tool of ['create_loop', 'update_loop', 'read_loop', 'delete_loop', 'get', 'query']) {
+  for (const tool of [
+    'create_loop',
+    'update_loop',
+    'read_loop',
+    'delete_loop',
+    'get',
+    'query',
+    'search',
+    'prism_write',
+  ]) {
     assert.match(ROUTER_RULES, new RegExp(`\\b${tool}\\b`), tool)
   }
   for (const tool of VIEW_TOOLS) {
