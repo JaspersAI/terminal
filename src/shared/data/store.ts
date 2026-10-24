@@ -106,6 +106,115 @@ export const QUERY_LIMIT_MAX = 2000
 /** The most exchanges of a chat one read answers with. A reader asks again for the ones before them. */
 export const EXCHANGES_MAX = 1000
 
+export const MEMORY_KINDS: readonly MemoryKind[] = ['message', 'tool_output', 'file', 'command', 'note', 'web']
+
+function isMemoryKind(v: unknown): v is MemoryKind {
+  return typeof v === 'string' && (MEMORY_KINDS as readonly string[]).includes(v)
+}
+
+/**
+ * Validates and normalizes arguments for the `search` tool (`~/Jaspers/data/memory.prism`).
+ */
+export function readSearchInput(input: Record<string, unknown>): MemorySearchRequest {
+  const out: MemorySearchRequest = {}
+  if (input.text !== undefined && input.text !== null) {
+    if (typeof input.text !== 'string') throw new Error('text must be a string.')
+    const t = input.text.trim()
+    if (t) out.text = t
+  }
+  if (input.mode !== undefined && input.mode !== null && input.mode !== '') {
+    if (input.mode !== 'hybrid' && input.mode !== 'vector' && input.mode !== 'keyword') {
+      throw new Error('mode must be "hybrid", "vector", or "keyword".')
+    }
+    out.mode = input.mode
+  }
+  if (input.kind !== undefined && input.kind !== null) {
+    if (Array.isArray(input.kind)) {
+      if (input.kind.length === 0 || !input.kind.every(isMemoryKind)) {
+        throw new Error(`kind must be one or more of: ${MEMORY_KINDS.join(', ')}.`)
+      }
+      out.kind = input.kind
+    } else if (isMemoryKind(input.kind)) {
+      out.kind = input.kind
+    } else {
+      throw new Error(`kind must be one of: ${MEMORY_KINDS.join(', ')}.`)
+    }
+  }
+  const strOrList = (v: unknown, name: string): string | string[] | undefined => {
+    if (v === undefined || v === null || v === '') return undefined
+    if (typeof v === 'string') return v.trim()
+    if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string' && x.trim() !== '')) {
+      return v.map((x) => (x as string).trim())
+    }
+    throw new Error(`${name} must be a non-empty string or array of strings.`)
+  }
+  const source = strOrList(input.source, 'source')
+  if (source !== undefined) out.source = source
+  const session = strOrList(input.session, 'session')
+  if (session !== undefined) out.session = session
+  const project = strOrList(input.project, 'project')
+  if (project !== undefined) out.project = project
+  const role = strOrList(input.role, 'role')
+  if (role !== undefined) out.role = role
+
+  if (input.since !== undefined && input.since !== null && input.since !== '') {
+    if (typeof input.since !== 'number' && typeof input.since !== 'string') {
+      throw new Error('since must be a timestamp (ms) or ISO-8601 string.')
+    }
+    out.since = input.since
+  }
+  if (input.until !== undefined && input.until !== null && input.until !== '') {
+    if (typeof input.until !== 'number' && typeof input.until !== 'string') {
+      throw new Error('until must be a timestamp (ms) or ISO-8601 string.')
+    }
+    out.until = input.until
+  }
+  if (input.recencyHalfLifeMs !== undefined && input.recencyHalfLifeMs !== null) {
+    const hl = Number(input.recencyHalfLifeMs)
+    if (!Number.isFinite(hl) || hl <= 0) throw new Error('recencyHalfLifeMs must be a positive number.')
+    out.recencyHalfLifeMs = hl
+  }
+  if (input.recencyWeight !== undefined && input.recencyWeight !== null) {
+    const w = Number(input.recencyWeight)
+    if (!Number.isFinite(w) || w < 0 || w > 1) throw new Error('recencyWeight must be between 0 and 1.')
+    out.recencyWeight = w
+  }
+  if (input.rerank !== undefined && input.rerank !== null) {
+    const r = Number(input.rerank)
+    if (!Number.isInteger(r) || r < 1) throw new Error('rerank must be a positive integer.')
+    out.rerank = r
+  }
+  if (input.orderBy !== undefined && input.orderBy !== null && input.orderBy !== '') {
+    if (input.orderBy !== 'asc' && input.orderBy !== 'desc') {
+      throw new Error('orderBy must be "asc" or "desc".')
+    }
+    out.orderBy = input.orderBy
+  }
+  if (input.limit !== undefined && input.limit !== null) {
+    const l = Number(input.limit)
+    if (!Number.isInteger(l) || l < 1) throw new Error('limit must be a positive integer.')
+    out.limit = l
+  }
+  if (input.offset !== undefined && input.offset !== null) {
+    const o = Number(input.offset)
+    if (!Number.isInteger(o) || o < 0) throw new Error('offset must be a non-negative integer.')
+    out.offset = o
+  }
+
+  const hasFilter =
+    out.kind !== undefined ||
+    out.source !== undefined ||
+    out.session !== undefined ||
+    out.project !== undefined ||
+    out.role !== undefined ||
+    out.since !== undefined ||
+    out.until !== undefined
+  if (!out.text && !hasFilter && !out.orderBy) {
+    throw new Error('search needs text, a filter, or orderBy.')
+  }
+  return out
+}
+
 /**
  * True when a SQL statement is a read-only SELECT or EXPLAIN SELECT against the Prism DB
  * `documents` table (`~/Jaspers/data/memory.prism`).

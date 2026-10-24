@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { renameSkill } from '../../shared/skills/skill-file'
 import { skillPathSegments, skillTemplate } from '../../shared/skills/skills'
+import { indexMemory, removeMemorySource } from '../data/store'
 import { homeSkillsRoot } from '../home'
 import { copySkillFolder, listEditableFiles, readEditable, removeEditable, writeEditable } from './skill-files'
 import { createSkill, newSkillName, rescanUserSkill, skillDir } from './skills'
@@ -22,14 +23,23 @@ export function registerSkillEditorIpc(): void {
     const own = ownFolder(id)
     if (typeof text !== 'string') throw new Error('There is no text to save.')
     if (typeof file === 'string' && file.trim().endsWith('/')) throw new Error('Name a file, like references/notes.md.')
-    const hash = await writeEditable(own.dir, skillPathSegments(file), text, asHash(baseHash))
+    const segments = skillPathSegments(file)
+    const hash = await writeEditable(own.dir, segments, text, asHash(baseHash))
     rescanUserSkill(own.name)
+    indexMemory({
+      source: `skills/${own.name}/${segments.join('/')}`,
+      kind: 'file',
+      text,
+      createdAt: Date.now(),
+    })
     return { hash }
   })
   ipcMain.handle('skill:remove-file', async (_event, id: unknown, file: unknown) => {
     const own = ownFolder(id)
-    await removeEditable(own.dir, skillPathSegments(file))
+    const segments = skillPathSegments(file)
+    await removeEditable(own.dir, segments)
     rescanUserSkill(own.name)
+    removeMemorySource(`skills/${own.name}/${segments.join('/')}`)
   })
   // The template: the new skill is listed, with its description still to write.
   ipcMain.handle('skill:create', (_event, raw: unknown) => {

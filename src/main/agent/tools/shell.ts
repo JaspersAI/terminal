@@ -20,6 +20,7 @@ import {
   type ProMode,
 } from '../../../shared/app/pro-mode'
 import { askUser } from '../../actions'
+import { indexMemory } from '../../data/store'
 import { jaspersHome } from '../../home'
 import { getState } from '../../state'
 import { allowTaskCommand, taskAllows } from '../../tasks/tasks'
@@ -158,6 +159,14 @@ const runShell: Tool = {
       ? `It was still running after ${seconds}s and was stopped. Anything it had written is in the folder; a longer timeoutSeconds is the way to ask for more, up to the user's setting.`
       : `Exit code ${result.code}, ${(ms / 1000).toFixed(1)}s.`
     const output = capOutput(result.output.trim(), proMode.outputMax)
+    indexMemory({
+      source: `shell:${started}`,
+      kind: 'command',
+      session: conversation,
+      project: context.workspaceId,
+      text: output ? `$ ${command}\n\n${output}` : `$ ${command}`,
+      createdAt: started,
+    })
     return output ? `${head}\n\n${output}` : `${head}\n\nIt printed nothing.`
   },
 }

@@ -1,14 +1,14 @@
 import { untilAborted } from '../../../shared/abort'
 import { readInput, readMcpCall } from '../../../shared/data/arguments'
 import { asTable } from '../../../shared/data/datasets'
-import { QUERY_LIMIT_DEFAULT, QUERY_LIMIT_MAX } from '../../../shared/data/store'
+import { MEMORY_KINDS, QUERY_LIMIT_DEFAULT, QUERY_LIMIT_MAX, readSearchInput } from '../../../shared/data/store'
 import { findConnectionTool, resolveConnectionSource, sourceParameters } from '../../../shared/data/tool-parameters'
 import { MCP_SOURCE } from '../../../shared/plugins/apps'
 import { appOf, showApp } from '../../plugins/apps'
 import { allSources, getSource, type RegisteredSource } from '../../plugins/registry'
 import { runSource } from '../../data/sources'
 import { getState } from '../../state'
-import { query } from '../../data/store'
+import { query, searchMemory } from '../../data/store'
 import type { Tool } from './types'
 import { optional, asPathString, asOffset } from './input'
 
@@ -19,9 +19,10 @@ export function storeTools(): Tool[] {
       readsOnly: true,
       whole: true,
       description: [
-        'Read everything every source has ever answered, with SQL (SQLite). This is the only way to compare sources, or to see anything older than the last call.',
+        'Read everything every source has ever answered, with SQL (SQLite), or query the local Prism retrieval store (`documents` table). This is the only way to compare sources, or to see anything older than the last call.',
         "runs(id, source, args, args_hash, workspace, fetched_at ms, row_count, meta, text, error) is one call of one source. run_rows(run_id, idx, data) is what came back, one row per row, data being JSON: reach into it with json_extract(data, '$.field'), and into a nested array with json_each(data, '$.field'). Providers name fields their own way, so coalesce them: coalesce(json_extract(data, '$.symbol'), json_extract(data, '$.ticker')).",
         "docs is a full text index over runs.text, which is what a source that answered with prose said: select rowid, snippet(docs, 0, '[', ']', '…', 8) from docs where docs match 'federal government'. The rowid is the run's id.",
+        "documents(id, score, source, kind, session, project, role, createdAt, text, metadata) is the local Prism DB (`memory.prism`), supporting ORDER BY HYBRID('query', 0.3, RECENCY(createdAt, '3 days', 0.15)) LIMIT 10 RERANK 50, SIMILARITY('query'), BM25('query'), and ORDER BY createdAt DESC LIMIT 50.",
         // Which sources have been filed is said with the workspace state, not here: a tool's description
         // sits in front of the whole conversation, and one that changed when a source first ran would
         // cost a provider everything it had read.
@@ -30,7 +31,7 @@ export function storeTools(): Tool[] {
       parameters: {
         type: 'object',
         properties: {
-          sql: { type: 'string', description: 'One SELECT, or WITH … SELECT.' },
+          sql: { type: 'string', description: 'One SELECT, WITH … SELECT, or EXPLAIN SELECT.' },
           limit: {
             type: 'integer',
             minimum: 1,
@@ -42,6 +43,95 @@ export function storeTools(): Tool[] {
       async run(input) {
         const result = await query({ sql: asPathString(input.sql), limit: optional(input.limit, asOffset) })
         return JSON.stringify(result)
+      },
+    },
+    {
+      name: 'search',
+      readsOnly: true,
+      whole: true,
+      description:
+        'Search the local Prism DB (`memory.prism`) across everything that has passed through Jaspers Terminal (messages, tool outputs, files, commands, notes, web pages) by meaning (local bge-small-en-v1.5 embeddings), keywords (code-aware BM25), recency, and typed filters, or list the latest items by time.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: {
+            type: 'string',
+            description:
+              'Query text for hybrid (meaning + BM25), vector, or keyword search. Omit for latest-N listing.',
+          },
+          mode: {
+            type: 'string',
+            enum: ['hybrid', 'vector', 'keyword'],
+            description: 'Search mode (default: "hybrid").',
+          },
+          kind: {
+            oneOf: [
+              { type: 'string', enum: [...MEMORY_KINDS] },
+              { type: 'array', items: { type: 'string', enum: [...MEMORY_KINDS] } },
+            ],
+            description: 'Filter by item kind: message, tool_output, file, command, note, or web.',
+          },
+          source: {
+            oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+            description: 'Filter by source identifier.',
+          },
+          session: {
+            oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+            description: 'Filter by chat session (e.g. workspace id or <workspace>/<loop>).',
+          },
+          project: {
+            oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+            description: 'Filter by workspace / project id.',
+          },
+          role: {
+            oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+            description: 'Filter by message role ("user" or "assistant").',
+          },
+          since: {
+            oneOf: [{ type: 'number' }, { type: 'string' }],
+            description: 'Inclusive lower bound on createdAt (ms since epoch or ISO-8601 string).',
+          },
+          until: {
+            oneOf: [{ type: 'number' }, { type: 'string' }],
+            description: 'Exclusive upper bound on createdAt (ms since epoch or ISO-8601 string).',
+          },
+          recencyHalfLifeMs: {
+            type: 'number',
+            minimum: 1,
+            description: 'Exponential recency decay half-life in milliseconds.',
+          },
+          recencyWeight: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1,
+            description: 'Weight of the recency signal in [0, 1] (default 0.15 when recencyHalfLifeMs is given).',
+          },
+          rerank: {
+            type: 'integer',
+            minimum: 1,
+            description: 'Candidate count for second-stage cross-encoder reranking (e.g. 50).',
+          },
+          orderBy: {
+            type: 'string',
+            enum: ['asc', 'desc'],
+            description: 'When text is omitted, order matching items by createdAt ("desc" for latest N).',
+          },
+          limit: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 200,
+            description: 'Maximum results to return (default 20).',
+          },
+          offset: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Results to skip first (default 0).',
+          },
+        },
+      },
+      async run(input) {
+        const hits = await searchMemory(readSearchInput(input))
+        return JSON.stringify(hits)
       },
     },
   ]
