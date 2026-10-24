@@ -133,7 +133,7 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
           signal,
           ...(page ? { fresh: true, raw: (raw: unknown) => (answer = raw) } : {}),
         })
-        // Everything the source returned is already filed in SQLite and Prism by runSource; the inline
+        // Everything the source returned is already filed in SQLite by runSource; the inline
         // text handed to the model is formatted as a compact table and capped so a multi-megabyte
         // filing or bar series never crowds the context window, while keeping the dataset and app
         // footers intact at the end.

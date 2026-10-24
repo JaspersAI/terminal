@@ -76,7 +76,7 @@ export function capOutput(output: string, max: number = OUTPUT_MAX): string {
 /**
  * A source run's answer as `run_source` hands it back: rows rewritten as a compact table and capped
  * for the model (or tighter for the plugin builder's test calls) while the full dataset stays in the
- * store and Prism, followed by its dataset metadata and any placed app view so neither is cut off.
+ * store, followed by its dataset metadata and any placed app view so neither is cut off.
  * An `unread` task run compares the raw text with its last and stays whole.
  */
 export function sourceOutput(
