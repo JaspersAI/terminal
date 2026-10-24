@@ -16,5 +16,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src", "tests", "packages/sdk/src", "docs/templates", "electron.vite.config.ts"]
+  "include": ["src", "tests", "packages/sdk/src", "packages/prism-db/src", "docs/templates", "electron.vite.config.ts"]
 }
