@@ -215,6 +215,14 @@ export function readSearchInput(input: Record<string, unknown>): MemorySearchReq
   return out
 }
 
+/** Short human-readable summary of `memory.prism` stats for Settings > Data. */
+export function formatMemorySummary(stats: MemoryStats): string {
+  const shortModel = stats.model.replace(/^[^/]+\//, '').replace(/@.*$/, '') || 'local'
+  const chunks = `${stats.docs.toLocaleString()} chunk${stats.docs === 1 ? '' : 's'}`
+  const segs = `${stats.segments.toLocaleString()} segment${stats.segments === 1 ? '' : 's'}`
+  return `${chunks} in ${segs} · ${shortModel}`
+}
+
 /**
  * True when a SQL statement is a read-only SELECT or EXPLAIN SELECT against the Prism DB
  * `documents` table (`~/Jaspers/data/memory.prism`).

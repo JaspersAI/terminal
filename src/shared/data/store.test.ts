@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readSearchInput } from './store.ts'
+import { formatMemorySummary, readSearchInput } from './store.ts'
 
 test('readSearchInput normalizes hybrid search, typed filters, recency, rerank, and latest-N options', () => {
   const req = readSearchInput({
@@ -33,4 +33,27 @@ test('readSearchInput normalizes hybrid search, typed filters, recency, rerank, 
   assert.throws(() => readSearchInput({}), /search needs text, a filter, or orderBy/)
   assert.throws(() => readSearchInput({ text: 'x', mode: 'bogus' }), /mode must be/)
   assert.throws(() => readSearchInput({ text: 'x', kind: 'bogus' }), /kind must be/)
+})
+
+test('formatMemorySummary formats Prism DB chunk counts, segments, and model name for Settings > Data', () => {
+  assert.equal(
+    formatMemorySummary({
+      path: '/Users/me/Jaspers/data/memory.prism',
+      bytes: 16384,
+      docs: 42,
+      segments: 2,
+      model: 'BAAI/bge-small-en-v1.5@v0/cls/l2/q1',
+    }),
+    '42 chunks in 2 segments · bge-small-en-v1.5',
+  )
+  assert.equal(
+    formatMemorySummary({
+      path: '/Users/me/Jaspers/data/memory.prism',
+      bytes: 8192,
+      docs: 1,
+      segments: 1,
+      model: 'bge-small-en-v1.5',
+    }),
+    '1 chunk in 1 segment · bge-small-en-v1.5',
+  )
 })
