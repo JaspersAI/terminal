@@ -140,7 +140,7 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
           capabilities: {
             type: 'array',
             items: { type: 'string' },
-            description: 'What definePlugin declares under capabilities: files, llm, tools, state, skills.',
+            description: 'What definePlugin declares under capabilities: files, llm, tools, state, skills, web.',
           },
           secrets: {
             type: 'object',

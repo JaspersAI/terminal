@@ -1,6 +1,6 @@
 {
   "name": "@jaspers-ai/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "What Jaspers Terminal plugins are written against: definePlugin, defineView, defineSource, the view hooks, and the skills helpers.",
   "license": "MIT",
   "type": "module",
