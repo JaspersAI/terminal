@@ -37,6 +37,8 @@ export {
   type State,
   type ViewDefinition,
   type ViewSpec,
+  type Web,
+  type WebPage,
 } from './define'
 export {
   ACTIVATE_SKILL,

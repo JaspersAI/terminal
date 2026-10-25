@@ -386,3 +386,42 @@ test("a source's fetch carries the plugin's secrets main sent, and fails naming 
     /BLS failed: fetch failed \(.*api\.invalid.*\)/,
   )
 })
+
+/** A plugin that reads a page, declaring the given capabilities. */
+const webPlugin = (capabilities: string[]): string => `
+const { definePlugin, defineSource } = require('@jaspers-ai/sdk')
+const { z } = require('zod')
+module.exports = definePlugin({
+  id: 'reader',
+  capabilities: ${JSON.stringify(capabilities)},
+  sources: {
+    read: defineSource({
+      description: 'Read a page',
+      input: z.object({ url: z.string() }),
+      run: async (args, ctx) => ctx.web.fetch(args.url),
+    }),
+  },
+})
+`
+
+test('a plugin that declares web reads any public page through main', async () => {
+  const { main } = start()
+  const asked: unknown[] = []
+  main.handle('web.fetch', async (params) => {
+    asked.push(params)
+    return { url: 'https://example.com/final', text: 'Hello' }
+  })
+  await main.request('init', { id: 'reader', code: webPlugin(['web']), capabilities: ['web'] })
+  const out = await main.request('source.run', { name: 'read', args: { url: 'https://example.com/' } })
+  assert.deepEqual(out, { url: 'https://example.com/final', text: 'Hello' })
+  assert.deepEqual(asked, [{ url: 'https://example.com/' }])
+})
+
+test('ctx.web is refused to a plugin that did not declare it', async () => {
+  const { main } = start()
+  await main.request('init', { id: 'reader', code: webPlugin([]), capabilities: [] })
+  await assert.rejects(
+    main.request('source.run', { name: 'read', args: { url: 'https://example.com/' } }),
+    /declare "web" in capabilities/,
+  )
+})

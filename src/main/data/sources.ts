@@ -221,6 +221,7 @@ function builtInContext(hosts: string[], workspace: string | null): BackendConte
     state: { get: none },
     skills: { catalog: none, activate: none, read: none },
     jobs: { start: none, abort: none, running: none },
+    web: { fetch: none },
   }
 }
 
