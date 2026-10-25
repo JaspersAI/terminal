@@ -81,12 +81,27 @@ function asPageResponse(response: IncomingMessage): PageResponse {
   return { status: response.statusCode ?? 0, headers, body, cancel: () => response.destroy() }
 }
 
-export async function fetchPage(
-  raw: string,
-  offset: number,
-  signal?: AbortSignal,
-  deps: PageDeps = LIVE,
-): Promise<string> {
+/** A page read whole: where it ended up, its text (HTML made text), and whether it was HTML. */
+export interface Page {
+  url: URL
+  text: string
+  /** The body as it came, for telling a page drawn by script from an empty one. */
+  body: string
+  html: boolean
+}
+
+/** A page's answer that was not a success, said by status so each caller words its own advice. */
+export class PageStatusError extends Error {
+  readonly status: number
+
+  constructor(status: number, url: URL) {
+    super(`${url.hostname} answered ${status} for ${url.pathname}.`)
+    this.status = status
+  }
+}
+
+/** The page at `raw`, read whole up to the byte limit, every hop held to the public-https rule. */
+export async function readPage(raw: string, signal?: AbortSignal, deps: PageDeps = LIVE): Promise<Page> {
   let url = parseAddress(raw)
   let response: PageResponse | null = null
   const timeout = AbortSignal.timeout(PAGE_TIMEOUT_MS)
@@ -109,16 +124,32 @@ export async function fetchPage(
   if (!response) throw new Error(`${url.hostname} redirected more than ${MAX_HOPS} times.`)
   if (response.status < 200 || response.status >= 300) {
     response.cancel()
-    const browserHint =
-      response.status === 401 || response.status === 403
-        ? ' Open this address in core/browser (place_view or set state.url) and read panels/<id>/text instead.'
-        : ''
-    throw new Error(`${url.hostname} answered ${response.status} for ${url.pathname}.${browserHint}`)
+    throw new PageStatusError(response.status, url)
   }
   const body = await readCapped(response)
   const type = response.headers['content-type'] ?? ''
   const html = /html/i.test(type) || /^\s*<(!doctype|html)/i.test(body.slice(0, 200))
-  const text = html ? htmlToText(body) : body
+  return { url, text: html ? htmlToText(body) : body, body, html }
+}
+
+export async function fetchPage(
+  raw: string,
+  offset: number,
+  signal?: AbortSignal,
+  deps: PageDeps = LIVE,
+): Promise<string> {
+  let page: Page
+  try {
+    page = await readPage(raw, signal, deps)
+  } catch (err) {
+    if (err instanceof PageStatusError && (err.status === 401 || err.status === 403)) {
+      throw new Error(
+        `${err.message} Open this address in core/browser (place_view or set state.url) and read panels/<id>/text instead.`,
+      )
+    }
+    throw err
+  }
+  const { url, text, body, html } = page
   const window = slice(text, offset)
   const size = window.length.toLocaleString('en-US')
   const head =
