@@ -130,3 +130,17 @@ test('an error status is an error, and a body past the byte limit is cut rather 
   const text = await fetchPage('https://docs.test/big', 0, undefined, deps)
   assert.match(text, new RegExp(`characters 0–${PAGE_LIMITS.chars} of ${PAGE_LIMITS.bytes.toLocaleString('en-US')}`))
 })
+
+test('a page that refuses says so by status, and a sign-in wall points to the browser', async () => {
+  const deps = web({
+    'https://docs.test/walled': () => reply('no', 403),
+    'https://docs.test/broken': () => reply('oops', 500),
+  })
+  await assert.rejects(fetchPage('https://docs.test/walled', 0, undefined, deps), {
+    message:
+      'docs.test answered 403 for /walled. Open this address in core/browser (place_view or set state.url) and read panels/<id>/text instead.',
+  })
+  await assert.rejects(fetchPage('https://docs.test/broken', 0, undefined, deps), {
+    message: 'docs.test answered 500 for /broken.',
+  })
+})
