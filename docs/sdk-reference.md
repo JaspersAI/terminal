@@ -10,7 +10,7 @@ The app provides the SDK, `react`, `react-dom`, and `zod` at runtime through `ja
 
 ### SDK surface and builder integration
 
-`@jaspers-ai/sdk` exports four definitions (`definePlugin`, `defineConnection`, `defineSource`, `defineView`), six React hooks (`useData`, `usePanelState`, `usePublish`, `usePublishText`, `useBridge`, and `usePanel`), a capability-gated backend `ctx` (`BackendContext`), and Agent Skills helpers (`skillsPrompt`, `skillTools`, `runSkillTool`).
+`@jaspers-ai/sdk` exports four definitions (`definePlugin`, `defineConnection`, `defineSource`, `defineView`), seven React hooks (`useData`, `usePanelState`, `usePublish`, `usePublishText`, `useDictation`, `useBridge`, and `usePanel`), a capability-gated backend `ctx` (`BackendContext`), and Agent Skills helpers (`skillsPrompt`, `skillTools`, `runSkillTool`).
 
 `src/main/agent/build/reference.ts` imports this file (`docs/sdk-reference.md?raw`), [`docs/writing-a-plugin.md`](writing-a-plugin.md) (`?raw`), `packages/sdk/src/context.ts?raw`, `packages/sdk/src/llm.ts?raw`, and the four starter templates in [`docs/templates/`](templates/README.md) into the coding agent's system prompt (`builderSystem` in `src/shared/agent/build/prompt.ts`).
 
@@ -95,6 +95,7 @@ From `@jaspers-ai/sdk`:
 | `usePanelState(panel, key, init)` | `[value, set]` for one key of the panel's state. `set` goes through main's schema check.                                        |
 | `usePublish(panel, output)`       | Publishes what the view shows. Debounced 100 ms, skipped while unchanged.                                                       |
 | `usePublishText(panel, text)`     | Publishes the whole of what the view shows as text, at `panels/<id>/text`, for models to read a part at a time and quote. Start it with a line naming what it is. `null` clears it. Cut past 200,000 characters. A quote that came with a [citation](connections-and-data.md#citations-in-the-chat) can carry its `[^id]` beside it, and the assistant cites it in the chat. |
+| `useDictation()`                  | Talking to the view, for a plugin that declares `microphone`. Returns `{ state, error, start, stop, cancel }`: `start()` opens the microphone (`state` becomes `listening`), `stop()` resolves with the words (`transcribing`, then `idle`), `cancel()` drops the recording. The app records and transcribes with the user's voice provider, so the view gets the words and never the audio. |
 
 ## Skills helpers
 
@@ -115,7 +116,7 @@ From `@jaspers-ai/sdk`, for a plugin's own model loop:
 
 ## Inside a view
 
-There is no network and no `window.app`; everything goes through the hooks and sources. `useBridge().openLink(url)` opens an https link in the browser and `useBridge().copyText(text)` writes the clipboard, since the view's sandboxed frame can do neither. A `<form>` never submits in that frame, so read Enter in `onKeyDown`. Errors thrown while mounting are shown in the frame.
+There is no network and no `window.app`; everything goes through the hooks and sources. `useBridge().openLink(url)` opens an https link in the browser and `useBridge().copyText(text)` writes the clipboard, since the view's sandboxed frame can do neither. Nor can it open the microphone: `useDictation()` asks the app to listen, for a plugin that declares `microphone` in `capabilities`. A `<form>` never submits in that frame, so read Enter in `onKeyDown`. Errors thrown while mounting are shown in the frame.
 
 ## Theme
 

@@ -1,6 +1,6 @@
 # @jaspers-ai/sdk
 
-TypeScript SDK ([`LICENSE`](LICENSE)) for [Jaspers Terminal](https://jsprai.com/terminal) ([`JaspersAI/terminal`](https://github.com/JaspersAI/terminal)): plugin definitions (`definePlugin`, `defineConnection`, `defineSource`, `defineView`), React hooks (`usePanelState`, `useData`, `usePublish`, `usePublishText`, `useBridge`, `usePanel`), capability-gated backend context (`BackendContext`), and [Agent Skills](https://agentskills.io) helpers (`skillsPrompt`, `skillTools`, `runSkillTool`).
+TypeScript SDK ([`LICENSE`](LICENSE)) for [Jaspers Terminal](https://jsprai.com/terminal) ([`JaspersAI/terminal`](https://github.com/JaspersAI/terminal)): plugin definitions (`definePlugin`, `defineConnection`, `defineSource`, `defineView`), React hooks (`usePanelState`, `useData`, `usePublish`, `usePublishText`, `useDictation`, `useBridge`, `usePanel`), capability-gated backend context (`BackendContext`), and [Agent Skills](https://agentskills.io) helpers (`skillsPrompt`, `skillTools`, `runSkillTool`).
 
 ## Host runtime module resolution (`jaspers-host://runtime/`)
 

@@ -55,7 +55,7 @@ const WORDS: Record<ListField, string> = {
   packages: 'package',
   frames: 'frame',
 }
-const CAPABILITIES: Capability[] = ['llm', 'tools', 'files', 'state', 'skills', 'sandbox', 'web']
+const CAPABILITIES: Capability[] = ['llm', 'tools', 'files', 'state', 'skills', 'sandbox', 'web', 'microphone']
 const PACKAGE_NAME = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/
 
 /** The envelope a definition and its package.json dependencies declare. */

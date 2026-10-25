@@ -5,8 +5,12 @@ import type { Skills } from './skills'
 // only. The app's builder reads this file and llm.ts as they are written: a comment on a member is
 // what it knows of that member beyond its type.
 
-/** What a plugin's backend may reach beyond its own views and work. Each one has to be declared. */
-export type Capability = 'llm' | 'tools' | 'files' | 'state' | 'skills' | 'sandbox' | 'web'
+/**
+ * What a plugin may reach beyond its own views and work. Each one has to be declared. All but one are
+ * its backend's `ctx`; `microphone` is its views' dictation (`useDictation`), which the app records
+ * and transcribes, so a view gets the words and never the audio.
+ */
+export type Capability = 'llm' | 'tools' | 'files' | 'state' | 'skills' | 'sandbox' | 'web' | 'microphone'
 
 /** One entry in a folder listing. `path` is written the way paths are asked for, so it reads back as is. */
 export interface FileEntry {

@@ -25,6 +25,7 @@ const CAPABILITIES: Record<Capability, true> = {
   skills: true,
   sandbox: true,
   web: true,
+  microphone: true,
 }
 
 /** A secret key, in a shape an environment variable can hold. */
@@ -83,8 +84,11 @@ export function validatePluginDefinition(value: unknown, folderName: string): Va
   const own = new Set<unknown>(Object.values(sources))
   const views: Record<string, ViewDefinition> = {}
   for (const [name, def] of members(plugin['views'], id, 'views')) views[name] = view(def, `${id}/${name}`, own)
+  // The microphone is its views' (dictation in the host window), so it alone needs no backend process.
   const hasBackend =
-    start !== undefined || capabilities.length > 0 || Object.values(sources).some((def) => !('mcp' in def))
+    start !== undefined ||
+    capabilities.some((c) => c !== 'microphone') ||
+    Object.values(sources).some((def) => !('mcp' in def))
   return {
     id,
     capabilities,
