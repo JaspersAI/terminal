@@ -39,6 +39,7 @@ export {
   type ViewSpec,
   type Web,
   type WebPage,
+  type WebResult,
 } from './define'
 export {
   ACTIVATE_SKILL,

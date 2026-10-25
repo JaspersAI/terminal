@@ -111,14 +111,24 @@ export interface WebPage {
   text: string
 }
 
+/** One web search result: a page's title, its address, and the engine's words about it. */
+export interface WebResult {
+  title: string
+  url: string
+  snippet: string
+}
+
 /**
  * Any public web page, read by the app with the rules its assistant's own fetch_page keeps: https
  * only, to a host that resolves to public addresses, every redirect checked the same way. Unlike
- * `fetch`, it reaches hosts nobody declared, and gives back text, not a response.
+ * `fetch`, it reaches hosts nobody declared, and gives back text, not a response. And the web
+ * searched with the user's own search provider, the one the assistant's search_web uses.
  */
 export interface Web {
   /** Throws for an address that is not public https, and for a page that does not answer 2xx. */
   fetch(url: string, opts?: { signal?: AbortSignal }): Promise<WebPage>
+  /** Throws when the user has set no search provider in Settings, and when the provider fails. */
+  search(query: string, opts?: { signal?: AbortSignal }): Promise<WebResult[]>
 }
 
 /** What a plugin's backend code reaches the app through: a function source's `run`, and `start`. */

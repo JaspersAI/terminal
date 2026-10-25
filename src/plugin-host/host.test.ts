@@ -417,6 +417,20 @@ test('a plugin that declares web reads any public page through main', async () =
   assert.deepEqual(asked, [{ url: 'https://example.com/' }])
 })
 
+test('a plugin that declares web searches the web through main', async () => {
+  const { main } = start()
+  const asked: unknown[] = []
+  main.handle('web.search', async (params) => {
+    asked.push(params)
+    return [{ title: 'Example', url: 'https://example.com/', snippet: 'An example' }]
+  })
+  const code = webPlugin(['web']).replace('ctx.web.fetch(args.url)', 'ctx.web.search(args.url)')
+  await main.request('init', { id: 'reader', code, capabilities: ['web'] })
+  const out = await main.request('source.run', { name: 'read', args: { url: 'example' } })
+  assert.deepEqual(out, [{ title: 'Example', url: 'https://example.com/', snippet: 'An example' }])
+  assert.deepEqual(asked, [{ query: 'example' }])
+})
+
 test('ctx.web is refused to a plugin that did not declare it', async () => {
   const { main } = start()
   await main.request('init', { id: 'reader', code: webPlugin([]), capabilities: [] })
