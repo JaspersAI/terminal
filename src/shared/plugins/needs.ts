@@ -13,7 +13,11 @@ export type PluginNeed =
   /** A connection of the plugin's that the user has to sign in to. */
   | { kind: 'authorization'; connection: string }
 
-/** The first thing a plugin needs from the user, a key before a sign-in, or null when it needs nothing. */
+/**
+ * The first thing a plugin needs from the user, a key before a sign-in, or null when it needs
+ * nothing. A plugin that already has a ready connection can serve its views without blocking on
+ * another connection's authorization.
+ */
 export function pluginNeed(
   plugin: PluginInfo | undefined,
   connections: Record<string, ConnectionInfo>,
@@ -21,6 +25,7 @@ export function pluginNeed(
   if (!plugin) return null
   const unset = plugin.secrets.find((secret) => !secret.set)
   if (unset) return { kind: 'key', key: unset.key, label: unset.label }
+  if (plugin.connections.some((id) => connections[id]?.status === 'ready')) return null
   const unsigned = plugin.connections.find((id) => connections[id]?.status === 'needs-auth')
   return unsigned ? { kind: 'authorization', connection: unsigned } : null
 }

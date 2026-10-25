@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactElement } from 'react'
 import type { WaitingView } from '../../../shared/plugins/needs'
 import { errorMessage } from '../../lib/errors'
-import { dispatch } from '../../lib/state'
+import { dispatch, useAppState } from '../../lib/state'
 
 interface Props {
   /** The view that is waiting, and what its plugin needs. */
@@ -23,9 +23,13 @@ interface Props {
  */
 export function Need({ waiting, on, onSkip }: Props): ReactElement {
   const { plugin, title, need } = waiting
+  const connectionError = useAppState((s) =>
+    need.kind === 'authorization' ? (s.connections[need.connection]?.error ?? null) : null,
+  )
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const shownError = error ?? connectionError
 
   function save(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
@@ -94,8 +98,8 @@ export function Need({ waiting, on, onSkip }: Props): ReactElement {
           >
             Authorize
           </button>
-          <p className={`mt-1.5 text-xs ${error ? 'text-destructive' : 'text-muted-foreground'}`}>
-            {error ?? (busy ? 'Waiting for you to sign in, in your browser.' : 'Opens your browser to sign in.')}
+          <p className={`mt-1.5 text-xs ${shownError ? 'text-destructive' : 'text-muted-foreground'}`}>
+            {shownError ?? (busy ? 'Waiting for you to sign in, in your browser.' : 'Opens your browser to sign in.')}
           </p>
         </div>
       )}

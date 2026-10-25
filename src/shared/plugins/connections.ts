@@ -181,8 +181,47 @@ export function offersTool(connection: Connection, tool: string): boolean {
 }
 
 const AUTH_FAILURE = /\b(?:401|403)\b|unauthoriz|forbidden|insufficient_scope/i
+const OAUTH_UNAUTHORIZED = /\b401\b|unauthoriz/i
 const STALE_HTTP_SESSION =
   /error posting to endpoint|failed to open sse stream|sse stream disconnected|session (?:not found|expired|id)|(?:invalid|missing|unknown|no valid) session|mcp-session-id|not initialized|fetch failed|socket hang up|econnreset|econnrefused/i
+
+/**
+ * What an OAuth connection waits on before a client is built: the app's sign-in with Jaspers when
+ * the server signs its users in through Account. A server that does not publish Account's resource
+ * metadata is tried against its endpoint first, so a broken or 404 URL fails as an error rather
+ * than asking the user to authorize.
+ */
+export function waitingBeforeConnect(spec: Connection, viaJaspers: boolean, signedIn: boolean): 'needs-sign-in' | null {
+  if (spec.auth === 'oauth' && viaJaspers && !signedIn) return 'needs-sign-in'
+  return null
+}
+
+/**
+ * Whether an error from connecting or authorizing an OAuth connection is an authentication
+ * challenge (401 / UnauthorizedError) rather than a broken endpoint (404, 5xx, network error).
+ */
+export function isOAuthUnauthorized(err: unknown, message?: string): boolean {
+  if (err instanceof Error) {
+    if (err.name === 'UnauthorizedError') return true
+    const code = (err as { code?: unknown }).code
+    if (typeof code === 'number') return code === 401
+  }
+  const text = message ?? (err instanceof Error ? err.message : String(err))
+  return OAUTH_UNAUTHORIZED.test(text)
+}
+
+/**
+ * The connection status when an interactive OAuth authorize attempt fails: `needs-auth` when the
+ * browser was already opened or the failure is an auth challenge, and `error` when the endpoint
+ * itself failed (such as HTTP 404 or a network error) before any browser flow could start.
+ */
+export function oauthAuthorizeFailureStatus(
+  err: unknown,
+  redirected: boolean,
+  message?: string,
+): 'needs-auth' | 'error' {
+  return redirected || isOAuthUnauthorized(err, message) ? 'needs-auth' : 'error'
+}
 
 /**
  * Whether an error from a call on a connection means an HTTP session or transport died under it and

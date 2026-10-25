@@ -3,12 +3,15 @@ import { test } from 'node:test'
 import {
   checkConnection,
   connectionUrls,
+  isOAuthUnauthorized,
   isStaleHttpSession,
+  oauthAuthorizeFailureStatus,
   offeredTools,
   offersTool,
   resolveSecrets,
   secretProgress,
   secretRefs,
+  waitingBeforeConnect,
   withConnectionUrl,
 } from './connections.ts'
 import type { ConnectionInfo } from '../state.ts'
@@ -345,4 +348,37 @@ test('isStaleHttpSession detects expired or broken Streamable HTTP sessions whil
   assert.equal(isStaleHttpSession(new Error('Unknown ticker symbol'), http), false)
   assert.equal(isStaleHttpSession(httpError(404, 'Session not found'), stdio), false)
   assert.equal(isStaleHttpSession(new TypeError('fetch failed'), stdio), false)
+})
+
+test('waitingBeforeConnect waits only on Jaspers sign-in so an OAuth endpoint without resource metadata is probed before asking for authorization', () => {
+  const oauth = checkConnection({ kind: 'connection', url: 'https://r.jsprai.com/mcp', auth: 'oauth' }, 'research/v2')
+  const bearer = checkConnection(HTTP, 'jaspers/sec')
+
+  assert.equal(waitingBeforeConnect(oauth, true, false), 'needs-sign-in')
+  assert.equal(waitingBeforeConnect(oauth, true, true), null)
+  assert.equal(waitingBeforeConnect(oauth, false, false), null)
+  assert.equal(waitingBeforeConnect(oauth, false, true), null)
+  assert.equal(waitingBeforeConnect(bearer, false, false), null)
+})
+
+test('isOAuthUnauthorized and oauthAuthorizeFailureStatus distinguish 401 challenges from 404 or network endpoint errors', () => {
+  const httpError = (code: number, detail: string): Error =>
+    Object.assign(new Error(`Streamable HTTP error: Error POSTing to endpoint (HTTP ${code}): ${detail}`), { code })
+  const unauthorized = Object.assign(new Error('Authorize this connection in Settings under Plugins.'), {
+    name: 'UnauthorizedError',
+  })
+
+  assert.equal(isOAuthUnauthorized(unauthorized), true)
+  assert.equal(isOAuthUnauthorized(httpError(401, 'Unauthorized')), true)
+  assert.equal(isOAuthUnauthorized(new Error('HTTP 401 trying to load metadata')), true)
+  assert.equal(isOAuthUnauthorized(httpError(404, 'Not Found (cf-ray 401abc)')), false)
+  assert.equal(isOAuthUnauthorized(new Error('Error POSTing to endpoint (HTTP 404): Not Found')), false)
+  assert.equal(isOAuthUnauthorized(new TypeError('fetch failed')), false)
+
+  // When a browser page was opened and the flow later fails, or the error is 401, it stays needs-auth so the user can retry.
+  assert.equal(oauthAuthorizeFailureStatus(new Error('Timed out waiting for browser'), true), 'needs-auth')
+  assert.equal(oauthAuthorizeFailureStatus(unauthorized, false), 'needs-auth')
+  // When authorize fails before opening the browser because the endpoint itself returned 404/502, it is a connection error.
+  assert.equal(oauthAuthorizeFailureStatus(httpError(404, 'Not Found'), false), 'error')
+  assert.equal(oauthAuthorizeFailureStatus(new TypeError('fetch failed'), false), 'error')
 })

@@ -20,10 +20,12 @@ import {
   type ToolApp,
 } from '../../shared/plugins/apps'
 import {
+  isOAuthUnauthorized,
   isStaleHttpSession,
   offeredTools,
   offersTool,
   resolveSecrets,
+  waitingBeforeConnect,
   type Connection,
 } from '../../shared/plugins/connections'
 import { messageOf } from '../../shared/rpc'
@@ -124,7 +126,7 @@ async function connectOne(id: string, retry = 0): Promise<void> {
     return
   }
   if (attempts.get(id) !== attempt) return
-  const waiting = waitingOn(id, spec, viaJaspers)
+  const waiting = waitingBeforeConnect(spec, viaJaspers, signedIn())
   if (waiting) {
     setInfo(id, { status: waiting, error: null, tools: [], instructions: null })
     return
@@ -176,7 +178,7 @@ async function connectOne(id: string, retry = 0): Promise<void> {
     await client.close().catch(() => undefined)
     if (attempts.get(id) !== attempt) return
     const message = redact(messageOf(err), values)
-    const unauthorized = err instanceof UnauthorizedError || /401|unauthoriz/i.test(message)
+    const unauthorized = isOAuthUnauthorized(err, message)
     if (err instanceof SignedOutError) setInfo(id, { status: 'needs-sign-in', error: null, tools: [] })
     else if (spec.auth === 'oauth' && !viaJaspers && unauthorized)
       setInfo(id, { status: 'needs-auth', error: null, tools: [] })
@@ -228,24 +230,21 @@ const reach: FetchLike = (url, init) =>
     throw new Error(messageOf(err), { cause: err })
   })
 
-/** What an OAuth connection waits on before a client is built: the app's sign-in with Jaspers, or a sign-in of its own; nothing, with either in hand. */
-function waitingOn(id: string, spec: Connection, viaJaspers: boolean): 'needs-sign-in' | 'needs-auth' | null {
-  if (spec.auth !== 'oauth') return null
-  if (viaJaspers) return signedIn() ? null : 'needs-sign-in'
-  return getState().oauth[id]?.tokens ? null : 'needs-auth'
-}
-
 /**
  * The sign-in with Jaspers began or ended, whoever ended it: every connection to a server that signs
  * its users in through it is connected again, which is also how one is put to waiting when the
- * sign-in is gone.
+ * sign-in is gone. Connections that had failed before their metadata could be read are tried too.
  */
 export function followSignIn(): void {
-  for (const id of Object.keys(getState().connections)) {
+  const connections = getState().connections
+  for (const id of Object.keys(connections)) {
     const entry = getConnection(id)
     if (entry?.spec.auth !== 'oauth' || !entry.spec.url) continue
     const resolved = resolveSecrets(entry.spec, secretValues(entry.plugin))
-    if ('missing' in resolved || !throughJaspers.has(resolved.connection.url!)) continue
+    if ('missing' in resolved) continue
+    const currentStatus = connections[id]?.status
+    if (!throughJaspers.has(resolved.connection.url!) && currentStatus !== 'error' && currentStatus !== 'needs-sign-in')
+      continue
     void connect(id).catch((err: unknown) => console.warn('[mcp]', err instanceof Error ? err.message : String(err)))
   }
 }
@@ -544,11 +543,12 @@ function build(
     return transport
   }
   // A server that signs its users in through Jaspers is sent to as the account, with no flow of
-  // the connection's own; one that signs them in itself gets the connection's OAuth.
+  // the connection's own; one that signs them in itself gets the connection's OAuth once authorized.
+  const hasTokens = Boolean(getState().oauth[id]?.tokens)
   return new StreamableHTTPClientTransport(new URL(connection.url!), {
     requestInit: { headers: connection.headers },
-    authProvider: connection.auth === 'oauth' && !viaJaspers ? oauthProvider(id) : undefined,
-    fetch: connection.auth === 'oauth' ? (viaJaspers ? asAccount : oauthFetch) : undefined,
+    authProvider: connection.auth === 'oauth' && !viaJaspers && hasTokens ? oauthProvider(id) : undefined,
+    fetch: connection.auth === 'oauth' ? (viaJaspers ? asAccount : hasTokens ? oauthFetch : undefined) : undefined,
   })
 }
 

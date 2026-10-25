@@ -30,12 +30,31 @@ test('a key it declares and does not have is asked for, by its label', () => {
   assert.equal(need && needId(need), 'key:apikey')
 })
 
-test('a connection to sign in to is asked for once the keys are in', () => {
+test('a connection to sign in to is asked for once the keys are in, unless another connection of the plugin is already ready', () => {
   const connections = { 'news/feed': connection('news/feed', 'needs-auth') }
   const both = plugin({ secrets: [{ key: 'apikey', label: 'API key', set: false }], connections: ['news/feed'] })
   assert.equal(pluginNeed(both, connections)?.kind, 'key')
   const keyed = plugin({ secrets: [{ key: 'apikey', label: 'API key', set: true }], connections: ['news/feed'] })
   assert.deepEqual(pluginNeed(keyed, connections), { kind: 'authorization', connection: 'news/feed' })
+
+  const fallbackReady = plugin({
+    id: 'research',
+    connections: ['research/jaspers', 'research/jaspers-v2'],
+  })
+  assert.equal(
+    pluginNeed(fallbackReady, {
+      'research/jaspers': connection('research/jaspers', 'ready'),
+      'research/jaspers-v2': connection('research/jaspers-v2', 'needs-auth'),
+    }),
+    null,
+  )
+  assert.deepEqual(
+    pluginNeed(fallbackReady, {
+      'research/jaspers': connection('research/jaspers', 'error'),
+      'research/jaspers-v2': connection('research/jaspers-v2', 'needs-auth'),
+    }),
+    { kind: 'authorization', connection: 'research/jaspers-v2' },
+  )
 })
 
 const viewPanel = (elementId: string, view: string): Panel => ({ elementId, content: { kind: 'view', view } }) as Panel

@@ -8,6 +8,7 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js'
 import { shell } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { oauthAuthorizeFailureStatus } from '../../shared/plugins/connections'
 import { openLoopback, type Loopback } from '../app/loopback'
 import { getConnection, setInfo } from './connections'
 import { connect } from './mcp'
@@ -121,7 +122,7 @@ export async function authorize(id: string): Promise<void> {
   if (redirects.has(id)) {
     const page = pages.get(id)
     if (page) void shell.openExternal(page)
-    setInfo(id, { status: 'connecting', error: null })
+    setInfo(id, { status: 'needs-auth', error: null })
     return
   }
   const provider = oauthProvider(id)
@@ -132,7 +133,7 @@ export async function authorize(id: string): Promise<void> {
     redirects.set(id, loopback.url)
     // The redirect URI is part of the registration and changes every run, so register again.
     patch(id, { client: null })
-    setInfo(id, { status: 'connecting', error: null })
+    setInfo(id, { status: 'needs-auth', error: null })
     const transport = new StreamableHTTPClientTransport(new URL(entry.spec.url), { authProvider: provider })
     try {
       await client.connect(transport)
@@ -145,8 +146,9 @@ export async function authorize(id: string): Promise<void> {
     await connect(id)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    const status = oauthAuthorizeFailureStatus(err, pages.has(id), message)
     await client.close().catch(() => undefined)
-    setInfo(id, { status: 'needs-auth', error: message })
+    setInfo(id, { status, error: message })
     console.warn(`[oauth ${id}] ${message}`)
   } finally {
     redirects.delete(id)
