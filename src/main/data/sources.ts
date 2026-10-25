@@ -222,6 +222,7 @@ function builtInContext(hosts: string[], workspace: string | null): BackendConte
     skills: { catalog: none, activate: none, read: none },
     jobs: { start: none, abort: none, running: none },
     prism: { search: none, query: none, upsert: none, index: none, get: none, delete: none },
+    web: { fetch: none },
   }
 }
 

@@ -28,6 +28,7 @@ import {
   type MemoryUpsertDoc,
 } from '../../shared/data/store'
 import { deleteMemory, getMemory, indexMemorySync, queryMemorySql, searchMemory, upsertMemory } from '../data/store'
+import { readPage } from '../agent/web/page-fetch'
 
 // Plugins' hosts, from main's side. A plugin with code of its own to run gets one utility process,
 // on its latest good build. A plugin that defines start gets it with each build, since start's work
@@ -450,6 +451,14 @@ function serve(host: Host, capabilities: Capability[]): void {
   rpc.onNotification('notify', (params) =>
     attempt(id, 'notify', () => fileNotice(id, String(asRecord(params)['text'] ?? ''))),
   )
+  // A public page, by the rules the assistant's fetch_page keeps; what the page says is the plugin's to handle.
+  rpc.handle('web.fetch', async (params, signal) => {
+    need('web')
+    const { url } = asRecord(params)
+    if (typeof url !== 'string') throw new Error('ctx.web.fetch takes a full https address.')
+    const page = await readPage(url, signal)
+    return { url: page.url.href, text: page.text }
+  })
   rpc.handle('prism.search', (params) => {
     const { options } = asRecord(params)
     return searchMemory(readSearchInput(asRecord(options)))

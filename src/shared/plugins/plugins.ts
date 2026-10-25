@@ -24,6 +24,7 @@ const CAPABILITIES: Record<Capability, true> = {
   state: true,
   skills: true,
   sandbox: true,
+  web: true,
 }
 
 /** A secret key, in a shape an environment variable can hold. */

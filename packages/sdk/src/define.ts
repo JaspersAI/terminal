@@ -18,6 +18,8 @@ export type {
   State,
   ToolEntry,
   Tools,
+  Web,
+  WebPage,
 } from './context'
 export type { Citation, Completion, ToolCall, ToolDefinition, ToolResult, Turn } from './llm'
 export type { Dataset, RunResult } from './datasets'

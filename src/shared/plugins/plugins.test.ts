@@ -159,7 +159,7 @@ test('capabilities are known names, once each, and give the plugin a backend', (
   assert.equal(validated.hasBackend, true)
   assert.throws(
     () => validatePluginDefinition({ kind: 'plugin', id: 'hello', capabilities: ['network'] }, 'hello'),
-    /capabilities are llm, tools, files, state, skills, sandbox; "network" is not one/,
+    /capabilities are llm, tools, files, state, skills, sandbox, web; "network" is not one/,
   )
   assert.throws(
     () => validatePluginDefinition({ kind: 'plugin', id: 'hello', capabilities: 'files' }, 'hello'),
