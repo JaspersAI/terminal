@@ -87,6 +87,7 @@ const sdkForBackend = {
   usePublish: stubHook('usePublish'),
   usePublishText: stubHook('usePublishText'),
   useData: stubHook('useData'),
+  useDictation: stubHook('useDictation'),
 }
 
 /** The five names a plugin may import. zod is this process's own, so the schemas a plugin builds are ones it can run. */
