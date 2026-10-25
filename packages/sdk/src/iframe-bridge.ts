@@ -97,5 +97,17 @@ export function createIframeBridge(): Bridge {
     async copyText(text: string) {
       await call('clipboard.write', { text })
     },
+
+    async startDictation() {
+      await call('voice.start', {})
+    },
+
+    async stopDictation() {
+      return (await call('voice.stop', {})) as string
+    },
+
+    async cancelDictation() {
+      await call('voice.cancel', {})
+    },
   }
 }

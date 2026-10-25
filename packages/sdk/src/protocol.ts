@@ -14,6 +14,9 @@ export type BridgeMethod =
   | 'dataset.rows'
   | 'link.open'
   | 'clipboard.write'
+  | 'voice.start'
+  | 'voice.stop'
+  | 'voice.cancel'
 
 /** iframe → host. `id` comes back on the reply, and is what tells a reply from a notification. */
 export interface BridgeRequest {

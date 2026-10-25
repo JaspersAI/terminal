@@ -7,6 +7,7 @@ import { hostBridge, runSourceIn } from '../../lib/bridge'
 import { subscribeLive } from '../../lib/live'
 import { useAppState } from '../../lib/state'
 import { BUILT_IN_VIEWS } from '../../views'
+import { Recorder } from '../composer/recorder'
 import { send } from './send'
 import { noteError, noteFromView } from '../../lib/eye'
 
@@ -50,6 +51,7 @@ export function ViewHost({ workspaceId, panelId, elementId, view, focused }: Pro
         name={view.slice(plugin.length + 1)}
         version={plugins[plugin]?.version ?? 0}
         sandbox={sandbox}
+        microphone={plugins[plugin]?.capabilities.includes('microphone') ?? false}
         title={views[view]?.title ?? view}
         focused={focused}
       />
@@ -74,6 +76,8 @@ interface FrameProps {
   name: string
   version: number
   sandbox: string
+  /** Whether the plugin declared `microphone`, which its views' dictation needs. */
+  microphone: boolean
   title: string
   focused: boolean
 }
@@ -91,6 +95,7 @@ function PluginView({
   name,
   version,
   sandbox,
+  microphone,
   title,
   focused,
 }: FrameProps): ReactElement {
@@ -101,6 +106,8 @@ function PluginView({
     if (!iframe) return
     const subscriptions = new Map<number, () => void>()
     let nextSub = 1
+    // Dictation records here, in the app's window, so the frame gets the words and never the audio.
+    const recorder = new Recorder()
 
     const post = (message: unknown): void => iframe.contentWindow?.postMessage(message, '*')
 
@@ -196,6 +203,19 @@ function PluginView({
           return hostBridge.openLink(String(params['url']))
         case 'clipboard.write':
           return hostBridge.copyText(params['text'] as string)
+        case 'voice.start':
+          if (!microphone) throw new Error(`Declare "microphone" in ${plugin}'s capabilities to listen.`)
+          if (!(await window.app.voice.requestMicrophone())) {
+            throw new Error('Microphone access is off. Allow it in System Settings, Privacy & Security, Microphone.')
+          }
+          return recorder.start()
+        case 'voice.stop': {
+          const recording = await recorder.stop()
+          return recording.durationMs < 400 ? '' : window.app.voice.transcribe(recording.audio, recording.mimeType)
+        }
+        case 'voice.cancel':
+          if (recorder.active) await recorder.stop()
+          return null
         default:
           throw new Error(`Unknown bridge method ${method}.`)
       }
@@ -213,8 +233,10 @@ function PluginView({
       observer.disconnect()
       for (const unsubscribe of subscriptions.values()) unsubscribe()
       subscriptions.clear()
+      // A view that goes away while listening lets go of the microphone.
+      if (recorder.active) void recorder.stop()
     }
-  }, [workspaceId, plugin, name, panelId])
+  }, [workspaceId, plugin, name, panelId, microphone])
 
   // Nothing in the SDK reads this yet; it is the half of the protocol the host owns.
   useEffect(() => {

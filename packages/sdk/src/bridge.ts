@@ -37,6 +37,16 @@ export interface Bridge {
   openLink(url: string): Promise<void>
   /** Puts text on the system clipboard. A sandboxed frame has no clipboard of its own. */
   copyText(text: string): Promise<void>
+  /**
+   * Dictation, for a plugin that declares `microphone`: the app opens the microphone and records,
+   * then transcribes with the user's voice provider, so the view gets the words and never the audio.
+   * Only a plugin view's relay carries these; the app's own views have the composer's microphone.
+   */
+  startDictation?(): Promise<void>
+  /** Stops recording and resolves with what was said: empty when nothing was caught. */
+  stopDictation?(): Promise<string>
+  /** Stops recording and drops it. */
+  cancelDictation?(): Promise<void>
 }
 
 /** How a source is run: fresh skips a dataset still good for the arguments and fetches again. */

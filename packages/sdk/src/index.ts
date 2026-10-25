@@ -55,7 +55,16 @@ export {
   type SkillFilePart,
   type Skills,
 } from './skills'
-export { useData, usePanelState, usePublish, usePublishText, type SourceData } from './hooks'
+export {
+  useData,
+  useDictation,
+  usePanelState,
+  usePublish,
+  usePublishText,
+  type Dictation,
+  type DictationState,
+  type SourceData,
+} from './hooks'
 export type { Dataset, RunResult } from './datasets'
 export type { QueryResult } from './query'
 export type { Citation, Completion, ToolCall, ToolDefinition, ToolResult, Turn } from './llm'

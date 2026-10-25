@@ -159,12 +159,20 @@ test('capabilities are known names, once each, and give the plugin a backend', (
   assert.equal(validated.hasBackend, true)
   assert.throws(
     () => validatePluginDefinition({ kind: 'plugin', id: 'hello', capabilities: ['network'] }, 'hello'),
-    /capabilities are llm, tools, files, state, skills, sandbox, web; "network" is not one/,
+    /capabilities are llm, tools, files, state, skills, sandbox, web, microphone; "network" is not one/,
   )
   assert.throws(
     () => validatePluginDefinition({ kind: 'plugin', id: 'hello', capabilities: 'files' }, 'hello'),
     /capabilities has to be a list/,
   )
+})
+
+test("microphone is its views' and alone gives the plugin no backend", () => {
+  const view = validatePluginDefinition({ kind: 'plugin', id: 'hello', capabilities: ['microphone'] }, 'hello')
+  assert.deepEqual(view.capabilities, ['microphone'])
+  assert.equal(view.hasBackend, false)
+  const both = validatePluginDefinition({ kind: 'plugin', id: 'hello', capabilities: ['microphone', 'llm'] }, 'hello')
+  assert.equal(both.hasBackend, true)
 })
 
 test('start is a function, and gives the plugin a backend', () => {

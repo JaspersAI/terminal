@@ -237,3 +237,75 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
 function usePanelRef(panel: PanelRef): PanelRef {
   return useMemo(() => ({ id: panel.id, workspaceId: panel.workspaceId }), [panel.id, panel.workspaceId])
 }
+
+/** Where a dictation is: not listening, recording what is said, or waiting on the transcript. */
+export type DictationState = 'idle' | 'listening' | 'transcribing'
+
+export interface Dictation {
+  state: DictationState
+  /** Why the last start or stop failed, worded for the user; null after one that worked. */
+  error: string | null
+  /** Opens the microphone. The first time on macOS, the system asks the user. */
+  start(): Promise<void>
+  /** Stops and resolves with the words: empty when nothing was caught, or when it failed. */
+  stop(): Promise<string>
+  /** Stops and drops what was recorded. */
+  cancel(): Promise<void>
+}
+
+/**
+ * Talking to a view, for a plugin that declares `microphone`. The app records and transcribes with
+ * the user's voice provider; the view gets the words. A view that goes away while listening stops.
+ */
+export function useDictation(): Dictation {
+  const bridge = useBridge()
+  const [state, setState] = useState<DictationState>('idle')
+  const [error, setError] = useState<string | null>(null)
+  const listening = useRef(false)
+  useEffect(
+    () => () => {
+      if (listening.current) void bridge.cancelDictation?.().catch(() => {})
+    },
+    [bridge],
+  )
+  return useMemo(() => {
+    const needs = (method: unknown): void => {
+      if (typeof method !== 'function') throw new Error('Dictation is for a plugin view; this view cannot listen.')
+    }
+    const failed = (err: unknown): void => setError(err instanceof Error ? err.message : String(err))
+    return {
+      state,
+      error,
+      async start() {
+        setError(null)
+        try {
+          needs(bridge.startDictation)
+          await bridge.startDictation!()
+          listening.current = true
+          setState('listening')
+        } catch (err) {
+          failed(err)
+        }
+      },
+      async stop() {
+        if (!listening.current) return ''
+        listening.current = false
+        setState('transcribing')
+        try {
+          return await bridge.stopDictation!()
+        } catch (err) {
+          failed(err)
+          return ''
+        } finally {
+          setState('idle')
+        }
+      },
+      async cancel() {
+        if (!listening.current) return
+        listening.current = false
+        setState('idle')
+        await bridge.cancelDictation?.().catch(() => {})
+      },
+    }
+  }, [bridge, state, error])
+}
