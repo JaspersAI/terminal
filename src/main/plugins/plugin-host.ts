@@ -19,6 +19,7 @@ import { activateSkill, readSkillFile, skillCatalog } from '../skills/skills'
 import { getProviderConfig } from '../secrets'
 import { getState, toPublic } from '../state'
 import { record } from '../eye/eye'
+import { readPage } from '../agent/web/page-fetch'
 
 // Plugins' hosts, from main's side. A plugin with code of its own to run gets one utility process,
 // on its latest good build. A plugin that defines start gets it with each build, since start's work
@@ -441,6 +442,14 @@ function serve(host: Host, capabilities: Capability[]): void {
   rpc.onNotification('notify', (params) =>
     attempt(id, 'notify', () => fileNotice(id, String(asRecord(params)['text'] ?? ''))),
   )
+  // A public page, by the rules the assistant's fetch_page keeps; what the page says is the plugin's to handle.
+  rpc.handle('web.fetch', async (params, signal) => {
+    need('web')
+    const { url } = asRecord(params)
+    if (typeof url !== 'string') throw new Error('ctx.web.fetch takes a full https address.')
+    const page = await readPage(url, signal)
+    return { url: page.url.href, text: page.text }
+  })
 }
 
 /** A plugin's model calls this session, counted in the tree so spend is visible. */

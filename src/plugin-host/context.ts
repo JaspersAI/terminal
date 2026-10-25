@@ -5,6 +5,7 @@ import type {
   SkillEntry,
   SkillFilePart,
   ToolEntry,
+  WebPage,
 } from '@jaspers-ai/sdk/define'
 import type { Completion } from '../shared/llm/llm'
 import { guardedFetch } from '../shared/plugins/guarded-fetch.ts'
@@ -98,6 +99,13 @@ export function createContextFactory(rpc: Rpc, capabilities: Capability[], plugi
     },
   }
 
+  const web: BackendContext['web'] = {
+    async fetch(url, opts) {
+      need('web')
+      return (await rpc.request('web.fetch', { url }, opts?.signal)) as WebPage
+    },
+  }
+
   const tools: BackendContext['tools'] = {
     async connections(filter) {
       need('tools')
@@ -183,6 +191,7 @@ export function createContextFactory(rpc: Rpc, capabilities: Capability[], plugi
       state: stateFor(workspace),
       skills,
       jobs,
+      web,
     }),
     async abortJobs(reason) {
       const settling = [...running.values()].map(({ controller, done }) => {

@@ -6,7 +6,7 @@ import type { Skills } from './skills'
 // what it knows of that member beyond its type.
 
 /** What a plugin's backend may reach beyond its own views and work. Each one has to be declared. */
-export type Capability = 'llm' | 'tools' | 'files' | 'state' | 'skills' | 'sandbox'
+export type Capability = 'llm' | 'tools' | 'files' | 'state' | 'skills' | 'sandbox' | 'web'
 
 /** One entry in a folder listing. `path` is written the way paths are asked for, so it reads back as is. */
 export interface FileEntry {
@@ -100,6 +100,23 @@ export interface Jobs {
   running(): string[]
 }
 
+/** A web page as the app read it: where it ended up after redirects, and its text. */
+export interface WebPage {
+  url: string
+  /** HTML made text; any other body as it came. Read up to the app's size limit. */
+  text: string
+}
+
+/**
+ * Any public web page, read by the app with the rules its assistant's own fetch_page keeps: https
+ * only, to a host that resolves to public addresses, every redirect checked the same way. Unlike
+ * `fetch`, it reaches hosts nobody declared, and gives back text, not a response.
+ */
+export interface Web {
+  /** Throws for an address that is not public https, and for a page that does not answer 2xx. */
+  fetch(url: string, opts?: { signal?: AbortSignal }): Promise<WebPage>
+}
+
 /** What a plugin's backend code reaches the app through: a function source's `run`, and `start`. */
 export interface BackendContext {
   /**
@@ -126,6 +143,7 @@ export interface BackendContext {
    */
   skills: Skills
   jobs: Jobs
+  web: Web
 }
 
 /** The name function sources were first written against. */
