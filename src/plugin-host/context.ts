@@ -6,6 +6,7 @@ import type {
   SkillFilePart,
   ToolEntry,
   WebPage,
+  WebResult,
 } from '@jaspers-ai/sdk/define'
 import type { Completion } from '../shared/llm/llm'
 import { guardedFetch } from '../shared/plugins/guarded-fetch.ts'
@@ -103,6 +104,10 @@ export function createContextFactory(rpc: Rpc, capabilities: Capability[], plugi
     async fetch(url, opts) {
       need('web')
       return (await rpc.request('web.fetch', { url }, opts?.signal)) as WebPage
+    },
+    async search(query, opts) {
+      need('web')
+      return (await rpc.request('web.search', { query }, opts?.signal)) as WebResult[]
     },
   }
 

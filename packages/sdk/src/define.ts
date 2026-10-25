@@ -16,6 +16,7 @@ export type {
   Tools,
   Web,
   WebPage,
+  WebResult,
 } from './context'
 export type { Citation, Completion, ToolCall, ToolDefinition, ToolResult, Turn } from './llm'
 export type { Dataset, RunResult } from './datasets'

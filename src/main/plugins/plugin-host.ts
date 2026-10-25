@@ -20,6 +20,7 @@ import { getProviderConfig } from '../secrets'
 import { getState, toPublic } from '../state'
 import { record } from '../eye/eye'
 import { readPage } from '../agent/web/page-fetch'
+import { searchWeb } from '../agent/web/search'
 
 // Plugins' hosts, from main's side. A plugin with code of its own to run gets one utility process,
 // on its latest good build. A plugin that defines start gets it with each build, since start's work
@@ -449,6 +450,13 @@ function serve(host: Host, capabilities: Capability[]): void {
     if (typeof url !== 'string') throw new Error('ctx.web.fetch takes a full https address.')
     const page = await readPage(url, signal)
     return { url: page.url.href, text: page.text }
+  })
+  // The user's own search provider, as the assistant's search_web asks it; none set is an error the plugin reads.
+  rpc.handle('web.search', async (params, signal) => {
+    need('web')
+    const { query } = asRecord(params)
+    if (typeof query !== 'string' || !query.trim()) throw new Error('ctx.web.search takes the words to search for.')
+    return searchWeb(query.trim(), signal)
   })
 }
 
