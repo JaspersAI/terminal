@@ -1,10 +1,12 @@
 import { useEffect, useState, type ReactElement } from 'react'
+import { needsJaspersSignIn } from '../../shared/app/jaspers'
 import { MAIN_WINDOW } from '../../shared/grid/windows'
 import { Composer } from '../components/composer/Composer'
 import { useDockedChat } from '../components/composer/dock'
 import { LoopsDialog } from '../components/settings/LoopsDialog'
 import { Settings } from '../components/settings/Settings'
 import { EyePrompt } from '../components/workspace/EyePrompt'
+import { SignInPrompt } from '../components/workspace/SignInPrompt'
 import { Workspace } from '../components/workspace/Workspace'
 import { errorMessage } from '../lib/errors'
 import { useAppState } from '../lib/state'
@@ -31,6 +33,7 @@ interface Props {
 export function Home({ welcome }: Props): ReactElement {
   const [settings, setSettings] = useState(false)
   const [loops, setLoops] = useState(false)
+  const [dismissedSignIn, setDismissedSignIn] = useState(false)
   // Settings… in the menu bar, where a Mac user looks for it, and ⌘, with it. It takes View loops' place.
   useEffect(
     () =>
@@ -43,16 +46,21 @@ export function Home({ welcome }: Props): ReactElement {
   const workspaceId = useAppState((s) => s.currentWorkspaceId)
   const docked = useDockedChat(workspaceId, MAIN_WINDOW)
   const termsAccepted = useAppState((s) => s.termsAccepted)
-  // Eye asks once, on the first run after it existed, and remembers either answer. Only here, so one
-  // window asks and the extensions never do, and only after the Terms of Use have been accepted.
-  const askEye = useAppState((s) => s.termsAccepted && !s.eye.asked)
+  const signedIn = useAppState((s) => s.jaspers.signedIn)
   useEffect(() => {
-    if (!welcome || !termsAccepted || askEye) return
+    if (signedIn) setDismissedSignIn(false)
+  }, [signedIn])
+  const askSignIn = useAppState((s) => needsJaspersSignIn(s, MAIN_WINDOW, dismissedSignIn))
+  // Eye asks once, on the first run after it existed, and remembers either answer. Only here, so one
+  // window asks and the extensions never do, and only after the Terms of Use and any Jaspers sign-in have been answered.
+  const askEye = useAppState((s) => s.termsAccepted && !askSignIn && !s.eye.asked)
+  useEffect(() => {
+    if (!welcome || !termsAccepted || askSignIn || askEye) return
     window.app.agent.welcome().catch((err: unknown) => console.error('[welcome]', errorMessage(err)))
-  }, [welcome, termsAccepted, askEye])
+  }, [welcome, termsAccepted, askSignIn, askEye])
   return (
     <>
-      <div inert={settings || loops} className="contents">
+      <div inert={!termsAccepted || settings || loops || askSignIn || askEye} className="contents">
         <Workspace />
         {!docked && <Composer />}
       </div>
@@ -66,7 +74,16 @@ export function Home({ welcome }: Props): ReactElement {
         />
       )}
       {loops && <LoopsDialog onClose={() => setLoops(false)} />}
-      {askEye && <EyePrompt />}
+      {!settings && !loops && askSignIn && (
+        <SignInPrompt
+          onOpenSettings={() => {
+            setDismissedSignIn(true)
+            setLoops(false)
+            setSettings(true)
+          }}
+        />
+      )}
+      {!settings && !loops && askEye && <EyePrompt />}
     </>
   )
 }

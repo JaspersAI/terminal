@@ -14,6 +14,7 @@ import {
   gatewayUrl,
   loadTermsState,
   nearExpiry,
+  needsJaspersSignIn,
   needsSubscription,
   needsTermsAcceptance,
   parseTermsText,
@@ -26,6 +27,7 @@ import {
   termsUrl,
   termsVersionNumber,
   tokensOf,
+  usesJaspersAccount,
 } from './jaspers.ts'
 
 /** A JWT as far as the claims go: a header, the payload, and something where the signature would be. */
@@ -374,4 +376,54 @@ test('terms acceptance is asked on the main window until accepted, regardless of
   assert.equal(needsTermsAcceptance({ termsAccepted: true, onboardingComplete: false }, 1), false)
   assert.equal(needsTermsAcceptance({ termsAccepted: true, onboardingComplete: true }, 1), false)
   assert.equal(needsTermsAcceptance({ termsAccepted: true, onboardingComplete: true }, 2), false)
+})
+
+test('Jaspers sign-in is asked on the main window after terms and onboarding when a Jaspers provider, connection, or ended session is signed out', () => {
+  const base = {
+    termsAccepted: true,
+    onboardingComplete: true,
+    llm: { providerId: 'anthropic' },
+    voice: null,
+    search: null,
+    connections: {},
+    jaspers: { signedIn: false, reason: null },
+  }
+  assert.equal(usesJaspersAccount(base), false)
+  assert.equal(needsJaspersSignIn(base, 1), false)
+
+  // Language model, voice, or web search configured to Jaspers while signed out requires sign-in.
+  const withLlm = { ...base, llm: { providerId: 'jaspers' } }
+  assert.equal(usesJaspersAccount(withLlm), true)
+  assert.equal(needsJaspersSignIn(withLlm, 1), true)
+  assert.equal(needsJaspersSignIn(withLlm, 2), false)
+  assert.equal(needsJaspersSignIn({ ...withLlm, termsAccepted: false }, 1), false)
+  assert.equal(needsJaspersSignIn({ ...withLlm, onboardingComplete: false }, 1), false)
+  assert.equal(needsJaspersSignIn({ ...withLlm, jaspers: { signedIn: true, reason: null } }, 1), false)
+
+  assert.equal(needsJaspersSignIn({ ...base, voice: { providerId: 'jaspers' } }, 1), true)
+  assert.equal(needsJaspersSignIn({ ...base, search: { providerId: 'jaspers' } }, 1), true)
+
+  // An account-backed MCP connection waiting on sign-in or a prior sign-in that ended with a reason requires sign-in.
+  assert.equal(needsJaspersSignIn({ ...base, connections: { 'research/mcp': { status: 'needs-sign-in' } } }, 1), true)
+  assert.equal(needsJaspersSignIn({ ...base, connections: { 'research/mcp': { status: 'ready' } } }, 1), false)
+  assert.equal(
+    needsJaspersSignIn(
+      {
+        ...base,
+        jaspers: {
+          signedIn: false,
+          reason: 'Jaspers signed you out: refresh token is no longer valid. Sign in again.',
+        },
+      },
+      1,
+    ),
+    true,
+  )
+
+  // Opening Settings to switch providers dismisses the prompt only once the language model is not Jaspers.
+  assert.equal(needsJaspersSignIn(withLlm, 1, true), true)
+  assert.equal(
+    needsJaspersSignIn({ ...base, connections: { 'research/mcp': { status: 'needs-sign-in' } } }, 1, true),
+    false,
+  )
 })

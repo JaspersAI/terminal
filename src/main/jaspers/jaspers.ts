@@ -84,6 +84,11 @@ export function signedIn(): boolean {
   return getState().jaspers.tokens !== null
 }
 
+/** Verifies a stored sign-in on open, unsealing tokens and renewing an expiring one upfront. */
+export function checkSignIn(): Promise<void> {
+  return session().check()
+}
+
 /** A fetch that goes out as the account: the bearer added, a 401, 402, or 403 renewed once and sent again, a refusal thrown in the service's words. */
 export const asAccount: FetchLike = (url, init) => session().fetch(url, init)
 

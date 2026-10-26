@@ -669,6 +669,55 @@ test('a sign-in sealed elsewhere cannot be used here, and reads as signed out wi
   }
 })
 
+test('check verifies a stored sign-in on open, renewing an expiring token and ending with the reason when invalid or unreadable', async () => {
+  const account = await fakeAccount()
+  try {
+    let canUnseal = true
+    const { session, clock, stored } = harness(account, {
+      unseal: (sealed) => (canUnseal && sealed.startsWith('sealed:') ? sealed.slice(7) : null),
+    })
+
+    // Signed out: check makes no requests.
+    await session.check()
+    assert.equal(account.seen.refreshes.length, 0)
+
+    // Signed in with a fresh token: check unseals without hitting the token endpoint.
+    await session.signIn()
+    await session.check()
+    assert.equal(account.seen.refreshes.length, 0)
+    assert.equal(session.signedIn(), true)
+
+    // Near expiry on open: check renews upfront and rotates the refresh token.
+    clock.now += 59 * 60_000
+    await session.check()
+    assert.equal(account.seen.refreshes.length, 1)
+    assert.equal(session.signedIn(), true)
+    assert.equal(await session.token(), account.issued[1]!.access_token)
+
+    // Transient outage on open: check does not throw and keeps the stored sign-in.
+    clock.now += 59 * 60_000
+    account.outage = true
+    await session.check()
+    assert.equal(session.signedIn(), true)
+    account.outage = false
+
+    // Spent or invalid refresh token on open: check transitions to signed out with the reason.
+    account.spend(account.issued[1]!.refresh_token)
+    await session.check()
+    assert.equal(session.signedIn(), false)
+    assert.equal(stored().reason, 'Jaspers signed you out: refresh token is no longer valid. Sign in again.')
+
+    // Unseal failure on open: check transitions to signed out with the unseal reason.
+    await session.signIn()
+    canUnseal = false
+    await session.check()
+    assert.equal(session.signedIn(), false)
+    assert.equal(stored().reason, 'The sign-in could not be opened on this machine. Sign in again.')
+  } finally {
+    await account.close()
+  }
+})
+
 test('pullTerms fetches the latest Terms of Use from the website on open and requires re-acceptance when updated', async () => {
   let servedStatus = 200
   let servedBody = `<main><h1>Terms of Use</h1><p>Effective October 7, 2026. Jaspers, Inc.</p><h2>1. Relationship</h2><p>Original terms.</p><hr><p>v.3 &middot; October 21, 2026</p></main>`

@@ -122,6 +122,9 @@ test('voice on another provider stays, and any other language model leaves voice
   assert.equal(voiceWith(anthropic, null), null)
   const jaspersVoice = voiceWith(JASPERS_LLM, null)
   assert.equal(voiceWith(anthropic, jaspersVoice), jaspersVoice)
+  // Switching the language model away from Jaspers while signed out clears unsigned Jaspers voice and search.
+  assert.equal(voiceWith(anthropic, jaspersVoice, false), null)
+  assert.equal(voiceWith(anthropic, elevenlabs, false), elevenlabs)
 })
 
 test('Jaspers is one address for every kind, takes no key or user-selected model, and needs the sign-in', () => {
@@ -198,6 +201,10 @@ test('a Jaspers key saved as the language model sets web search up with it, and 
     token: 'y',
   }
   assert.equal(searchWith(anthropic, null), null)
+  const jaspersSearch = searchWith(JASPERS_LLM, null)
+  assert.equal(searchWith(anthropic, jaspersSearch), jaspersSearch)
+  assert.equal(searchWith(anthropic, jaspersSearch, false), null)
+  assert.equal(searchWith(anthropic, brave, false), brave)
 })
 
 test('a search provider needs a key and no model', () => {

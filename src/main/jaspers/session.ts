@@ -51,6 +51,8 @@ export interface Session {
   /** Revokes the grant at Account, as far as it can, and forgets the sign-in either way. */
   signOut(): Promise<void>
   signedIn(): boolean
+  /** Checks a stored sign-in on open: unseals the tokens and renews an expiring one, ending with `reason` when invalid or unreadable. */
+  check(): Promise<void>
   /** The access token for a request made now, renewed first when it is about to run out. Rejects with `SignedOutError` when there is no sign-in. */
   token(): Promise<string>
   /** A fetch that goes out as the account: the bearer added, a 401, 402, or 403 renewed once and sent again, a refusal thrown in the service's own words. */
@@ -252,6 +254,16 @@ export function createSession(deps: SessionDeps): Session {
     return fresh.access
   }
 
+  async function check(): Promise<void> {
+    const held = current()
+    if (!held || !nearExpiry(held, deps.now())) return
+    try {
+      await renew(held)
+    } catch {
+      // A passing failure at Account leaves the sign-in for the next try.
+    }
+  }
+
   /** After a request was refused under `refused`: a token to send it again with, or null when the sign-in is over. One renewed meanwhile is given as it is. */
   async function renewed(refused: string): Promise<string | null> {
     const held = current()
@@ -327,6 +339,7 @@ export function createSession(deps: SessionDeps): Session {
     signIn,
     signOut,
     signedIn: () => deps.read().tokens !== null,
+    check,
     token,
     fetch: asAccount,
     call,
