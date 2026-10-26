@@ -112,6 +112,22 @@ export function panelErrorAt(state: AppState, workspaceId: string, path: StorePa
   return panelIn(grids, path.panelId).panel.error ?? null
 }
 
+/** Formats a path's value (or state) as JSON for `get` and `set`, cutting long values and including any panel error. */
+export function showPathValue(
+  path: string,
+  key: 'value' | 'state',
+  value: unknown,
+  max: number,
+  error: string | null = null,
+): string {
+  const json = value === undefined ? 'null' : JSON.stringify(value)
+  const cut = json.length <= max ? json : `${json.slice(0, max)}…(cut)`
+  const failed = error ? { error } : {}
+  return cut === json
+    ? JSON.stringify({ path, [key]: value ?? null, ...failed })
+    : JSON.stringify({ path, [key]: cut, truncated: true, ...failed })
+}
+
 /** One part of a long text, like a view's, with where it sits in the whole and where the next part starts while there is more. */
 export function textPart(
   text: string,

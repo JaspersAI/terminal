@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_GRID, failPanel, placeView, publishText } from './grid/grid.ts'
-import { formatPath, panelErrorAt, parsePath, readPath, textPart } from './paths.ts'
+import { formatPath, panelErrorAt, parsePath, readPath, showPathValue, textPart } from './paths.ts'
 import { skill } from './skills/skill-fixture.ts'
 import type { AppState } from './state.ts'
 import { EYE_OFF } from './app/eye.ts'
@@ -334,6 +334,27 @@ test("a panel's view error reads by path, shows in the panel listing, and is fou
     summary: null,
     textLength: null,
     error: 'children is not defined',
+  })
+  const statePath = parsePath('panels/e1/state')
+  assert.deepEqual(
+    JSON.parse(
+      showPathValue(
+        formatPath(statePath),
+        'value',
+        readPath(state, WS, statePath),
+        16_000,
+        panelErrorAt(state, WS, statePath),
+      ),
+    ),
+    {
+      path: 'panels/e1/state',
+      value: { text: 'hi', filters: { sector: 'Tech' } },
+      error: 'children is not defined',
+    },
+  )
+  assert.deepEqual(JSON.parse(showPathValue('panels/e1/output', 'value', null, 32_000, null)), {
+    path: 'panels/e1/output',
+    value: null,
   })
 })
 

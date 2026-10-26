@@ -364,6 +364,7 @@ export type Action =
   | { type: 'panel.setState'; workspaceId: string; panelId: string; path: string[]; value: unknown }
   | { type: 'panel.publish'; workspaceId: string; panelId: string; output: Record<string, unknown> }
   | { type: 'panel.publishText'; workspaceId: string; panelId: string; text: string | null }
+  | { type: 'panel.fail'; workspaceId: string; panelId: string; error: string }
   | { type: 'panel.refresh'; workspaceId: string; panelId: string }
   /** The value is sealed in main under the plugin and never comes back out; only `set` does. */
   | { type: 'plugin.setSecret'; plugin: string; key: string; value: string }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type ReactElement } from 'react'
 import { BridgeProvider, PanelProvider } from '@jaspers-ai/sdk'
 import type { BridgeRequest } from '@jaspers-ai/sdk/host'
+import { viewErrorMessage } from '../../../shared/grid/grid'
 import { liveKeyOf } from '../../../shared/plugins/live'
 import { viewSandbox } from '../../../shared/plugins/plugins'
 import { hostBridge, runSourceIn } from '../../lib/bridge'
@@ -115,9 +116,11 @@ function PluginView({
       // Only this element's own frame. Its origin is opaque, or shared with every frame of its
       // plugin when the plugin frames a site, so the window is what identifies it.
       if (event.source !== iframe?.contentWindow) return
-      // An error or an interaction in the view, told by the page the app put around it: for Eye, nothing to answer.
+      // An error or an interaction in the view, told by the page the app put around it: recorded on the panel and in Eye.
       const told = event.data as { method?: unknown; params?: unknown } | null
       if (told?.method === 'view.error') {
+        const message = viewErrorMessage(told.params)
+        if (message) send({ type: 'panel.fail', workspaceId, panelId, error: message })
         noteError('view', told.params, { view: `${plugin}/${name}`, plugin })
         return
       }

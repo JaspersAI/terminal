@@ -35,6 +35,7 @@ import {
   PANEL_TEXT_MAX,
   clearPluginPanelErrors,
   failPanel,
+  viewErrorMessage,
   publishOutput,
   publishText,
   rangeName,
@@ -492,6 +493,13 @@ test('a view error is recorded on its panel, shown on the map, and cleared when 
   const rebuilt = clearPluginPanelErrors(failed.grid, 'option-chain')
   assert.equal(panelOf(rebuilt, 'e2').error, undefined)
   assert.equal(clearPluginPanelErrors(rebuilt, 'option-chain'), rebuilt)
+  assert.equal(
+    viewErrorMessage({ message: '  children is not defined ', stack: 'at Table' }),
+    'children is not defined',
+  )
+  assert.equal(viewErrorMessage('  boom '), 'boom')
+  assert.equal(viewErrorMessage({ message: '   ' }), null)
+  assert.equal(viewErrorMessage(null), null)
 })
 
 test('setIn writes deep without touching what it was given', () => {
