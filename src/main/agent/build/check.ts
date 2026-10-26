@@ -35,6 +35,27 @@ export function pluginLine(info: PluginInfo | undefined, id: string): string {
 }
 
 /**
+ * Why a build run that ended is not finished yet, or null when the plugin is installed and ready.
+ * A plugin whose build failed or has not settled is not finished, whatever the builder said.
+ */
+export function unfinishedBuild(
+  id: string,
+  live: boolean,
+  info: PluginInfo | undefined,
+  ranOut: boolean,
+): string | null {
+  if (!live) return `${id} was not installed: the builder stopped before install_plugin.`
+  if (!info) return `${id} was approved but not finished: the builder stopped before writing plugin.tsx.`
+  if (info.status === 'error') {
+    const why = (info.errors[0] ?? 'unknown').replace(/[.\s]+$/, '')
+    return `${id} is installed but has a build error: ${why}.`
+  }
+  if (info.status === 'building') return `${id} is still building.`
+  if (ranOut) return `${id} is installed but not finished: the builder used all its rounds.`
+  return null
+}
+
+/**
  * Resolves with the plugin's entry once its build has settled: a build in flight, or one that begins
  * within `settleMs`, is waited for; a plugin not in the tree yet is waited for until the watcher
  * begins it. Rejects when the run stops or the time is up.
