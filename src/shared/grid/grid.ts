@@ -748,6 +748,30 @@ export function clearPluginPanelErrors(grid: Grid, plugin: string): Grid {
   return { ...grid, panels }
 }
 
+/** The view panels a panel write or refresh affects: the panel itself for a view, or the views inside it for a frame. */
+export function watchedViewPanels(grid: Grid, panelId: string): Panel[] {
+  const panel = panelOf(grid, panelId)
+  if (panel.content.kind === 'view') return [panel]
+  return layoutOf(grid, panel.elementId).panels.filter((p) => p.content.kind === 'view')
+}
+
+/**
+ * Whether the view panel(s) affected by a placement, state write, or refresh have settled: true as
+ * soon as any watched view records a runtime error or every watched view publishes new output.
+ */
+export function panelTargetsSettled(
+  grid: Grid,
+  panelId: string,
+  beforeOutputs: ReadonlyMap<string, unknown>,
+): { settled: boolean; error: string | null } {
+  const targets = watchedViewPanels(grid, panelId)
+  if (targets.length === 0) return { settled: true, error: null }
+  const failed = targets.find((p) => Boolean(p.error))
+  if (failed?.error) return { settled: true, error: failed.error }
+  const allPublished = targets.every((p) => p.output !== beforeOutputs.get(p.id))
+  return { settled: allPublished, error: null }
+}
+
 /** Tells the panel's view to fetch its data again: the SDK's useData hears the new stamp and runs its sources fresh. */
 export function refreshPanel(grid: Grid, id: string, at: number): { grid: Grid; panel: Panel } {
   const current = panelOf(grid, id)
