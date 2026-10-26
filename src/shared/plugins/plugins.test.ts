@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { qualifyConnection, unsetRequiredSecret, validatePluginDefinition, viewPolicy, viewSandbox } from './plugins.ts'
+import {
+  qualifyConnection,
+  unsetRequiredSecret,
+  validatePluginDefinition,
+  viewErrorText,
+  viewPolicy,
+  viewSandbox,
+} from './plugins.ts'
 
 // The schemas are stubs: the check is that a schema is there and can parse, which is all main needs
 // before it hands the definition to the registry. Everything here is what a plugin's file exports.
@@ -425,4 +432,22 @@ test('a bare connection name is qualified with its plugin; a slashed one is left
   assert.equal(qualifyConnection('fmp', 'mcp'), 'fmp/mcp')
   assert.equal(qualifyConnection('screener', 'jaspers/sec'), 'jaspers/sec')
   assert.equal(qualifyConnection(null, 'jaspers/sec'), 'jaspers/sec')
+})
+
+test('a runtime error in a plugin view becomes readable panel text with its stack', () => {
+  assert.equal(
+    viewErrorText({
+      message: 'children is not defined',
+      stack:
+        'ReferenceError: children is not defined\n    at YahooProviderLoader (jaspers-plugin://option-chain/bundle.js:443:3)',
+    }),
+    'ReferenceError: children is not defined\n    at YahooProviderLoader (jaspers-plugin://option-chain/bundle.js:443:3)',
+  )
+  assert.equal(viewErrorText({ message: 'boom', stack: null }), 'Error: boom')
+  assert.equal(
+    viewErrorText({ message: 'boom', stack: 'at view (bundle.js:1:1)' }),
+    'Error: boom\nat view (bundle.js:1:1)',
+  )
+  assert.equal(viewErrorText({ message: '' }), null)
+  assert.equal(viewErrorText(null), null)
 })

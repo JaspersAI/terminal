@@ -288,3 +288,16 @@ function show(value: unknown): string {
 export function unsetRequiredSecret<T extends { set: boolean; optional?: boolean }>(secrets: T[]): T | undefined {
   return secrets.find((secret) => !secret.set && !secret.optional)
 }
+
+/**
+ * Formats an uncaught error from a plugin view's iframe (`view.error`) as panel text, so the assistant
+ * can read why a view failed via `get panels/<id>/text` or `read_loop` instead of seeing `text: null`.
+ */
+export function viewErrorText(params: unknown): string | null {
+  const raw = asRecord(params)
+  const message = typeof raw?.['message'] === 'string' ? raw['message'].trim() : ''
+  if (!message) return null
+  const stack = typeof raw?.['stack'] === 'string' ? raw['stack'].trim() : ''
+  if (!stack) return `Error: ${message}`
+  return stack.includes(message) ? stack : `Error: ${message}\n${stack}`
+}

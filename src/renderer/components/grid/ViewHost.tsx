@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, type ReactElement } from 'react'
 import { BridgeProvider, PanelProvider } from '@jaspers-ai/sdk'
 import type { BridgeRequest } from '@jaspers-ai/sdk/host'
 import { liveKeyOf } from '../../../shared/plugins/live'
-import { viewSandbox } from '../../../shared/plugins/plugins'
+import { viewErrorText, viewSandbox } from '../../../shared/plugins/plugins'
 import { hostBridge, runSourceIn } from '../../lib/bridge'
 import { subscribeLive } from '../../lib/live'
 import { useAppState } from '../../lib/state'
@@ -106,6 +106,7 @@ function PluginView({
     if (!iframe) return
     const subscriptions = new Map<number, () => void>()
     let nextSub = 1
+    let failed = false
     // Dictation records here, in the app's window, so the frame gets the words and never the audio.
     const recorder = new Recorder()
 
@@ -119,6 +120,11 @@ function PluginView({
       const told = event.data as { method?: unknown; params?: unknown } | null
       if (told?.method === 'view.error') {
         noteError('view', told.params, { view: `${plugin}/${name}`, plugin })
+        const errorText = viewErrorText(told.params)
+        if (errorText) {
+          failed = true
+          void hostBridge.publishText({ id: panelId, workspaceId }, errorText)
+        }
         return
       }
       if (told?.method === 'view.eye' && typeof told.params === 'object' && told.params !== null) {
@@ -191,8 +197,13 @@ function PluginView({
         case 'panel.setState':
           return hostBridge.setState(panel, params['path'] as string[], params['value'])
         case 'panel.publish':
+          if (failed) {
+            failed = false
+            void hostBridge.publishText(panel, null)
+          }
           return hostBridge.publish(panel, params['output'] as Record<string, unknown>)
         case 'panel.publishText':
+          failed = false
           return hostBridge.publishText(panel, params['text'] as string | null)
         case 'source.run':
           // The frame's own workspace, never one the frame names: a plugin's code reads it as ctx.workspace.
@@ -233,6 +244,7 @@ function PluginView({
       observer.disconnect()
       for (const unsubscribe of subscriptions.values()) unsubscribe()
       subscriptions.clear()
+      if (failed) void hostBridge.publishText({ id: panelId, workspaceId }, null)
       // A view that goes away while listening lets go of the microphone.
       if (recorder.active) void recorder.stop()
     }

@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react'
+import { Component as ReactComponent, type ComponentType, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BridgeProvider, PanelProvider, type PanelRef } from '@jaspers-ai/sdk'
 import { createIframeBridge } from '@jaspers-ai/sdk/host'
@@ -11,6 +11,23 @@ import { watchDocumentUse } from '../renderer/lib/eye'
 /** A plugin's bundle, as far as this file cares: the definition its plugin.tsx exported. */
 interface PluginModule {
   default?: { views?: Record<string, { component?: unknown }> }
+}
+
+class ViewBoundary extends ReactComponent<{ children: ReactNode }, { error: string | null }> {
+  state: { error: string | null } = { error: null }
+
+  static getDerivedStateFromError(error: unknown): { error: string } {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+
+  componentDidCatch(error: unknown): void {
+    tell(error)
+  }
+
+  render(): ReactNode {
+    if (this.state.error !== null) return <div style={{ padding: 12 }}>{this.state.error}</div>
+    return this.props.children
+  }
 }
 
 export async function boot(): Promise<void> {
@@ -32,7 +49,9 @@ export async function boot(): Promise<void> {
     createRoot(root).render(
       <BridgeProvider value={createIframeBridge()}>
         <PanelProvider value={panel}>
-          <Component panel={panel} />
+          <ViewBoundary>
+            <Component panel={panel} />
+          </ViewBoundary>
         </PanelProvider>
       </BridgeProvider>,
     )
@@ -42,8 +61,13 @@ export async function boot(): Promise<void> {
   }
 }
 
+let lastTold = ''
+
 function tell(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error)
   const stack = error instanceof Error ? (error.stack ?? null) : null
+  const key = `${message}\n${stack ?? ''}`
+  if (key === lastTold) return
+  lastTold = key
   window.parent.postMessage({ method: 'view.error', params: { message, stack } }, '*')
 }
