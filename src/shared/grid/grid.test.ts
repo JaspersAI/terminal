@@ -35,6 +35,7 @@ import {
   PANEL_TEXT_MAX,
   clearPluginPanelErrors,
   failPanel,
+  panelTargetsSettled,
   viewErrorMessage,
   publishOutput,
   publishText,
@@ -500,6 +501,26 @@ test('a view error is recorded on its panel, shown on the map, and cleared when 
   assert.equal(viewErrorMessage('  boom '), 'boom')
   assert.equal(viewErrorMessage({ message: '   ' }), null)
   assert.equal(viewErrorMessage(null), null)
+})
+
+test('panelTargetsSettled watches a view panel or a frame’s child views until one fails or all publish new output', () => {
+  const { grid } = placeFramed(EMPTY_GRID, { content: view('option-chain/table'), loop: 'f1' })
+  const before = new Map([['p2', null]])
+  assert.deepEqual(panelTargetsSettled(grid, 'p2', before), { settled: false, error: null })
+  assert.deepEqual(panelTargetsSettled(grid, 'p1', before), { settled: false, error: null })
+  const failed = failPanel(grid, 'e2', 'children is not defined').grid
+  assert.deepEqual(panelTargetsSettled(failed, 'p2', before), {
+    settled: true,
+    error: 'children is not defined',
+  })
+  assert.deepEqual(panelTargetsSettled(failed, 'p1', before), {
+    settled: true,
+    error: 'children is not defined',
+  })
+  const published = publishOutput(grid, 'e2', { rows: [] }, '0 rows').grid
+  assert.deepEqual(panelTargetsSettled(published, 'p1', before), { settled: true, error: null })
+  const emptyFrame = placeFrame(EMPTY_GRID, { content: { kind: 'frame' } }).grid
+  assert.deepEqual(panelTargetsSettled(emptyFrame, 'p1', new Map()), { settled: true, error: null })
 })
 
 test('setIn writes deep without touching what it was given', () => {

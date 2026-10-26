@@ -1,4 +1,4 @@
-import { Component, useEffect, useState, type ComponentType, type ReactElement, type ReactNode } from 'react'
+import { Component, useEffect, useRef, useState, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BridgeProvider, PanelProvider, type Bridge, type PanelRef } from '@jaspers-ai/sdk'
 import { createIframeBridge } from '@jaspers-ai/sdk/host'
@@ -15,9 +15,14 @@ interface PluginModule {
 }
 
 export async function boot(): Promise<void> {
+  let failMounted: ((error: unknown) => void) | null = null
+  const onUncaught = (error: unknown): void => {
+    failMounted?.(error)
+    tell(error)
+  }
   // What goes wrong or is clicked, typed, or zoomed in the view is told to the page around it, which records it on the panel and tells Eye while it records.
-  window.addEventListener('error', (event) => tell(event.error ?? event.message))
-  window.addEventListener('unhandledrejection', (event) => tell(event.reason))
+  window.addEventListener('error', (event) => onUncaught(event.error ?? event.message))
+  window.addEventListener('unhandledrejection', (event) => onUncaught(event.reason))
   watchDocumentUse((params) => window.parent.postMessage({ method: 'view.eye', params }, '*'))
   const query = new URLSearchParams(location.search)
   const view = query.get('view') ?? ''
@@ -33,7 +38,14 @@ export async function boot(): Promise<void> {
     createRoot(root).render(
       <BridgeProvider value={bridge}>
         <PanelProvider value={panel}>
-          <MountedView bridge={bridge} panel={panel} View={component} />
+          <MountedView
+            bridge={bridge}
+            panel={panel}
+            View={component}
+            onMountFail={(listener) => {
+              failMounted = listener
+            }}
+          />
         </PanelProvider>
       </BridgeProvider>,
     )
@@ -47,13 +59,30 @@ function MountedView({
   bridge,
   panel,
   View,
+  onMountFail,
 }: {
   bridge: Bridge
   panel: PanelRef
   View: ComponentType<{ panel: PanelRef }>
+  onMountFail: (listener: ((error: unknown) => void) | null) => void
 }): ReactElement {
   const [attempt, setAttempt] = useState(0)
+  const [uncaught, setUncaught] = useState<string | null>(null)
+  const failed = useRef(false)
   useEffect(() => {
+    onMountFail((error) => {
+      failed.current = true
+      setUncaught(error instanceof Error ? error.message : String(error))
+    })
+    return () => onMountFail(null)
+  }, [onMountFail])
+  useEffect(() => {
+    const retry = (): void => {
+      if (!failed.current) return
+      failed.current = false
+      setUncaught(null)
+      setAttempt((n) => n + 1)
+    }
     const watch = (path: string): (() => void) => {
       let seen = false
       return bridge.subscribe(path, () => {
@@ -61,23 +90,40 @@ function MountedView({
           seen = true
           return
         }
-        setAttempt((n) => n + 1)
+        retry()
       })
     }
+    let hadError = false
+    const offError = bridge.subscribe(`workspaces/${panel.workspaceId}/panels/${panel.id}/error`, (next) => {
+      const hasError = typeof next === 'string' && next.length > 0
+      if (hasError) failed.current = true
+      else if (hadError) retry()
+      hadError = hasError
+    })
     const offs = [
       watch(`workspaces/${panel.workspaceId}/panels/${panel.id}/state`),
       watch(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`),
+      offError,
     ]
     return () => offs.forEach((off) => off())
   }, [bridge, panel.workspaceId, panel.id])
   return (
-    <ViewBoundary attempt={attempt}>
-      <View panel={panel} />
+    <ViewBoundary
+      attempt={attempt}
+      uncaught={uncaught}
+      onCaught={() => {
+        failed.current = true
+      }}
+    >
+      <View key={attempt} panel={panel} />
     </ViewBoundary>
   )
 }
 
-class ViewBoundary extends Component<{ attempt: number; children: ReactNode }, { error: string | null }> {
+class ViewBoundary extends Component<
+  { attempt: number; uncaught: string | null; onCaught: () => void; children: ReactNode },
+  { error: string | null }
+> {
   override state: { error: string | null } = { error: null }
 
   static getDerivedStateFromError(error: unknown): { error: string } {
@@ -85,17 +131,24 @@ class ViewBoundary extends Component<{ attempt: number; children: ReactNode }, {
   }
 
   override componentDidCatch(error: unknown): void {
+    this.props.onCaught()
     tell(error)
   }
 
-  override componentDidUpdate(prevProps: { attempt: number; children: ReactNode }): void {
+  override componentDidUpdate(prevProps: {
+    attempt: number
+    uncaught: string | null
+    onCaught: () => void
+    children: ReactNode
+  }): void {
     if (prevProps.attempt !== this.props.attempt && this.state.error !== null) {
       this.setState({ error: null })
     }
   }
 
   override render(): ReactNode {
-    return this.state.error === null ? this.props.children : this.state.error
+    const shown = this.state.error ?? this.props.uncaught
+    return shown === null ? this.props.children : shown
   }
 }
 
