@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { RETRIES_MAX } from '../../../shared/llm/limits.ts'
 import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../../shared/llm/llm.ts'
+import { ProviderError } from '../../llm/http.ts'
 import { createLlm, type LlmDeps } from './llm.ts'
 
 const REPLY: Completion = {
@@ -25,6 +27,7 @@ function deps(complete: (options: CompleteOptions, turns: Turn[], tools: ToolDef
     complete: (_config, _system, turns, tools, options) => complete(options, turns, tools),
     usage: (input, output) => void usage.push([input, output]),
     wait: async (ms) => void waits.push(ms),
+    random: () => 1,
   }
   return { d, usage, waits }
 }
@@ -37,7 +40,7 @@ const request = {
   maxTokens: 50_000,
 }
 
-test('a request reaches the provider with its model, a capped token limit, the signal, and the long timeout', async () => {
+test('a request reaches the provider streamed, with its model, a capped token limit, and the signal', async () => {
   let seen: CompleteOptions | null = null
   const { d, usage } = deps(async (options) => {
     seen = options
@@ -47,7 +50,7 @@ test('a request reaches the provider with its model, a capped token limit, the s
   assert.equal(await createLlm(d).complete(request, signal), REPLY)
   assert.deepEqual(
     { ...seen!, signal: seen!.signal === signal },
-    { model: 'claude-opus-5', maxTokens: 32_000, signal: true, stream: true, timeoutMs: 600_000 },
+    { model: 'claude-opus-5', maxTokens: 32_000, signal: true, stream: true },
   )
   assert.deepEqual(usage, [[30, 7]])
 
@@ -61,14 +64,23 @@ test('a request reaches the provider with its model, a capped token limit, the s
   assert.equal(seen!.model, undefined)
 })
 
-test('a rate limit or server error is tried once more after two seconds; a refusal is not', async () => {
+test('a rate limit, gateway timeout, or server error is retried with backoff up to the retry limit; a refusal is not', async () => {
   let calls = 0
   const flaky = deps(async () => {
-    if (++calls === 1) throw new Error('Anthropic returned 529: overloaded')
+    if (++calls <= 2) throw new ProviderError('Jaspers returned 524: timed out', 524)
     return REPLY
   })
   assert.equal(await createLlm(flaky.d).complete(request, new AbortController().signal), REPLY)
-  assert.deepEqual(flaky.waits, [2000])
+  assert.equal(calls, 3)
+  assert.deepEqual(flaky.waits, [2000, 4000])
+
+  let limitedCalls = 0
+  const rateLimited = deps(async () => {
+    if (++limitedCalls === 1) throw new ProviderError('Jaspers returned 429: rate limited', 429, 7500)
+    return REPLY
+  })
+  assert.equal(await createLlm(rateLimited.d).complete(request, new AbortController().signal), REPLY)
+  assert.deepEqual(rateLimited.waits, [7500])
 
   let refusals = 0
   const refused = deps(async () => {
@@ -78,10 +90,14 @@ test('a rate limit or server error is tried once more after two seconds; a refus
   await assert.rejects(createLlm(refused.d).complete(request, new AbortController().signal), /401/)
   assert.equal(refusals, 1)
 
-  const twice = deps(async () => {
+  let exhaustedCalls = 0
+  const exhausted = deps(async () => {
+    exhaustedCalls++
     throw new Error('Anthropic returned 503: unavailable')
   })
-  await assert.rejects(createLlm(twice.d).complete(request, new AbortController().signal), /503/)
+  await assert.rejects(createLlm(exhausted.d).complete(request, new AbortController().signal), /503/)
+  assert.equal(exhaustedCalls, RETRIES_MAX + 1)
+  assert.equal(exhausted.waits.length, RETRIES_MAX)
 })
 
 test('no configured model, or a malformed request, says so', async () => {
