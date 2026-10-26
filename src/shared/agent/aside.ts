@@ -1,3 +1,4 @@
+import { ACTIVATE_SKILL, READ_SKILL_FILE } from '@jaspers-ai/sdk/skills'
 import type { ToolCall, ToolResult, Turn } from '../llm/llm'
 // The extension is explicit because Node's test runner resolves this import at run time.
 import { size, withoutThinking } from './history.ts'
@@ -36,6 +37,8 @@ export const WHOLE_MAX = 60_000
 export const ROOM = 2 / 3
 /** The tool that brings an answer set aside back, named here since a round of it is asked to be read with the one before. */
 export const READ_AGAIN = 'read_again'
+/** The tools whose answers are instructions or source files a run works from, which always go whole. */
+export const INSTRUCTIONS: ReadonlySet<string> = new Set([ACTIVATE_SKILL, READ_SKILL_FILE, 'read_file'])
 
 /** How much of an answer its note keeps: the beginning, where a table names its columns and a reply its ids. */
 const HEAD = 200

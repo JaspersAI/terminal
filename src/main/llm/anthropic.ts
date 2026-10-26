@@ -1,5 +1,6 @@
 import { post, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
+import { INSTRUCTIONS, LARGE, WHOLE_MAX as ASIDE_WHOLE_MAX } from '../../shared/agent/aside.ts'
 import { added } from '../../shared/agent/transcript.ts'
 import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
@@ -227,6 +228,10 @@ export function anthropicRequest(
  */
 function anthropicMessages(history: Turn[], stateAsMessage: boolean, mark: boolean): AnthropicMessage[] {
   const messages: AnthropicMessage[] = []
+  const userRounds: { message: AnthropicMessage; volatileChars: number }[] = []
+  const calls = new Map(
+    history.flatMap((turn) => (turn.role === 'assistant' ? turn.toolCalls.map((c) => [c.id, c.name] as const) : [])),
+  )
   let said: string | undefined
   history.forEach((turn, index) => {
     if (turn.role === 'assistant') {
@@ -242,6 +247,14 @@ function anthropicMessages(history: Turn[], stateAsMessage: boolean, mark: boole
             content: r.output,
             is_error: r.isError || undefined,
           }))
+    const volatileChars =
+      turn.role === 'tool'
+        ? turn.results.reduce(
+            (sum, r) =>
+              r.output.length > LARGE && !INSTRUCTIONS.has(calls.get(r.callId) ?? '') ? sum + r.output.length : sum,
+            0,
+          )
+        : 0
     const state = turn.context
     if (state !== undefined && !stateAsMessage && state !== said) {
       content.push({ type: 'text', text: stateBlock(state) })
@@ -251,26 +264,45 @@ function anthropicMessages(history: Turn[], stateAsMessage: boolean, mark: boole
     // first: two user messages in a row is a shape no other turn makes, and one message is the one
     // every server takes.
     const round = messages[messages.length - 1]
-    if (added(history, index) && round?.role === 'user' && Array.isArray(round.content)) round.content.push(...content)
-    else messages.push({ role: 'user', content })
+    if (added(history, index) && round?.role === 'user' && Array.isArray(round.content)) {
+      round.content.push(...content)
+      const prev = userRounds[userRounds.length - 1]
+      if (prev) prev.volatileChars += volatileChars
+    } else {
+      const message: AnthropicMessage = { role: 'user', content }
+      messages.push(message)
+      userRounds.push({ message, volatileChars })
+    }
     // Such a message has to be the last, or have the assistant after it: one before another user turn is refused.
     const next = history[index + 1]
     if (state !== undefined && stateAsMessage && (!next || next.role === 'assistant')) {
       messages.push({ role: 'system', clear_at: 'next_user_message', content: stateBlock(state) })
     }
   })
-  if (mark) markEnd(messages)
+  if (mark) markCache(userRounds)
   return messages
 }
 
 /**
- * The cache breakpoint for the conversation: the last block of the last user message, so the next
- * round reads back everything up to here. A state message takes no mark, which is why this is the
- * block before it.
+ * The cache breakpoints for the conversation: one on the stable prefix before the first turn with
+ * an unset-aside long tool output (so setting those outputs aside later still hits the cache up to
+ * here), and one on the last user/tool message — or on the message before it when the newest round
+ * alone exceeds ASIDE_WHOLE_MAX and will be set aside on the very next round.
  */
-function markEnd(messages: AnthropicMessage[]): void {
-  const last = [...messages].reverse().find((message) => message.role === 'user')
-  const blocks = last?.content as Record<string, unknown>[] | undefined
+function markCache(rounds: { message: AnthropicMessage; volatileChars: number }[]): void {
+  if (rounds.length === 0) return
+  const firstVolatile = rounds.findIndex((r) => r.volatileChars > 0)
+  if (firstVolatile > 0) markMessage(rounds[firstVolatile - 1]!.message)
+  const last = rounds.length - 1
+  if (rounds[last]!.volatileChars > ASIDE_WHOLE_MAX) {
+    if (last > 0) markMessage(rounds[last - 1]!.message)
+  } else {
+    markMessage(rounds[last]!.message)
+  }
+}
+
+function markMessage(message: AnthropicMessage): void {
+  const blocks = message.content as Record<string, unknown>[] | undefined
   const block = blocks?.[blocks.length - 1]
   if (block) block.cache_control = { type: 'ephemeral' }
 }

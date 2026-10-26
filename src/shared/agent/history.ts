@@ -1,3 +1,4 @@
+import { asTable } from '../data/datasets.ts'
 import type { Turn } from '../llm/llm'
 
 // A thread's turns as a run leaves them and the next request takes them up: how much of a thread goes
@@ -57,17 +58,38 @@ export function recent(turns: Turn[], count: number = RECENT): Turn[] {
 
 /** The most one tool's answer may put in front of the model at once. */
 export const OUTPUT_MAX = 100_000
+/** The most a source test run inside the plugin builder puts in front of the builder at once. */
+export const BUILDER_OUTPUT_MAX = 20_000
 
 /**
- * A tool's answer, cut where reading on would crowd everything else out: a command or a page can
- * print megabytes, and a conversation that has taken that in cannot be sent again. The model is told
- * how much it did not see, which is what lets it ask for less. A source's rows and a query's are not
- * cut here or anywhere: they are the data, and a tool that answers with them says so (`whole`).
+ * A tool's answer, cut where reading on would crowd everything else out: a command, a page, or a
+ * source can answer with megabytes, and a conversation that has taken that in cannot be sent again
+ * without blowing past the cache and the window. The model is told how much it did not see, which is
+ * what lets it ask for less or read the rows from the store with `query`.
  */
 export function capOutput(output: string, max: number = OUTPUT_MAX): string {
   if (output.length <= max) return output
   const cut = output.length - max
   return `${output.slice(0, max)}\n… [${cut.toLocaleString('en-US')} more characters, cut because this is more than can be read at once. Ask for less, or read the rows with query.]`
+}
+
+/**
+ * A source run's answer as `run_source` hands it back: rows rewritten as a compact table and capped
+ * for the model (or tighter for the plugin builder's test calls) while the full dataset stays in the
+ * store, followed by its dataset metadata and any placed app view so neither is cut off.
+ * An `unread` task run compares the raw text with its last and stays whole.
+ */
+export function sourceOutput(
+  result: { kind: string; text: string; datasetId?: string; rowCount?: number },
+  options: { unread?: boolean; builder?: boolean; shown?: string } = {},
+): string {
+  const text = options.unread
+    ? result.text
+    : capOutput(asTable(result.text), options.builder ? BUILDER_OUTPUT_MAX : OUTPUT_MAX)
+  const line =
+    result.kind === 'dataset' ? `\n${JSON.stringify({ datasetId: result.datasetId, rowCount: result.rowCount })}` : ''
+  const shown = options.shown ? `\n${options.shown}` : ''
+  return `${text}${line}${shown}`
 }
 
 /**

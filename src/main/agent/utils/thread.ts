@@ -1,5 +1,14 @@
-import { ACTIVATE_SKILL, READ_SKILL_FILE, skillLoaded } from '@jaspers-ai/sdk/skills'
-import { callOf, cutFrom, makeRoom, READ_AGAIN, sent, setAside, type Sending } from '../../../shared/agent/aside'
+import { skillLoaded } from '@jaspers-ai/sdk/skills'
+import {
+  callOf,
+  cutFrom,
+  INSTRUCTIONS,
+  makeRoom,
+  READ_AGAIN,
+  sent,
+  setAside,
+  type Sending,
+} from '../../../shared/agent/aside'
 import { cited, keptOn, type Citation } from '../../../shared/agent/citations'
 import { portableFork, putBack, standing, type Fork } from '../../../shared/agent/fork'
 import { RECENT, recent, withoutThinking } from '../../../shared/agent/history'
@@ -181,9 +190,6 @@ export function threadReads(history: Turn[]): Pick<ToolContext, 'userSaid' | 'in
 export function citedBy(text: string, history: Turn[], workspaceId: string): Citation[] {
   return cited(text, new Map([...keptOn(history), ...citationsFor(workspaceId)]))
 }
-
-/** The tools whose answers are instructions a run goes by, which always go whole. */
-const INSTRUCTIONS: ReadonlySet<string> = new Set([ACTIVATE_SKILL, READ_SKILL_FILE])
 
 /** A run's history as its model is sent it this round (`sent` in `shared/agent/aside.ts`). The history itself keeps everything. */
 export function sentOf(history: Turn[], sending: Sending): Turn[] {
