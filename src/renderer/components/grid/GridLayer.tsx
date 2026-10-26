@@ -16,13 +16,13 @@ interface Props {
 
 /**
  * The grid layer of one workspace in one window: the workspace's own columns × rows of cells filling
- * the window but for the gutter, with each element on the cells main gave it, and column letters and row
- * numbers in the gutter along the top and left edges. Nothing here decides a layout: a drag draws
- * where the engine says it lands and asks main for it on release. A maximized element covers the
- * cells while the rest stay mounted underneath, hidden. The grid's own stacking context keeps
- * floating elements under the composer. The labels are beside the cells rather than over them, so
- * they stay readable whatever is open, and the 4 (16 px) the gutter takes is the only place a
- * pointer can reach the window's edge without touching an element. An element dragged in from
+ * the window but for the 4 (16 px) gutter on all four sides, with each element on the cells main gave
+ * it, and column letters and row numbers in the gutter along the top and left edges. Nothing here
+ * decides a layout: a drag draws where the engine says it lands and asks main for it on release. A
+ * maximized element covers the cells while the rest stay mounted underneath, hidden. The grid's own
+ * stacking context keeps floating elements under the composer. The labels are beside the cells rather
+ * than over them, so they stay readable whatever is open, and the gutter around the cells keeps every
+ * element's frame and resize edges clear of the window's own frame. An element dragged in from
  * another window is drawn as a ghost on the cells it would take.
  *
  * `layer` is the cells' box, not the window's: both drags measure the pointer against it, so the
@@ -62,7 +62,7 @@ export function GridLayer({ workspaceId, windowNumber }: Props): ReactElement {
           gridTemplateColumns: `repeat(${grid.size.cols}, minmax(0, 1fr))`,
           gridTemplateRows: `repeat(${grid.size.rows}, minmax(0, 1fr))`,
         }}
-        className="absolute top-4 right-0 bottom-0 left-4 isolate grid"
+        className="absolute inset-4 isolate grid"
       >
         <Gridlines size={grid.size} />
         <Cells workspaceId={workspaceId} windowNumber={windowNumber} size={grid.size} cells={grid.cells} />

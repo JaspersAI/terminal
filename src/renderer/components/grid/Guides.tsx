@@ -11,19 +11,19 @@ interface Props {
 }
 
 /**
- * The lines at the cell edges, under the elements: two repeating gradients, not a box per cell. A
- * 100 × 100 grid is 10,000 cells, and that many nodes costs far more than the lines are worth. Each
- * gradient repeats over `calc(100% / n)` of the same box the elements' grid tracks divide, so a line
- * lands where an element's edge does at any window size, fractions and all. Both are shifted a track
- * along, so the line belongs to the left and top edge of the second cell onward and the grid's own
- * outer edges get none, as when this was a box per cell.
+ * The lines at the cell edges, under the elements: two repeating gradients and a 1 px outer ring, not
+ * a box per cell. A 100 × 100 grid is 10,000 cells, and that many nodes costs far more than the lines
+ * are worth. Each gradient repeats over `calc(100% / n)` of the same box the elements' grid tracks
+ * divide, so a line lands where an element's edge does at any window size, fractions and all. Both are
+ * shifted a track along, so the line belongs to the left and top edge of the second cell onward, and
+ * the outer ring bounds the grid against the gutter around it.
  */
 export function Gridlines({ size }: Props): ReactElement {
   const line = 'var(--app-gridline)'
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute inset-0"
+      className="pointer-events-none absolute inset-0 ring-1 ring-gridline"
       style={{
         backgroundImage: `repeating-linear-gradient(to right, ${line} 0 1px, transparent 1px calc(100% / ${size.cols})), repeating-linear-gradient(to bottom, ${line} 0 1px, transparent 1px calc(100% / ${size.rows}))`,
         backgroundPosition: `calc(100% / ${size.cols}) 0, 0 calc(100% / ${size.rows})`,
@@ -48,7 +48,7 @@ export function Labels({ size }: Props): ReactElement {
       className="pointer-events-none absolute inset-0 text-[10px] leading-none text-muted-foreground select-none"
     >
       <div
-        className="absolute top-0 right-0 left-4 grid h-4"
+        className="absolute inset-x-4 top-0 grid h-4"
         style={{ gridTemplateColumns: `repeat(${size.cols}, minmax(0, 1fr))` }}
       >
         {Array.from({ length: size.cols }, (_, x) => (
@@ -58,7 +58,7 @@ export function Labels({ size }: Props): ReactElement {
         ))}
       </div>
       <div
-        className="absolute top-4 bottom-0 left-0 grid w-4"
+        className="absolute inset-y-4 left-0 grid w-4"
         style={{ gridTemplateRows: `repeat(${size.rows}, minmax(0, 1fr))` }}
       >
         {Array.from({ length: size.rows }, (_, y) => (
