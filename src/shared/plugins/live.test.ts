@@ -138,3 +138,37 @@ test('researchLiveText formats a research room thread from its live room and mes
   }))
   assert.equal(mixed, '#1 [Risk Analyst]: First claim [1] and second claim [2].')
 })
+
+test('researchLiveText prefers the final answer after tool steps and falls back to the latest narration paragraph while working', () => {
+  const first = 'I will check the filing database guide.'
+  const second = `${first}\n\n<cite document_id="10" chunk_id="1" quote="a">I will now read the 10-K.</cite>`
+  const final = '## Summary\n\n<cite document_id="20" chunk_id="2" quote="b">The revolver matures in 2027.</cite>'
+  const steps = [
+    { at: first.length, tool: 'get_guide' },
+    { at: second.length, tool: 'fetch_chunk' },
+  ]
+
+  const working = researchLiveText({ seqs: [1] }, () => ({
+    seq: 1,
+    role: 'analyst',
+    name: 'Basic Analyst',
+    status: 'working',
+    text: second,
+    steps,
+    error: null,
+    citations: [],
+  }))
+  assert.equal(working, '#1 [Basic Analyst] (working): I will now read the 10-K. [1]')
+
+  const finished = researchLiveText({ seqs: [1] }, () => ({
+    seq: 1,
+    role: 'analyst',
+    name: 'Basic Analyst',
+    status: 'done',
+    text: `${second}\n\n${final}`,
+    steps,
+    error: null,
+    citations: [],
+  }))
+  assert.equal(finished, '#1 [Basic Analyst]: ## Summary\n\nThe revolver matures in 2027. [2]')
+})

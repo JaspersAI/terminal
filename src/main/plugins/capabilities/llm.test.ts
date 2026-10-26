@@ -47,7 +47,7 @@ test('a request reaches the provider with its model, a capped token limit, the s
   assert.equal(await createLlm(d).complete(request, signal), REPLY)
   assert.deepEqual(
     { ...seen!, signal: seen!.signal === signal },
-    { model: 'claude-opus-5', maxTokens: 32_000, signal: true, timeoutMs: 600_000 },
+    { model: 'claude-opus-5', maxTokens: 32_000, signal: true, stream: true, timeoutMs: 600_000 },
   )
   assert.deepEqual(usage, [[30, 7]])
 
