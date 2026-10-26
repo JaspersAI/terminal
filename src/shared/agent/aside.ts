@@ -155,9 +155,24 @@ export function makeRoom(
 
 /**
  * The call with this id and what it answered, as the thread holds them, or null when it holds no such
- * call. Of two with one id the later is meant. One nothing answered has no answer.
+ * call. Of two with one id the later is meant. One nothing answered has no answer. A `read_again` call
+ * whose target is still in the thread resolves to that target, so reading a `read_again` never nests.
  */
 export function callOf(turns: Turn[], id: string): { call: ToolCall; answer: string | null } | null {
+  let found = findCall(turns, id)
+  if (!found) return null
+  const seen = new Set<string>()
+  for (;;) {
+    const target = readAgainTarget(found.call)
+    if (!target || seen.has(target)) return found
+    seen.add(found.call.id)
+    const next = findCall(turns, target)
+    if (!next) return found
+    found = next
+  }
+}
+
+function findCall(turns: Turn[], id: string): { call: ToolCall; answer: string | null } | null {
   for (let at = turns.length - 1; at >= 0; at--) {
     const turn = turns[at]!
     const call = turn.role === 'assistant' ? turn.toolCalls.find((one) => one.id === id) : undefined
@@ -169,6 +184,27 @@ export function callOf(turns: Turn[], id: string): { call: ToolCall; answer: str
     return { call, answer: null }
   }
   return null
+}
+
+function readAgainTarget(call: ToolCall): string | null {
+  if (call.name !== READ_AGAIN) return null
+  const given = call.input.call ?? call.input.id
+  const id = typeof given === 'string' ? given.trim().replace(/^"(.*)"$/, '$1') : ''
+  return id || null
+}
+
+function originOf(callId: string, calls: ReadonlyMap<string, ToolCall>): ToolCall | undefined {
+  let current = calls.get(callId)
+  const seen = new Set<string>()
+  while (current) {
+    const target = readAgainTarget(current)
+    if (!target || seen.has(target)) return current
+    seen.add(current.id)
+    const next = calls.get(target)
+    if (!next) return current
+    current = next
+  }
+  return undefined
 }
 
 /** The marks once `cut` turns are gone from the front of their thread: on the turns they were on, or at its start. */
@@ -210,20 +246,23 @@ function long(
 }
 
 function standsAside(result: ToolResult, calls: ReadonlyMap<string, ToolCall>, kept: ReadonlySet<string>): boolean {
-  return result.output.length > LARGE && !kept.has(calls.get(result.callId)?.name ?? '')
+  return result.output.length > LARGE && !kept.has(originOf(result.callId, calls)?.name ?? '')
 }
 
 /**
- * Where the answers that stay whole begin: the newest round, or, when every call of that round reads
- * an answer again, the round before it, which the model was reading when it asked.
+ * Where the answers that stay whole begin: the newest round, or, when every call of a streak of newest
+ * rounds reads an answer again, the round before that streak, which the model was reading when it asked.
  */
 function keptWhole(turns: Turn[], calls: ReadonlyMap<string, ToolCall>): number {
-  const newest = newestRound(turns)
-  if (newest < 0) return newest
-  const round = turns[newest] as Answered
-  if (!round.results.every((result) => calls.get(result.callId)?.name === READ_AGAIN)) return newest
-  const before = newestRound(turns.slice(0, newest))
-  return before < 0 ? newest : before
+  let cursor = newestRound(turns)
+  while (cursor >= 0) {
+    const round = turns[cursor] as Answered
+    if (!round.results.every((result) => calls.get(result.callId)?.name === READ_AGAIN)) return cursor
+    const before = newestRound(turns.slice(0, cursor))
+    if (before < 0) return cursor
+    cursor = before
+  }
+  return -1
 }
 
 /** The last round of answers in a thread, or -1 in one with none. */
@@ -310,9 +349,10 @@ function shortList(items: unknown[], id: string): unknown[] {
 
 /** What stands where an answer the model has read was: how much it was, the way back to it, and how it began. */
 function asideNote(result: ToolResult, calls: ReadonlyMap<string, ToolCall>): string {
-  const call = calls.get(result.callId)
+  const call = originOf(result.callId, calls)
   const whose = call ? `${call.name}'s answer` : 'this answer'
-  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. read_again "${result.callId}" brings it back. It began: ${result.output.slice(0, HEAD)}…]`
+  const id = call?.id ?? result.callId
+  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. read_again "${id}" brings it back. It began: ${result.output.slice(0, HEAD)}…]`
 }
 
 /** What stands where an answer the model never read would have been. */

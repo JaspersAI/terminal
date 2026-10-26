@@ -266,6 +266,56 @@ test('a round that only reads answers again keeps the round before it whole: the
   assert.deepEqual(setAside(next, put.sending)!.sending, { asked: 0, aside: 8 })
 })
 
+test('consecutive rounds of read_again keep all of them and the round before them whole together', () => {
+  const fetched: Turn[] = [
+    asked('go'),
+    calling('c1', 'fetch_page'),
+    answer('c1', big(half)),
+    calling('c2', 'fetch_page'),
+    answer('c2', big(half)),
+    calling('c3', 'fetch_page'),
+    answer('c3', big(LARGE + 1)),
+  ]
+  const put = setAside(fetched, { asked: 0, aside: 0 })!
+  assert.deepEqual(put.sending, { asked: 0, aside: 6 })
+  // The model brings c1 back in one round and c2 in the next, to read all three together.
+  const one: Turn[] = [...put.turns, calling('r1', 'read_again', { call: 'c1' }), answer('r1', big(half))]
+  assert.equal(setAside(one, put.sending), null)
+  const two: Turn[] = [...one, calling('r2', 'read_again', { call: 'c2' }), answer('r2', big(half))]
+  assert.equal(setAside(two, put.sending), null, 'the earlier read_again round is not set aside by the second')
+  const out = outputs(sent(two, put.sending))
+  assert.equal(out[2]!.length, LARGE + 1)
+  assert.equal(out[3]!.length, half)
+  assert.equal(out[4]!.length, half)
+})
+
+test('read_again resolves through an earlier read_again to the original call, and its note names the original call', () => {
+  const turns: Turn[] = [
+    asked('go'),
+    calling('c1', 'get', { path: 'plugins' }),
+    answer('c1', `plugins-list\n${big(4_000)}`),
+    calling('r1', 'read_again', { call: 'c1' }),
+    answer('r1', `get {"path":"plugins"}\n\nplugins-list\n${big(4_000)}`),
+    calling('f1', 'read_file', { path: 'plugin.tsx' }),
+    answer('f1', `file-body\n${big(4_000)}`),
+    calling('rf1', 'read_again', { call: 'f1' }),
+    answer('rf1', `read_file {"path":"plugin.tsx"}\n\nfile-body\n${big(4_000)}`),
+    replied('checked'),
+    asked('next'),
+  ]
+  assert.deepEqual(callOf(turns, 'r1'), {
+    call: { id: 'c1', name: 'get', input: { path: 'plugins' } },
+    answer: `plugins-list\n${big(4_000)}`,
+  })
+  const notes = outputs(sent(turns, startOf(turns), INSTRUCTIONS))
+  assert.match(notes[1]!, /get's answer/)
+  assert.match(notes[1]!, /read_again "c1"/)
+  assert.doesNotMatch(notes[1]!, /read_again "r1"/)
+  // A read_again of an INSTRUCTIONS call (like read_file) stays whole just as the original does.
+  assert.equal(notes[2], outputs(turns)[2])
+  assert.equal(notes[3], outputs(turns)[3])
+})
+
 test('a round that reads again beside a new call is a new round like any other', () => {
   const turns: Turn[] = [
     asked('go'),
