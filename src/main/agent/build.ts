@@ -74,6 +74,7 @@ export async function runBuild(request: string, id: string, parent: ToolContext)
   // Whether the builder used every round it gets: its end was then not its own choice.
   let ranOut = false
   let text: string
+  let builtPlugin = getState().plugins[id]
   try {
     history.push({ role: 'user', text: request })
     keep()
@@ -115,6 +116,11 @@ export async function runBuild(request: string, id: string, parent: ToolContext)
       },
       keep,
     })
+    const current = getState().plugins[id]
+    builtPlugin =
+      current?.status === 'building'
+        ? await waitForBuild(id, { read: getState, subscribe: (listener) => subscribe(listener) }, context.signal)
+        : current
   } catch (err) {
     // Cut off: the conversation is closed off with why.
     const byUser = isStopped(run, err)
@@ -127,11 +133,6 @@ export async function runBuild(request: string, id: string, parent: ToolContext)
   }
   // The orchestrator reads the plugin's state before the builder's words: a build that is not over
   // finished nothing, whatever it said, and is told so as an error. What it wrote and said stays.
-  const current = getState().plugins[id]
-  const builtPlugin =
-    current?.status === 'building'
-      ? await waitForBuild(id, { read: getState, subscribe: (listener) => subscribe(listener) }, context.signal)
-      : current
   const unfinished = unfinishedBuild(id, session.folder.live, builtPlugin, ranOut)
   if (unfinished !== null || !builtPlugin) {
     join(chat, config, thread, fork, era)

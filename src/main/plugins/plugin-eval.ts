@@ -290,12 +290,19 @@ function walkNode(
 
     if (typeof type === 'function') {
       const proto = (type as { prototype?: { render?: unknown } }).prototype
-      const rendered =
-        proto && typeof proto.render === 'function'
-          ? new (type as new (p: Record<string, unknown>) => { render(): unknown })(props).render()
-          : (type as (p: Record<string, unknown>) => unknown)(props)
+      let rendered: unknown
+      try {
+        rendered =
+          proto && typeof proto.render === 'function'
+            ? new (type as new (p: Record<string, unknown>) => { render(): unknown })(props).render()
+            : (type as (p: Record<string, unknown>) => unknown)(props)
+      } catch (err) {
+        if (strict || isFatalSyntheticError(err)) throw err
+        walkNode(props['children'], depth + 1, visited, false, collectInteractions)
+        return
+      }
       walkNode(rendered, depth + 1, visited, strict, collectInteractions)
-      walkNode(props['children'], depth + 1, visited, strict, collectInteractions)
+      walkNode(props['children'], depth + 1, visited, false, collectInteractions)
       return
     }
 
@@ -601,14 +608,6 @@ function createSampleProxy(depth: number): unknown {
           return createSampleProxy(depth + 1)
       }
     },
-    ownKeys() {
-      return ['prototype', 'value']
-    },
-    getOwnPropertyDescriptor(_target, prop) {
-      if (prop === 'value') return { configurable: true, enumerable: true, value: 1, writable: true }
-      if (prop === 'prototype') return { configurable: false, enumerable: false, value: undefined, writable: true }
-      return undefined
-    },
   })
   return proxy
 }
@@ -886,7 +885,12 @@ const sdkForBackend = {
   },
   useData: (target: string, ...rest: [unknown?]) => {
     const ctx = requireRender('useData')
-    if (rest.length > 0) return ctx.sourceResult
+    if (rest.length > 0) {
+      if (!target) {
+        return { data: undefined, loading: false, error: null, datasetId: null, meta: {}, refetch: noop }
+      }
+      return ctx.sourceResult
+    }
     if (typeof target === 'string') {
       if (target.endsWith('/state')) return ctx.state
       const stateIdx = target.indexOf('/state/')
