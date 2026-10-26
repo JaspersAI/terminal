@@ -132,7 +132,7 @@ test('a helper component inside a view that forgets to destructure children fail
         })
       `,
     }),
-    /View option-chain\/table.*children is not defined/,
+    /View option-chain\/table \(in Badge\): ReferenceError: children is not defined/,
   )
 })
 

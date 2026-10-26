@@ -88,6 +88,7 @@ test('the procedure asks for approval first, writes complete files in a single p
   // Automatic validation on each save from write_file and edit_file.
   assert.match(fixed!, /each write_file and edit_file save automatically rebuilds/)
   assert.match(fixed!, /edit_file replaces one passage of a file and leaves the rest as it is/)
+  assert.match(fixed!, /destructured in its runtime parameter list/)
   // Shell-prepared files are read through ctx.files with shell: paths.
   assert.match(fixed!, /ctx\.files/)
   assert.match(fixed!, /shell:/)
