@@ -92,11 +92,15 @@ test('a source is one of the two shapes and nothing else', () => {
   )
 })
 
-test('a view needs defineView, a title, and both schemas', () => {
+test('a view needs defineView, a component function, a title, and both schemas', () => {
   const view = (over: Record<string, unknown>): Record<string, unknown> => ({
     views: { hello: { kind: 'view', title: 'Hello', state: schema, output: schema, component: () => null, ...over } },
   })
   assert.throws(() => validatePluginDefinition(plugin({ views: { hello: { title: 'Hello' } } }), 'hello'), /defineView/)
+  assert.throws(
+    () => validatePluginDefinition(plugin(view({ component: null })), 'hello'),
+    /hello\/hello needs a component function/,
+  )
   assert.throws(() => validatePluginDefinition(plugin(view({ title: '' })), 'hello'), /hello\/hello needs a title/)
   assert.throws(
     () => validatePluginDefinition(plugin(view({ state: undefined })), 'hello'),
@@ -106,38 +110,23 @@ test('a view needs defineView, a title, and both schemas', () => {
     () => validatePluginDefinition(plugin(view({ output: {} })), 'hello'),
     /hello\/hello needs a schema for output/,
   )
+  assert.throws(
+    () => validatePluginDefinition(plugin(view({ summarize: 'bad' })), 'hello'),
+    /hello\/hello: summarize has to be a function/,
+  )
 })
 
 test('a view renders its own plugin’s sources, by the source itself', () => {
   const elsewhere = greet()
+  const view = (renders: unknown): Record<string, unknown> => ({
+    views: { hello: { kind: 'view', title: 'Hello', state: schema, output: schema, component: () => null, renders } },
+  })
+  assert.throws(() => validatePluginDefinition(plugin(view([elsewhere])), 'hello'), /not one of this plugin’s sources/)
   assert.throws(
-    () =>
-      validatePluginDefinition(
-        plugin({
-          views: { hello: { kind: 'view', title: 'Hello', state: schema, output: schema, renders: [elsewhere] } },
-        }),
-        'hello',
-      ),
+    () => validatePluginDefinition(plugin(view(['hello/greet'])), 'hello'),
     /not one of this plugin’s sources/,
   )
-  assert.throws(
-    () =>
-      validatePluginDefinition(
-        plugin({
-          views: { hello: { kind: 'view', title: 'Hello', state: schema, output: schema, renders: ['hello/greet'] } },
-        }),
-        'hello',
-      ),
-    /not one of this plugin’s sources/,
-  )
-  assert.throws(
-    () =>
-      validatePluginDefinition(
-        plugin({ views: { hello: { kind: 'view', title: 'Hello', state: schema, output: schema, renders: 'greet' } } }),
-        'hello',
-      ),
-    /renders has to be a list/,
-  )
+  assert.throws(() => validatePluginDefinition(plugin(view('greet')), 'hello'), /renders has to be a list/)
 })
 
 test('a function source gives a plugin a backend of its own; mcp sources alone do not', () => {
