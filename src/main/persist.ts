@@ -327,7 +327,7 @@ function patchGrid(stored: Grid): Grid {
     cells,
     size,
     elements: grid.elements.map(retagged),
-    panels: grid.panels.map((p) => ({
+    panels: grid.panels.map(({ error: _error, ...p }) => ({
       ...p,
       content: (p.content as { kind: string }).kind === 'empty' ? { kind: 'frame' } : p.content,
       state: p.state ?? {},
