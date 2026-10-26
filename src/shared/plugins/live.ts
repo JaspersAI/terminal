@@ -100,9 +100,10 @@ export function researchLiveText(
       const name = typeof msg['name'] === 'string' ? msg['name'] : 'Analyst'
       const status = typeof msg['status'] === 'string' && msg['status'] !== 'done' ? ` (${msg['status']})` : ''
       const rawText = typeof msg['text'] === 'string' ? msg['text'] : ''
+      const steps = Array.isArray(msg['steps']) ? msg['steps'] : []
       const error = typeof msg['error'] === 'string' && msg['error'] ? msg['error'] : null
       const citations = Array.isArray(msg['citations']) ? msg['citations'] : []
-      const text = stripCiteTags(rawText).trim() || (error ? `(error: ${error})` : '(nothing yet)')
+      const text = visibleAnalystText(rawText, steps) || (error ? `(error: ${error})` : '(nothing yet)')
       const sources = citations
         .map((c, index) => formatCitation(c, index + 1))
         .filter((line): line is string => line !== null)
@@ -119,7 +120,27 @@ export function researchLiveText(
 const CITE_TAG = /<(?:cite|dbcitation)\b([^>]*?)(?:\s*\/|>([\s\S]*?)<\/(?:cite|dbcitation)\s*)>/gi
 const CITE_ATTR = /([A-Za-z_][\w-]*)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^\s"'>]+))/g
 
-function stripCiteTags(text: string): string {
+function visibleAnalystText(rawText: string, steps: unknown[]): string {
+  const numberFor = citeNumberer(rawText)
+  let lastAt = 0
+  for (const step of steps) {
+    if (typeof step === 'object' && step !== null) {
+      const at = (step as Record<string, unknown>)['at']
+      if (typeof at === 'number' && Number.isFinite(at) && at > lastAt) lastAt = Math.min(at, rawText.length)
+    }
+  }
+  const answer = stripCiteTags(rawText.slice(lastAt), numberFor).trim()
+  if (answer) return answer
+  const parts = rawText
+    .slice(0, lastAt)
+    .trim()
+    .split(/\n\n+/)
+    .map((p) => stripCiteTags(p, numberFor).trim())
+    .filter(Boolean)
+  return parts.at(-1) ?? ''
+}
+
+function citeNumberer(fullText: string): (rawAttrs: string) => number {
   const seen = new Map<string, number>()
   const numberFor = (rawAttrs: string): number => {
     const attrs: Record<string, string> = {}
@@ -138,6 +159,11 @@ function stripCiteTags(text: string): string {
     seen.set(id, next)
     return next
   }
+  for (const match of fullText.matchAll(CITE_TAG)) numberFor(match[1] ?? '')
+  return numberFor
+}
+
+function stripCiteTags(text: string, numberFor: (rawAttrs: string) => number = citeNumberer(text)): string {
   return text.replace(CITE_TAG, (_full, attrs: string, inner?: string) => {
     const n = numberFor(attrs)
     const trimmed = inner?.trim() ?? ''

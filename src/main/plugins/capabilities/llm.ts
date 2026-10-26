@@ -41,6 +41,7 @@ export function createLlm(deps: LlmDeps): { complete(raw: unknown, signal: Abort
           model: signsIn(config.provider) ? undefined : request.model,
           maxTokens: request.maxTokens === undefined ? undefined : Math.min(request.maxTokens, TOKENS_MAX),
           signal,
+          stream: true,
           timeoutMs: TIMEOUT_MS,
           ...(request.tools.length > 0 || request.turns.length > 1 ? { loop: true } : {}),
         }
