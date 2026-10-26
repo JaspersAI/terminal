@@ -97,6 +97,8 @@ export interface Panel {
   text: string | null
   /** When the view was last told to fetch its data again, ms since the epoch; null until it is. */
   refreshedAt: number | null
+  /** What the view threw in its frame, while it failed to render or run. */
+  error?: string | null
 }
 
 /** One window's grid. */
@@ -671,7 +673,8 @@ export function setPanelState(
   value: unknown,
 ): { grid: Grid; panel: Panel } {
   const current = panelOf(grid, panelId)
-  const panel: Panel = { ...current, state: setIn(current.state, path, value) }
+  const { error: _was, ...rest } = current
+  const panel: Panel = { ...rest, state: setIn(current.state, path, value) }
   return { grid: withPanel(grid, panel), panel }
 }
 
@@ -683,8 +686,9 @@ export function publishOutput(
   summary: string | null,
 ): { grid: Grid; panel: Panel } {
   const current = panelOf(grid, panelId)
-  if (current.output === output && current.summary === summary) return { grid, panel: current }
-  const panel: Panel = { ...current, output, summary }
+  if (current.output === output && current.summary === summary && !current.error) return { grid, panel: current }
+  const { error: _was, ...rest } = current
+  const panel: Panel = { ...rest, output, summary }
   return { grid: withPanel(grid, panel), panel }
 }
 
@@ -699,15 +703,43 @@ export function publishText(grid: Grid, panelId: string, text: string | null): {
     text !== null && text.length > PANEL_TEXT_MAX
       ? `${text.slice(0, PANEL_TEXT_MAX)}\n\n[The rest is cut: a panel's text holds ${PANEL_TEXT_MAX.toLocaleString('en-US')} characters at most.]`
       : text
-  if (current.text === next) return { grid, panel: current }
-  const panel: Panel = { ...current, text: next }
+  if (current.text === next && (text === null || !current.error)) return { grid, panel: current }
+  const { error: _was, ...rest } = current
+  const panel: Panel = text !== null ? { ...rest, text: next } : { ...current, text: next }
   return { grid: withPanel(grid, panel), panel }
+}
+
+/** The most a panel's error holds, in characters. */
+export const PANEL_ERROR_MAX = 4000
+
+/** Records what a panel's view threw in its frame, or clears it when null. The same again changes nothing. */
+export function failPanel(grid: Grid, panelId: string, error: string | null): { grid: Grid; panel: Panel } {
+  const current = panelOf(grid, panelId)
+  const trimmed = error?.trim() ?? ''
+  const next = trimmed ? trimmed.slice(0, PANEL_ERROR_MAX) : null
+  if ((current.error ?? null) === next) return { grid, panel: current }
+  const { error: _was, ...rest } = current
+  const panel: Panel = next === null ? rest : { ...rest, error: next }
+  return { grid: withPanel(grid, panel), panel }
+}
+
+/** Clears recorded view errors on panels of a plugin that just rebuilt, so a fixed build starts clean. */
+export function clearPluginPanelErrors(grid: Grid, plugin: string): Grid {
+  const prefix = `${plugin}/`
+  if (!grid.panels.some((p) => p.error && p.content.kind === 'view' && p.content.view.startsWith(prefix))) return grid
+  const panels = grid.panels.map((p) => {
+    if (!p.error || p.content.kind !== 'view' || !p.content.view.startsWith(prefix)) return p
+    const { error: _was, ...rest } = p
+    return rest
+  })
+  return { ...grid, panels }
 }
 
 /** Tells the panel's view to fetch its data again: the SDK's useData hears the new stamp and runs its sources fresh. */
 export function refreshPanel(grid: Grid, id: string, at: number): { grid: Grid; panel: Panel } {
   const current = panelOf(grid, id)
-  const panel: Panel = { ...current, refreshedAt: at }
+  const { error: _was, ...rest } = current
+  const panel: Panel = { ...rest, refreshedAt: at }
   return { grid: withPanel(grid, panel), panel }
 }
 
@@ -1031,10 +1063,13 @@ export function gridMap(grid: Grid, workOf?: (loop: string) => string, frame?: s
 
 // Internals.
 
-/** What a panel holds, for the map: a view names itself and shows its summary, and a frame with nothing inside says so. */
+/** What a panel holds, for the map: a view names itself and shows its summary (and any runtime error), and a frame with nothing inside says so. */
 function describePanel(panel: Panel): string {
   const content = panel.content
-  if (content.kind === 'view') return ` view ${content.view}: ${JSON.stringify(panel.summary ?? content.view)}`
+  if (content.kind === 'view') {
+    const failed = panel.error ? ` (error: ${panel.error})` : ''
+    return ` view ${content.view}: ${JSON.stringify(panel.summary ?? content.view)}${failed}`
+  }
   return ': no view yet'
 }
 

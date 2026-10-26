@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { EMPTY_GRID, placeView, publishText } from './grid/grid.ts'
-import { formatPath, parsePath, readPath, textPart } from './paths.ts'
+import { EMPTY_GRID, failPanel, placeView, publishText } from './grid/grid.ts'
+import { formatPath, panelErrorAt, parsePath, readPath, textPart } from './paths.ts'
 import { skill } from './skills/skill-fixture.ts'
 import type { AppState } from './state.ts'
 import { EYE_OFF } from './app/eye.ts'
@@ -312,6 +312,29 @@ test("a panel's refreshedAt reads by path, with nothing under it", () => {
   assert.deepEqual(parsePath('panels/e1/refreshedAt'), { kind: 'panel', panelId: 'e1', field: 'refreshedAt', rest: [] })
   assert.equal(readPath(state, WS, parsePath('panels/e1/refreshedAt')), null)
   assert.throws(() => parsePath('panels/e1/refreshedAt/x'), /Cannot read/)
+})
+
+test("a panel's view error reads by path, shows in the panel listing, and is found for sub-paths", () => {
+  const state = fixture()
+  assert.deepEqual(parsePath('panels/e1/error'), { kind: 'panel', panelId: 'e1', field: 'error', rest: [] })
+  assert.equal(formatPath(parsePath('panels/e1/error')), 'panels/e1/error')
+  assert.equal(readPath(state, WS, parsePath('panels/e1/error')), null)
+  assert.equal(panelErrorAt(state, WS, parsePath('panels/e1/state')), null)
+  assert.throws(() => parsePath('panels/e1/error/x'), /Cannot read/)
+  state.grids[WS] = { ...state.grids[WS], 1: failPanel(state.grids[WS]![1]!, 'e1', 'children is not defined').grid }
+  assert.equal(readPath(state, WS, parsePath('panels/e1/error')), 'children is not defined')
+  assert.equal(panelErrorAt(state, WS, parsePath('panels/e1/state')), 'children is not defined')
+  assert.equal(panelErrorAt(state, WS, parsePath('panels/e1/output')), 'children is not defined')
+  assert.deepEqual(readPath(state, WS, parsePath('panels/e1')), {
+    id: 'p1',
+    elementId: 'e1',
+    window: 1,
+    view: 'core/note',
+    loop: null,
+    summary: null,
+    textLength: null,
+    error: 'children is not defined',
+  })
 })
 
 test('panels lists every window, and a panel id finds its window', () => {
