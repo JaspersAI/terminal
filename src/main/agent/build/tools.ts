@@ -3,7 +3,7 @@ import path from 'node:path'
 import { describeFolder, sizeText } from '../../../shared/agent/build/files'
 import { isPluginId } from '../../../shared/plugins/id'
 import type { PluginInfo } from '../../../shared/state'
-import { askUserFor } from '../../actions'
+import { askUser } from '../../actions'
 import { addNotice, dismissNotice } from '../../app/notices'
 import { homePluginsRoot, jaspersHome } from '../../home'
 import { readBuildRecordFile } from '../../plugins/build-record'
@@ -184,18 +184,10 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
           notice: (text) => {
             noticeId = addNotice('plugins', text)
           },
-          /** Waits for approval, reports an unanswered timeout, and dismisses the notice on every exit. */
+          /** Waits for approval and dismisses the notice on every exit. */
           ask: async (question) => {
             try {
-              const asked = await askUserFor(question.text, question.choices, context.signal, question.code)
-              // Ten minutes with nobody there is not a no: say so, rather than that the user refused.
-              if (asked.answer === null && asked.ended === 'timeout') {
-                if (session.guard) session.guard.ended = 'timeout'
-                throw new Error(
-                  `Nobody answered the question to install ${session.folder.id} within ten minutes, so nothing was installed. The user did not refuse; they may be away. Say the plugin is waiting on their approval, and call install_plugin again when they ask.`,
-                )
-              }
-              return asked.answer
+              return await askUser(question.text, question.choices, context.signal, question.code)
             } finally {
               if (noticeId) {
                 dismissNotice(noticeId)

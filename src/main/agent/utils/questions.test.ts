@@ -52,22 +52,32 @@ test('in one place the first asked is on screen and the next waits behind it, an
   assert.deepEqual(screen(), [['in a tile', 'e3']])
 })
 
-test('a question waits ten minutes from when it is shown, not from when it was asked', async (t) => {
+test('a question in a user run waits without a time limit, in the global box or a tile, until answered, closed, or stopped', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { questions, screen } = queue()
-  const first = questions.ask(asked('one'))
-  const second = questions.ask(asked('two'))
-  t.mock.timers.tick(QUESTION_WAIT_MS)
-  assert.equal(await first, null)
-  assert.deepEqual(screen(), [['two', null]])
-  let over = false
-  void second.then(() => (over = true))
-  t.mock.timers.tick(QUESTION_WAIT_MS - 1)
+  const { questions, screen, id } = queue()
+  const box = questions.askFor(asked('in the global box'))
+  const tile = questions.askFor(asked('Approve building plugin?', 'e3'))
+  assert.equal(questions.seen(id('Approve building plugin?')), true)
+  // Told again, as a box drawn again tells it: it was already seen.
+  assert.equal(questions.seen(id('Approve building plugin?')), false)
+  let boxDone = false
+  let tileDone = false
+  void box.then(() => (boxDone = true))
+  void tile.then(() => (tileDone = true))
+  t.mock.timers.tick(QUESTION_WAIT_MS * 10)
   await tick()
-  assert.equal(over, false)
-  t.mock.timers.tick(1)
-  assert.equal(await second, null)
+  assert.equal(boxDone, false)
+  assert.equal(tileDone, false)
+  assert.deepEqual(screen(), [
+    ['in the global box', null],
+    ['Approve building plugin?', 'e3'],
+  ])
+  questions.answer(id('Approve building plugin?'), 'Build it')
+  assert.deepEqual(await tile, { answer: 'Build it' })
+  questions.answer(id('in the global box'), '   ')
+  assert.deepEqual(await box, { answer: null, ended: 'closed' })
   assert.deepEqual(screen(), [])
+  assert.equal(questions.seen('q9'), false)
 })
 
 test('a run that is stopped takes its question with it, and the next one shows', async (t) => {
@@ -87,43 +97,27 @@ test('an answer to a question that is not waiting is nothing', () => {
   assert.deepEqual(screen(), [])
 })
 
-test('a question asked in a tile waits until its tile has drawn it, and ten minutes from then', async (t) => {
+test('a question from a run nobody is at waits ten minutes and then times out, while a user question stays up', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { questions, id } = queue()
-  const tile = questions.ask(asked('in a tile', 'e3'))
-  const box = questions.ask(asked('in the global box'))
-  let over = false
-  void tile.then(() => (over = true))
-  // The global box draws what is on screen at once: its wait is from then.
-  t.mock.timers.tick(QUESTION_WAIT_MS)
-  assert.equal(await box, null)
-  await tick()
-  // The tile's has not begun: it may be on a workspace off screen, in a closed window, or under a maximized element.
-  assert.equal(over, false)
-  assert.equal(questions.seen(id('in a tile')), true)
-  t.mock.timers.tick(QUESTION_WAIT_MS - 1)
-  // Told again, as a box drawn again tells it: the wait is the one already begun.
-  assert.equal(questions.seen(id('in a tile')), false)
-  await tick()
-  assert.equal(over, false)
-  t.mock.timers.tick(1)
-  assert.equal(await tile, null)
-  assert.equal(questions.seen('q9'), false)
-})
-
-test('a question from a run nobody is at starts its wait as it is asked, drawn or not', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { questions } = queue()
+  const { questions, screen, id } = queue()
   const ended: string[] = []
   // A task's work asks in its tile, and its tile may never be looked at: the wait has to have an end.
   void questions
     .ask(asked('may I run this?', 'e3'), undefined, true)
     .then((answer) => ended.push(`unattended: ${answer}`))
-  void questions.ask(asked('and this?', 'e4')).then((answer) => ended.push(`attended: ${answer}`))
-  t.mock.timers.tick(QUESTION_WAIT_MS)
+  const attended = questions.ask(asked('and this?', 'e4'))
+  void attended.then((answer) => ended.push(`attended: ${answer}`))
+  assert.equal(questions.seen(id('and this?')), true)
+  t.mock.timers.tick(QUESTION_WAIT_MS - 1)
   await tick()
-  // Nobody drew either: the one a task's work asked has run out, and the user's own still waits to be seen.
+  assert.deepEqual(ended, [])
+  t.mock.timers.tick(1)
+  await tick()
+  // The one a task's work asked has run out, and the user's own still waits even after being drawn.
   assert.deepEqual(ended, ['unattended: null'])
+  assert.deepEqual(screen(), [['and this?', 'e4']])
+  questions.answer(id('and this?'), 'Build it')
+  assert.equal(await attended, 'Build it')
 })
 
 test('a question with no answer says why: closed, timed out, or stopped', async (t) => {
@@ -132,7 +126,7 @@ test('a question with no answer says why: closed, timed out, or stopped', async 
   const closed = questions.askFor(asked('closed'))
   questions.answer(id('closed'), '  ')
   assert.deepEqual(await closed, { answer: null, ended: 'closed' })
-  const timedOut = questions.askFor(asked('nobody there'))
+  const timedOut = questions.askFor(asked('nobody there'), undefined, true)
   t.mock.timers.tick(QUESTION_WAIT_MS)
   assert.deepEqual(await timedOut, { answer: null, ended: 'timeout' })
   const run = new AbortController()

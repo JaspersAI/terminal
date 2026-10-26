@@ -503,7 +503,7 @@ function message(err: unknown): string {
 /** The questions the assistant is waiting on, and what of them is on screen, which the tree shows. */
 const questions = createQuestions((heads) => update((state) => ({ ...state, questions: heads })))
 
-/** A tile's box says it has drawn a question: its ten minutes begin, and the log says the user had it in front of them. */
+/** A tile's box says it has drawn a question: the log records that the user had it in front of them. */
 function seenQuestion(id: string): void {
   if (questions.seen(id)) console.log(`[ask] ${id} drawn in its tile`)
 }
@@ -511,14 +511,13 @@ function seenQuestion(id: string): void {
 /**
  * Asks the user something and waits. The same shape as a key being asked for: main puts the
  * question in the tree, the composer shows it where the key field appears, and the tool call sits
- * here until it is answered, dismissed, or ten minutes pass. A task's run has no tool for asking a
+ * here until it is answered, dismissed, or the run is stopped. A task's run has no tool for asking a
  * question of its own, `TASK_EXCLUDED_TOOLS` leaves it out, and reaches this only for a command
  * nobody allowed the task: with nobody there the ten minutes pass, which is a refusal.
  *
  * The user's requests run side by side, and that task's run can ask while one of them has a question
  * up. The user reads one at a time in a place, so a question asked while another is up there waits
- * behind it, and its ten minutes start when it is shown: at once in the global box, and in a tile
- * when its box says it has drawn it (`utils/questions.ts`). `about` is the
+ * behind it (`utils/questions.ts`). `about` is the
  * request it came from, for the user to tell whose it is; whoever asks says so when it needs saying.
  *
  * `code` is text the question is about, shown as written and in full: a shell script to approve goes

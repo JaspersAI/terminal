@@ -46,7 +46,6 @@ import { rescanUserSkill } from './skills'
 // install_skill tool starts it from a link and asks the user, in its own question, before it
 // confirms. Either way the user's yes to what was staged is what installs.
 
-const HOLD_MS = 10 * 60_000
 const API_TIMEOUT_MS = 30_000
 const PREVIEW_MAX = 20_000
 /** Files counted for the prompt, at most. */
@@ -69,7 +68,6 @@ interface Fetched {
 interface Staged extends Fetched {
   token: string
   dir: string
-  timer: NodeJS.Timeout
 }
 
 let staged: Staged | null = null
@@ -101,7 +99,7 @@ export async function prepareSkills(raw: unknown): Promise<SkillPrepareResult> {
         return fetched
       }
       const token = randomBytes(16).toString('hex')
-      staged = { ...fetched, token, dir, timer: setTimeout(() => void drop(), HOLD_MS) }
+      staged = { ...fetched, token, dir }
       return {
         token,
         source: describeSkillSource(fetched.source),
@@ -261,7 +259,6 @@ function readSkillText(dir: string): { text: string; error: string | null } {
 export async function confirmSkills(token: string, names: string[]): Promise<string[]> {
   const install = staged
   if (!install || install.token !== token) throw new Error('That install is no longer waiting. Start it again.')
-  clearTimeout(install.timer)
   staged = null
   const installed: string[] = []
   try {
@@ -309,7 +306,7 @@ export async function confirmSkills(token: string, names: string[]): Promise<str
   }
 }
 
-/** Removes the staged skills and clears their expiry timer only when `token` matches; stale tokens do nothing. */
+/** Removes the staged skills only when `token` matches; stale tokens do nothing. */
 export async function cancelSkills(token: string): Promise<void> {
   if (staged?.token === token) await drop()
 }
@@ -318,7 +315,6 @@ async function drop(): Promise<void> {
   const install = staged
   if (!install) return
   staged = null
-  clearTimeout(install.timer)
   await removeDir(install.dir)
 }
 

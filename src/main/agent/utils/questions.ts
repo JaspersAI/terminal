@@ -4,7 +4,7 @@ import type { Question } from '../../../shared/state'
 
 export type { Asking }
 
-/** How long a question waits before the assistant carries on without an answer. */
+/** How long an unattended question (from a scheduled task's run) waits before the assistant carries on without an answer. */
 export const QUESTION_WAIT_MS = 10 * 60 * 1000
 
 /** Runs in flight in which the user has already answered a question without refusing. */
@@ -55,13 +55,9 @@ export function notApproved(what: string, outcome: string, asked: Asking): strin
 /**
  * The questions the assistant is waiting on. A question is asked in a place, a tile's box or the
  * global box, and the user reads one at a time in a place: the one that has waited longest there is
- * on screen and the rest wait behind it, each starting its ten minutes when it is shown. It ends
- * answered, closed with nothing said, timed out, or with its run when the user stops that.
- *
- * The global box draws what is on screen at once, so its question's wait is from then. A tile may be
- * on a workspace that is not on screen, in a window that is closed, or under a maximized element, and
- * only the window knows: a tile's question begins its wait when its box says it has drawn it (`seen`),
- * and until then waits for as long as it takes to be looked at.
+ * on screen and the rest wait behind it. A question in the user's own run waits until it is
+ * answered, closed with nothing said, or its run is stopped; one from a scheduled task's run
+ * (`unattended`), where nobody may be at the computer, waits ten minutes and no longer.
  *
  * `show` is told what is on screen whenever that changes; main puts it in the tree. Nothing here
  * reads the tree or the clock but through `setTimeout`, so the whole of it is read in a test.
@@ -69,23 +65,19 @@ export function notApproved(what: string, outcome: string, asked: Asking): strin
 export function createQuestions(show: (heads: Question[]) => void, waitMs = QUESTION_WAIT_MS) {
   /** Answers waiting on a question, by its id. */
   const answering = new Map<string, (asked: Asking) => void>()
-  /** The questions not yet answered, in the order asked, each with what begins its wait: once, whoever says so again. */
-  const asking: { question: Question; wait: () => boolean }[] = []
+  /** The questions not yet answered, in the order asked, and which have been drawn in their tile. */
+  const asking: { question: Question; seen: boolean }[] = []
   /** What is on screen now. */
   let heads: Question[] = []
   let seq = 0
 
-  /** Puts on screen the question that has waited longest in each place, and starts the wait of one that was not there before. */
+  /** Puts on screen the question that has waited longest in each place. */
   function showNext(): void {
     const next = onScreen(asking.map((one) => one.question))
     const was = heads
     if (next.length === was.length && next.every((one, at) => one.id === was[at]!.id)) return
     heads = next
     show(next)
-    for (const one of asking) {
-      const shown = next.includes(one.question) && !was.some((had) => had.id === one.question.id)
-      if (shown && one.question.place === undefined) one.wait()
-    }
   }
 
   /** As `ask`, and says why there is no answer when there is none. */
@@ -107,13 +99,10 @@ export function createQuestions(show: (heads: Question[]) => void, waitMs = QUES
       const stopped = (): void => finish({ answer: null, ended: 'stopped' })
       signal?.addEventListener('abort', stopped, { once: true })
       answering.set(id, finish)
-      const wait = (): boolean => {
-        if (timer !== undefined) return false
+      asking.push({ question, seen: false })
+      if (unattended) {
         timer = setTimeout(() => finish({ answer: null, ended: 'timeout' }), waitMs)
-        return true
       }
-      asking.push({ question, wait })
-      if (unattended) wait()
       showNext()
     })
   }
@@ -121,8 +110,8 @@ export function createQuestions(show: (heads: Question[]) => void, waitMs = QUES
   return {
     /**
      * Asks one and waits: its answer, or null when it was closed, its time ran out, or its run was
-     * stopped. `unattended` is a run nobody is at, a task's: its wait begins as it is asked, since a
-     * tile nobody looks at would otherwise hold the run, and whatever waits behind it, for good.
+     * stopped. `unattended` is a run nobody is at, a task's: its wait is bounded, since a tile
+     * nobody looks at would otherwise hold the task's run, and whatever waits behind it, for good.
      */
     ask(asked: Omit<Question, 'id'>, signal?: AbortSignal, unattended = false): Promise<string | null> {
       return askFor(asked, signal, unattended).then((one) => one.answer)
@@ -138,9 +127,12 @@ export function createQuestions(show: (heads: Question[]) => void, waitMs = QUES
       waiting(said ? { answer: said } : { answer: null, ended: 'closed' })
     },
 
-    /** A tile's box has drawn the question with that id: its wait begins. Answers whether it began now. */
+    /** A tile's box has drawn the question with that id. Answers whether it was drawn for the first time. */
     seen(id: string): boolean {
-      return asking.find((one) => one.question.id === id)?.wait() ?? false
+      const entry = asking.find((one) => one.question.id === id)
+      if (!entry || entry.seen) return false
+      entry.seen = true
+      return true
     },
   }
 }
