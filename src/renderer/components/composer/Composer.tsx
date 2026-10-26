@@ -332,9 +332,7 @@ export function Composer(): ReactElement {
     <div
       id="composer"
       ref={shell}
-      // Half the label gutter to the right: the cells start after it, so centering on the window
-      // would leave the orb and the arrow under it off-center against the columns they sit over.
-      className="pointer-events-none fixed inset-x-0 bottom-0 mx-auto h-44 w-112 max-w-full translate-x-2"
+      className="pointer-events-none fixed inset-x-0 bottom-0 mx-auto h-44 w-112 max-w-full"
     >
       <div
         ref={panel}

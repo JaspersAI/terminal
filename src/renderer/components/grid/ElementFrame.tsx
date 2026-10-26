@@ -19,7 +19,7 @@ import {
 import { waitingViews } from '../../../shared/plugins/needs'
 import { useAppState } from '../../lib/state'
 import { Board } from './Board'
-import { canGrab, EDGES } from './edges'
+import { canGrab, EDGES, frameEdges } from './edges'
 import { loopName, showsChat } from '../../../shared/loops/loops'
 import { barLabel, BORN, boxOpens, sameActivity, type Activity, type TileState } from './box'
 import { LoopBox } from './LoopBox'
@@ -84,9 +84,9 @@ const HANGING = 1000
  *
  * Elements meet with no gap, so the outline is a 1 px ring outside the box rather than a border:
  * where two meet, the later one's ring covers the earlier one's edge and the seam stays one line,
- * and at the window's edges the ring falls outside and draws nothing. The focused element stacks
- * above its neighbors so its dark ring is the one that shows. Each element is its own stacking
- * context, so its edges never reach over a floating element lying on top of it.
+ * and at the grid's outer edges the ring sits in the gutter inside the window. The focused element
+ * stacks above its neighbors so its primary ring is the one that shows. Each element is its own
+ * stacking context, so its edges never reach over a floating element lying on top of it.
  */
 export function ElementFrame({
   workspaceId,
@@ -148,7 +148,6 @@ export function ElementFrame({
   }, [need])
   const empty = frame && !grid.elements.some((e) => e.parent === element.id && !undrawn.has(e.id))
   const label = frame ? (loop ? `${called}, ${loop.desc}` : '') : title
-  const maximized = element.mode === 'maximized'
   const minimized = element.mode === 'minimized'
   // What the work is doing. A tile whose box asks for what a view waits on is asking, whatever its runs are doing.
   const doing = useLoopStatus(workspaceId, element.loop)
@@ -200,7 +199,7 @@ export function ElementFrame({
               : undefined,
       }}
       className={`relative isolate flex min-h-0 min-w-0 flex-col ${hangs ? 'overflow-visible' : 'overflow-hidden'} bg-background ring-1 select-none ${
-        focused ? 'ring-primary' : 'ring-border'
+        focused ? 'ring-primary' : 'ring-foreground/25'
       } ${element.mode === 'floating' ? 'shadow-lg' : ''} ${covered ? 'invisible' : ''} ${away ? 'opacity-40' : ''} ${
         // As tall as its bar, at the top of the row it keeps.
         minimized ? 'h-6 self-start' : ''
@@ -215,12 +214,12 @@ export function ElementFrame({
           else toggleMaximized(workspaceId, element)
         }}
         className={`flex h-6 shrink-0 items-center border-b ${
-          central ? 'border-central bg-central text-central-foreground' : 'border-border'
+          central ? 'border-central bg-central text-central-foreground' : 'border-border bg-muted'
         } ${canGrab(element.mode, 'move') ? 'cursor-grab' : ''}`}
       >
         <span
           className={`min-w-0 flex-1 truncate px-2 text-xs ${
-            central ? 'font-medium' : focused ? 'text-foreground' : 'text-muted-foreground'
+            central ? 'font-medium' : focused ? 'font-medium text-foreground' : 'text-muted-foreground'
           }`}
         >
           {loop ? `${called} · ${loop.desc}` : title}
@@ -371,16 +370,15 @@ export function ElementFrame({
           <Held workspaceId={workspaceId} elementId={element.id} panel={panel} focused={focused} />
         )}
       </div>
-      {!maximized &&
-        !minimized &&
-        (Object.keys(EDGES) as (keyof typeof EDGES)[]).map((handle) => (
-          <div
-            key={handle}
-            aria-hidden
-            onPointerDown={(event) => onGrab(event, handle)}
-            className={`absolute z-10 ${EDGES[handle]}`}
-          />
-        ))}
+      {frameEdges(element.mode).map((handle) => (
+        <div
+          key={handle}
+          aria-hidden
+          data-edge={handle}
+          onPointerDown={(event) => onGrab(event, handle)}
+          className={`absolute z-10 ${EDGES[handle]}`}
+        />
+      ))}
     </section>
   )
 }

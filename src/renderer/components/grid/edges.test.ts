@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { canGrab, insideEdges } from './edges.ts'
+import { canGrab, EDGES, frameEdges, insideEdges } from './edges.ts'
 
 const whole = { x: 0, y: 0, w: 16, h: 12 }
 
@@ -42,4 +42,19 @@ test('a minimized element can be grabbed by its bar to move, and not by an edge 
   assert.equal(canGrab('minimized', 'se'), false)
   assert.equal(canGrab('maximized', 'move'), false)
   assert.equal(canGrab('maximized', 'se'), false)
+})
+
+test('a tiled or floating frame has all eight resize handles, and a minimized or maximized one has none', () => {
+  const all = ['n', 's', 'e', 'w', 'ne', 'sw', 'nw', 'se']
+  assert.deepEqual(frameEdges('tiled'), all)
+  assert.deepEqual(frameEdges('floating'), all)
+  assert.deepEqual(frameEdges('minimized'), [])
+  assert.deepEqual(frameEdges('maximized'), [])
+})
+
+test('every resize handle shows its resize cursor and highlights on hover', () => {
+  for (const classes of Object.values(EDGES)) {
+    assert.match(classes, /\bcursor-(ns|ew|nesw|nwse)-resize\b/)
+    assert.match(classes, /\bhover:bg-primary\/20\b/)
+  }
 })
