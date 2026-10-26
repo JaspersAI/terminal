@@ -6,6 +6,7 @@ import {
   failPanel,
   layoutOf,
   panelOf,
+  panelTargetsSettled,
   placeFrame,
   placeFramed,
   placeView,
@@ -17,9 +18,11 @@ import {
   setPanelState,
   setRect,
   sizeProblem,
+  watchedViewPanels,
   writeCells,
   swapElements,
   type ElementMode,
+  type Grid,
   type GridElement,
   type GridSize,
   type Panel,
@@ -963,37 +966,45 @@ export function failPanelChecked(workspaceId: string, panelId: string, error: st
 const PANEL_SETTLE_MS = 250
 
 /**
- * Gives an open window a moment to mount or re-render a view panel after main changed it, so a
- * render error (`panel.fail`) or immediate publish is already on the panel when the tool answers
- * and the round's `workspace_state` is built. Returns at once when no window is showing the workspace.
+ * Gives an open window a moment to mount or re-render a view panel (or the views inside a refreshed
+ * frame) after main changed it, so a render error (`panel.fail`) or immediate publish is already on
+ * the panel when the tool answers and the round's `workspace_state` is built. Returns at once when
+ * no window is showing the workspace.
  */
 export function settlePanel(workspaceId: string, panelId: string, signal?: AbortSignal): Promise<Panel | null> {
   const initial = readPanel(workspaceId, panelId)
-  if (!initial || initial.panel.content.kind !== 'view') return Promise.resolve(initial?.panel ?? null)
-  if (workspaceId !== getState().currentWorkspaceId || !windowOf(initial.window)) {
+  if (!initial) return Promise.resolve(null)
+  const targets = watchedViewPanels(initial.grid, panelId)
+  if (targets.length === 0 || workspaceId !== getState().currentWorkspaceId || !windowOf(initial.window)) {
     return Promise.resolve(initial.panel)
   }
-  const beforeOutput = initial.panel.output
+  const beforeOutputs = new Map(targets.map((p) => [p.id, p.output]))
   return new Promise((resolve) => {
     const finish = (): void => {
       clearTimeout(timer)
       stop()
       signal?.removeEventListener('abort', finish)
-      resolve(readPanel(workspaceId, panelId)?.panel ?? initial.panel)
+      const now = readPanel(workspaceId, panelId)
+      if (!now) {
+        resolve(initial.panel)
+        return
+      }
+      const { error } = panelTargetsSettled(now.grid, panelId, beforeOutputs)
+      resolve(error ? { ...now.panel, error } : now.panel)
     }
     const stop = subscribe(() => {
-      const now = readPanel(workspaceId, panelId)?.panel
-      if (!now || now.error || now.output !== beforeOutput) finish()
+      const now = readPanel(workspaceId, panelId)
+      if (!now || panelTargetsSettled(now.grid, panelId, beforeOutputs).settled) finish()
     })
     const timer = setTimeout(finish, PANEL_SETTLE_MS)
     signal?.addEventListener('abort', finish, { once: true })
   })
 }
 
-function readPanel(workspaceId: string, panelId: string): { window: number; panel: Panel } | null {
+function readPanel(workspaceId: string, panelId: string): { window: number; grid: Grid; panel: Panel } | null {
   try {
     const { window, grid } = findElement(workspaceId, panelId)
-    return { window, panel: panelOf(grid, panelId) }
+    return { window, grid, panel: panelOf(grid, panelId) }
   } catch {
     return null
   }
