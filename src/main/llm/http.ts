@@ -37,7 +37,7 @@ export async function post<T>(
   url: string,
   headers: Record<string, string>,
   body: string | Blob | FormData,
-  timeoutMs = 60_000,
+  timeoutMs = 90_000,
   signal?: AbortSignal,
 ): Promise<T> {
   let response: Response
@@ -102,8 +102,10 @@ const STATUS_DETAIL: Readonly<Record<number, string>> = {
 
 function detail(text: string, status: number, statusText = ''): string {
   try {
-    const parsed = JSON.parse(text) as { error?: { message?: string } | string; message?: string }
-    const message = typeof parsed.error === 'string' ? parsed.error : (parsed.error?.message ?? parsed.message)
+    const raw: unknown = JSON.parse(text)
+    const parsed = (Array.isArray(raw) ? raw[0] : raw) as
+      { error?: { message?: string } | string; message?: string } | undefined
+    const message = typeof parsed?.error === 'string' ? parsed.error : (parsed?.error?.message ?? parsed?.message)
     if (typeof message === 'string' && message.trim() && !/^\s*</.test(message)) return message.trim()
   } catch {
     // not JSON; fall through to the raw text
@@ -120,7 +122,7 @@ function detail(text: string, status: number, statusText = ''): string {
 }
 
 /** How long a stream may go without a `data:` frame before it is given up on. */
-const QUIET_MS = 30_000
+export const QUIET_MS = 90_000
 
 /**
  * POST to a provider and read back a server-sent event stream, one payload at a time. The errors are
@@ -129,7 +131,7 @@ const QUIET_MS = 30_000
  *
  * The limit is on the silence between `data:` pieces, not on the whole stream, which is the point of
  * streaming a long reply: a model that thinks for ten minutes and says so as it goes is working, and
- * one that has sent no `data:` frame for thirty seconds (even if a proxy sends keep-alive comments)
+ * one that has sent no `data:` frame for ninety seconds (even if a proxy sends keep-alive comments)
  * is not. A caller that stops reading (a `break`, or an error thrown at it) cancels the body.
  */
 export async function* sse(

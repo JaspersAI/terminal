@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
 import { isRetryable } from '../../shared/llm/limits.ts'
 import type { Provider } from '../../shared/llm/providers.ts'
-import { post, ProviderError, sse } from './http.ts'
+import { post, ProviderError, QUIET_MS, sse } from './http.ts'
 
 const TEST: Provider = {
   id: 'test',
@@ -110,6 +110,7 @@ test('a post that times out waiting on headers or body rejects with a ProviderEr
 })
 
 test('a refusal carries its status and how long the provider asked to be left alone', async () => {
+  assert.equal(QUIET_MS, 90_000)
   await serving(
     (res) => {
       res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '3' })
@@ -122,6 +123,24 @@ test('a refusal carries its status and how long the provider asked to be left al
           assert.equal(err.message, 'Test returned 429: slow down')
           assert.equal(err.status, 429)
           assert.equal(err.retryAfterMs, 3000)
+          return true
+        })
+      }
+    },
+  )
+  // Vertex AI wraps its OpenAI-compatible error payloads in a single-element JSON array.
+  await serving(
+    (res) => {
+      res.writeHead(429, { 'content-type': 'application/json' })
+      res.end(JSON.stringify([{ error: { code: 429, message: 'Resource exhausted. Please try again later.' } }]))
+    },
+    async (url) => {
+      for (const refused of [() => post(WIRE, url, {}, '{}'), () => read(url, 1000)]) {
+        await assert.rejects(refused, (err: unknown) => {
+          assert.ok(err instanceof ProviderError)
+          assert.equal(err.message, 'Test returned 429: Resource exhausted. Please try again later.')
+          assert.equal(err.status, 429)
+          assert.equal(err.retryAfterMs, null)
           return true
         })
       }
