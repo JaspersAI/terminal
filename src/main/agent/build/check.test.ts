@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { PluginInfo } from '../../../shared/state.ts'
-import { pluginLine, waitForBuild, type BuildWatch } from './check.ts'
+import { pluginLine, unfinishedBuild, waitForBuild, type BuildWatch } from './check.ts'
 
 function info(over: Partial<PluginInfo>): PluginInfo {
   return {
@@ -97,5 +97,35 @@ test('a wait ends with the run, and past its time', async () => {
   await assert.rejects(
     waitForBuild('rates', store(info({ status: 'building' })), undefined, { settleMs: 10, timeoutMs: 30 }),
     /still building/,
+  )
+})
+
+test('a build run is finished only when the plugin is live, ready, and did not run out of rounds', () => {
+  assert.equal(unfinishedBuild('rates', true, info({ status: 'ready' }), false), null)
+  assert.equal(
+    unfinishedBuild('rates', false, undefined, false),
+    'rates was not installed: the builder stopped before install_plugin.',
+  )
+  assert.equal(
+    unfinishedBuild('rates', true, undefined, false),
+    'rates was approved but not finished: the builder stopped before writing plugin.tsx.',
+  )
+  assert.equal(
+    unfinishedBuild(
+      'option-chain',
+      true,
+      info({
+        id: 'option-chain',
+        status: 'error',
+        errors: ['View option-chain/table: ReferenceError: children is not defined'],
+      }),
+      false,
+    ),
+    'option-chain is installed but has a build error: View option-chain/table: ReferenceError: children is not defined.',
+  )
+  assert.equal(unfinishedBuild('rates', true, info({ status: 'building' }), false), 'rates is still building.')
+  assert.equal(
+    unfinishedBuild('rates', true, info({ status: 'ready' }), true),
+    'rates is installed but not finished: the builder used all its rounds.',
   )
 })

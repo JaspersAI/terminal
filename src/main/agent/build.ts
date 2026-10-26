@@ -4,10 +4,10 @@ import { forkOf } from '../../shared/agent/fork'
 import { closeOff } from '../../shared/agent/history'
 import { failedNote, STOPPED_NOTE } from '../../shared/agent/transcript'
 import { isPluginId } from '../../shared/plugins/id'
-import { getState } from '../state'
+import { getState, subscribe } from '../state'
 import { agentLoop } from './agent'
 import { REFERENCE } from './build/reference'
-import { pluginLine } from './build/check'
+import { pluginLine, unfinishedBuild, waitForBuild } from './build/check'
 import { listFilesSync, openFolder } from './build/folder'
 import { builderTools, builtPlugins, ownerOf, type BuildSession } from './build/tools'
 import { readCodingMemories } from './memory'
@@ -127,15 +127,15 @@ export async function runBuild(request: string, id: string, parent: ToolContext)
   }
   // The orchestrator reads the plugin's state before the builder's words: a build that is not over
   // finished nothing, whatever it said, and is told so as an error. What it wrote and said stays.
-  const builtPlugin = getState().plugins[id]
-  if (!session.folder.live || !builtPlugin || ranOut) {
+  const current = getState().plugins[id]
+  const builtPlugin =
+    current?.status === 'building'
+      ? await waitForBuild(id, { read: getState, subscribe: (listener) => subscribe(listener) }, context.signal)
+      : current
+  const unfinished = unfinishedBuild(id, session.folder.live, builtPlugin, ranOut)
+  if (unfinished !== null || !builtPlugin) {
     join(chat, config, thread, fork, era)
-    const state = !session.folder.live
-      ? `${id} was not installed: the builder stopped before install_plugin.`
-      : !builtPlugin
-        ? `${id} was approved but not finished: the builder stopped before writing plugin.tsx.`
-        : `${id} is installed but not finished: the builder used all its rounds.`
-    throw new Error(`${state} It said: ${text || '(nothing)'}\n${CARRIES_ON}`)
+    throw new Error(`${unfinished ?? `${id} is not finished.`} It said: ${text || '(nothing)'}\n${CARRIES_ON}`)
   }
   // Over: its conversation goes with it.
   startOver(chat, config, thread)
