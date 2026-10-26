@@ -723,6 +723,19 @@ export function failPanel(grid: Grid, panelId: string, error: string | null): { 
   return { grid: withPanel(grid, panel), panel }
 }
 
+/** Extracts a non-empty error message from what a view's frame sent on `view.error`, or null. */
+export function viewErrorMessage(raw: unknown): string | null {
+  if (typeof raw === 'object' && raw !== null && typeof (raw as { message?: unknown }).message === 'string') {
+    const message = (raw as { message: string }).message.trim()
+    return message ? message.slice(0, PANEL_ERROR_MAX) : null
+  }
+  if (typeof raw === 'string') {
+    const message = raw.trim()
+    return message ? message.slice(0, PANEL_ERROR_MAX) : null
+  }
+  return null
+}
+
 /** Clears recorded view errors on panels of a plugin that just rebuilt, so a fixed build starts clean. */
 export function clearPluginPanelErrors(grid: Grid, plugin: string): Grid {
   const prefix = `${plugin}/`

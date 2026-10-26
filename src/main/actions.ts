@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { ZodError } from 'zod'
 import {
   NO_ROOM_TO_RESTORE,
+  failPanel,
   layoutOf,
   panelOf,
   placeFrame,
@@ -86,7 +87,7 @@ import {
   moveElementAcross,
   setGridSize,
 } from './grid/grid'
-import { openWindow, surplusNote, useAllScreens, useOneScreen } from './grid/windows'
+import { openWindow, surplusNote, useAllScreens, useOneScreen, windowOf } from './grid/windows'
 import { installDefaultsForSignUp, removeInstalled } from './plugins/install'
 import { connect } from './plugins/mcp'
 import { dismissNotice } from './app/notices'
@@ -198,6 +199,9 @@ const HANDLERS: Record<Action['type'], Handler> = {
   },
   'panel.publishText': (raw) => {
     publishTextChecked(asString(raw.workspaceId), asString(raw.panelId), asTextOrNull(raw.text))
+  },
+  'panel.fail': (raw) => {
+    failPanelChecked(asString(raw.workspaceId), asString(raw.panelId), asString(raw.error))
   },
   'panel.refresh': (raw) => {
     refreshChecked(asString(raw.workspaceId), asString(raw.panelId))
@@ -948,6 +952,51 @@ export function publishChecked(workspaceId: string, panelId: string, output: Rec
 /** The whole of what the view shows as text, for a model to read at length. The engine cuts what is past its cap. */
 export function publishTextChecked(workspaceId: string, panelId: string, text: string | null): Panel {
   return changeGridOf(workspaceId, panelId, (grid) => publishText(grid, panelId, text)).panel
+}
+
+/** Records what a panel's view threw in its frame, so the assistant can see why it is not showing anything. */
+export function failPanelChecked(workspaceId: string, panelId: string, error: string): Panel {
+  return changeGridOf(workspaceId, panelId, (grid) => failPanel(grid, panelId, error)).panel
+}
+
+/** How long a tool that placed or updated a view waits for its frame to report an immediate mount error or output. */
+const PANEL_SETTLE_MS = 250
+
+/**
+ * Gives an open window a moment to mount or re-render a view panel after main changed it, so a
+ * render error (`panel.fail`) or immediate publish is already on the panel when the tool answers
+ * and the round's `workspace_state` is built. Returns at once when no window is showing the workspace.
+ */
+export function settlePanel(workspaceId: string, panelId: string, signal?: AbortSignal): Promise<Panel | null> {
+  const initial = readPanel(workspaceId, panelId)
+  if (!initial || initial.panel.content.kind !== 'view') return Promise.resolve(initial?.panel ?? null)
+  if (workspaceId !== getState().currentWorkspaceId || !windowOf(initial.window)) {
+    return Promise.resolve(initial.panel)
+  }
+  const beforeOutput = initial.panel.output
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer)
+      stop()
+      signal?.removeEventListener('abort', finish)
+      resolve(readPanel(workspaceId, panelId)?.panel ?? initial.panel)
+    }
+    const stop = subscribe(() => {
+      const now = readPanel(workspaceId, panelId)?.panel
+      if (!now || now.error || now.output !== beforeOutput) finish()
+    })
+    const timer = setTimeout(finish, PANEL_SETTLE_MS)
+    signal?.addEventListener('abort', finish, { once: true })
+  })
+}
+
+function readPanel(workspaceId: string, panelId: string): { window: number; panel: Panel } | null {
+  try {
+    const { window, grid } = findElement(workspaceId, panelId)
+    return { window, panel: panelOf(grid, panelId) }
+  } catch {
+    return null
+  }
 }
 
 /**

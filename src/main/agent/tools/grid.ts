@@ -21,7 +21,7 @@ import {
 } from '../../../shared/grid/grid'
 import { MAIN_WINDOW, windowNumbers, WINDOWS_MAX } from '../../../shared/grid/windows'
 import { elementTarget, frameOf, isTile, notPlaced, refreshTarget } from '../../../shared/loops/loops'
-import { asWindow, placeChecked, refreshChecked, removeChecked } from '../../actions'
+import { asWindow, placeChecked, refreshChecked, removeChecked, settlePanel } from '../../actions'
 import { loopsOf, notOwnFrame, ownTile } from '../../loops/loops'
 import {
   changeGrid,
@@ -183,12 +183,14 @@ export function gridTools(context?: ToolContext): Tool[] {
           placement,
           context.loop,
         )
+        const settled = (await settlePanel(workspaceId, panel.id, context.signal)) ?? panel
         return JSON.stringify({
           elementId: element.id,
           panelId: panel.id,
           window: findElement(workspaceId, element.id).window,
           rect: element.rect,
           resolved,
+          ...(settled.error ? { error: settled.error } : {}),
         })
       },
     },
@@ -385,7 +387,12 @@ export function gridTools(context?: ToolContext): Tool[] {
         )
         ownTile(context, id)
         const panel = refreshChecked(workspaceId, id)
-        return JSON.stringify({ refreshed: panel.elementId, at: panel.refreshedAt })
+        const settled = (await settlePanel(workspaceId, panel.id, context.signal)) ?? panel
+        return JSON.stringify({
+          refreshed: panel.elementId,
+          at: panel.refreshedAt,
+          ...(settled.error ? { error: settled.error } : {}),
+        })
       },
     },
   ]

@@ -1,9 +1,17 @@
-import { formatPath, panelIn, parsePath, readPath, textPart, type StorePath } from '../../../shared/paths'
-import { cap } from '../../../shared/agent/prompt'
+import {
+  formatPath,
+  panelErrorAt,
+  panelIn,
+  parsePath,
+  readPath,
+  showPathValue,
+  textPart,
+  type StorePath,
+} from '../../../shared/paths'
 import { coerceViewState, schemaAt } from '../../../shared/agent/view-state'
 import { panelOf, type Panel } from '../../../shared/grid/grid'
 import { RESEARCH_PLUGIN, RESEARCH_THREAD_SOURCE, researchLiveText, researchRoomOf } from '../../../shared/plugins/live'
-import { publishTextChecked, setPanelStateChecked } from '../../actions'
+import { publishTextChecked, setPanelStateChecked, settlePanel } from '../../actions'
 import { runSource } from '../../data/sources'
 import { ownTile } from '../../loops/loops'
 import { findElement } from '../../grid/grid'
@@ -70,7 +78,7 @@ export const stateTools: Tool[] = [
     name: 'get',
     readsOnly: true,
     description:
-      "Read app state by path: panels (every panel), panels/<id> (that one panel's entry: its window, view, and summary), panels/<id>/state[/key…], panels/<id>/output[/key…], panels/<id>/summary, panels/<id>/text, tasks (this workspace's, with their last runs), views, sources, connections, plugins. <id> is an element id like e3 or a panel id like p3. A view's text is the whole of what it shows, like a transcript, and comes 20,000 characters at a time from offset. Other long values are cut, and say so.",
+      "Read app state by path: panels (every panel), panels/<id> (that one panel's entry: its window, view, summary, and any runtime error), panels/<id>/state[/key…], panels/<id>/output[/key…], panels/<id>/summary, panels/<id>/text, panels/<id>/error, tasks (this workspace's, with their last runs), views, sources, connections, plugins. <id> is an element id like e3 or a panel id like p3. A view's text is the whole of what it shows, like a transcript, and comes 20,000 characters at a time from offset. Other long values are cut, and say so.",
     parameters: {
       type: 'object',
       properties: {
@@ -86,15 +94,18 @@ export const stateTools: Tool[] = [
     async run(input, { workspaceId, signal }) {
       const path = parsePath(asPathString(input.path))
       await syncPathPanels(workspaceId, path, signal)
-      const value = readPath(toPublic(getState()), workspaceId, path)
+      const state = toPublic(getState())
+      const value = readPath(state, workspaceId, path)
+      const error = path.kind === 'panel' && path.field !== 'error' ? panelErrorAt(state, workspaceId, path) : null
       if (path.kind === 'panel' && path.field === 'text' && typeof value === 'string') {
         return JSON.stringify({
           path: formatPath(path),
           ...textPart(value, optional(input.offset, asOffset) ?? 0, TEXT_PAGE),
+          ...(error ? { error } : {}),
         })
       }
       const max = path.kind === 'panel' && path.field === 'state' ? STATE_MAX : VALUE_MAX
-      return show(formatPath(path), 'value', value, max)
+      return showPathValue(formatPath(path), 'value', value, max, error)
     },
   },
   {
@@ -122,7 +133,8 @@ export const stateTools: Tool[] = [
       // whole resulting state is still checked, so anything else comes back as the error it is.
       const value = coerceViewState(schemaAt(stateSchemaAt(workspace, path.panelId), path.rest), input.value)
       const panel = setPanelStateChecked(workspace, path.panelId, path.rest, value)
-      return show(formatPath(path), 'state', panel.state, STATE_MAX)
+      const settled = (await settlePanel(workspace, panel.id, context.signal)) ?? panel
+      return showPathValue(formatPath(path), 'state', settled.state, STATE_MAX, settled.error ?? null)
     },
   },
 ]
@@ -136,12 +148,4 @@ function stateSchemaAt(workspaceId: string, panelId: string): Record<string, unk
     // No such panel: the write itself will say so.
     return undefined
   }
-}
-
-function show(path: string, key: 'value' | 'state', value: unknown, max: number): string {
-  const json = value === undefined ? 'null' : JSON.stringify(value)
-  const cut = cap(json, max)
-  return cut === json
-    ? JSON.stringify({ path, [key]: value ?? null })
-    : JSON.stringify({ path, [key]: cut, truncated: true })
 }
