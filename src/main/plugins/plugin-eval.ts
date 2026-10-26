@@ -391,9 +391,20 @@ function formatViewError(viewId: string, err: unknown): string {
     const message =
       typeof (err as { message?: unknown }).message === 'string' ? (err as { message: string }).message : String(err)
     const detail = name && name !== 'Error' && !message.startsWith(name) ? `${name}: ${message}` : message
-    return `View ${viewId}: ${detail}`
+    const fn = componentInStack((err as { stack?: unknown }).stack)
+    return fn ? `View ${viewId} (in ${fn}): ${detail}` : `View ${viewId}: ${detail}`
   }
   return `View ${viewId}: ${String(err)}`
+}
+
+function componentInStack(stack: unknown): string | null {
+  if (typeof stack !== 'string') return null
+  for (const line of stack.split('\n')) {
+    const match = /^\s*at\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+\([^)]*\/plugin\.tsx:/.exec(line)
+    const fn = match?.[1]
+    if (fn && fn !== '__jaspersCheckViews' && fn !== 'eval') return fn
+  }
+  return null
 }
 
 /** Builds a sample state or output object from a Zod schema, optionally populating empty array fields. */
