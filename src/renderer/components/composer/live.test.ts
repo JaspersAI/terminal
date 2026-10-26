@@ -10,6 +10,7 @@ import {
   over,
   sent,
   shownOn,
+  trailOf,
   without,
   workingOn,
   type LiveExchange,
@@ -277,4 +278,32 @@ test('a run that handed its request over marks its exchange, and no other', () =
   )
   // Said again, it changes nothing.
   assert.equal(heard(list, { kind: 'handed', runId: 'run2' }), list)
+})
+
+test('trailOf keeps the active step or thought visible while working and folds completed steps into a summary log', () => {
+  assert.deepEqual(trailOf([], null, true, null), {
+    folded: [],
+    summary: null,
+    active: { text: 'Thinking', thought: true },
+  })
+  assert.deepEqual(trailOf(['get: panels'], null, true, null), {
+    folded: [],
+    summary: null,
+    active: { text: 'get: panels', thought: false },
+  })
+  assert.deepEqual(trailOf(['get: panels', 'query: the store'], null, true, null), {
+    folded: ['get: panels'],
+    summary: '1 step',
+    active: { text: 'query: the store', thought: false },
+  })
+  assert.deepEqual(trailOf(['get: panels', 'query: the store'], 'Checking margins.', true, null), {
+    folded: ['get: panels', 'query: the store'],
+    summary: '2 steps',
+    active: { text: 'Checking margins.', thought: true },
+  })
+  assert.deepEqual(trailOf(['get: panels', 'query: the store'], null, false, null), {
+    folded: ['get: panels', 'query: the store'],
+    summary: '2 steps',
+    active: null,
+  })
 })

@@ -7,12 +7,12 @@ import {
   type UIEvent as ReactUIEvent,
   type WheelEvent as ReactWheelEvent,
 } from 'react'
-import { ADDED, THINKING } from '../../../shared/agent/agent'
+import { ADDED } from '../../../shared/agent/agent'
 import type { Citation } from '../../../shared/agent/citations'
 import type { Exchange } from '../../../shared/agent/transcript'
 import { useAppState } from '../../lib/state'
 import { ErrorText } from './ErrorText'
-import type { LiveExchange } from './live'
+import { trailOf, type LiveExchange } from './live'
 import { MarkdownText } from './MarkdownText'
 
 /** How near the top of what is drawn the reader comes before the exchanges ahead of it are asked for, in px. */
@@ -285,12 +285,11 @@ function Bubble({ id, text }: { id?: string; text: string }): ReactElement {
 }
 
 /**
- * What the run is doing, in the conversation itself: each step on a line, the newest with the
- * squares pulsing beside it while the run works, and Stop at the end. While its model is asked, the
- * last line is what the model is thinking (`data-thinking`), which is no step: it changes as the
- * model thinks and goes when the model says or does something. Once the run is over the trail stays
- * above the reply, dimmed, so a long run still shows what it did. An error takes the place of the
- * squares. `#agent-thinking` is the block of the last request sent while it works, which a driven run
+ * What the run is doing, in the conversation itself: completed steps tucked into an expandable log,
+ * the active step or thought (`data-thinking`) with the squares pulsing beside it while the run
+ * works, and Stop at the end. Once the run is over the whole trail folds into the expandable log
+ * above the reply, dimmed, so a long run stays uncluttered while still letting the reader open what
+ * it did. `#agent-thinking` is the block of the last request sent while it works, which a driven run
  * waits on; a request sent before it and still working has no id, since an id names one thing.
  */
 export function Trail({
@@ -309,9 +308,8 @@ export function Trail({
   last: boolean
   onStop?: () => void
 }): ReactElement {
-  // A run that has begun and said nothing yet is thinking too: its first round has not said so.
-  const now = working ? (thinking ?? (steps.length === 0 && !error ? THINKING : null)) : null
-  const lines = now === null ? steps : [...steps, now]
+  const { folded, summary, active } = trailOf(steps, thinking, working, error)
+  const activeAdded = active !== null && !active.thought && active.text.startsWith(ADDED)
   return (
     <div
       id={working && last ? 'agent-thinking' : undefined}
@@ -319,34 +317,46 @@ export function Trail({
       role={working ? 'status' : undefined}
       className={`mb-2 text-sm ${working ? '' : 'opacity-60'}`}
     >
-      {lines.map((line, index) => {
-        const newest = index === lines.length - 1
-        const thought = newest && now !== null
-        // What the user added while the run was at work is theirs, and reads as theirs among the steps.
-        const added = !thought && line.startsWith(ADDED)
-        return (
-          <p
-            key={index}
-            data-added={added ? '' : undefined}
-            data-thinking={thought ? '' : undefined}
-            className={`flex min-h-[22px] items-center gap-2 ${added ? 'text-foreground' : 'text-muted-foreground'}`}
-          >
-            {/* A thought is not a step: it reads as one passing, apart from what was said and done. */}
-            <span className={`min-w-0 break-words ${thought ? 'italic' : ''}`}>{line}</span>
-            {working && newest && (
-              <span aria-hidden className="flex shrink-0 gap-1">
-                {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className="h-1.5 w-1.5 animate-dots bg-muted-foreground"
-                    style={{ animationDelay: `${i * 160}ms` }}
-                  />
-                ))}
-              </span>
-            )}
-          </p>
-        )
-      })}
+      {summary !== null && (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer py-0.5 select-none hover:text-foreground">{summary}</summary>
+          <div className="mt-1 border-l border-border pl-2.5">
+            {folded.map((line, index) => {
+              const added = line.startsWith(ADDED)
+              return (
+                <p
+                  key={index}
+                  data-added={added ? '' : undefined}
+                  className={`min-h-[20px] break-words ${added ? 'text-foreground' : 'text-muted-foreground'}`}
+                >
+                  {line}
+                </p>
+              )
+            })}
+          </div>
+        </details>
+      )}
+      {active !== null && (
+        <p
+          data-added={activeAdded ? '' : undefined}
+          data-thinking={active.thought ? '' : undefined}
+          className={`flex min-h-[22px] items-center gap-2 ${activeAdded ? 'text-foreground' : 'text-muted-foreground'}`}
+        >
+          {/* A thought is not a step: it reads as one passing, apart from what was said and done. */}
+          <span className={`min-w-0 break-words ${active.thought ? 'italic' : ''}`}>{active.text}</span>
+          {working && (
+            <span aria-hidden className="flex shrink-0 gap-1">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className="h-1.5 w-1.5 animate-dots bg-muted-foreground"
+                  style={{ animationDelay: `${i * 160}ms` }}
+                />
+              ))}
+            </span>
+          )}
+        </p>
+      )}
       {error && <ErrorText text={error} className="mt-1" />}
       {working && onStop && (
         <button
