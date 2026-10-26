@@ -247,9 +247,13 @@ function source(value: unknown, id: string, plugin: string, connections: Record<
 function view(value: unknown, id: string, own: Set<unknown>): ViewDefinition {
   const def = asRecord(value)
   if (!def || def['kind'] !== 'view') throw new Error(`View ${id} has to come from defineView.`)
+  if (typeof def['component'] !== 'function') throw new Error(`View ${id} needs a component function.`)
   if (typeof def['title'] !== 'string' || def['title'] === '') throw new Error(`View ${id} needs a title.`)
   for (const field of ['state', 'output'] as const) {
     if (!parses(def[field])) throw new Error(`View ${id} needs a schema for ${field}, one zod can parse with.`)
+  }
+  if (def['summarize'] !== undefined && typeof def['summarize'] !== 'function') {
+    throw new Error(`View ${id}: summarize has to be a function.`)
   }
   const renders = def['renders']
   if (renders !== undefined) {
