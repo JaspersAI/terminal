@@ -207,14 +207,16 @@ export async function runBuild(request: string, rawId: string, parent: ToolConte
         : current
   } catch (err) {
     if (session.guard?.ended && !parent.signal?.aborted) {
+      const endedMessage = approvalEndedMessage(id, session.guard.ended)
       if (session.guard.ended === 'declined' && !session.folder.live && !begun) {
         startOver(chat, config, thread)
       } else {
+        closeOff(history, failedNote(endedMessage))
         join(chat, config, thread, fork, era)
         keepForLoop()
       }
       rememberEnded(parent.runId, { id, ended: session.guard.ended })
-      return approvalEndedMessage(id, session.guard.ended)
+      return endedMessage
     }
     // Cut off: the conversation is closed off with why.
     const byUser = isStopped(run, err)
