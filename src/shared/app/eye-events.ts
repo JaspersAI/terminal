@@ -175,7 +175,7 @@ const cut = clip
  * as it is used (a note on every key pressed), and a window saying it has drawn a question. What
  * they change is in the tree's changes; they are not lines of their own.
  */
-const QUIET_ACTIONS = new Set(['panel.setState', 'panel.publish', 'panel.publishText', 'question.seen'])
+const QUIET_ACTIONS = new Set(['panel.setState', 'panel.publish', 'panel.publishText', 'panel.fail', 'question.seen'])
 
 export function quietAction(name: string): boolean {
   return QUIET_ACTIONS.has(name)

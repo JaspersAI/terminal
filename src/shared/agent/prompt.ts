@@ -483,12 +483,13 @@ function describeFocus(
   ].join('\n')
 }
 
-/** What a view's panel holds, as the model reads it: its instructions, its state, what it shows, and how much text. */
+/** What a view's panel holds, as the model reads it: its instructions, its state, what it shows, what it threw, and how much text. */
 function panelLines(elementId: string, panel: Panel, instructions: string | undefined): string[] {
   return [
     ...(instructions ? [`Instructions: ${instructions}`] : []),
     `state: ${cap(JSON.stringify(panel.state), STATE_MAX)}`,
     `output: ${cap(JSON.stringify(panel.output), OUTPUT_MAX)}`,
+    ...(panel.error ? [`error: ${cap(panel.error, ERROR_MAX)}`] : []),
     // Only its length: the text can be a whole transcript, and this is said every round.
     ...(panel.text !== null
       ? [

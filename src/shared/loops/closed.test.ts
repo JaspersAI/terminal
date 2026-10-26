@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { EMPTY_GRID, type Grid, type GridElement, type Panel, type PanelContent } from '../grid/grid.ts'
+import { EMPTY_GRID, failPanel, type Grid, type GridElement, type Panel, type PanelContent } from '../grid/grid.ts'
 import { gone, loopName, readLoops, showsChat, shut, type Loop, type Loops } from './loops.ts'
 import { closedHolding, closedWithout, loopLog, reopened, withoutLoop } from './closed.ts'
 
@@ -184,6 +184,12 @@ test('a reopened loop keeps its name, and takes new ids when one of its own was 
   ])
   assert.equal(back.grids[1]!.seq, 5)
   assert.equal(loopName(back.loops.list.find((one) => one.id === 'f1')!.id), 'loop_1')
+  // A reopened view mounts fresh, so any runtime error it had before closing is cleared.
+  const errored = workspace()
+  errored[1] = failPanel(errored[1]!, 'e2', 'children is not defined').grid
+  const closedErrored = closedWithout(both, errored, withoutFrame(errored, 'e1'), 60)
+  const reopenedClean = reopened(withoutFrame(errored, 'e1'), closedErrored, 'f1', 1, 70)
+  assert.equal(reopenedClean.grids[1]!.panels.find((p) => p.elementId === 'e2')?.error, undefined)
 })
 
 test('the loop log lists every loop, open and closed, the one changed last first, each change newest first', () => {

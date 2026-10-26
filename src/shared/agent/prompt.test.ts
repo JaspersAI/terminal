@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   EMPTY_GRID,
+  failPanel,
   layoutOf,
   placeView,
   publishOutput,
@@ -970,6 +971,34 @@ test('reading a loop gives its record, its status, its tile with what the views 
   assert.match(
     describeLoop(tree(placed.grid), WS, NOTE_LOOP, 'working', [], () => undefined),
     /status: working\n[\s\S]*Nothing has been said in it yet\.$/,
+  )
+})
+
+test('a view that threw in its frame exposes its error in focus, in its tile, and in read_loop', () => {
+  const frame = placeView(EMPTY_GRID, { content: { kind: 'frame' }, loop: 'f1' })
+  const placed = inside(frame.grid, 'e1', {
+    content: { kind: 'view', view: 'option-chain/table' },
+    state: { symbol: 'FLWS' },
+    loop: 'f1',
+  })
+  const failed = withLayout(placed, 'e1', failPanel(layoutOf(placed, 'e1'), 'e2', 'children is not defined').grid)
+  const state = { ...tree(failed), loops: { [WS]: [NOTE_LOOP] } }
+  assert.match(
+    describeTiles(state, WS, NOTE_LOOP, () => undefined),
+    /e2 \[0,0 8×6\] view option-chain\/table: "option-chain\/table" \(error: children is not defined\)  ← focused\nfree: \[8,0 8×12\] \[0,6 16×6\]\ne2, view option-chain\/table\.\nstate: \{"symbol":"FLWS"\}\noutput: null\nerror: children is not defined/,
+  )
+  assert.match(
+    describeLoop(state, WS, NOTE_LOOP, 'idle', [], () => undefined),
+    /Its tile is e1 in window 1, holding:\ne2, view option-chain\/table\.\nstate: \{"symbol":"FLWS"\}\noutput: null\nerror: children is not defined/,
+  )
+  const topFailed = failPanel(
+    placeView(EMPTY_GRID, { content: { kind: 'view', view: 'core/note' }, state: { text: 'hi' } }).grid,
+    'e1',
+    'boom',
+  ).grid
+  assert.match(
+    describeContext(tree(topFailed), WS, instructionsFor),
+    /Focused element e1, view core\/note\.\nInstructions: .*\nstate: \{"text":"hi"\}\noutput: null\nerror: boom/,
   )
 })
 
