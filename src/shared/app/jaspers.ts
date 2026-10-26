@@ -168,16 +168,18 @@ export function usesJaspersAccount(state: Omit<JaspersUsageState, 'termsAccepted
 /**
  * Whether this window must prompt the user to sign back in to their Jaspers account before
  * proceeding to the terminal experience: the main window, after Terms of Use and onboarding, when
- * the setup uses a Jaspers account and is signed out.
+ * the setup uses a Jaspers account and is signed out. Once the user opens Settings from the prompt
+ * and switches their language model to another provider, the prompt clears so optional Jaspers
+ * connections do not block the workspace.
  */
-export function needsJaspersSignIn(state: JaspersUsageState, windowNumber: number): boolean {
-  return (
-    windowNumber === 1 &&
-    state.termsAccepted &&
-    state.onboardingComplete === true &&
-    !state.jaspers.signedIn &&
-    usesJaspersAccount(state)
-  )
+export function needsJaspersSignIn(state: JaspersUsageState, windowNumber: number, dismissed = false): boolean {
+  if (windowNumber !== 1 || !state.termsAccepted || state.onboardingComplete !== true || state.jaspers.signedIn) {
+    return false
+  }
+  if (dismissed && state.llm !== null && state.llm !== undefined && state.llm.providerId !== 'jaspers') {
+    return false
+  }
+  return usesJaspersAccount(state)
 }
 /** The one scope Account grants. */
 export const JASPERS_SCOPE = 'mcp'

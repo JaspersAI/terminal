@@ -600,14 +600,24 @@ export function setProvider(kind: ProviderKind, raw: ProviderInput): void {
   }
   const previous = getState()[kind]
   const kept = previous && previous.providerId === input.providerId ? previous.token : null
-  const error = validateProviderInput(kind, input, { savedToken: kept !== null, signedIn: signedIn() })
+  const isSignedIn = signedIn()
+  const error = validateProviderInput(kind, input, { savedToken: kept !== null, signedIn: isSignedIn })
   if (error) throw new Error(error)
   // The Jaspers provider's credential is the sign-in: no key is kept for it, pasted or saved.
   const token = viaJaspers ? null : input.token ? seal(input.token) : kept
   const stored = { providerId: input.providerId, baseUrl: input.baseUrl, model: input.model, token }
   update((state) =>
     kind === 'llm'
-      ? { ...state, llm: stored, voice: voiceWith(stored, state.voice), search: searchWith(stored, state.search) }
+      ? {
+          ...state,
+          llm: stored,
+          voice: voiceWith(stored, state.voice, isSignedIn),
+          search: searchWith(stored, state.search, isSignedIn),
+          jaspers:
+            !viaJaspers && !isSignedIn && state.jaspers.reason !== null
+              ? { ...state.jaspers, reason: null }
+              : state.jaspers,
+        }
       : { ...state, [kind]: stored },
   )
 }

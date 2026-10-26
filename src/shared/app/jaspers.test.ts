@@ -419,4 +419,11 @@ test('Jaspers sign-in is asked on the main window after terms and onboarding whe
     ),
     true,
   )
+
+  // Opening Settings to switch providers dismisses the prompt only once the language model is not Jaspers.
+  assert.equal(needsJaspersSignIn(withLlm, 1, true), true)
+  assert.equal(
+    needsJaspersSignIn({ ...base, connections: { 'research/mcp': { status: 'needs-sign-in' } } }, 1, true),
+    false,
+  )
 })

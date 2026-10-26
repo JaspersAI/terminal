@@ -293,27 +293,37 @@ export function withJaspersWhereNone<T extends SavedProvider>(providers: {
 
 /**
  * The voice setting to keep once `llm` is saved. The Jaspers sign-in serves voice as well, so a
- * language model on Jaspers sets voice up on the same service on Jaspers' voice model. Voice on
+ * language model on Jaspers sets voice up on the same service on Jaspers' voice model; switching
+ * `llm` away from Jaspers while signed out clears an unsigned Jaspers voice setting. Voice on
  * another provider is the user's choice and stays.
  */
 export function voiceWith<T extends { providerId: string; baseUrl: string; model: string }>(
   llm: T,
   voice: T | null,
+  jaspersSignedIn = true,
 ): T | null {
-  if (llm.providerId !== JASPERS || (voice !== null && voice.providerId !== JASPERS)) return voice
+  if (llm.providerId !== JASPERS) {
+    return !jaspersSignedIn && voice?.providerId === JASPERS ? null : voice
+  }
+  if (voice !== null && voice.providerId !== JASPERS) return voice
   return { ...llm, model: findProvider('voice', JASPERS)!.model }
 }
 
 /**
  * The search setting to keep once `llm` is saved, the way `voiceWith` keeps voice: the Jaspers
- * sign-in serves search as well, so a language model on Jaspers sets search up on the same service.
+ * sign-in serves search as well, so a language model on Jaspers sets search up on the same service,
+ * and switching `llm` away from Jaspers while signed out clears an unsigned Jaspers search setting.
  * Search on another provider is the user's choice and stays.
  */
 export function searchWith<T extends { providerId: string; baseUrl: string; model: string }>(
   llm: T,
   search: T | null,
+  jaspersSignedIn = true,
 ): T | null {
-  if (llm.providerId !== JASPERS || (search !== null && search.providerId !== JASPERS)) return search
+  if (llm.providerId !== JASPERS) {
+    return !jaspersSignedIn && search?.providerId === JASPERS ? null : search
+  }
+  if (search !== null && search.providerId !== JASPERS) return search
   return { ...llm, model: '' }
 }
 
