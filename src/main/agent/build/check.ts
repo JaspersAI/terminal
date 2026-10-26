@@ -1,9 +1,12 @@
+import { isPluginId } from '../../../shared/plugins/id.ts'
 import type { PluginInfo } from '../../../shared/state.ts'
 
 // What the tree says of the plugin being built, and waiting for a build to settle. The watcher
 // builds a folder a moment after a write lands, so a wait first gives the build that moment to
 // begin, then waits for it to end; a plugin that never starts building is answered as it is. The
 // store is handed in, so a test drives it.
+
+export type ApprovalEnd = 'timeout' | 'declined'
 
 /** The tree as far as a wait needs it: the plugins, and a way to hear a change. */
 export interface BuildWatch {
@@ -22,8 +25,8 @@ export interface WaitOptions {
 export const WAIT_DEFAULTS: WaitOptions = { settleMs: 1500, timeoutMs: 90_000 }
 
 /** One line about the plugin, for the builder's round and its tools' answers. */
-export function pluginLine(info: PluginInfo | undefined, id: string): string {
-  if (!info) return `${id}: not installed yet`
+export function pluginLine(info: PluginInfo | undefined, id: string, live = false): string {
+  if (!info) return live ? `${id}: approved; write its files, ending with plugin.tsx.` : `${id}: not installed yet`
   if (info.status === 'building') return `${id}: building`
   if (info.status === 'error') return `${id}: error: ${info.errors[0] ?? 'unknown'}`
   const parts = [`ready (build ${info.version})`]
@@ -53,6 +56,30 @@ export function unfinishedBuild(
   if (info.status === 'building') return `${id} is still building.`
   if (ranOut) return `${id} is installed but not finished: the builder used all its rounds.`
   return null
+}
+
+/**
+ * Picks the plugin id to build: when the caller invents a new free id while the loop or run already
+ * has an unfinished build, carries on with that unfinished build instead of spawning another plugin.
+ */
+export function resolveBuildId(requestedId: string, unfinished: readonly string[], taken: ReadonlySet<string>): string {
+  if (!isPluginId(requestedId)) return requestedId
+  if (unfinished.length === 0 || unfinished.includes(requestedId) || taken.has(requestedId)) return requestedId
+  return unfinished[unfinished.length - 1]!
+}
+
+/**
+ * What `build_plugin` answers when a build stopped because its approval question timed out or was
+ * declined: the caller is told to report to the user and not call `build_plugin` again in this run.
+ */
+export function approvalEndedMessage(id: string, ended: ApprovalEnd, widened?: readonly string[]): string {
+  if (ended === 'timeout') {
+    return `Nobody answered the question to approve ${id} within ten minutes, so nothing was installed. The user did not refuse; they may be away. What this build wrote and said is kept under ${id}: say ${id} is waiting on their approval, and do not call build_plugin again in this run.`
+  }
+  if (widened && widened.length > 0) {
+    return `The user did not allow ${id} to reach more (${widened.join(', ')}), so ${id} was not finished. Leave it; do not call build_plugin again in this run.`
+  }
+  return `The user did not approve building ${id}, so nothing was installed. Leave it; do not call build_plugin again in this run.`
 }
 
 /**

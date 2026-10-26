@@ -9,7 +9,7 @@ import type { PluginInfo } from '../../../shared/state.ts'
 import { hasShellApproval } from '../../plugins/shell-approval.ts'
 import { readBuildRecordFile } from '../../plugins/build-record.ts'
 import { openFolder, writeBuildFile, type BuildFolder } from './folder.ts'
-import { installPlugin, type InstallDeps } from './install.ts'
+import { installPlugin, type InstallDeps, type InstallGuard } from './install.ts'
 
 function info(over: Partial<PluginInfo>): PluginInfo {
   return {
@@ -328,6 +328,64 @@ test('a failed package install leaves the build record and shell approval unchan
       shell: true,
     })
     assert.equal(hasShellApproval(live.dir), true)
+  } finally {
+    await fsp.rm(home, { recursive: true, force: true })
+  }
+})
+
+test('a session guard prevents re-prompting after an unanswered timeout, an initial refusal, or a repeated declined widening, while allowing retries after typed instructions', async () => {
+  const { home, folder } = await stagedFolder()
+  try {
+    // 1. Typed instructions in place of a button do not lock the guard: the builder can follow them and ask again.
+    const typedGuard: InstallGuard = {}
+    const typed = harness(home, 'call it rates_v2')
+    typed.deps.guard = typedGuard
+    await assert.rejects(installPlugin(folder, input, 'rates please', typed.deps), /the user wrote "call it rates_v2"/)
+    assert.equal(typed.asked.length, 1)
+    assert.equal(typedGuard.ended, undefined)
+
+    // 2. An initial No or closed prompt marks the guard declined and blocks any repeat prompt in the same build run.
+    const declinedGuard: InstallGuard = {}
+    const declined = harness(home, 'No')
+    declined.deps.guard = declinedGuard
+    await assert.rejects(installPlugin(folder, input, 'rates please', declined.deps), /did not approve building rates/)
+    assert.equal(declined.asked.length, 1)
+    assert.equal(declinedGuard.ended, 'declined')
+    await assert.rejects(installPlugin(folder, input, 'rates please', declined.deps), /did not approve building rates/)
+    assert.equal(declined.asked.length, 1)
+    assert.equal(declined.notices.length, 1)
+
+    // 3. A timeout marks the guard timed out and blocks any repeat prompt in the same build run.
+    const timeoutGuard: InstallGuard = { ended: 'timeout' }
+    const timedOut = harness(home, APPROVE)
+    timedOut.deps.guard = timeoutGuard
+    await assert.rejects(
+      installPlugin(folder, input, 'rates please', timedOut.deps),
+      /Nobody answered the question to install rates within ten minutes/,
+    )
+    assert.equal(timedOut.asked.length, 0)
+    assert.equal(timedOut.notices.length, 0)
+
+    // 4. On a live plugin, a declined widening blocks re-prompting for the same widened item, while allowing another.
+    const liveGuard: InstallGuard = {}
+    const first = harness(home, APPROVE)
+    first.deps.guard = liveGuard
+    const { folder: live } = await installPlugin(folder, input, 'rates please', first.deps)
+
+    const widenNo = harness(home, 'No')
+    widenNo.deps.guard = liveGuard
+    await assert.rejects(
+      installPlugin(live, { ...input, hosts: ['api.frankfurter.dev', 'api.other.dev'] }, 'r', widenNo.deps),
+      /did not allow rates to reach more: host api\.other\.dev/,
+    )
+    assert.equal(widenNo.asked.length, 1)
+    // Asking again for the same declined host does not re-prompt the user.
+    await assert.rejects(
+      installPlugin(live, { ...input, hosts: ['api.frankfurter.dev', 'api.other.dev'] }, 'r', widenNo.deps),
+      /did not allow rates to reach more: host api\.other\.dev/,
+    )
+    assert.equal(widenNo.asked.length, 1)
+    assert.equal(widenNo.notices.length, 1)
   } finally {
     await fsp.rm(home, { recursive: true, force: true })
   }

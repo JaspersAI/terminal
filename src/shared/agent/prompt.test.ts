@@ -590,12 +590,14 @@ test('the rules leave the grid rules to the placement block, and send a needed k
   assert.match(LOOP_RULES, /call build_plugin with the whole request/)
 })
 
-test('a loop is told to look on Jaspers Hub before it builds a plugin', () => {
+test('a loop is told to look on Jaspers Hub before it builds a plugin, and to keep the same plugin id rather than re-prompting on timeout or refusal', () => {
   for (const rules of [loopRules(true), loopRules(false)]) {
     const find = rules.indexOf('call find_plugin')
     assert.ok(find >= 0)
     assert.ok(find < rules.indexOf('call build_plugin'))
     assert.match(rules, /do not build: tell the user its id and title/)
+    assert.match(rules, /Keep the same plugin id when continuing or retrying an unfinished build/)
+    assert.match(rules, /do not call build_plugin again in the same run/)
   }
 })
 
