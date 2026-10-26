@@ -98,12 +98,20 @@ export function researchLiveText(
     }
     if (msg['role'] === 'analyst') {
       const name = typeof msg['name'] === 'string' ? msg['name'] : 'Analyst'
-      const status = typeof msg['status'] === 'string' && msg['status'] !== 'done' ? ` (${msg['status']})` : ''
+      const rawStatus = typeof msg['status'] === 'string' ? msg['status'] : ''
       const rawText = typeof msg['text'] === 'string' ? msg['text'] : ''
       const steps = Array.isArray(msg['steps']) ? msg['steps'] : []
       const error = typeof msg['error'] === 'string' && msg['error'] ? msg['error'] : null
       const citations = Array.isArray(msg['citations']) ? msg['citations'] : []
-      const text = visibleAnalystText(rawText, steps) || (error ? `(error: ${error})` : '(nothing yet)')
+      const trimmed = visibleAnalystText(rawText, steps)
+      const status = rawStatus && rawStatus !== 'done' ? ` (${rawStatus}${trimmed && error ? `: ${error}` : ''})` : ''
+      const text = trimmed
+        ? error && rawStatus && rawStatus !== 'done'
+          ? `${trimmed}\n\n(${rawStatus}: ${error})`
+          : trimmed
+        : error
+          ? `(error: ${error})`
+          : '(nothing yet)'
       const sources = citations
         .map((c, index) => formatCitation(c, index + 1))
         .filter((line): line is string => line !== null)

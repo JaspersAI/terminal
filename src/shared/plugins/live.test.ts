@@ -137,6 +137,37 @@ test('researchLiveText formats a research room thread from its live room and mes
     citations: [],
   }))
   assert.equal(mixed, '#1 [Risk Analyst]: First claim [1] and second claim [2].')
+
+  // An analyst that wrote step narration before failing still surfaces its error reason.
+  const firstStep = 'I will check the filing database guide.'
+  const secondStep = `${firstStep}\n\nI will now fetch chunks 12241742 and 12241743.`
+  const partialFailed = researchLiveText({ seqs: [1, 2] }, (seq) =>
+    seq === 1
+      ? { seq: 1, role: 'user', text: 'summarize the latest filings for flws', to: ['basic'] }
+      : {
+          seq: 2,
+          role: 'analyst',
+          name: 'Basic Analyst',
+          status: 'error',
+          text: secondStep,
+          steps: [
+            { at: firstStep.length, tool: 'get_guide' },
+            { at: secondStep.length, tool: 'fetch_chunk' },
+          ],
+          error: 'Jaspers returned 524: timed out',
+          citations: [],
+        },
+  )
+  assert.equal(
+    partialFailed,
+    [
+      '#1 [You → basic]: summarize the latest filings for flws',
+      '',
+      '#2 [Basic Analyst] (error: Jaspers returned 524: timed out): I will now fetch chunks 12241742 and 12241743.',
+      '',
+      '(error: Jaspers returned 524: timed out)',
+    ].join('\n'),
+  )
 })
 
 test('researchLiveText prefers the final answer after tool steps and falls back to the latest narration paragraph while working', () => {
