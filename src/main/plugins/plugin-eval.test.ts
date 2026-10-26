@@ -288,3 +288,128 @@ test('a valid view using React and SDK hooks passes evaluation, while calling a 
     /useData cannot run here; components render only in views/,
   )
 })
+
+test('a view that inspects Object.keys(row) or spreads rows before hitting an undeclared identifier still fails evaluation', async () => {
+  await assert.rejects(
+    compileAndEvaluate('dynamic-cols', {
+      'plugin.tsx': `
+        import { definePlugin, defineSource, defineView, useData, type PanelRef } from '@jaspers-ai/sdk'
+        import { z } from 'zod'
+        const rows = defineSource({
+          description: 'Rows',
+          input: z.object({}),
+          run: async () => [],
+        })
+        function Table({ panel: _panel }: { panel: PanelRef }) {
+          const { data } = useData('dynamic-cols/rows', {})
+          if (!data || data.length === 0) return <p>Empty</p>
+          const copy = { ...data[0] }
+          const cols = Object.keys(copy)
+          return <div>{cols.join(',')}{children}</div>
+        }
+        export default definePlugin({
+          id: 'dynamic-cols',
+          sources: { rows },
+          views: {
+            table: defineView(Table, {
+              title: 'Table',
+              state: z.object({}),
+              output: z.object({}),
+              renders: [rows],
+            }),
+          },
+        })
+      `,
+    }),
+    /View dynamic-cols\/table.*children is not defined/,
+  )
+})
+
+test('guarded wrapper children, sibling synthetic errors, and idle empty-target useData calls are handled accurately', async () => {
+  const valid = await compileAndEvaluate('guarded-modal', {
+    'plugin.tsx': `
+      import { useState, type ReactNode } from 'react'
+      import { definePlugin, defineSource, defineView, useData, type PanelRef } from '@jaspers-ai/sdk'
+      import { z } from 'zod'
+      const detail = defineSource({
+        description: 'Detail',
+        input: z.object({ id: z.string() }),
+        run: async () => [],
+      })
+      function Modal({ open, children }: { open: boolean; children: ReactNode }) {
+        return open ? <div>{children}</div> : null
+      }
+      function Detail({ state }: { state: { ticker: string } }) {
+        return <span>{state.ticker.toUpperCase()}</span>
+      }
+      function View({ panel }: { panel: PanelRef }) {
+        const state = useData(\`workspaces/\${panel.workspaceId}/panels/\${panel.id}/state\`) as { ticker: string } | undefined
+        const [selected] = useState<{ id: string; name: string } | null>(null)
+        const { data } = useData(selected ? 'guarded-modal/detail' : '', { id: selected?.id })
+        if (data && selected) return <div>{selected.name.toUpperCase()}</div>
+        return (
+          <Modal open={state !== undefined}>
+            <Detail state={state!} />
+          </Modal>
+        )
+      }
+      export default definePlugin({
+        id: 'guarded-modal',
+        sources: { detail },
+        views: {
+          main: defineView(View, {
+            title: 'Main',
+            state: z.object({ ticker: z.string().default('AAPL') }),
+            output: z.object({}),
+            renders: [detail],
+          }),
+        },
+      })
+    `,
+  })
+  assert.deepEqual(Object.keys(valid.views), ['main'])
+
+  await assert.rejects(
+    compileAndEvaluate('sibling-ref-error', {
+      'plugin.tsx': `
+        import { definePlugin, defineSource, defineView, useData, type PanelRef } from '@jaspers-ai/sdk'
+        import { z } from 'zod'
+        const feed = defineSource({
+          description: 'Feed',
+          input: z.object({}),
+          run: async () => [],
+        })
+        function FirstChild({ row }: { row: Record<string, unknown> }) {
+          const bad = (row.missing as unknown as { nonMethod: () => string }).nonMethod.call(null)
+          return <span>{bad}</span>
+        }
+        function SecondChild() {
+          return <span>{children}</span>
+        }
+        function View({ panel: _panel }: { panel: PanelRef }) {
+          const { data } = useData('sibling-ref-error/feed', {})
+          if (!data || data.length === 0) return <p>Loading</p>
+          return (
+            <div>
+              <FirstChild row={data[0]!} />
+              <SecondChild />
+            </div>
+          )
+        }
+        export default definePlugin({
+          id: 'sibling-ref-error',
+          sources: { feed },
+          views: {
+            main: defineView(View, {
+              title: 'Main',
+              state: z.object({}),
+              output: z.object({}),
+              renders: [feed],
+            }),
+          },
+        })
+      `,
+    }),
+    /View sibling-ref-error\/main.*children is not defined/,
+  )
+})
