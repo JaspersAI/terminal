@@ -1,6 +1,5 @@
 import { hubFindings } from '../../../shared/hub/hub'
 import { searchPlugins } from '../../hub/hub'
-import { usePlugin } from '../../loops/loops'
 import { getState } from '../../state'
 import { runBuild } from '../build'
 import { asPathString } from './input'
@@ -40,7 +39,7 @@ export function buildTools(context?: ToolContext): Tool[] {
     {
       name: 'build_plugin',
       description:
-        'Builds a plugin when no installed one, and none find_plugin found on Jaspers Hub, does what the user asks: a new data source, a view, something that produces a document, a connection to a service. Pass the whole request. It runs now, while the user waits and watches its steps, not in the background: the user is asked before anything is written, and the call answers only once the plugin is installed and tested, with its sources and views and what they take, or fails saying why. Then place or run what it built for the user.',
+        "Builds a plugin when no installed one, and none find_plugin found on Jaspers Hub, does what the user asks: a new data source, a view, something that produces a document, a connection to a service. Pass the whole request. It runs now, while the user waits and watches its steps, not in the background: the user is asked before anything is written, and the call answers only once the plugin is installed and tested, with its sources and views and what they take, or fails saying why. When continuing or retrying an unfinished build, pass the same id rather than inventing a new one; when it says the plugin is waiting on the user's approval or was not approved, tell the user and do not call build_plugin again in the same run. Once it finishes, place or run what it built for the user.",
       parameters: {
         type: 'object',
         properties: {
@@ -50,7 +49,8 @@ export function buildTools(context?: ToolContext): Tool[] {
           },
           id: {
             type: 'string',
-            description: 'A short id for the plugin: lower-case letters, digits, and dashes, like fred or sec-filings.',
+            description:
+              'A short id for the plugin: lower-case letters, digits, and dashes, like fred or sec-filings. Keep the same id when resuming or retrying an unfinished build.',
           },
         },
         required: ['request', 'id'],
@@ -59,9 +59,7 @@ export function buildTools(context?: ToolContext): Tool[] {
         const request = asPathString(input.request).trim()
         if (!request) throw new Error('Say what the plugin should do.')
         const id = asPathString(input.id).trim().toLowerCase()
-        const built = await runBuild(request, id, context)
-        if (context.loop !== undefined) usePlugin(context.workspaceId, context.loop, id)
-        return built
+        return runBuild(request, id, context)
       },
     },
   ]

@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { PluginInfo } from '../../../shared/state.ts'
-import { pluginLine, unfinishedBuild, waitForBuild, type BuildWatch } from './check.ts'
+import {
+  approvalEndedMessage,
+  pluginLine,
+  resolveBuildId,
+  unfinishedBuild,
+  waitForBuild,
+  type BuildWatch,
+} from './check.ts'
 
 function info(over: Partial<PluginInfo>): PluginInfo {
   return {
@@ -55,6 +62,34 @@ test('a plugin is described in one line: ready with what it offers, an error wit
   )
   assert.equal(pluginLine(info({ status: 'building' }), 'rates'), 'rates: building')
   assert.equal(pluginLine(undefined, 'rates'), 'rates: not installed yet')
+  assert.equal(pluginLine(undefined, 'rates', true), 'rates: approved; write its files, ending with plugin.tsx.')
+})
+
+test('resolveBuildId reuses an unfinished build id when a retry invents a new free id', () => {
+  const taken = new Set(['yfinance', 'screener'])
+  assert.equal(resolveBuildId('options-chain', [], taken), 'options-chain')
+  assert.equal(resolveBuildId('options-table', ['options-chain'], taken), 'options-chain')
+  assert.equal(resolveBuildId('options-desk', ['options-chain', 'options-table'], taken), 'options-table')
+  // Naming an already-unfinished build id or an existing taken plugin keeps the requested id.
+  assert.equal(resolveBuildId('options-chain', ['options-chain', 'options-table'], taken), 'options-chain')
+  assert.equal(resolveBuildId('yfinance', ['options-chain'], taken), 'yfinance')
+  // Invalid ids are left for runBuild to reject with its own message.
+  assert.equal(resolveBuildId('Bad Id', ['options-chain'], taken), 'Bad Id')
+})
+
+test('approvalEndedMessage tells the caller not to retry build_plugin in the same run on timeout or refusal', () => {
+  const timedOut = approvalEndedMessage('options-chain', 'timeout')
+  assert.match(timedOut, /Nobody answered the question to approve options-chain within ten minutes/)
+  assert.match(timedOut, /do not call build_plugin again in this run/)
+  assert.doesNotMatch(timedOut, /stopped before install_plugin/)
+
+  const declined = approvalEndedMessage('options-chain', 'declined')
+  assert.match(declined, /The user did not approve building options-chain/)
+  assert.match(declined, /do not call build_plugin again in this run/)
+
+  const widenedDeclined = approvalEndedMessage('options-chain', 'declined', ['host api.other.dev'])
+  assert.match(widenedDeclined, /did not allow options-chain to reach more \(host api\.other\.dev\)/)
+  assert.match(widenedDeclined, /do not call build_plugin again in this run/)
 })
 
 test('a build in flight is waited out, and the entry is answered once it settles', async () => {

@@ -25,7 +25,7 @@ import {
   type BuildFolder,
   type Owner,
 } from './folder'
-import { installPlugin } from './install'
+import { installPlugin, type InstallGuard } from './install'
 
 // The builder's own tools: the plugin folder, and the one call that puts the plugin in front of the
 // user. The folder starts as staging and becomes the live one when the plugin lands, so the session
@@ -35,6 +35,7 @@ export interface BuildSession {
   id: string
   request: string
   folder: BuildFolder
+  guard?: InstallGuard
 }
 
 /** The tree, as a build wait reads it. */
@@ -97,6 +98,7 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
       },
       /** Writes a complete file and reports the build when the plugin is ready to rebuild. */
       async run(input) {
+        refuseEnded(session)
         const written = await writeBuildFile(session.folder, input.path, input.content)
         return afterSave(`Wrote ${written.path} (${sizeText(written.size)}).`)
       },
@@ -120,6 +122,7 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
       },
       /** Replaces one passage and reports the build when the plugin is ready to rebuild. */
       async run(input) {
+        refuseEnded(session)
         const edited = await editBuildFile(session.folder, input.path, input.old, input.new)
         return afterSave(`Edited ${edited.path} (${sizeText(edited.size)}).`)
       },
@@ -176,6 +179,7 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
         let noticeId: string | null = null
         const { folder, info } = await installPlugin(session.folder, input, session.request, {
           home: jaspersHome(),
+          guard: session.guard,
           /** Remembers the approval notice so it can be dismissed when the question ends. */
           notice: (text) => {
             noticeId = addNotice('plugins', text)
@@ -186,6 +190,7 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
               const asked = await askUserFor(question.text, question.choices, context.signal, question.code)
               // Ten minutes with nobody there is not a no: say so, rather than that the user refused.
               if (asked.answer === null && asked.ended === 'timeout') {
+                if (session.guard) session.guard.ended = 'timeout'
                 throw new Error(
                   `Nobody answered the question to install ${session.folder.id} within ten minutes, so nothing was installed. The user did not refuse; they may be away. Say the plugin is waiting on their approval, and call install_plugin again when they ask.`,
                 )
@@ -198,7 +203,11 @@ export function builderTools(session: BuildSession, context: ToolContext): Tool[
               }
             }
           },
-          land: landFolder,
+          land: async (staged) => {
+            const landed = await landFolder(staged)
+            session.folder = landed
+            return landed
+          },
           rebuild: rebuildPlugin,
           wait: (id) => {
             tell(`Waiting for the app to build ${id}`)
@@ -276,10 +285,22 @@ function readable(session: BuildSession, plugin: unknown): BuildFolder {
   return builtFolder(plugin, ownerOf(plugin))
 }
 
+/** Refuses writes in the same round after an approval question timed out or was declined. */
+function refuseEnded(session: BuildSession): void {
+  if (session.guard?.ended === 'timeout') {
+    throw new Error(
+      `Nobody answered the question to install ${session.folder.id} within ten minutes, so nothing was installed. Say the plugin is waiting on their approval and stop.`,
+    )
+  }
+  if (session.guard?.ended === 'declined') {
+    throw new Error(`The user did not approve building ${session.folder.id}. Say what you wanted to build and stop.`)
+  }
+}
+
 /** The build's outcome for the builder: the line, and every error when there are several. */
 function describeBuild(info: PluginInfo | null, id: string): string {
-  if (!info) return `${id}: approved; write its files, ending with plugin.tsx.`
-  const line = pluginLine(info, id)
+  if (!info) return pluginLine(undefined, id, true)
+  const line = pluginLine(info, id, true)
   if (info.status === 'error' && info.errors.length > 1) return `${line}\n${info.errors.slice(1).join('\n')}`
   return line
 }

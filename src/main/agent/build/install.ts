@@ -30,9 +30,18 @@ import { hasShellApproval, writeShellApproval } from '../../plugins/shell-approv
 
 const PURPOSE_MAX = 200
 
+export interface InstallGuard {
+  /** Set once an approval prompt in this build run timed out or was declined without replacement instructions. */
+  ended?: 'timeout' | 'declined'
+  /** Widening lines the user already declined in this build run, so the builder cannot re-prompt for them. */
+  declinedWidening?: Set<string>
+}
+
 export interface InstallDeps {
   /** The Jaspers home, for the question's wording. */
   home: string
+  /** Tracks approval state across calls in one build run so a timeout or refusal does not re-prompt. */
+  guard?: InstallGuard
   /** Puts the question to the user and answers with what they chose, or null when nobody answered. */
   ask(question: TrustQuestion): Promise<string | null>
   /** Surfaces a notice when the build is waiting for approval. */
@@ -59,6 +68,14 @@ export async function installPlugin(
   if (!purpose || purpose.length > PURPOSE_MAX) {
     throw new Error(`purpose is one line, up to ${PURPOSE_MAX} characters, saying what the plugin is for.`)
   }
+  if (deps.guard?.ended === 'timeout') {
+    throw new Error(
+      `Nobody answered the question to install ${folder.id} within ten minutes, so nothing was installed. The user did not refuse; they may be away. Say the plugin is waiting on their approval, and call install_plugin again when they ask.`,
+    )
+  }
+  if (deps.guard?.ended === 'declined') {
+    throw new Error(`The user did not approve building ${folder.id}. Say what you wanted to build and stop.`)
+  }
   const { envelope, packageSpecs } = envelopeFromInput(input)
   const files = await fileContents(folder)
   const hasEntry = files.some((file) => file.path === 'plugin.tsx')
@@ -67,9 +84,10 @@ export async function installPlugin(
     deps.notice?.(approvalNotice(folder.id, purpose))
     const answer = await deps.ask(trustQuestion({ id: folder.id, purpose, envelope, files, home: deps.home }))
     if (!isApproved(answer, APPROVE)) {
+      const userWrote = wrote(answer, DECLINE)
+      if (!userWrote && deps.guard) deps.guard.ended = 'declined'
       throw new Error(
-        wrote(answer, DECLINE) ??
-          `The user did not approve building ${folder.id}. Say what you wanted to build and stop.`,
+        userWrote ?? `The user did not approve building ${folder.id}. Say what you wanted to build and stop.`,
       )
     }
     if (packageSpecs.length > 0) await deps.installPackages(folder.dir, packageSpecs)
@@ -85,11 +103,21 @@ export async function installPlugin(
   record.approved = { ...record.approved, shell: hasShellApproval(folder.dir) }
   const lines = widened(envelope, record.approved)
   if (lines.length > 0) {
+    if (deps.guard?.declinedWidening && lines.some((line) => deps.guard!.declinedWidening!.has(line))) {
+      throw new Error(
+        `The user did not allow ${folder.id} to reach more: ${lines.join(', ')}. Keep to what was approved, or stop.`,
+      )
+    }
     deps.notice?.(approvalNotice(folder.id, purpose))
     const answer = await deps.ask(widenQuestion(folder.id, lines))
     if (!isApproved(answer, ALLOW)) {
+      const userWrote = wrote(answer, DECLINE)
+      if (!userWrote && deps.guard) {
+        deps.guard.declinedWidening ??= new Set()
+        for (const line of lines) deps.guard.declinedWidening.add(line)
+      }
       throw new Error(
-        wrote(answer, DECLINE) ??
+        userWrote ??
           `The user did not allow ${folder.id} to reach more: ${lines.join(', ')}. Keep to what was approved, or stop.`,
       )
     }
