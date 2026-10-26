@@ -123,7 +123,7 @@ function PluginView({
         const errorText = viewErrorText(told.params)
         if (errorText) {
           failed = true
-          void hostBridge.publishText({ id: panelId, workspaceId }, errorText)
+          void hostBridge.publishText({ id: panelId, workspaceId }, errorText).catch(() => {})
         }
         return
       }
@@ -199,7 +199,7 @@ function PluginView({
         case 'panel.publish':
           if (failed) {
             failed = false
-            void hostBridge.publishText(panel, null)
+            void hostBridge.publishText(panel, null).catch(() => {})
           }
           return hostBridge.publish(panel, params['output'] as Record<string, unknown>)
         case 'panel.publishText':
@@ -244,7 +244,7 @@ function PluginView({
       observer.disconnect()
       for (const unsubscribe of subscriptions.values()) unsubscribe()
       subscriptions.clear()
-      if (failed) void hostBridge.publishText({ id: panelId, workspaceId }, null)
+      if (failed) void hostBridge.publishText({ id: panelId, workspaceId }, null).catch(() => {})
       // A view that goes away while listening lets go of the microphone.
       if (recorder.active) void recorder.stop()
     }
