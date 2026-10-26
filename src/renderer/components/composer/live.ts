@@ -9,7 +9,7 @@
 // nothing hands back the list it was given, so React has nothing to draw.
 
 // The extension is explicit because Node's test runner resolves this import at run time.
-import { addStep, plain, stepped, thought, type AgentEvent } from '../../../shared/agent/agent.ts'
+import { addStep, plain, stepped, THINKING, thought, type AgentEvent } from '../../../shared/agent/agent.ts'
 import type { Citation } from '../../../shared/agent/citations'
 
 export interface LiveExchange {
@@ -172,6 +172,45 @@ export function awayOn(list: LiveExchange[], workspaceId: string): LiveExchange[
 /** Whether a workspace has a request still in flight, shown or not. */
 export function workingOn(list: LiveExchange[], workspaceId: string): boolean {
   return list.some((one) => one.workspaceId === workspaceId && one.working)
+}
+
+export interface TrailView {
+  folded: string[]
+  summary: string | null
+  active: { text: string; thought: boolean } | null
+}
+
+/**
+ * Splits a run's trail into the completed steps tucked into an expandable log and the single active
+ * step or thought shown while the run works. Once the run is over, every step folds into the log.
+ */
+export function trailOf(
+  steps: readonly string[],
+  thinking: string | null | undefined,
+  working: boolean,
+  error: string | null,
+): TrailView {
+  if (!working) {
+    const folded = [...steps]
+    return {
+      folded,
+      summary: folded.length > 0 ? `${folded.length} step${folded.length === 1 ? '' : 's'}` : null,
+      active: null,
+    }
+  }
+  const now = thinking ?? (steps.length === 0 && !error ? THINKING : null)
+  const folded = now !== null ? [...steps] : steps.slice(0, -1)
+  const active =
+    now !== null
+      ? { text: now, thought: true }
+      : steps.length > 0
+        ? { text: steps[steps.length - 1]!, thought: false }
+        : null
+  return {
+    folded,
+    summary: folded.length > 0 ? `${folded.length} step${folded.length === 1 ? '' : 's'}` : null,
+    active,
+  }
 }
 
 /** An exchange with what a run's event left of its reply, its steps, and its thinking, or the exchange itself when that is what it had. */
