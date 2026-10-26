@@ -138,6 +138,47 @@ export function needsTermsAcceptance(
 ): boolean {
   return windowNumber === 1 && !state.termsAccepted
 }
+
+export interface JaspersUsageState {
+  termsAccepted: boolean
+  onboardingComplete?: boolean
+  llm?: { providerId: string } | null
+  voice?: { providerId: string } | null
+  search?: { providerId: string } | null
+  connections?: Record<string, { status: string }>
+  jaspers: { signedIn: boolean; reason?: string | null }
+}
+
+/**
+ * Whether the user's setup uses a Jaspers account: one of the providers is Jaspers, an installed
+ * connection signs in through Jaspers and waits for it, or a prior Jaspers sign-in ended on its own.
+ */
+export function usesJaspersAccount(state: Omit<JaspersUsageState, 'termsAccepted' | 'onboardingComplete'>): boolean {
+  if (
+    state.llm?.providerId === 'jaspers' ||
+    state.voice?.providerId === 'jaspers' ||
+    state.search?.providerId === 'jaspers'
+  ) {
+    return true
+  }
+  if (typeof state.jaspers.reason === 'string' && state.jaspers.reason.trim().length > 0) return true
+  return Object.values(state.connections ?? {}).some((c) => c.status === 'needs-sign-in')
+}
+
+/**
+ * Whether this window must prompt the user to sign back in to their Jaspers account before
+ * proceeding to the terminal experience: the main window, after Terms of Use and onboarding, when
+ * the setup uses a Jaspers account and is signed out.
+ */
+export function needsJaspersSignIn(state: JaspersUsageState, windowNumber: number): boolean {
+  return (
+    windowNumber === 1 &&
+    state.termsAccepted &&
+    state.onboardingComplete === true &&
+    !state.jaspers.signedIn &&
+    usesJaspersAccount(state)
+  )
+}
 /** The one scope Account grants. */
 export const JASPERS_SCOPE = 'mcp'
 /** A token this close to running out is renewed before it is used, so a request never goes out on one about to be refused. */

@@ -41,7 +41,7 @@ import { registerVoiceIpc } from './llm/voice'
 import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
 import { anyInFront, isHttps, openAllStored, registerDragIpc, showAll, watchDisplays } from './grid/windows'
 import { installMenu } from './app/menu'
-import { accountPageAddress, onSignInChange, refreshTerms } from './jaspers/jaspers'
+import { accountPageAddress, checkSignIn, onSignInChange, refreshTerms } from './jaspers/jaspers'
 
 // The schemes a plugin view's iframe loads from have to be declared before the app is ready; their
 // handlers come after it, below.
@@ -55,7 +55,7 @@ if (!primary) app.quit()
 app.whenReady().then(async () => {
   if (!primary) return
   start()
-  await refreshTerms()
+  await Promise.all([refreshTerms(), checkSignIn()])
   // Light, dark, or the system's, before the first window opens.
   startTheme()
   // What serves a plugin view's page and the runtime it borrows.
@@ -202,6 +202,7 @@ app.whenReady().then(async () => {
 
   const reopen = (): void => {
     void refreshTerms()
+    void checkSignIn()
     showAll()
   }
   startBackground({ showWindow: reopen, windowInFront: anyInFront, suspendTasks, wakeTasks, installUpdate })
@@ -239,6 +240,7 @@ let hostsStopped = false
 let uploadsFlushing = false
 let uploadsFlushed = false
 app.on('before-quit', (event) => {
+  flush()
   if (hostsStopping || uploadsFlushing) {
     event.preventDefault()
     return
@@ -257,6 +259,7 @@ app.on('before-quit', (event) => {
   quittingHosts()
   closePendingRuns()
   endSession()
+  flush()
   if (!uploadsFlushed && canFlushUploads()) {
     event.preventDefault()
     uploadsFlushing = true

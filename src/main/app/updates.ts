@@ -1,6 +1,7 @@
 import { app, autoUpdater as squirrel } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { updatesAfter, type UpdateEvent } from '../../shared/app/updates'
+import { flush } from '../persist'
 import { getState, update } from '../state'
 import { addNotice } from './notices'
 
@@ -55,6 +56,7 @@ export async function checkForUpdates(): Promise<void> {
 /** The tray's and Settings > About's Restart to update: installs what was downloaded and starts the new app. */
 export function installUpdate(): void {
   if (getState().updates.status !== 'ready') throw new Error('No update is ready to install.')
+  flush()
   autoUpdater.quitAndInstall(true, true)
 }
 
