@@ -24,13 +24,10 @@ import { getState, update } from '../state'
 // Unasked: what a Jaspers sign-up comes with, the Screener and Research, the items default-install.ts
 // allows, which only the sign-in during setup starts. No tool reaches that unasked path.
 
-const HOLD_MS = 10 * 60_000
-
 /** The install the prompt is asking about, under its token. */
 interface Held {
   token: string
   staged: Staged
-  timer: NodeJS.Timeout
 }
 
 let held: Held | null = null
@@ -69,7 +66,7 @@ export async function prepareInstall(raw: unknown, win: BrowserWindow | null): P
       staged = await stageSource(request.kind === 'hub' ? request : parseSource(request.text))
     }
     const token = randomBytes(16).toString('hex')
-    held = { token, staged, timer: setTimeout(() => void drop(), HOLD_MS) }
+    held = { token, staged }
     const { manifest, source, sha256, replaces, hub } = staged
     return {
       token,
@@ -88,13 +85,12 @@ export async function prepareInstall(raw: unknown, win: BrowserWindow | null): P
 export async function confirmInstall(token: string): Promise<void> {
   const waiting = held
   if (!waiting || waiting.token !== token) throw new Error('That install is no longer waiting. Start it again.')
-  clearTimeout(waiting.timer)
   held = null
   await commitStaged(waiting.staged)
   rebuildPlugin(waiting.staged.manifest.id)
 }
 
-/** Removes the staged plugin and clears its expiry timer only when `token` matches; stale tokens do nothing. */
+/** Removes the staged plugin only when `token` matches; stale tokens do nothing. */
 export async function cancelInstall(token: string): Promise<void> {
   if (held?.token === token) await drop()
 }
@@ -103,7 +99,6 @@ async function drop(): Promise<void> {
   const waiting = held
   if (!waiting) return
   held = null
-  clearTimeout(waiting.timer)
   await discardStaged(waiting.staged)
 }
 

@@ -23,8 +23,8 @@ const TILE = 'relative shrink-0 bg-background'
 /**
  * The assistant asking something and waiting for the answer, in the place its replies appear and the
  * place a key is asked for. It opens this with ask_user when a request reads two ways and nothing it
- * can look at settles which; the run sits in main until this is answered, closed, or ten minutes
- * pass. A scheduled task never opens one: nobody is there to answer it.
+ * can look at settles which; the run sits in main until this is answered, closed, or the run is
+ * stopped. A scheduled task never opens one: nobody is there to answer it.
  *
  * A question may carry text it is about — the shell script pro mode is asking to run — which is shown
  * under it as it was written, monospaced, every line, and scrolled rather than cut once it is taller
@@ -50,7 +50,7 @@ export function QuestionField({ question, box, shown = true }: Props): ReactElem
     if (!on) input.current?.focus()
   }, [question.id, on])
 
-  // A tile's question begins its wait once its tile has drawn it, which only a window can say: main
+  // A tile's question reports once its tile has drawn it, which only a window can say: main
   // cannot tell a tile on a workspace off screen, in a closed window, or under a maximized element.
   useEffect(() => {
     if (on && shown) void dispatch({ type: 'question.seen', id: question.id }).catch(() => undefined)
