@@ -110,7 +110,7 @@ test('a post that times out waiting on headers or body rejects with a ProviderEr
 })
 
 test('a refusal carries its status and how long the provider asked to be left alone', async () => {
-  assert.equal(QUIET_MS, 90_000)
+  assert.equal(QUIET_MS, 120_000)
   await serving(
     (res) => {
       res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '3' })

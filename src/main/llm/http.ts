@@ -37,7 +37,7 @@ export async function post<T>(
   url: string,
   headers: Record<string, string>,
   body: string | Blob | FormData,
-  timeoutMs = 90_000,
+  timeoutMs = 120_000,
   signal?: AbortSignal,
 ): Promise<T> {
   let response: Response
@@ -122,7 +122,7 @@ function detail(text: string, status: number, statusText = ''): string {
 }
 
 /** How long a stream may go without a `data:` frame before it is given up on. */
-export const QUIET_MS = 90_000
+export const QUIET_MS = 120_000
 
 /**
  * POST to a provider and read back a server-sent event stream, one payload at a time. The errors are
@@ -131,7 +131,7 @@ export const QUIET_MS = 90_000
  *
  * The limit is on the silence between `data:` pieces, not on the whole stream, which is the point of
  * streaming a long reply: a model that thinks for ten minutes and says so as it goes is working, and
- * one that has sent no `data:` frame for ninety seconds (even if a proxy sends keep-alive comments)
+ * one that has sent no `data:` frame for two minutes (even if a proxy sends keep-alive comments)
  * is not. A caller that stops reading (a `break`, or an error thrown at it) cancels the body.
  */
 export async function* sse(
