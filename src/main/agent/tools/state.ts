@@ -26,24 +26,33 @@ const TEXT_PAGE = 50_000
 export async function syncResearchPanelText(workspaceId: string, panel: Panel, signal?: AbortSignal): Promise<void> {
   const room = researchRoomOf(panel)
   if (!room) return
+  const readLive = (): string | null =>
+    researchLiveText(
+      getLive(RESEARCH_PLUGIN, `rooms/${room}`),
+      (seq) => getLive(RESEARCH_PLUGIN, `rooms/${room}/m/${seq}`),
+      getLive(RESEARCH_PLUGIN, 'analysts'),
+    )
+  const liveText = readLive()
+  if (liveText !== null) {
+    publishTextChecked(workspaceId, panel.id, liveText)
+    return
+  }
   if (getSource(RESEARCH_THREAD_SOURCE)) {
     try {
       const result = await runSource(RESEARCH_THREAD_SOURCE, { room }, { workspaceId, signal })
+      const after = readLive()
+      if (after !== null) {
+        publishTextChecked(workspaceId, panel.id, after)
+        return
+      }
       const text = result.text.trim()
       if (text && text !== 'The room has no messages yet.') {
         publishTextChecked(workspaceId, panel.id, result.text)
-        return
       }
     } catch {
-      // Fall back to the room's live values in memory.
+      // Leave panel.text as it is when the room cannot be read.
     }
   }
-  const liveText = researchLiveText(
-    getLive(RESEARCH_PLUGIN, `rooms/${room}`),
-    (seq) => getLive(RESEARCH_PLUGIN, `rooms/${room}/m/${seq}`),
-    getLive(RESEARCH_PLUGIN, 'analysts'),
-  )
-  if (liveText !== null) publishTextChecked(workspaceId, panel.id, liveText)
 }
 
 async function syncPathPanels(workspaceId: string, path: StorePath, signal?: AbortSignal): Promise<void> {
