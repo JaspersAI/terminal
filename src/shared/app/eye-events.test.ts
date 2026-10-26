@@ -171,7 +171,7 @@ test('an action keeps what was asked, but never a key, a cell’s contents, or a
 })
 
 test('a view’s own writes, and a window saying it drew a question, are not the user’s actions', () => {
-  for (const name of ['panel.setState', 'panel.publish', 'panel.publishText', 'question.seen'])
+  for (const name of ['panel.setState', 'panel.publish', 'panel.publishText', 'panel.fail', 'question.seen'])
     assert.equal(quietAction(name), true, name)
   for (const name of ['panel.refresh', 'element.place', 'question.answer', 'cells.write'])
     assert.equal(quietAction(name), false, name)

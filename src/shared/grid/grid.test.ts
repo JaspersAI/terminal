@@ -31,7 +31,10 @@ import {
   moveAcross,
   dropRect,
   panelOf,
+  PANEL_ERROR_MAX,
   PANEL_TEXT_MAX,
+  clearPluginPanelErrors,
+  failPanel,
   publishOutput,
   publishText,
   rangeName,
@@ -464,6 +467,31 @@ test('the map names a view panel by its summary, or by the view when it has none
   assert.equal(gridMap(grid).split('\n')[0], 'e1 [0,0 8×6] A1:H6 view core/note: "core/note"  ← focused')
   const published = publishOutput(grid, 'p1', { text: 'First line\nsecond' }, 'First line').grid
   assert.equal(gridMap(published).split('\n')[0], 'e1 [0,0 8×6] A1:H6 view core/note: "First line"  ← focused')
+})
+
+test('a view error is recorded on its panel, shown on the map, and cleared when the view recovers or its plugin rebuilds', () => {
+  const { grid } = placeFramed(EMPTY_GRID, { content: view('option-chain/table'), loop: 'f1' })
+  const failed = failPanel(grid, 'e2', '  children is not defined  ')
+  assert.equal(failed.panel.error, 'children is not defined')
+  assert.equal(failPanel(failed.grid, 'p2', 'children is not defined').grid, failed.grid)
+  assert.match(
+    gridMap(failed.grid, () => 'loop_1'),
+    /  e2 view option-chain\/table: "option-chain\/table" \(error: children is not defined\)/,
+  )
+  assert.match(
+    gridMap(failed.grid, undefined, 'e1'),
+    /e2 \[0,0 16×12\] view option-chain\/table: "option-chain\/table" \(error: children is not defined\)  ← focused/,
+  )
+  assert.equal(failPanel(failed.grid, 'e2', 'x'.repeat(PANEL_ERROR_MAX + 50)).panel.error?.length, PANEL_ERROR_MAX)
+  assert.equal(setPanelState(failed.grid, 'e2', ['symbol'], 'FLWS').panel.error, undefined)
+  assert.equal(publishOutput(failed.grid, 'e2', { rows: [] }, '0 rows').panel.error, undefined)
+  assert.equal(publishText(failed.grid, 'e2', 'Option chain').panel.error, undefined)
+  assert.equal(publishText(failed.grid, 'e2', null).panel.error, 'children is not defined')
+  assert.equal(refreshPanel(failed.grid, 'e2', 1000).panel.error, undefined)
+  assert.equal(clearPluginPanelErrors(failed.grid, 'other'), failed.grid)
+  const rebuilt = clearPluginPanelErrors(failed.grid, 'option-chain')
+  assert.equal(panelOf(rebuilt, 'e2').error, undefined)
+  assert.equal(clearPluginPanelErrors(rebuilt, 'option-chain'), rebuilt)
 })
 
 test('setIn writes deep without touching what it was given', () => {

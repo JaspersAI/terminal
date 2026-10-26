@@ -24,7 +24,7 @@ export type StorePath =
       kind: 'panel'
       workspaceId?: string
       panelId: string
-      field: 'state' | 'output' | 'summary' | 'text' | 'refreshedAt'
+      field: 'state' | 'output' | 'summary' | 'text' | 'refreshedAt' | 'error'
       rest: string[]
     }
 
@@ -44,10 +44,12 @@ export interface PanelSummary {
   summary: string | null
   /** Characters in the text the view published, so a reader knows there is some to read; null when there is none. */
   textLength: number | null
+  /** What the view threw in its frame, when it failed to render or run. */
+  error?: string
 }
 
 const SHAPES =
-  'workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, and any of those under workspaces/<workspace id>/'
+  'workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, panels/<id>/error, and any of those under workspaces/<workspace id>/'
 
 /** Parse a store path, preserving any workspace prefix; throw if its shape is unsupported. */
 export function parsePath(raw: string): StorePath {
@@ -69,7 +71,7 @@ export function parsePath(raw: string): StorePath {
   if (head !== 'panels') reject(raw)
   if (panelId === undefined) return { kind: 'panels', ...at }
   if (field === undefined) return { kind: 'panelEntry', ...at, panelId }
-  if ((field === 'summary' || field === 'text' || field === 'refreshedAt') && rest.length === 0)
+  if ((field === 'summary' || field === 'text' || field === 'refreshedAt' || field === 'error') && rest.length === 0)
     return { kind: 'panel', ...at, panelId, field, rest: [] }
   if (field === 'state' || field === 'output') return { kind: 'panel', ...at, panelId, field, rest }
   reject(raw)
@@ -99,7 +101,15 @@ export function readPath(state: AppState, workspaceId: string, path: StorePath):
   if (path.field === 'summary') return panel.summary
   if (path.field === 'text') return panel.text
   if (path.field === 'refreshedAt') return panel.refreshedAt
+  if (path.field === 'error') return panel.error ?? null
   return walk(panel[path.field], path.rest)
+}
+
+/** The recorded runtime error of the panel a path points at, or null when it has none. */
+export function panelErrorAt(state: AppState, workspaceId: string, path: StorePath): string | null {
+  if (path.kind !== 'panel') return null
+  const grids = gridsOf(state, path.workspaceId ?? workspaceId)
+  return panelIn(grids, path.panelId).panel.error ?? null
 }
 
 /** One part of a long text, like a view's, with where it sits in the whole and where the next part starts while there is more. */
@@ -155,6 +165,7 @@ function panelSummary(window: number, grid: Grid, p: Panel): PanelSummary {
     loop: loop === undefined ? null : loopName(loop),
     summary: p.summary,
     textLength: p.text === null ? null : p.text.length,
+    ...(p.error ? { error: p.error } : {}),
   }
 }
 

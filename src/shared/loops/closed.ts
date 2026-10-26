@@ -170,7 +170,7 @@ export function reopened(
     loop: id,
     rect: onto(e.rect, grid.size),
   }))
-  const panels = shut.panels.map((p) => ({
+  const panels = shut.panels.map(({ error: _error, ...p }) => ({
     ...p,
     id: panelIds.get(p.id) ?? p.id,
     elementId: ids.get(p.elementId) ?? p.elementId,
