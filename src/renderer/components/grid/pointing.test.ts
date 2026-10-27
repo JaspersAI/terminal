@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { arrowStep, moveTo, pressAt, spanName, stepCell, stepPointing } from './pointing.ts'
+import {
+  arrowStep,
+  moveTo,
+  pressAt,
+  spanName,
+  spanRect,
+  stepCell,
+  stepEditing,
+  stepPointing,
+  stepSelection,
+} from './pointing.ts'
 
 const SIZE = { cols: 8, rows: 8 }
 
@@ -160,4 +170,48 @@ test('stepPointing returns null at the grid edges', () => {
   assert.equal(atTopLeft.draft, '=A1')
   assert.equal(stepPointing(atTopLeft.pointing, 'B1', atTopLeft.draft, atTopLeft.caret, -1, 0, false, SIZE), null)
   assert.equal(stepPointing(atTopLeft.pointing, 'B1', atTopLeft.draft, atTopLeft.caret, 0, -1, true, SIZE), null)
+})
+
+test('arrow keys on a selected cell move selection up, down, left, and right across empty and written cells and stop at grid edges', () => {
+  assert.deepEqual(stepEditing('C3', '', false, 0, -1, false, SIZE), { kind: 'cell', cell: 'C2' })
+  assert.deepEqual(stepEditing('C3', '100', false, 0, 1, false, SIZE), { kind: 'cell', cell: 'C4' })
+  assert.deepEqual(stepEditing('C3', 'hello', false, -1, 0, false, SIZE), { kind: 'cell', cell: 'B3' })
+  assert.deepEqual(stepEditing('C3', '=A1+B1', false, 1, 0, false, SIZE), { kind: 'cell', cell: 'D3' })
+
+  // At the edges of the grid, stepping holds on the edge cell rather than dropping selection.
+  assert.deepEqual(stepEditing('A1', '', false, -1, 0, false, SIZE), { kind: 'cell', cell: 'A1' })
+  assert.deepEqual(stepEditing('A1', '', false, 0, -1, false, SIZE), { kind: 'cell', cell: 'A1' })
+  assert.deepEqual(stepEditing('H8', '42', false, 1, 0, false, SIZE), { kind: 'cell', cell: 'H8' })
+  assert.deepEqual(stepEditing('H8', '42', false, 0, 1, false, SIZE), { kind: 'cell', cell: 'H8' })
+})
+
+test('while typing text in a cell, Left and Right stay with the input caret while Up and Down move to the next cell', () => {
+  assert.equal(stepEditing('C3', 'hello', true, -1, 0, false, SIZE), null)
+  assert.equal(stepEditing('C3', 'hello', true, 1, 0, false, SIZE), null)
+  assert.equal(stepEditing('C3', 'hello', true, -1, 0, true, SIZE), null)
+  assert.deepEqual(stepEditing('C3', 'hello', true, 0, -1, false, SIZE), { kind: 'cell', cell: 'C2' })
+  assert.deepEqual(stepEditing('C3', 'hello', true, 0, 1, false, SIZE), { kind: 'cell', cell: 'C4' })
+
+  // An emptied draft has no text to move the caret through, so Left and Right step cells again.
+  assert.deepEqual(stepEditing('C3', '', true, -1, 0, false, SIZE), { kind: 'cell', cell: 'B3' })
+  assert.deepEqual(stepEditing('C3', '', true, 1, 0, false, SIZE), { kind: 'cell', cell: 'D3' })
+})
+
+test('holding Shift with arrow keys grows and shrinks a cell selection from its anchor, and an unshifted arrow steps to the next cell', () => {
+  const first = stepEditing('C3', '100', false, 1, 0, true, SIZE)
+  assert.deepEqual(first, { kind: 'select', selection: { anchor: 'C3', end: 'D3' } })
+  assert.deepEqual(spanRect(first.selection.anchor, first.selection.end, SIZE), { x: 2, y: 2, w: 2, h: 1 })
+
+  const down = stepSelection(first.selection, 0, 1, true, SIZE)
+  assert.deepEqual(down, { kind: 'select', selection: { anchor: 'C3', end: 'D4' } })
+  assert.deepEqual(spanRect(down.selection.anchor, down.selection.end, SIZE), { x: 2, y: 2, w: 2, h: 2 })
+
+  const left1 = stepSelection(down.selection, -1, 0, true, SIZE)
+  assert.equal(left1.kind, 'select')
+  const left2 = stepSelection(left1.selection, -1, 0, true, SIZE)
+  assert.deepEqual(left2, { kind: 'select', selection: { anchor: 'C3', end: 'B4' } })
+  assert.deepEqual(spanRect(left2.selection.anchor, left2.selection.end, SIZE), { x: 1, y: 2, w: 2, h: 2 })
+
+  const stepOut = stepSelection(left2.selection, 0, 1, false, SIZE)
+  assert.deepEqual(stepOut, { kind: 'cell', cell: 'B5' })
 })

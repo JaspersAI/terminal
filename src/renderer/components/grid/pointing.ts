@@ -129,3 +129,48 @@ export function spanName(anchor: string, to: string, size: GridSize): string {
 export function spanRect(anchor: string, to: string, size: GridSize): Rect | null {
   return parseRange(`${anchor}:${to}`, size)
 }
+
+/** A rectangle of cells selected by hand (by dragging or with Shift and the arrow keys). */
+export interface CellSelection {
+  anchor: string
+  end: string
+}
+
+/** Where an arrow key takes the cursor when it is not pointing at a formula reference. */
+export type CellStep = { kind: 'cell'; cell: string } | { kind: 'select'; selection: CellSelection }
+
+/**
+ * One arrow-key step from the active cell when not pointing at a formula reference. While the user is
+ * actively editing non-empty text in the cell, Left and Right stay with the input's own caret; otherwise
+ * an unshifted arrow moves the active cell (stopping at the grid's edges) and Shift starts a selection
+ * anchored at the cell.
+ */
+export function stepEditing(
+  name: string,
+  draft: string,
+  typing: boolean,
+  dx: number,
+  dy: number,
+  shift: boolean,
+  size: GridSize,
+): CellStep | null {
+  if (typing && draft !== '' && dy === 0) return null
+  return stepSelection({ anchor: name, end: name }, dx, dy, shift, size)
+}
+
+/**
+ * One arrow-key step from a cell selection: with Shift held, grows or shrinks the rectangle from its
+ * anchor by stepping `end`; without Shift, collapses to the next single cell from `end`. Stops at the
+ * grid's edges.
+ */
+export function stepSelection(
+  selection: CellSelection,
+  dx: number,
+  dy: number,
+  shift: boolean,
+  size: GridSize,
+): CellStep {
+  const next = stepCell(selection.end, dx, dy, size) ?? selection.end
+  if (shift) return { kind: 'select', selection: { anchor: selection.anchor, end: next } }
+  return { kind: 'cell', cell: next }
+}
