@@ -49,8 +49,13 @@ if (fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8') === `${UV_VERSION} ${
   try {
     const saved = path.join(work, archive.file)
     fs.writeFileSync(saved, bytes)
-    // tar reads both: the .tar.gz on a Mac, and on Windows its own bsdtar reads the .zip.
-    execFileSync('tar', ['-xf', saved, '-C', work])
+    // tar reads both: the .tar.gz on a Mac, and on Windows its own bsdtar reads the .zip. Named by its
+    // path there, since the tar first on PATH in Git's shell is GNU tar, which reads C: as a host.
+    const tar =
+      process.platform === 'win32'
+        ? path.join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'tar.exe')
+        : 'tar'
+    execFileSync(tar, ['-xf', saved, '-C', work])
     fs.rmSync(out, { recursive: true, force: true })
     fs.mkdirSync(out, { recursive: true })
     for (const name of [`uv${exe}`, `uvx${exe}`]) {
