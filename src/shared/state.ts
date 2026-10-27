@@ -1,5 +1,5 @@
 import type { MemoryInfo } from './agent/memory.ts'
-export type { Memory, MemoryInfo } from './agent/memory.ts'
+export type { Memory, MemoryInfo, MemoryScope } from './agent/memory.ts'
 export type { Loop } from './loops/loops'
 
 // Shared by main, preload, and renderer. Keep this file free of Node and DOM imports.
@@ -255,8 +255,10 @@ export interface AppState {
   notices: Notice[]
   /** How many notifications are unread, for the inbox view. The inbox itself is in the store. */
   unread: number
-  /** What the assistant knows, as names and their one line. The bodies stay on disk. */
+  /** What the assistant knows about the user, as names and their one line. The bodies stay on disk. */
   memories: MemoryInfo[]
+  /** What the builder learned from plugin builds, as names and their one line. The bodies stay on disk. */
+  codingMemories: MemoryInfo[]
   /** Scheduled work, every workspace's, oldest first. Persisted in tasks.json. */
   tasks: Task[]
   background: BackgroundInfo

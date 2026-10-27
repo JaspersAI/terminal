@@ -13,6 +13,12 @@ export const BODY_MAX = 4000
 /** Memories in the prompt's index. Past this the newest are listed and the rest are counted. */
 export const INDEX_MAX = 60
 
+export type MemoryScope = 'general' | 'coding'
+
+export function isMemoryScope(value: unknown): value is MemoryScope {
+  return value === 'general' || value === 'coding'
+}
+
 /** A memory as the tree and the prompt know it: what it is called and what it is about, never its body. */
 export interface MemoryInfo {
   /** The file name without .md, which is how a tool names it. */
@@ -78,5 +84,21 @@ export function memoryIndex(memories: MemoryInfo[]): string {
     'What you know about this user, from earlier. Read one with recall { name } when its line looks like it bears on the request; write one with remember { name, about, text } when the user tells you something worth keeping, like a preference or a fact about how they work. Do not read them all.',
     ...shown.map((one) => `- ${one.name}: ${one.about}`),
     ...(rest > 0 ? [`… and ${rest} more; get memories lists them.`] : []),
+  ].join('\n')
+}
+
+/**
+ * The coding memories index the builder's prompt carries: lessons from earlier plugin builds,
+ * newest first, and nothing at all when there are none.
+ */
+export function codingMemoryIndex(memories: MemoryInfo[]): string {
+  if (memories.length === 0) return ''
+  const newest = [...memories].sort((a, b) => b.at - a.at)
+  const shown = newest.slice(0, INDEX_MAX)
+  const rest = newest.length - shown.length
+  return [
+    'What you learned from earlier plugin builds. Read one with recall { name } when its line looks like it bears on this build; write one with remember { name, about, text } when you hit an issue, have to correct yourself, or are corrected, so the next build knows it from the start. Do not read them all.',
+    ...shown.map((one) => `- ${one.name}: ${one.about}`),
+    ...(rest > 0 ? [`… and ${rest} more.`] : []),
   ].join('\n')
 }

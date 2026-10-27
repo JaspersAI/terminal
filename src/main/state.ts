@@ -80,6 +80,7 @@ export interface MainState {
   notices: Notice[]
   unread: number
   memories: Memory[]
+  codingMemories: Memory[]
   /** Scheduled work. Persisted in tasks.json beside the counter its ids come from. */
   tasks: Task[]
   /** The last task id number handed out. Never reused. */
@@ -191,6 +192,7 @@ export function toPublic(state: MainState): AppState {
     unread: state.unread,
     // The index, never the bodies: the whole tree goes to every window on every change.
     memories: state.memories.map(({ name, about, at }) => ({ name, about, at })),
+    codingMemories: state.codingMemories.map(({ name, about, at }) => ({ name, about, at })),
     tasks: state.tasks,
     background: state.background,
     updates: state.updates,

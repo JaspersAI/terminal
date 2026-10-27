@@ -4,22 +4,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { jaspersHome } from '../home'
 import { getState, update } from '../state'
-import { checkMemory, isMemoryName, memoryFile, parseMemory, type Memory } from '../../shared/agent/memory'
+import { isMemoryScope, type Memory, type MemoryScope } from '../../shared/agent/memory'
 import { clean, type Standing } from '../../shared/agent/standing'
+import { memoryDir, readAllMemories, readMemoryFile, removeMemoryFile, writeMemoryFile } from './memory-files'
 
-// What the assistant knows, off disk. Two folders and one file, watched, so editing a memory in a
-// text editor or deleting one is all it takes; the app is not the only way in, it is only the
-// easiest. Nothing is cached beyond what the tree holds, and the tree holds the index, not the
-// bodies: a body is read when a tool asks for it.
+// What the assistant and its builder know, off disk. General user memories live in memory/<name>.md
+// and coding memories in memory/coding/<name>.md, watched so editing a memory in a text editor or
+// deleting one is all it takes; the app is not the only way in, it is only the easiest. Nothing is
+// cached beyond what the tree holds, and the tree holds the indexes, not the bodies: a body is read
+// when a tool asks for it.
 
-const MEMORY_DIR = 'memory'
 const STANDING_FILE = 'AGENT.md'
-/** Files read from the folder at most, so a folder someone filled cannot stall a scan. */
-const FILES_MAX = 500
-
-function memoryRoot(): string {
-  return path.join(jaspersHome(), MEMORY_DIR)
-}
 
 function standingPath(workspaceId?: string): string {
   return workspaceId
@@ -27,64 +22,38 @@ function standingPath(workspaceId?: string): string {
     : path.join(jaspersHome(), STANDING_FILE)
 }
 
-/** One memory by name, read now rather than from anything kept. */
-export async function readMemory(name: string): Promise<Memory | null> {
-  if (!isMemoryName(name)) return null
-  const file = path.join(memoryRoot(), `${name}.md`)
-  try {
-    const [text, stat] = await Promise.all([fsp.readFile(file, 'utf8'), fsp.stat(file)])
-    return parseMemory(name, text, stat.mtimeMs)
-  } catch {
-    return null
-  }
+/** One memory by name and scope, read now rather than from anything kept. */
+export async function readMemory(name: string, scope: MemoryScope = 'general'): Promise<Memory | null> {
+  return readMemoryFile(name, scope)
 }
 
 /** Writes one, and answers what is wrong instead when it is not worth keeping. */
-export async function writeMemory(name: string, about: string, body: string): Promise<string | null> {
-  const refusal = checkMemory(name, about, body)
+export async function writeMemory(
+  name: string,
+  about: string,
+  body: string,
+  scope: MemoryScope = 'general',
+): Promise<string | null> {
+  const refusal = await writeMemoryFile(name, about, body, scope)
   if (refusal) return refusal
-  await fsp.mkdir(memoryRoot(), { recursive: true })
-  await fsp.writeFile(path.join(memoryRoot(), `${name}.md`), memoryFile(about, body), { mode: 0o600 })
   await scan()
-  console.log(`[memory] wrote ${name}`)
+  console.log(`[memory] wrote ${scope === 'coding' ? `coding/${name}` : name}`)
   return null
 }
 
 /** Forgets one. Answers whether there was one to forget. */
-async function removeMemory(name: string): Promise<boolean> {
-  if (!isMemoryName(name)) return false
-  try {
-    await fsp.rm(path.join(memoryRoot(), `${name}.md`))
-  } catch {
-    return false
-  }
+export async function removeMemory(name: string, scope: MemoryScope = 'general'): Promise<boolean> {
+  const removed = await removeMemoryFile(name, scope)
+  if (!removed) return false
   await scan()
-  console.log(`[memory] forgot ${name}`)
+  console.log(`[memory] forgot ${scope === 'coding' ? `coding/${name}` : name}`)
   return true
 }
 
-/** Everything in the folder, as the index the prompt carries. Bodies are left on disk. */
+/** Everything in the folders, as the indexes the prompts carry. Bodies are left on disk. */
 export async function scan(): Promise<void> {
-  const memories = await readAll()
-  update((state) => ({ ...state, memories }))
-}
-
-async function readAll(): Promise<Memory[]> {
-  let names: string[]
-  try {
-    names = await fsp.readdir(memoryRoot())
-  } catch {
-    return []
-  }
-  const found: Memory[] = []
-  for (const file of names.slice(0, FILES_MAX)) {
-    if (!file.endsWith('.md') || file.startsWith('.')) continue
-    const name = file.slice(0, -3)
-    if (!isMemoryName(name)) continue
-    const one = await readMemory(name)
-    if (one) found.push(one)
-  }
-  return found
+  const [memories, codingMemories] = await Promise.all([readAllMemories('general'), readAllMemories('coding')])
+  update((state) => ({ ...state, memories, codingMemories }))
 }
 
 /** A file someone could have filled by hand. The editor is a person typing; nothing here is a document. */
@@ -103,19 +72,23 @@ function readText(file: string): string {
   }
 }
 
-/** Reads the folder now, and again whenever it changes. */
+/** Reads the folders now, and again whenever either changes. */
 export function startMemory(): void {
   void scan()
-  try {
-    fs.mkdirSync(memoryRoot(), { recursive: true })
-    let timer: NodeJS.Timeout | undefined
-    fs.watch(memoryRoot(), () => {
-      clearTimeout(timer)
-      // An editor writes a file in several goes; one scan once it has settled.
-      timer = setTimeout(() => void scan(), 200)
-    })
-  } catch (error) {
-    console.warn(`[memory] not watching ${memoryRoot()}: ${error instanceof Error ? error.message : String(error)}`)
+  let timer: NodeJS.Timeout | undefined
+  const scheduleScan = (): void => {
+    clearTimeout(timer)
+    // An editor writes a file in several goes; one scan once it has settled.
+    timer = setTimeout(() => void scan(), 200)
+  }
+  for (const scope of ['general', 'coding'] as const) {
+    const dir = memoryDir(scope)
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+      fs.watch(dir, scheduleScan)
+    } catch (error) {
+      console.warn(`[memory] not watching ${dir}: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 }
 
@@ -146,12 +119,14 @@ async function writeStanding(workspaceId: string | null, text: string): Promise<
  * window on every change.
  */
 export function registerMemoryIpc(): void {
-  ipcMain.handle('memory:read', (_event, name: unknown) => readMemory(asName(name)))
-  ipcMain.handle('memory:write', async (_event, name: unknown, about: unknown, body: unknown) => {
-    const refusal = await writeMemory(asName(name), asText(about), asText(body))
+  ipcMain.handle('memory:read', (_event, name: unknown, scope?: unknown) => readMemory(asName(name), asScope(scope)))
+  ipcMain.handle('memory:write', async (_event, name: unknown, about: unknown, body: unknown, scope?: unknown) => {
+    const refusal = await writeMemory(asName(name), asText(about), asText(body), asScope(scope))
     if (refusal) throw new Error(refusal)
   })
-  ipcMain.handle('memory:remove', (_event, name: unknown) => removeMemory(asName(name)))
+  ipcMain.handle('memory:remove', (_event, name: unknown, scope?: unknown) =>
+    removeMemory(asName(name), asScope(scope)),
+  )
   ipcMain.handle('memory:standing', (_event, workspaceId: unknown) => readStanding(asWorkspace(workspaceId)))
   ipcMain.handle('memory:save-standing', (_event, workspaceId: unknown, text: unknown) =>
     writeStanding(asWorkspace(workspaceId), asText(text)),
@@ -160,6 +135,12 @@ export function registerMemoryIpc(): void {
 
 function asName(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function asScope(value: unknown): MemoryScope {
+  if (value === undefined || value === null) return 'general'
+  if (isMemoryScope(value)) return value
+  throw new Error('Unknown memory scope.')
 }
 
 function asText(value: unknown): string {

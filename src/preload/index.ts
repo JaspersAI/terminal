@@ -7,7 +7,7 @@ import type { RunResult } from '../shared/data/datasets'
 import type { DragMove, DragOver } from '../shared/grid/drag'
 import type { HubItem, HubMe, PublishAnswer } from '../shared/hub/hub'
 import type { InstallRequest, PrepareResult } from '../shared/plugins/install'
-import type { Memory } from '../shared/agent/memory'
+import type { Memory, MemoryScope } from '../shared/agent/memory'
 import type { SkillInstallRequest, SkillPrepareResult } from '../shared/skills/skill-install'
 import type { SkillFile } from '../shared/skills/skills'
 import type { Action, AppState } from '../shared/state'
@@ -133,13 +133,15 @@ const api = {
     publish: (request: { kind: 'plugin' | 'skill'; id: string }): Promise<PublishAnswer> =>
       ipcRenderer.invoke('hub:publish', request),
   },
-  /** What the assistant knows: one memory's body, read when something wants it, and the AGENT.md files. */
+  /** What the assistant and its builder know: one memory's body, read when something wants it, and the AGENT.md files. */
   memory: {
-    read: (name: string): Promise<Memory | null> => ipcRenderer.invoke('memory:read', name),
-    write: (name: string, about: string, body: string): Promise<void> =>
-      ipcRenderer.invoke('memory:write', name, about, body),
+    read: (name: string, scope?: MemoryScope): Promise<Memory | null> =>
+      ipcRenderer.invoke('memory:read', name, scope ?? 'general'),
+    write: (name: string, about: string, body: string, scope?: MemoryScope): Promise<void> =>
+      ipcRenderer.invoke('memory:write', name, about, body, scope ?? 'general'),
     /** Answers whether there was one to forget. */
-    remove: (name: string): Promise<boolean> => ipcRenderer.invoke('memory:remove', name),
+    remove: (name: string, scope?: MemoryScope): Promise<boolean> =>
+      ipcRenderer.invoke('memory:remove', name, scope ?? 'general'),
     /** AGENT.md as it is on disk: the app's with null, a workspace's with its id. */
     standing: (workspaceId: string | null): Promise<string> => ipcRenderer.invoke('memory:standing', workspaceId),
     saveStanding: (workspaceId: string | null, text: string): Promise<void> =>
