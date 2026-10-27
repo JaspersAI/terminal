@@ -1,4 +1,4 @@
-import { WINDOWS_MAX } from '../../../shared/grid/windows'
+import { WINDOWS_MAX } from '../../../shared/grid/windows.ts'
 
 // Small coercions and parameter schemas shared by tools. Domain validation belongs to the domain.
 

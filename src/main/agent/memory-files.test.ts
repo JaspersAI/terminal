@@ -3,7 +3,15 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { memoryDir, readAllMemories, readMemoryFile, removeMemoryFile, writeMemoryFile } from './memory-files.ts'
+import {
+  createMemoryTools,
+  memoryDir,
+  readAllMemories,
+  readMemoryFile,
+  removeMemoryFile,
+  writeMemoryFile,
+} from './memory-files.ts'
+import type { ToolContext } from './tools/types.ts'
 
 let home: string
 let prevHome: string | undefined
@@ -75,4 +83,37 @@ test('invalid names, directories, and symlinks are refused across both scopes', 
   assert.equal(await removeMemoryFile('linked', 'coding'), false)
   assert.equal(fs.existsSync(outside), true)
   await assert.rejects(() => writeMemoryFile('linked', 'overwrite', 'new body', 'coding'), /regular file/)
+})
+
+test('general and coding memory tools read and write only their own scope', async () => {
+  const ctx = {} as ToolContext
+  const generalTools = createMemoryTools('general')
+  const codingTools = createMemoryTools('coding')
+
+  const generalRemember = generalTools.find((t) => t.name === 'remember')!
+  const generalRecall = generalTools.find((t) => t.name === 'recall')!
+  const codingRemember = codingTools.find((t) => t.name === 'remember')!
+  const codingRecall = codingTools.find((t) => t.name === 'recall')!
+
+  assert.match(generalRemember.description, /preference/)
+  assert.match(codingRemember.description, /plugin|coding|correct/i)
+
+  assert.equal(
+    await codingRemember.run(
+      {
+        name: 'fred-auth',
+        about: 'FRED API key goes in api_key query param',
+        text: 'Always pass api_key=${secret:apikey}&file_type=json in FRED URLs.',
+      },
+      ctx,
+    ),
+    'Remembered as fred-auth.',
+  )
+
+  // Coding recall finds it; general recall does not.
+  assert.equal(
+    await codingRecall.run({ name: 'fred-auth' }, ctx),
+    'Always pass api_key=${secret:apikey}&file_type=json in FRED URLs.',
+  )
+  await assert.rejects(() => generalRecall.run({ name: 'fred-auth' }, ctx), /Nothing is remembered as "fred-auth"/)
 })

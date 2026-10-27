@@ -164,3 +164,26 @@ test('a round says what the folder holds and what the tree says of the plugin', 
     'Folder:\nplugin.tsx 2.1 KB\npackage.json 0.2 KB\n\nPlugin: fred: ready (v1), sources fred/series',
   )
 })
+
+test('the builder is told to recall coding memories and save lessons with remember when it hits issues, self-corrects, or is corrected', () => {
+  const [fixed, withoutMemories] = builderSystem(reference, run)
+  assert.match(fixed!, /\brecall\b/)
+  assert.match(fixed!, /\bremember\b/)
+  assert.match(fixed!, /correct yourself|corrected/i)
+  assert.doesNotMatch(withoutMemories!, /earlier plugin builds/)
+
+  const [fixedWith, withMemories] = builderSystem(reference, {
+    ...run,
+    memories: [
+      { name: 'older-quirk', about: 'An older endpoint note', at: 1 },
+      { name: 'fred-dates', about: 'FRED series observations require YYYY-MM-DD dates', at: 5 },
+    ],
+  })
+  // Coding memories ride in the run's dynamic block so the cached static block never changes.
+  assert.equal(fixedWith, fixed)
+  assert.match(withMemories!, /What you learned from earlier plugin builds/)
+  assert.match(
+    withMemories!,
+    /- fred-dates: FRED series observations require YYYY-MM-DD dates\n- older-quirk: An older endpoint note/,
+  )
+})
