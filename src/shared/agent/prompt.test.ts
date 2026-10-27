@@ -146,6 +146,7 @@ function tree(
     notices: [],
     unread: 0,
     memories: [],
+    codingMemories: [],
     tasks: [],
     background: { openAtLogin: false, canOpenAtLogin: false },
     updates: { version: '0.1.0', supported: false, status: 'idle', available: null, error: null },
@@ -1026,4 +1027,16 @@ test('a task preface lists allowed commands for run_shell only while Pro mode is
   const proModeOff = taskPreface('t4', ['tail -40 out/run.log'], false)
   assert.equal(proModeOff, withoutCommands)
   assert.doesNotMatch(proModeOff, /<command>|run_shell/)
+})
+
+test('general prompts include general user memories and never coding memories', () => {
+  const state: AppState = {
+    ...tree(EMPTY_GRID),
+    memories: [{ name: 'figures-in-millions', about: 'Show figures in millions', at: 10 }],
+    codingMemories: [{ name: 'zod-default', about: 'Zod v4 default ordering in defineSource', at: 20 }],
+  }
+  for (const text of [describeInstalled(state), describeInstalledToRoute(state)]) {
+    assert.match(text, /figures-in-millions: Show figures in millions/)
+    assert.doesNotMatch(text, /zod-default/)
+  }
 })

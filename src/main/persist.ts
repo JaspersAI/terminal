@@ -210,6 +210,7 @@ export function load(): MainState {
     unread: 0,
     // The folder is read at startup; nothing about it comes off state.json.
     memories: [],
+    codingMemories: [],
     tasks,
     taskSeq: typeof tasksFile?.seq === 'number' ? tasksFile.seq : 0,
     // The OS says; background.ts asks it once the app is ready.

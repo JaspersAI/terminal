@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ABOUT_MAX, BODY_MAX, checkMemory, memoryFile, memoryIndex, parseMemory } from './memory.ts'
+import {
+  ABOUT_MAX,
+  BODY_MAX,
+  checkMemory,
+  codingMemoryIndex,
+  isMemoryScope,
+  memoryFile,
+  memoryIndex,
+  parseMemory,
+} from './memory.ts'
 
 const mem = (name: string, about: string, at: number) => ({ name, about, body: 'b', at })
 
@@ -44,4 +53,31 @@ test('a great many memories are counted rather than all listed', () => {
   const index = memoryIndex(many)
   assert.match(index, /… and 40 more/)
   assert.ok(index.split('\n').length < 70)
+})
+
+test('the coding memory index lists plugin build lessons newest first without bodies and without general get paths', () => {
+  assert.equal(codingMemoryIndex([]), '')
+  const index = codingMemoryIndex([
+    mem('old-api', 'Older endpoint note', 1),
+    mem('zod-default', 'Zod v4 optional default ordering in source schemas', 9),
+  ])
+  const lines = index.split('\n')
+  assert.match(lines[0]!, /earlier plugin builds/)
+  assert.match(lines[0]!, /recall \{ name \}/)
+  assert.match(lines[0]!, /remember \{ name, about, text \}/)
+  assert.equal(lines[1], '- zod-default: Zod v4 optional default ordering in source schemas')
+  assert.equal(lines[2], '- old-api: Older endpoint note')
+  assert.ok(!index.includes('\nb'))
+
+  const many = Array.from({ length: 100 }, (_, i) => mem(`c${i}`, `coding ${i}`, i))
+  const capped = codingMemoryIndex(many)
+  assert.match(capped, /… and 40 more\./)
+  assert.doesNotMatch(capped, /get memories/)
+})
+
+test('a memory scope is either general or coding', () => {
+  assert.equal(isMemoryScope('general'), true)
+  assert.equal(isMemoryScope('coding'), true)
+  assert.equal(isMemoryScope('other'), false)
+  assert.equal(isMemoryScope(null), false)
 })
