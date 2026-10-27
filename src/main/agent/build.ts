@@ -12,6 +12,7 @@ import { listFilesSync, openFolder } from './build/folder'
 import { builderTools, builtPlugins, ownerOf, type BuildSession } from './build/tools'
 import { conversationTools } from './tools/conversation'
 import { sourceTools } from './tools/data'
+import { codingMemoryTools } from './tools/memory'
 import type { ToolContext } from './tools/types'
 import { emit, isStopped, type Live } from './utils/runs'
 import { configured } from './utils/settings'
@@ -66,6 +67,7 @@ export async function runBuild(request: string, id: string, parent: ToolContext)
   const keep = (): void => keepOpen(chat, config, thread, fork, era)
   // Once, so the run's block of the prompt reads the same every round.
   const built = builtPlugins(id)
+  const memories = getState().codingMemories
   const begun = !folder.live && listFilesSync(folder).length > 0
   emit({ kind: 'status', runId: parent.runId, line: `Building ${id}` })
   // Whether the builder used every round it gets: its end was then not its own choice.
@@ -90,12 +92,14 @@ export async function runBuild(request: string, id: string, parent: ToolContext)
             live: folder.live,
             begun,
             built,
+            memories,
           }),
         round: () =>
           builderRound(describeFolder(listFilesSync(session.folder)), pluginLine(getState().plugins[id], id)),
       },
       tools: () => [
         ...builderTools(session, context),
+        ...codingMemoryTools,
         ...sourceTools(),
         ...conversationTools.filter((tool) => tool.name === 'ask_user'),
       ],
