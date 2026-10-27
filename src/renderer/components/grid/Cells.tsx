@@ -2,7 +2,20 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { cellName, onGrid, parseCellName, rangeName, type GridSize, type Rect } from '../../../shared/grid/grid'
 import { displayValue, evaluateSheet, isError } from '../../../shared/grid/formula'
 import { expectsReference, referencedCells } from '../../../shared/grid/reference'
-import { arrowStep, moveTo, pressAt, spanRect, stepCell, stepPointing, type Pointed, type Pointing } from './pointing'
+import {
+  arrowStep,
+  moveTo,
+  pressAt,
+  spanRect,
+  stepCell,
+  stepEditing,
+  stepPointing,
+  stepSelection,
+  type CellSelection,
+  type CellStep,
+  type Pointed,
+  type Pointing,
+} from './pointing'
 import { send } from './send'
 
 // The grid's own cells as a light spreadsheet: click one and type in it. What a cell holds is grid
@@ -36,6 +49,8 @@ interface Props {
 interface Editing {
   name: string
   draft: string
+  /** True once the user types in this cell or clicks inside its input, so Left and Right move the text caret. */
+  typing?: boolean
   /**
    * Where the caret belongs once this draft is on screen. Set only when something other than typing
    * moved it — a reference going in — so an ordinary keystroke leaves the caret where the browser put it.
@@ -54,7 +69,8 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
   /** The cell the pointer is over, so an empty cell still shows it can be typed in. */
   const [hovered, setHovered] = useState<string | null>(null)
   /** The rectangle selected by hand, or null. Local to this window: main owns cells, not the cursor. */
-  const [selection, setSelection] = useState<Rect | null>(null)
+  const [selection, setSelection] = useState<CellSelection | null>(null)
+  const selectedRect: Rect | null = selection ? spanRect(selection.anchor, selection.end, size) : null
   const values = useMemo(() => evaluateSheet(cells, size), [cells, size])
   const input = useRef<HTMLInputElement>(null)
   /** The reference being pointed at (by pointer or arrow keys), kept in a ref so the next step reads it directly. */
@@ -70,7 +86,19 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
     if (editing && (cells[editing.name] ?? '') !== editing.draft) {
       send({ type: 'cells.write', workspaceId, window: windowNumber, cells: { [editing.name]: editing.draft } })
     }
-    setEditing(next === null ? null : { name: next, draft: cells[next] ?? '' })
+    setEditing(
+      next === null ? null : { name: next, draft: editing?.name === next ? editing.draft : (cells[next] ?? '') },
+    )
+  }
+
+  const applyStep = (step: CellStep): void => {
+    if (step.kind === 'select') {
+      commit(null)
+      setSelection(step.selection)
+      return
+    }
+    setSelection(null)
+    commit(step.cell)
   }
 
   /**
@@ -98,7 +126,7 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
    */
   const point = (step: Pointed): void => {
     pointing.current = step.pointing
-    setEditing((held) => (held ? { ...held, draft: step.draft, caret: step.caret } : held))
+    setEditing((held) => (held ? { ...held, draft: step.draft, caret: step.caret, typing: true } : held))
   }
 
   // A reference that went in moved the caret with it: the input is told where once the draft is drawn.
@@ -108,23 +136,37 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
     input.current?.setSelectionRange(editing.caret, editing.caret)
   }, [editing?.caret, editing?.draft])
 
-  // What a selection is for: Backspace or Delete clears the cells in it, and Escape lets it go. Heard
-  // ahead of the composer's keys, since a selection on screen is what those two mean at that moment,
-  // and only while there is one: with nothing selected this layer hears no keys at all.
+  // What a selection is for: arrow keys move or resize it, Backspace or Delete clears the cells in it,
+  // and Escape lets it go. Heard ahead of the composer's keys, since a selection on screen is what those
+  // mean at that moment, and only while there is one: with nothing selected this layer hears no keys at all.
   useEffect(() => {
     if (!selection) return
     const down = (event: KeyboardEvent): void => {
-      // A field has the keyboard to itself: the composer, the answer box, a cell being typed in.
-      if (event.target instanceof Element && event.target.closest('input, textarea, [contenteditable="true"]')) return
+      if (event.isComposing || event.keyCode === 229) return
+      // A field, menu, or modal dialog has the keyboard to itself.
+      if (
+        event.target instanceof Element &&
+        event.target.closest('input, textarea, select, [contenteditable="true"], [aria-modal="true"], [role="menu"]')
+      )
+        return
+      if (document.querySelector('[aria-modal="true"], [role="menu"]')) return
       if (event.metaKey || event.ctrlKey || event.altKey) return
+      const move = arrowStep(event.key)
+      if (move) {
+        event.preventDefault()
+        event.stopPropagation()
+        applyStep(stepSelection(selection, move.dx, move.dy, event.shiftKey, size))
+        return
+      }
       if (event.key !== 'Escape' && event.key !== 'Backspace' && event.key !== 'Delete') return
       event.preventDefault()
       event.stopPropagation()
+      const rect = spanRect(selection.anchor, selection.end, size)
       setSelection(null)
-      if (event.key === 'Escape') return
+      if (event.key === 'Escape' || !rect) return
       const blanks: Record<string, string> = {}
-      for (let y = selection.y; y < selection.y + selection.h; y += 1) {
-        for (let x = selection.x; x < selection.x + selection.w; x += 1) {
+      for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+        for (let x = rect.x; x < rect.x + rect.w; x += 1) {
           // Only the cells that hold something: writing an empty cell empty is a change to nothing.
           const name = cellName(x, y)
           if (name in cells) blanks[name] = ''
@@ -137,7 +179,7 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
     }
     window.addEventListener('keydown', down, true)
     return () => window.removeEventListener('keydown', down, true)
-  }, [selection, cells, workspaceId, windowNumber])
+  }, [selection, size, cells, workspaceId, windowNumber])
 
   /** The cells to draw: those that hold something, the one being typed in, and the one under the pointer. */
   const shown = Object.keys(cells)
@@ -207,7 +249,7 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
             drag.moved = true
             setEditing(null)
           }
-          setSelection(spanRect(drag.anchor, to, size))
+          setSelection({ anchor: drag.anchor, end: to })
           return
         }
         const name = cellUnder(event)
@@ -242,14 +284,14 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
           style={{ gridColumn: `${rect.x + 1} / span ${rect.w}`, gridRow: `${rect.y + 1} / span ${rect.h}` }}
         />
       ))}
-      {selection && (
+      {selectedRect && (
         <div
           aria-hidden
           id="cell-selection"
           className="pointer-events-none border border-primary bg-primary/10"
           style={{
-            gridColumn: `${selection.x + 1} / span ${selection.w}`,
-            gridRow: `${selection.y + 1} / span ${selection.h}`,
+            gridColumn: `${selectedRect.x + 1} / span ${selectedRect.w}`,
+            gridRow: `${selectedRect.y + 1} / span ${selectedRect.h}`,
           }}
         />
       )}
@@ -274,13 +316,26 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
                 onChange={(event) => {
                   pointing.current = null
                   dragging.current = false
-                  setEditing({ name, draft: event.target.value })
+                  setEditing({ name, draft: event.target.value, typing: true })
                 }}
-                onBlur={() => commit(null)}
+                onBlur={() => {
+                  pointing.current = null
+                  dragging.current = false
+                  if ((cells[name] ?? '') !== editing.draft) {
+                    send({
+                      type: 'cells.write',
+                      workspaceId,
+                      window: windowNumber,
+                      cells: { [name]: editing.draft },
+                    })
+                  }
+                  setEditing((held) => (held?.name === name ? null : held))
+                }}
                 // The layer's own press would commit this cell and start it again, losing the cursor.
                 onPointerDown={(event) => {
                   pointing.current = null
                   dragging.current = false
+                  setEditing((held) => (held ? { ...held, typing: true } : held))
                   event.stopPropagation()
                 }}
                 onKeyDown={(event) => {
@@ -290,13 +345,13 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
                   if (event.key === 'Enter') {
                     event.preventDefault()
                     event.stopPropagation()
-                    commit(stepCell(name, 0, event.shiftKey ? -1 : 1, size))
+                    commit(stepCell(name, 0, event.shiftKey ? -1 : 1, size) ?? name)
                     return
                   }
                   if (event.key === 'Tab') {
                     event.preventDefault()
                     event.stopPropagation()
-                    commit(stepCell(name, event.shiftKey ? -1 : 1, 0, size))
+                    commit(stepCell(name, event.shiftKey ? -1 : 1, 0, size) ?? name)
                     return
                   }
                   if (event.key === 'Escape') {
@@ -325,6 +380,21 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
                         size,
                       )
                       if (next) point(next)
+                      return
+                    }
+                    const next = stepEditing(
+                      name,
+                      editing.draft,
+                      editing.typing === true,
+                      move.dx,
+                      move.dy,
+                      event.shiftKey,
+                      size,
+                    )
+                    if (next) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      applyStep(next)
                       return
                     }
                   }
