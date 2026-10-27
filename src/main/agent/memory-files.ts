@@ -12,6 +12,10 @@ import { jaspersHome } from '../home.ts'
 import { asPathString } from './tools/input.ts'
 import type { Tool } from './tools/types.ts'
 
+// Disk storage and tool definitions for general user memories (~/Jaspers/memory/<name>.md) and
+// coding agent memories (~/Jaspers/memory/coding/<name>.md). Kept free of Electron so tests can run
+// against a temporary JASPERS_HOME.
+
 export interface MemoryOps {
   read(name: string, scope?: MemoryScope): Promise<Memory | null>
   write(name: string, about: string, body: string, scope?: MemoryScope): Promise<string | null>
@@ -72,8 +76,6 @@ export function createMemoryTools(scope: MemoryScope = 'general', ops: MemoryOps
     },
   ]
 }
-// (~/Jaspers/memory/coding/<name>.md). Kept free of Electron so tests can run against a temporary
-// JASPERS_HOME.
 
 const MEMORY_DIR = 'memory'
 const CODING_MEMORY_DIR = 'coding'
