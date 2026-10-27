@@ -270,6 +270,70 @@ test('a plugin says whether it built, and a broken one says where it stopped', (
   assert.equal(lines[3]!.endsWith('…(cut)'), true)
 })
 
+test('a plugin with declared secrets says when a required key is missing and when its keys are set', () => {
+  const fredObs: SourceInfo = {
+    id: 'fred/observations',
+    plugin: 'fred',
+    description: 'Fetch FRED series observations.',
+    parameterNames: 'series, [limit]',
+    connection: null,
+    tool: null,
+    internal: false,
+  }
+  const unset = plugin('fred', {
+    sources: ['fred/observations'],
+    capabilities: ['web'],
+    secrets: [{ key: 'apikey', label: 'FRED API key', set: false }],
+  })
+  const set = plugin('fred', {
+    version: 2,
+    sources: ['fred/observations'],
+    capabilities: ['web'],
+    secrets: [
+      { key: 'apikey', label: 'FRED API key', set: true },
+      { key: 'live', label: 'Live key', set: false, optional: true },
+    ],
+  })
+  const multi = plugin('alpaca', {
+    secrets: [
+      { key: 'key', label: 'API key', set: true },
+      { key: 'secret', label: 'API secret', set: true },
+    ],
+  })
+
+  const before = describeContext(
+    tree(EMPTY_GRID, {}, { 'fred/observations': fredObs }, {}, { fred: unset }),
+    WS,
+    instructionsFor,
+  )
+  assert.match(
+    before,
+    /- fred\/observations: Fetch FRED series observations\. — takes series, \[limit\] \[plugin fred: needs-secret\]/,
+  )
+  assert.match(
+    before,
+    /- fred: ready \(v1\), capabilities web \(needs a key: ask the user with set_secret \{ plugin: "fred", key: "apikey" \}\)/,
+  )
+  assert.match(
+    describeInstalledToRoute(tree(EMPTY_GRID, {}, { 'fred/observations': fredObs }, {}, { fred: unset })),
+    /- fred: ready \(v1\), capabilities web \(needs a key: ask the user with set_secret \{ plugin: "fred", key: "apikey" \}\)/,
+  )
+
+  const after = describeContext(
+    tree(EMPTY_GRID, {}, { 'fred/observations': fredObs }, {}, { fred: set, alpaca: multi }),
+    WS,
+    instructionsFor,
+  )
+  assert.match(after, /- fred\/observations: Fetch FRED series observations\. — takes series, \[limit\]\n/)
+  assert.doesNotMatch(after, /needs-secret|needs a key/)
+  assert.match(after, /- fred: ready \(v2\), capabilities web, key apikey set/)
+  assert.match(after, /- alpaca: ready \(v1\), keys key, secret set/)
+  assert.match(
+    describeInstalledToRoute(tree(EMPTY_GRID, {}, { 'fred/observations': fredObs }, {}, { fred: set })),
+    /- fred: ready \(v2\), capabilities web, key apikey set/,
+  )
+})
+
 test('the skills a model may load are listed after the plugins, and none leaves the block out', () => {
   const skills = {
     dcf: skill('dcf', { description: 'Builds a DCF.' }),

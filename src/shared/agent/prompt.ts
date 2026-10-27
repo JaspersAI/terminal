@@ -14,6 +14,7 @@ import { everyText, formatLocal, taskStatus, type Task } from '../tasks/tasks.ts
 import { MAIN_WINDOW } from '../grid/windows.ts'
 import { cellName, formatRect, gridMap, layoutOf, type GridSize, type Panel } from '../grid/grid.ts'
 import { frameOf, loopName, notPlaced, type Loop, type LoopStatus } from '../loops/loops.ts'
+import { unsetRequiredSecret } from '../plugins/plugins.ts'
 import type { Exchange } from './transcript.ts'
 import { stateShape } from './view-state.ts'
 import { parameterNames } from '../data/tool-parameters.ts'
@@ -46,7 +47,7 @@ const SENT = `You are sent only the last ${RECENT} exchanges of the conversation
 // What every run goes by, in three parts, since the middle one is said differently to an agent that
 // puts nothing on the grid.
 const SEEN =
-  "A view's output is what it is currently showing; read it with get when the user refers to what is on screen. When a tool result or a view's text gives citations, an id beside a quote, put [^id] right after each claim in your reply that rests on one, and the conversation lists those sources under it; cite only ids you were given, never an id or a quote of your own. The marks show in the conversation only: in a document, give the quote and link its url instead. When a connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done; to bring a view's data up to date now, call refresh_element. When the user asks to run a command or script on this computer, call run_shell when it is in your tools; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
+  "A view's output is what it is currently showing; read it with get when the user refers to what is on screen. When a tool result or a view's text gives citations, an id beside a quote, put [^id] right after each claim in your reply that rests on one, and the conversation lists those sources under it; cite only ids you were given, never an id or a quote of your own. The marks show in the conversation only: in a document, give the quote and link its url instead. When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done; to bring a view's data up to date now, call refresh_element. When the user asks to run a command or script on this computer, call run_shell when it is in your tools; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
 const APP_SHOWN =
   "A connection's tool marked (has a view) puts its server's own view of the answer on the grid when you call it with run_source on core/mcp, and the answer names the element: do not place a table or a document for the same result."
 const SKILL_SAYS = 'A skill you load says how to go about a request; the plugins still do the work it describes.'
@@ -60,7 +61,7 @@ const ROUTER_REPLY =
   'Your text reply appears in Central (or in the chat box above the composer, which fades after a few seconds when undocked), so keep it clear and direct, at whatever length the answer needs without padding. When you only start or send work, that is the whole of your part, and the user is told what the tool answered.'
 // The app is the orchestrator's: keys, tasks, and plugins it handles itself, in words and calls of its own.
 const APP_RUN =
-  "When a connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. When the user asks to run a command or script on this computer, call run_shell yourself when it is in your tools — it asks the user to approve before running — rather than starting a loop or scheduling a task for it; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
+  "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. When the user asks to run a command or script on this computer, call run_shell yourself when it is in your tools — it asks the user to approve before running — rather than starting a loop or scheduling a task for it; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
 
 /** What the orchestrator goes by: it routes, where its reply shows, how much of the conversation it is sent, and the app it runs. */
 export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, APP_RUN].join(' ')
@@ -123,7 +124,7 @@ export function describeInstalled(state: AppState): string {
 /** What is installed beside the views: the sources, the connections, the plugins, the skills, and what is remembered. */
 function installedRest(state: AppState): string[] {
   return [
-    ...describeSources(state.sources, state.connections),
+    ...describeSources(state.sources, state.connections, state.plugins),
     ...describeConnections(state.connections, state.sources),
     ...describePlugins(state.plugins),
     ...describeSkills(state),
@@ -190,7 +191,7 @@ export function describeCatalog(state: AppState): string {
   const skills = usableSkills(state, 'model')
   return [
     describeViews(state.views),
-    ...describeSources(state.sources, state.connections),
+    ...describeSources(state.sources, state.connections, state.plugins),
     ...describeConnections(state.connections, state.sources),
     ...describePlugins(state.plugins),
     ...(skills.length === 0 ? [] : ['Skills:', ...skills.map(skillLine)]),
@@ -278,7 +279,7 @@ export function describePlugin(state: AppState, id: string): string {
   const views = own(told.views)
   return [
     ...(Object.keys(views).length > 0 ? [describeViews(views)] : []),
-    ...describeSources(own(told.sources), told.connections),
+    ...describeSources(own(told.sources), told.connections, told.plugins),
     ...describeConnections(told.connections, told.sources),
     ...describePlugins(told.plugins),
     ...describeSkills(told),
@@ -359,16 +360,26 @@ function viewLine(v: ViewInfo): string {
  * The data calls and what each one runs on. Nothing is said when nothing is installed, and an MCP
  * source carries its connection's state, since a call on a connection that is not ready will fail.
  */
-function describeSources(sources: Record<string, SourceInfo>, connections: Record<string, ConnectionInfo>): string[] {
+function describeSources(
+  sources: Record<string, SourceInfo>,
+  connections: Record<string, ConnectionInfo>,
+  plugins: Record<string, PluginInfo> = {},
+): string[] {
   // An internal source is for views; the model is never offered it.
   const list = Object.values(sources).filter((s) => !s.internal)
   if (list.length === 0) return []
   return [
     'Sources, run with run_source { source, input }: a line each, what it is for, then what it takes, the arguments it needs first and the ones it may have in brackets. describe_source gives the whole description and schema of one.',
     ...list.map((s) => {
-      // Only a connection that will not answer is worth a word here: the Connections block names them all.
+      // Only a connection or plugin that will not answer is worth a word here: the blocks below name them all.
       const status = s.connection ? (connections[s.connection]?.status ?? 'missing') : 'ready'
-      const on = status === 'ready' ? '' : ` [connection ${s.connection}: ${status}]`
+      const unset = !s.connection && s.plugin ? unsetRequiredSecret(plugins[s.plugin]?.secrets ?? []) : undefined
+      const on =
+        status !== 'ready'
+          ? ` [connection ${s.connection}: ${status}]`
+          : unset
+            ? ` [plugin ${s.plugin}: needs-secret]`
+            : ''
       const takes = s.parameterNames ? ` — takes ${s.parameterNames}` : ''
       return `- ${s.id}: ${cap(firstSentence(s.description), SOURCE_MAX)}${takes}${on}`
     }),
@@ -418,7 +429,7 @@ function connectionFix(c: ConnectionInfo): string {
   return c.error ? ` (${c.error})` : ''
 }
 
-/** Where the views and sources came from, so a plugin that is not building says so itself. */
+/** Where the views and sources came from, so a plugin that is not building or needs a key says so itself. */
 function describePlugins(plugins: Record<string, PluginInfo>): string[] {
   const list = Object.values(plugins)
   if (list.length === 0) return []
@@ -428,7 +439,13 @@ function describePlugins(plugins: Record<string, PluginInfo>): string[] {
       const error = p.errors[0]
       if (error) return `- ${p.id}: ${p.status}: ${cap(error, ERROR_MAX)}`
       const uses = p.capabilities.length === 0 ? [] : [`capabilities ${p.capabilities.join(', ')}`]
-      return [`- ${p.id}: ${p.status} (v${p.version})`, ...uses].join(', ')
+      const unset = unsetRequiredSecret(p.secrets)
+      const set = p.secrets.filter((s) => s.set).map((s) => s.key)
+      const keys = !unset && set.length > 0 ? [`${set.length === 1 ? 'key' : 'keys'} ${set.join(', ')} set`] : []
+      const need = unset
+        ? ` (needs a key: ask the user with set_secret { plugin: "${p.id}", key: "${unset.key}" })`
+        : ''
+      return `${[`- ${p.id}: ${p.status} (v${p.version})`, ...uses, ...keys].join(', ')}${need}`
     }),
   ]
 }

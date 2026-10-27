@@ -36,13 +36,13 @@ export const conversationTools: Tool[] = [
   {
     name: 'set_secret',
     description:
-      "Ask the user for a credential a plugin needs, when one of its connections is needs-secret. The app opens a secure field and this call waits until the user saves or cancels and the plugin's connections settle; the value never passes through you. When it returns ready, carry on with what the user asked: the connections' sources are in your tools from the next step. With value, stores a value the user already pasted into the chat, and waits the same way.",
+      "Ask the user for a credential a plugin needs, when the plugin or one of its connections is needs-secret. The app opens a secure field and this call waits until the user saves or cancels and the plugin's connections settle; the value never passes through you. When it returns ready, carry on with what the user asked: the plugin's sources are in your tools from the next step. With value, stores a value the user already pasted into the chat, and waits the same way.",
     parameters: {
       type: 'object',
       properties: {
         plugin: {
           type: 'string',
-          description: 'The plugin id, as the Connections line names it: set_secret { plugin, key }.',
+          description: 'The plugin id, as the Plugins or Connections line names it: set_secret { plugin, key }.',
         },
         key: { type: 'string', description: 'The secret key the plugin declares, from the same line.' },
         value: {
@@ -63,13 +63,14 @@ export const conversationTools: Tool[] = [
       const outcome = await waitForSecret(plugin, key)
       switch (outcome.kind) {
         case 'cancelled':
-          return `The user closed the field without saving ${key} for ${plugin}. Its connections stay unavailable; say so, and do not ask again unless they want to.`
+          return `The user closed the field without saving ${key} for ${plugin}. Its sources and connections stay unavailable; say so, and do not ask again unless they want to.`
         case 'timeout':
           return `The user has not answered yet; the field for ${key} is still open. Say that ${plugin} is waiting for its key and what you will do once it is in.`
         case 'waiting':
           return `Saved ${key}; ${plugin}'s connections are still connecting. They retry on their own; tell the user.`
         case 'settled': {
-          if (outcome.connections.length === 0) return `Saved ${key}; no connection was waiting on it.`
+          if (outcome.connections.length === 0)
+            return `Saved ${key} for ${plugin}. Carry on with the user's request now; its sources are ready.`
           const lines = outcome.connections.map((c) =>
             c.status === 'ready'
               ? `${c.id} is ready with tools ${c.tools.join(', ')}.`
