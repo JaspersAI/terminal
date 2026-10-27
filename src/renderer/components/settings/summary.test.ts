@@ -42,6 +42,7 @@ function connection(status: ConnectionInfo['status'], id = 'fmp/mcp'): Connectio
     status,
     error: status === 'error' ? 'fetch failed' : null,
     tools: [],
+    internal: false,
     missing: status === 'needs-secret' ? ['apikey'] : [],
     instructions: null,
   }

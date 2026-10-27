@@ -120,6 +120,11 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
           rawInput !== undefined && Object.keys(topLevel).length > 0
             ? readInput({ ...topLevel, ...parsedInput }, source.id, state.connections)
             : parsedInput
+        if (source.id === MCP_SOURCE) {
+          const target = readMcpCall(args, state.connections).connection
+          if (state.connections[target]?.internal)
+            throw new Error(`${target} is its plugin's own server: use that plugin's views and sources instead.`)
+        }
         // A plugin's own code fails without a key it declares, where a connection's call asks for its
         // own. The wait ends with the run: no source is run for a run stopped while it was asking.
         if (ask && plugin !== null && connection === null) await untilAborted(ask(plugin), signal)

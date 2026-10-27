@@ -42,6 +42,12 @@ test('an http connection takes auth, headers, and the tools it offers', () => {
   assert.equal(checkConnection(HTTP, 'jaspers/sec').tools, undefined)
 })
 
+test("a plugin's own server says so, and only true or false says it", () => {
+  assert.equal(checkConnection({ ...STDIO, internal: true }, 'agents/research').internal, true)
+  assert.equal(checkConnection({ ...STDIO, internal: false }, 'agents/research').internal, undefined)
+  assert.throws(() => checkConnection({ ...STDIO, internal: 'yes' }, 'agents/research'), /internal is true or false/)
+})
+
 test('every rule names the connection and what was wrong', () => {
   const bad = (value: unknown): string => {
     try {
@@ -170,6 +176,7 @@ test('a secret the assistant asked for is waited on until the user answers and e
     status,
     error: status === 'error' ? 'Bad gateway' : null,
     tools: status === 'ready' ? [{ name: 'screen_companies', description: '', inputSchema: {} }] : [],
+    internal: false,
     missing,
     instructions: null,
   })

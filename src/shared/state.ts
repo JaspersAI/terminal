@@ -73,6 +73,8 @@ export interface ConnectionInfo {
   /** Why it is not ready, worded for the user. Never carries a secret. */
   error: string | null
   tools: ConnectionTool[]
+  /** The plugin's own server: its plugin calls these tools, and the assistant is never offered them. */
+  internal: boolean
   /** The plugin's secret keys this connection refers to that have no value yet. */
   missing: string[]
   /** What the server wrote about its tools when it connected, for a model that has to use them. */

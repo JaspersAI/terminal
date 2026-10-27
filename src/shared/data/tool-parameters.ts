@@ -171,7 +171,7 @@ export function withParameters(message: string, tool: ConnectionTool | undefined
 
 /**
  * Resolves a connection-level tool reference (`<plugin>/<connection>/<tool>` or `<plugin>/<tool>`)
- * against ready connections and registered MCP sources, ignoring internal sources.
+ * against ready connections and registered MCP sources, ignoring internal sources and connections.
  */
 export function findConnectionTool(
   id: string,
@@ -190,7 +190,7 @@ export function findConnectionTool(
     const connectionId = `${plugin}/${connName}`
     if (internal.has(`${connectionId}/${toolName}`) || internal.has(`${plugin}/${toolName}`)) return undefined
     const conn = connections[connectionId]
-    if (!conn || conn.status !== 'ready') return undefined
+    if (!conn || conn.status !== 'ready' || conn.internal) return undefined
     const tool = conn.tools.find((one) => one.name === toolName)
     return tool ? { connection: conn.id, plugin: conn.plugin, tool } : undefined
   }
@@ -213,7 +213,7 @@ export function findConnectionTool(
       }
     }
     for (const conn of Object.values(connections)) {
-      if (conn.status !== 'ready') continue
+      if (conn.status !== 'ready' || conn.internal) continue
       if (conn.plugin !== plugin && !conn.id.startsWith(`${plugin}/`)) continue
       const tool = conn.tools.find((one) => one.name === toolName)
       if (tool && !internal.has(`${conn.id}/${tool.name}`)) {

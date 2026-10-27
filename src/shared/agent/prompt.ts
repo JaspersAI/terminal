@@ -159,7 +159,7 @@ export function toldOf(state: AppState, plugins: readonly string[], skills: read
  * does no work with them, and the work it starts is set up with them in a call of its own (`setup.ts`).
  */
 export function describeInstalledToRoute(state: AppState): string {
-  const list = Object.values(state.connections)
+  const list = Object.values(state.connections).filter((c) => !c.internal)
   const connections =
     list.length === 0 ? [] : ['Connections:', ...list.map((c) => `- ${c.id}: ${c.status}${connectionFix(c)}`)]
   const plugins = describePlugins(state.plugins)
@@ -384,7 +384,8 @@ function describeConnections(
   connections: Record<string, ConnectionInfo>,
   sources: Record<string, SourceInfo>,
 ): string[] {
-  const list = Object.values(connections)
+  // A plugin's own server is its plugin's business: the model reaches it through that plugin's views.
+  const list = Object.values(connections).filter((c) => !c.internal)
   if (list.length === 0) return []
   const reached = new Set(Object.values(sources).map((s) => `${s.connection}/${s.tool}`))
   return [
