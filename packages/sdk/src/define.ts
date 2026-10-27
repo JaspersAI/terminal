@@ -73,7 +73,8 @@ export function isMcpSource(def: SourceDef): def is { kind: 'source' } & McpSour
 /** An MCP server a plugin reaches. Its name in `connections` is its id, `<plugin>/<name>`; the secrets it refers to are the plugin's. */
 export interface ConnectionSpec {
   /**
-   * stdio: the program, then its arguments. `node` is the Node the app runs on. Never ${secret:KEY}:
+   * stdio: the program, then its arguments. `node` is the Node the app runs on; `uv` and `uvx` are
+   * the uv the app ships, which fetches the Python a script asks for. Never ${secret:KEY}:
    * a command line is argv, which every process on the machine can read. Put the key in `env`.
    */
   command?: string[]

@@ -34,6 +34,7 @@ import { refreshOnce } from './oauth-refresh'
 import { accountAddress, asAccount, callAsAccount, signedIn } from '../jaspers/jaspers'
 import { RefusedError, SignedOutError } from '../jaspers/session'
 import { getState } from '../state'
+import { ownUv } from './uv'
 
 // One MCP client per connection, and what it knows published into the tree. Everything that could
 // carry a credential stays in this file and connections.ts: the resolved command, the headers, the
@@ -521,10 +522,11 @@ function build(
     const [command, ...args] = connection.command
     // "node" means the Node this app is running on, which is Electron's own, not whatever is first
     // on PATH: the app is usually started from a shell, and a shell's default Node is often older
-    // than the server needs. ELECTRON_RUN_AS_NODE turns the app binary back into that Node.
+    // than the server needs. ELECTRON_RUN_AS_NODE turns the app binary back into that Node. "uv" and
+    // "uvx" are the app's own too, so a Python server needs nothing installed.
     const own = command === 'node'
     const transport = new StdioClientTransport({
-      command: own ? process.execPath : command!,
+      command: own ? process.execPath : (ownUv(command!) ?? command!),
       args,
       env: {
         ...(process.env as Record<string, string>),

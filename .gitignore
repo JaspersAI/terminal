@@ -5,3 +5,4 @@ dist/
 packages/sdk/dist/
 .claude/
 docs/superpowers/
+build/uv/

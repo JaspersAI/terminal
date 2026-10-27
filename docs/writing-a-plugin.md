@@ -124,7 +124,9 @@ import { z } from "zod";
 import { WatchlistView } from "./WatchlistView";
 
 // The server beside this file, which the app starts over stdio. `node` is the app's own Node, and
-// it runs TypeScript as is.
+// it runs TypeScript as is. A Python server runs the same way with `uv` (`["uv", "run", "--script",
+// "server.py"]`, its packages in the script's header) or `uvx`: the app ships uv, and uv fetches
+// Python, so the user installs neither.
 const server = defineConnection({ command: ["node", "server.ts"] });
 
 // One tool on that connection. Its parameters are the tool's own input schema.

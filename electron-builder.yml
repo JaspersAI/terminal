@@ -11,6 +11,16 @@ files:
 asarUnpack:
   - node_modules/esbuild/**
   - node_modules/@esbuild/**
+# uv and uvx, for plugin connections that run Python (src/main/plugins/uv.ts); `npm run dist` puts this
+# platform's in build/uv first (scripts/fetch-uv.mjs).
+extraResources:
+  - from: build/uv
+    to: uv
+    filter:
+      - uv
+      - uvx
+      - uv.exe
+      - uvx.exe
 # Nothing native to rebuild against Electron.
 npmRebuild: false
 # The feed the installed app checks for a newer version: latest.yml on Windows, latest-mac.yml on a
