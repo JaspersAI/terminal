@@ -3,7 +3,15 @@ import { test } from 'node:test'
 import { skill } from '../../../shared/skills/skill-fixture.ts'
 import type { ConnectionInfo, PluginInfo } from '../../../shared/state.ts'
 import type { Task } from '../../../shared/tasks/tasks.ts'
-import { pluginLine, shownEntry, skillTitle, taskLine } from './summary.ts'
+import {
+  memoryEntryId,
+  memoryPathLabel,
+  parseMemoryEntryId,
+  pluginLine,
+  shownEntry,
+  skillTitle,
+  taskLine,
+} from './summary.ts'
 
 function plugin(over: Partial<PluginInfo> = {}): PluginInfo {
   return {
@@ -211,4 +219,19 @@ test('a skill is titled by the /name that loads it, or its bare id when that can
   assert.equal(skillTitle(skill('research:dcf-room')), '/research:dcf-room')
   assert.equal(skillTitle(skill('quiet', { userInvocable: false })), 'quiet')
   assert.equal(skillTitle(skill('broken', { error: 'SKILL.md has no description' })), 'broken')
+})
+
+test('general and coding memories have distinct entry ids and path labels even when given the same name', () => {
+  const generalId = memoryEntryId('general', 'rates')
+  const codingId = memoryEntryId('coding', 'rates')
+  assert.equal(generalId, 'rates')
+  assert.equal(codingId, 'coding:rates')
+  assert.deepEqual(parseMemoryEntryId(generalId), { scope: 'general', name: 'rates' })
+  assert.deepEqual(parseMemoryEntryId(codingId), { scope: 'coding', name: 'rates' })
+  assert.equal(memoryPathLabel('general', 'rates'), 'memory/rates.md')
+  assert.equal(memoryPathLabel('coding', 'rates'), 'memory/coding/rates.md')
+
+  const entries = ['+always', generalId, codingId]
+  assert.deepEqual(shownEntry(codingId, entries), { id: 'coding:rates', picked: true })
+  assert.deepEqual(shownEntry(generalId, entries), { id: 'rates', picked: true })
 })
