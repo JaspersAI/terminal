@@ -147,7 +147,7 @@ function tree(
     memories: [],
     tasks: [],
     background: { openAtLogin: false, canOpenAtLogin: false },
-    updates: { version: '0.1.0', supported: false, status: 'idle', available: null, error: null },
+    updates: { version: '0.1.0', packaged: false, supported: false, status: 'idle', available: null, error: null },
     budgets: { dailyTokens: 2_000_000 },
     theme: 'system',
     proMode: PRO_MODE_OFF,

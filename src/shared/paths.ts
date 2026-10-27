@@ -15,6 +15,8 @@ export type StorePath =
   /** One panel's entry in the listing, by its id or its element's. */
   | { kind: 'panelEntry'; workspaceId?: string; panelId: string }
   | { kind: 'tasks'; workspaceId?: string }
+  /** The running app: whether it is an installed build, so a view can keep what only a developer reads to the app run from source. */
+  | { kind: 'app' }
   | { kind: 'views' }
   | { kind: 'sources' }
   | { kind: 'connections' }
@@ -47,7 +49,7 @@ export interface PanelSummary {
 }
 
 const SHAPES =
-  'workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, and any of those under workspaces/<workspace id>/'
+  'app, workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, and any of those under workspaces/<workspace id>/'
 
 /** Parse a store path, preserving any workspace prefix; throw if its shape is unsupported. */
 export function parsePath(raw: string): StorePath {
@@ -64,6 +66,7 @@ export function parsePath(raw: string): StorePath {
     if (panelId !== undefined || workspaceId) reject(raw)
     return { kind: registry }
   }
+  if (head === 'app' && panelId === undefined && !workspaceId) return { kind: 'app' }
   if (head === 'workspace' && panelId === undefined) return { kind: 'workspace', ...at }
   if (head === 'tasks' && panelId === undefined) return { kind: 'tasks', ...at }
   if (head !== 'panels') reject(raw)
@@ -80,6 +83,7 @@ export function readPath(state: AppState, workspaceId: string, path: StorePath):
   // Every skill, whether it is on, and who may load it: the list, not the registry's record.
   if (path.kind === 'skills') return skillListing(state)
   if (isRegistry(path)) return state[path.kind]
+  if (path.kind === 'app') return { packaged: state.updates.packaged }
   if (path.kind === 'workspace') {
     const workspace = state.workspaces.find((w) => w.id === (path.workspaceId ?? workspaceId))
     if (!workspace) throw new Error('Unknown workspace.')
@@ -115,7 +119,7 @@ export function textPart(
 
 /** The path as it was written, so an error or a subscription key reads back the way it came in. */
 export function formatPath(path: StorePath): string {
-  if (isRegistry(path)) return path.kind
+  if (isRegistry(path) || path.kind === 'app') return path.kind
   const prefix = path.workspaceId ? `workspaces/${path.workspaceId}/` : ''
   if (path.kind === 'workspace') return `${prefix}workspace`
   if (path.kind === 'panels') return `${prefix}panels`

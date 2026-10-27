@@ -2,7 +2,14 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { MAC_DOWNLOAD_URL, refusedMessage, restartOffer, updatesAfter, type UpdateInfo } from './updates.ts'
 
-const idle: UpdateInfo = { version: '0.1.0', supported: true, status: 'idle', available: null, error: null }
+const idle: UpdateInfo = {
+  version: '0.1.0',
+  packaged: true,
+  supported: true,
+  status: 'idle',
+  available: null,
+  error: null,
+}
 
 test('a check starts, finds nothing, and the app is current', () => {
   const checking = updatesAfter(idle, { type: 'checking' })

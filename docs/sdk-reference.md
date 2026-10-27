@@ -91,7 +91,7 @@ From `@jaspers-ai/sdk`:
 | Hook                              | What it does                                                                                                                    |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `useData(source, args)`           | Runs a source, and again whenever `args` change. Returns `{ data, text, loading, error, datasetId, meta, refetch }`.            |
-| `useData(path)`                   | Subscribes to a path in the app state, such as `workspaces/<workspaceId>/panels/<id>/state`. `undefined` until the first value. |
+| `useData(path)`                   | Subscribes to a path in the app state, such as `workspaces/<workspaceId>/panels/<id>/state`, or `app`, `{ packaged }`: false when the app runs from source, for what only a developer should see. `undefined` until the first value, and on an app from before `app` was added. |
 | `usePanelState(panel, key, init)` | `[value, set]` for one key of the panel's state. `set` goes through main's schema check.                                        |
 | `usePublish(panel, output)`       | Publishes what the view shows. Debounced 100 ms, skipped while unchanged.                                                       |
 | `usePublishText(panel, text)`     | Publishes the whole of what the view shows as text, at `panels/<id>/text`, for models to read a part at a time and quote. Start it with a line naming what it is. `null` clears it. Cut past 200,000 characters. A quote that came with a [citation](connections-and-data.md#citations-in-the-chat) can carry its `[^id]` beside it, and the assistant cites it in the chat. |

@@ -86,7 +86,7 @@ function fixture(): AppState {
     memories: [],
     tasks: [],
     background: { openAtLogin: false, canOpenAtLogin: false },
-    updates: { version: '0.1.0', supported: false, status: 'idle', available: null, error: null },
+    updates: { version: '0.1.0', packaged: false, supported: false, status: 'idle', available: null, error: null },
     budgets: { dailyTokens: 2_000_000 },
     theme: 'system',
     proMode: PRO_MODE_OFF,
@@ -124,7 +124,14 @@ test('a path parses to what it names', () => {
   assert.deepEqual(parsePath('panels/e1'), { kind: 'panelEntry', panelId: 'e1' })
   assert.deepEqual(parsePath(`workspaces/${WS}/panels/p1`), { kind: 'panelEntry', workspaceId: WS, panelId: 'p1' })
   assert.deepEqual(parsePath('workspace'), { kind: 'workspace' })
+  assert.deepEqual(parsePath('app'), { kind: 'app' })
   assert.deepEqual(parsePath(`workspaces/${WS}/workspace`), { kind: 'workspace', workspaceId: WS })
+})
+
+test('app says whether this is an installed build, the same in every workspace', () => {
+  assert.deepEqual(read('app'), { packaged: false })
+  assert.throws(() => parsePath(`workspaces/${WS}/app`), /Cannot read/)
+  assert.throws(() => parsePath('app/packaged'), /Cannot read/)
 })
 
 test('anything else is rejected, with the shapes that are not', () => {

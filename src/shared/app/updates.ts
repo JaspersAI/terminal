@@ -6,6 +6,8 @@ export type UpdateStatus = 'idle' | 'checking' | 'current' | 'downloading' | 're
 export interface UpdateInfo {
   /** The running app's version. */
   version: string
+  /** Whether this is an installed build rather than the app run from source. */
+  packaged: boolean
   /** Whether this build can update itself: a packaged app, on Windows or a Mac. */
   supported: boolean
   status: UpdateStatus

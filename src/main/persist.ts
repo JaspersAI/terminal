@@ -215,7 +215,7 @@ export function load(): MainState {
     // The OS says; background.ts asks it once the app is ready.
     background: { openAtLogin: false, canOpenAtLogin: false },
     // Which build this is and what the feed says; updates.ts fills it in once the app is ready.
-    updates: { version: '', supported: false, status: 'idle', available: null, error: null },
+    updates: { version: '', packaged: false, supported: false, status: 'idle', available: null, error: null },
     budgets: { dailyTokens: readBudget(state.budgets?.dailyTokens ?? DAILY_TOKENS_DEFAULT) },
     theme: isTheme(state.theme) ? state.theme : 'system',
     // Read the careful way: a file edited by hand, or written by a later version, cannot turn it on by accident.

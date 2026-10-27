@@ -24,7 +24,10 @@ const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
 
 export function startUpdates(): void {
   const supported = app.isPackaged && (process.platform === 'win32' || process.platform === 'darwin')
-  update((state) => ({ ...state, updates: { ...state.updates, version: app.getVersion(), supported } }))
+  update((state) => ({
+    ...state,
+    updates: { ...state.updates, version: app.getVersion(), packaged: app.isPackaged, supported },
+  }))
   if (!supported) return
   autoUpdater.logger = {
     info: (message: unknown) => console.log('[updates]', message),
