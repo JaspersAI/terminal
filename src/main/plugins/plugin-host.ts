@@ -182,7 +182,20 @@ function spawn(id: string, build: HostBuild): Host {
     serviceName: `jaspers-plugin-${id}`,
     stdio: 'pipe',
     // None of main's environment: whatever keys a shell exported stay out of plugin code's reach.
-    env: pick(process.env, ['PATH', 'HOME', 'TMPDIR', 'LANG', 'USER']),
+    // Windows names the same things otherwise, and without SystemRoot Winsock cannot resolve a host
+    // name: every fetch fails with getaddrinfo EAI_FAIL.
+    env: pick(process.env, [
+      'PATH',
+      'HOME',
+      'TMPDIR',
+      'LANG',
+      'USER',
+      'SystemRoot',
+      'USERPROFILE',
+      'TEMP',
+      'TMP',
+      'USERNAME',
+    ]),
   })
   lines(child.stdout, (line) => console.log(`[plugin ${id}] ${line}`))
   lines(child.stderr, (line) => console.warn(`[plugin ${id}] ${line}`))
