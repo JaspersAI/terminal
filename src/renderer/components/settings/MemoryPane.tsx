@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
-import { ABOUT_MAX, BODY_MAX, type Memory } from '../../../shared/agent/memory'
+import { ABOUT_MAX, BODY_MAX, type Memory, type MemoryScope } from '../../../shared/agent/memory'
 import { STANDING_MAX } from '../../../shared/agent/standing'
 import { errorMessage } from '../../lib/errors'
 import { useAppState } from '../../lib/state'
@@ -7,7 +7,7 @@ import { StatusLine } from './InstallPrompt'
 import { holdLeave, requestLeave } from './leave-guard'
 import { BUTTON, FIELD } from './Row'
 import { Entry, ListHeading, PinnedEntry, Split } from './Split'
-import { shownEntry } from './summary'
+import { memoryEntryId, memoryPathLabel, parseMemoryEntryId, shownEntry } from './summary'
 
 /** The entry above the memories. A memory's name is lower case and never starts with +. */
 const ALWAYS = '+always'
@@ -62,11 +62,18 @@ function Ask({
  */
 export function MemoryPane(): ReactElement {
   const memories = useAppState((s) => s.memories)
+  const codingMemories = useAppState((s) => s.codingMemories)
   const [open, setOpen] = useState<string | null>(null)
   const newest = [...memories].sort((a, b) => b.at - a.at)
-  const shown = shownEntry(open, [ALWAYS, ...newest.map((one) => one.name)])
+  const newestCoding = [...codingMemories].sort((a, b) => b.at - a.at)
+  const shown = shownEntry(open, [
+    ALWAYS,
+    ...newest.map((one) => memoryEntryId('general', one.name)),
+    ...newestCoding.map((one) => memoryEntryId('coding', one.name)),
+  ])
   // Unsaved edits in either editor ask before another entry takes its place.
   const pick = (id: string | null): void => requestLeave(() => setOpen(id))
+  const selected = shown.id !== null && shown.id !== ALWAYS ? parseMemoryEntryId(shown.id) : null
 
   return (
     <Split
@@ -85,24 +92,49 @@ export function MemoryPane(): ReactElement {
               <p className="px-4 py-1 text-sm text-muted-foreground">Nothing yet.</p>
             ) : (
               <ul>
-                {newest.map((one) => (
-                  <Entry
-                    key={one.name}
-                    id={one.name}
-                    selected={shown.id === one.name}
-                    onSelect={() => pick(one.name)}
-                    title={<span className="font-mono">{one.name}</span>}
-                    line={one.about}
-                  />
-                ))}
+                {newest.map((one) => {
+                  const entryId = memoryEntryId('general', one.name)
+                  return (
+                    <Entry
+                      key={entryId}
+                      id={entryId}
+                      selected={shown.id === entryId}
+                      onSelect={() => pick(entryId)}
+                      title={<span className="font-mono">{one.name}</span>}
+                      line={one.about}
+                    />
+                  )
+                })}
+              </ul>
+            )}
+          </section>
+          <section aria-label="Coding memories">
+            <ListHeading>Coding memories</ListHeading>
+            {newestCoding.length === 0 ? (
+              <p className="px-4 py-1 text-sm text-muted-foreground">Nothing yet.</p>
+            ) : (
+              <ul>
+                {newestCoding.map((one) => {
+                  const entryId = memoryEntryId('coding', one.name)
+                  return (
+                    <Entry
+                      key={entryId}
+                      id={entryId}
+                      selected={shown.id === entryId}
+                      onSelect={() => pick(entryId)}
+                      title={<span className="font-mono">{one.name}</span>}
+                      line={one.about}
+                    />
+                  )
+                })}
               </ul>
             )}
           </section>
         </>
       }
       detail={
-        shown.id !== null && shown.id !== ALWAYS ? (
-          <MemoryDetail key={shown.id} name={shown.id} onBack={() => setOpen(null)} />
+        selected !== null ? (
+          <MemoryDetail key={shown.id} scope={selected.scope} name={selected.name} onBack={() => setOpen(null)} />
         ) : (
           <AlwaysDetail />
         )
@@ -251,8 +283,10 @@ function StandingEditor({
 }
 
 /** One memory: the line the prompt carries, the body a tool reads, and the way to forget it. */
-function MemoryDetail({ name, onBack }: { name: string; onBack: () => void }): ReactElement {
-  const listed = useAppState((s) => s.memories.some((one) => one.name === name))
+function MemoryDetail({ scope, name, onBack }: { scope: MemoryScope; name: string; onBack: () => void }): ReactElement {
+  const listed = useAppState((s) =>
+    (scope === 'coding' ? s.codingMemories : s.memories).some((one) => one.name === name),
+  )
   const [saved, setSaved] = useState<Memory | null>(null)
   const [about, setAbout] = useState('')
   const [body, setBody] = useState('')
@@ -265,7 +299,7 @@ function MemoryDetail({ name, onBack }: { name: string; onBack: () => void }): R
   useEffect(() => {
     let live = true
     window.app.memory
-      .read(name)
+      .read(name, scope)
       .then((one) => {
         if (!live || !one) return
         setSaved(one)
@@ -276,7 +310,7 @@ function MemoryDetail({ name, onBack }: { name: string; onBack: () => void }): R
     return () => {
       live = false
     }
-  }, [name])
+  }, [name, scope])
 
   useEffect(() => {
     if (!dirty) return
@@ -297,7 +331,7 @@ function MemoryDetail({ name, onBack }: { name: string; onBack: () => void }): R
     setBusy(true)
     setLine({ text: 'Saving…', error: false })
     window.app.memory
-      .write(name, written.about, written.body)
+      .write(name, written.about, written.body, scope)
       .then(() => {
         setSaved((was) => (was ? { ...was, ...written } : was))
         setLine({ text: 'Saved.', error: false })
@@ -309,7 +343,7 @@ function MemoryDetail({ name, onBack }: { name: string; onBack: () => void }): R
   const forget = (): void => {
     setBusy(true)
     window.app.memory
-      .remove(name)
+      .remove(name, scope)
       .then(onBack)
       .catch((err: unknown) => {
         setLine({ text: errorMessage(err), error: true })
@@ -321,7 +355,7 @@ function MemoryDetail({ name, onBack }: { name: string; onBack: () => void }): R
     <div id="memory-detail">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 pr-8">
         <h3 className="font-mono text-base font-semibold break-all">{name}</h3>
-        <span className="font-mono text-xs text-muted-foreground">memory/{name}.md</span>
+        <span className="font-mono text-xs text-muted-foreground">{memoryPathLabel(scope, name)}</span>
       </div>
       {saved && <p className="mt-1 text-sm text-muted-foreground">Written {new Date(saved.at).toLocaleString()}</p>}
 
@@ -329,8 +363,9 @@ function MemoryDetail({ name, onBack }: { name: string; onBack: () => void }): R
         What it is about
       </label>
       <p className="mt-0.5 text-xs text-muted-foreground">
-        The one line carried in every request. The body below is read only when this line looks like it bears on what
-        was asked.
+        {scope === 'coding'
+          ? 'The one line carried in every plugin build. The body below is read only when this line looks like it bears on the build.'
+          : 'The one line carried in every request. The body below is read only when this line looks like it bears on what was asked.'}
       </p>
       <input
         id="memory-about"
