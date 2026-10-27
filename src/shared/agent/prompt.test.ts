@@ -85,6 +85,7 @@ const READY: ConnectionInfo = {
   status: 'ready',
   error: null,
   tools: [{ name: 'screen_companies', description: '', inputSchema: {} }],
+  internal: false,
   missing: [],
   instructions: null,
 }
@@ -736,6 +737,12 @@ test('a ready connection lists only the tools no source reaches, since those nee
     instructionsFor,
   ).split('\n')
   assert.ok(lines.includes('- jaspers/sec: ready, tools without a source: get_company'), lines.join('\n'))
+})
+
+test("a plugin's own server is not among the connections the model is told of", () => {
+  const own: ConnectionInfo = { ...READY, internal: true }
+  const told = describeContext(tree(EMPTY_GRID, {}, {}, { 'jaspers/sec': own }), WS, instructionsFor)
+  assert.ok(!told.includes('jaspers/sec'), told)
 })
 
 test('a tool no source reaches says what it takes, so it is not called bare to find out', () => {

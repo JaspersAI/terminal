@@ -93,6 +93,11 @@ export interface ConnectionSpec {
   env?: Record<string, string>
   /** Only these of the server's tools are offered, to the model and to every caller. Absent means all of them. */
   tools?: string[]
+  /**
+   * The plugin's own server: plugins call its tools with ctx.tools, and the assistant is never offered
+   * them. A source declared on it is offered as that source's own `internal` says.
+   */
+  internal?: boolean
 }
 
 export interface ConnectionDef extends ConnectionSpec {

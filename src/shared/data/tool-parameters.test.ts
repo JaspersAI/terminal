@@ -105,6 +105,7 @@ test('connection tool lookups resolve <plugin>/<connection>/<tool> and <plugin>/
       status: 'ready',
       error: null,
       tools: [GUIDE, hiddenTool],
+      internal: false,
       missing: [],
       instructions: null,
     },
@@ -115,6 +116,7 @@ test('connection tool lookups resolve <plugin>/<connection>/<tool> and <plugin>/
       status: 'ready',
       error: null,
       tools: [screenTool],
+      internal: false,
       missing: [],
       instructions: null,
     },
@@ -177,4 +179,18 @@ test('connection tool lookups resolve <plugin>/<connection>/<tool> and <plugin>/
   assert.equal(findConnectionTool('research/unknown_tool', connections, sources), undefined)
   assert.equal(resolveConnectionSource('research/jaspers/unknown_tool', sources, connections), undefined)
   assert.equal(resolveConnectionSource('research/unknown_tool', sources, connections), undefined)
+
+  // A plugin's own server offers no tool of its own; a source declared on it is offered as it says.
+  const own = { ...connections, 'research/jaspers': { ...connections['research/jaspers']!, internal: true } }
+  assert.equal(findConnectionTool('research/jaspers/get_guide', own, sources), undefined)
+  assert.equal(findConnectionTool('research/get_guide', own, sources), undefined)
+  assert.equal(resolveConnectionSource('research/jaspers/get_guide', sources, own), undefined)
+  assert.equal(resolveConnectionSource('research/get_guide', sources, own), undefined)
+  const declared: SourceEntry = {
+    id: 'research/guide',
+    plugin: 'research',
+    connection: 'research/jaspers',
+    def: { kind: 'source', mcp: 'jaspers', tool: 'get_guide' },
+  }
+  assert.equal(resolveConnectionSource('research/guide', [...sources, declared], own)?.id, 'research/guide')
 })

@@ -20,6 +20,7 @@ function connection(
       description: `${name} tool`,
       inputSchema: { type: 'object', properties: { q: { type: 'string' } } },
     })),
+    internal: false,
     missing: [],
     instructions,
   }

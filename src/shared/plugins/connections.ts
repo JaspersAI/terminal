@@ -24,6 +24,8 @@ export interface Connection {
   env: Record<string, string>
   /** Only these of the server's tools are offered, to the model and to every caller. Absent means all of them. */
   tools?: string[]
+  /** The plugin's own server: the assistant is never offered its tools. */
+  internal?: boolean
 }
 
 const REFERENCE = /\$\{secret:([^}]*)\}/g
@@ -110,6 +112,7 @@ export function checkConnection(value: unknown, id: string): Connection {
   }
   if (raw.cwd !== undefined && typeof raw.cwd !== 'string') fail("cwd is a path, relative to the plugin's folder.")
   const tools = raw.tools === undefined || raw.tools === null ? undefined : asTools(raw.tools, fail)
+  if (raw.internal !== undefined && typeof raw.internal !== 'boolean') fail('internal is true or false.')
   return {
     ...(command ? { command, ...(typeof raw.cwd === 'string' ? { cwd: raw.cwd } : {}) } : {}),
     ...(url ? { url } : {}),
@@ -117,6 +120,7 @@ export function checkConnection(value: unknown, id: string): Connection {
     headers: asStrings(raw.headers, 'headers', fail),
     env: asStrings(raw.env, 'env', fail),
     ...(tools ? { tools } : {}),
+    ...(raw.internal === true ? { internal: true } : {}),
   }
 }
 
@@ -306,7 +310,7 @@ export function secretProgress(
       id: c.id,
       status: c.status,
       error: c.error,
-      tools: c.tools.map((t) => t.name),
+      tools: c.internal ? [] : c.tools.map((t) => t.name),
     })),
   }
 }

@@ -49,6 +49,7 @@ function fixture(): AppState {
         status: 'ready',
         error: null,
         tools: [],
+        internal: false,
         missing: [],
         instructions: null,
       },

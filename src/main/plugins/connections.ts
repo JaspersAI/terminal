@@ -140,6 +140,7 @@ function infoFor({ id, plugin, spec }: HeldConnection, values: Record<string, st
     status: statusFor(spec, values),
     error: null,
     tools: [],
+    internal: spec.internal === true,
     missing: missingOf(spec, values),
     instructions: null,
   }
