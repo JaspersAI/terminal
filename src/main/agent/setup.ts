@@ -21,8 +21,21 @@ import { configured } from './utils/settings'
 // the work's agent is told of. It runs under the orchestrator's run, so its stop stops this too and
 // Eye files it with that run.
 
-export async function setUpLoop(desc: string, brief: string, context: ToolContext): Promise<SetUp> {
+export async function setUpLoop(
+  desc: string,
+  brief: string,
+  context: ToolContext,
+  given?: { plugins?: unknown[]; skills?: unknown[] },
+): Promise<SetUp> {
   const state = toPublic(getState())
+  const havePlugins = Object.keys(state.plugins)
+  const haveSkills = usableSkills(state, 'model').map((one) => one.id)
+  if (given?.plugins !== undefined || given?.skills !== undefined) {
+    const direct = setUpOf({ plugins: given.plugins ?? [], skills: given.skills ?? [] }, havePlugins, haveSkills)
+    if (direct.plugins.length > 0 || direct.skills.length > 0 || (given.plugins?.length ?? 0) === 0) {
+      return direct
+    }
+  }
   const log = (line: string): void => console.log(`[agent] setup ${line}`)
   const controller = new AbortController()
   const stopped = (): void => controller.abort(context.signal?.reason)

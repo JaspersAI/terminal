@@ -4,7 +4,7 @@ import type { Handed } from '../../shared/agent/typed'
 import { closedLoop } from '../../shared/loops/closed'
 import { loopChat, frameOf, gone, shut } from '../../shared/loops/loops'
 import type { Exchange } from '../../shared/agent/transcript'
-import { loopsOf } from '../loops/loops'
+import { findRoomTab, loopsOf, touchLoop } from '../loops/loops'
 import { getGrids } from '../grid/grid'
 import { expandSlash } from '../skills/skills'
 import { getState, subscribe } from '../state'
@@ -15,28 +15,38 @@ import { stopChat } from './utils/runs'
 import { exchanges, forget } from './utils/thread'
 import { createTurns } from './utils/turns'
 
-// A loop's requests: a message sent in its frame's box, answered by its own agent. It is the same
-// request the global box makes (`userRequest`), on the loop's own chat: its thread goes on whole,
+// A room's requests: a message sent in its frame's box, answered by its own agent. It is the same
+// request the global box makes (`userRequest`), on the room's own chat: its thread goes on whole,
 // its prompt is about its tiles, its tools change only those, and what it asks is asked in its frame.
-// One run at a time. A message for a loop whose agent is working joins that run after the round in
+// One run at a time. A message for a room whose agent is working joins that run after the round in
 // flight; one that arrives while the run is writing its reply waits, and begins the next.
 
 const turns = createTurns()
 
-/** The loop a tile on a workspace belongs to. The docked chat has none, and has no conversation of its own. */
-function loopOn(workspaceId: string, on: string): string {
-  for (const grid of Object.values(getGrids(workspaceId))) {
-    const element = grid.elements.find((e) => e.id === on)
-    if (element?.loop !== undefined) return element.loop
-    if (element) break
+/** The room a tile on a tab belongs to, and which tab holds it. The docked chat has none. */
+function loopOn(preferredTabId: string, on: string): { workspaceId: string; loop: string } {
+  const state = getState()
+  const checkTab = (tabId: string): string | null => {
+    for (const grid of Object.values(state.grids[tabId] ?? {})) {
+      const element = grid.elements.find((e) => e.id === on)
+      if (element?.loop !== undefined) return element.loop
+      if (element) return null
+    }
+    return null
+  }
+  const local = checkTab(preferredTabId)
+  if (local) return { workspaceId: preferredTabId, loop: local }
+  for (const tabId of Object.keys(state.grids)) {
+    const found = checkTab(tabId)
+    if (found) return { workspaceId: tabId, loop: found }
   }
   throw new Error(`${on} has no conversation of its own.`)
 }
 
-/** A message sent from a tile's box, on the workspace on screen when it is sent. */
+/** A message sent from a tile's box. */
 export function runLoop(input: string, on: string, ask?: string): Promise<string> {
-  const workspaceId = getState().currentWorkspaceId
-  return runOn(workspaceId, loopOn(workspaceId, on), on, { input, ask })
+  const { workspaceId, loop } = loopOn(getState().currentWorkspaceId, on)
+  return runOn(workspaceId, loop, on, { input, ask })
 }
 
 /**
@@ -76,10 +86,13 @@ interface Sent {
   task?: string
 }
 
-/** One request of a loop's, shown in its frame: its own chat, prompt, and tools, in its turn. */
+/** One request of a room's, shown in its frame: its own chat, prompt, and tools, in its turn. */
 function runOn(workspaceId: string, loop: string, on: string, { input, ask, written, task }: Sent): Promise<string> {
-  const chat = loopChat(workspaceId, loop)
+  const record = loopsOf(workspaceId).list.find((one) => one.id === loop)
+  const chat = loopChat(workspaceId, record ?? loop)
+  touchLoop(workspaceId, loop)
   const request = (): Promise<string> => {
+    const latestRecord = loopsOf(workspaceId).list.find((one) => one.id === loop)
     // Where it shows is the work's frame, read as the run begins.
     const place: Place = { workspaceId, on: frameOf(getGrids(workspaceId), loop)?.element.id ?? on }
     return userRequest({
@@ -90,7 +103,8 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
       task,
       ask,
       label: `${loop} `,
-      // The whole of it goes on: a loop's conversation is its memory of the work.
+      model: latestRecord?.model ?? null,
+      // The whole of it goes on: a room's conversation is its memory of the work.
       goesOn: () => {},
       // Work a task's run started is told so, as the task's own run is: it answers only when there is
       // something to hear, and is given the scripts the user allowed that task.
@@ -98,7 +112,7 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
       tools: loopTools,
       state: () => loopStateNow(workspaceId, loop),
       tile: { loop, place },
-      // What is sent to this loop while the run is at work joins it. A run on a task's limits takes
+      // What is sent to this room while the run is at work joins it. A run on a task's limits takes
       // nothing: what the user sends then waits, and runs as theirs.
       added: task === undefined ? () => turns.takeWaiting<Added>(chat) : undefined,
     })
@@ -123,14 +137,16 @@ export function callOff(ask: string): boolean {
   return turns.callOff(ask)
 }
 
-/** The end of a loop's chat on the workspace on screen, open or closed, as `agent:history` reads the workspace's own. */
+/** The end of a room's chat across any tab, open or closed, as `agent:history` reads it. */
 export function loopHistory(loop: string, limit: number, before?: number): Promise<Exchange[]> {
-  const workspaceId = getState().currentWorkspaceId
-  const loops = loopsOf(workspaceId)
-  // A closed loop keeps its chat until it is deleted.
-  const known = loops.list.some((one) => one.id === loop) || closedLoop(loops, loop) !== undefined
-  if (!known) throw new Error(`Unknown work ${loop}.`)
-  return exchanges(loopChat(workspaceId, loop), limit, before)
+  const state = getState()
+  const ownerTabId = findRoomTab(state, loop) ?? state.currentWorkspaceId
+  const loops = loopsOf(ownerTabId)
+  const openRecord = loops.list.find((one) => one.id === loop)
+  const closedRecord = closedLoop(loops, loop)?.loop
+  const record = openRecord ?? closedRecord
+  if (!record) throw new Error(`Unknown work ${loop}.`)
+  return exchanges(loopChat(ownerTabId, record), limit, before)
 }
 
 /**

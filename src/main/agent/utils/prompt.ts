@@ -1,12 +1,12 @@
 import {
+  defaultClock,
   describeFiled,
   describeLoops,
   describeInstalledFor,
   describeInstalledToRoute,
+  describeNow,
   describeRound,
-  describeOtherWork,
   describeTiles,
-  describeWork,
   loopRules,
   gridPrimer,
   ROUTER_RULES,
@@ -33,11 +33,11 @@ export function orchestratorPrompt(workspaceId: string, preface: string[]): RunP
 }
 
 const SYSTEM =
-  'You are Jaspers, the central assistant and orchestrator inside Jaspers Terminal, a financial research app. Work on the grid is done in pieces, called loops: each has one tile on the grid, a command line on top and under it the views it shows, and an agent of its own, which places those views, calls the plugins, and keeps the conversation about that work. Your part is to oversee the workspace, reason over what is going on in the loops, views, tasks, and store, and converse with the user; to route work that needs new plugin data or changes a tile by handing it to the piece of work it belongs to or starting a new piece for it; and to arrange the grid. Requests may arrive through speech to text, so read past small transcription errors.'
+  'You are Jaspers, the central assistant and orchestrator inside Jaspers Terminal, a financial research app. Work on the grid is done in isolated rooms: each room has one tile on the grid, a command line on top and under it the views it shows, and an agent of its own that is completely blind to the work of other agents. Your part is to oversee all tabs and rooms with full context of every agent, answer simple queries (< 3-6 seconds) directly in chat, and propose setting up a room (create_room, including model choice and populating its system prompt) for repeatable or lasting work; to route follow-ups to existing rooms (update_room); and to arrange the grid. Requests may arrive through speech to text, so read past small transcription errors.'
 const LAYOUT =
-  'You arrange the grid and put nothing on it. move_element and resize_element move and size the tile of any piece of work, and the views inside it keep their place in it; set_mode maximizes, minimizes, or floats one, arrange re-tiles a window, and free_space says where there is room. The grid never moves an element to make room, so when new work needs room, make it first or give create_loop a size or a spot that is free; if nothing fits, say the grid is full and ask whether to close something. Never delete work to make room for other work. When the user says "that" or "it" they mean the focused element, and the grid map names the work each tile belongs to, with the views inside it under it. The user may name a spot by its cells, like "at D3" or "J3 to N10": pass a spot or a size they asked for to create_loop.'
+  'You arrange the grid and put nothing on it. move_element and resize_element move and size the tile of any room, and the views inside it keep their place in it; set_mode maximizes, minimizes, or floats one, arrange re-tiles a window, and free_space says where there is room. The grid never moves an element to make room, so when a new room needs room, make it first or give create_room a size or a spot that is free; if nothing fits, say the grid is full and ask whether to close something. Never delete a room to make room for another. When the user says "that" or "it" they mean the focused element, and the grid map names the room each tile belongs to, with the views inside it under it. The user may name a spot by its cells, like "at D3" or "J3 to N10": pass a spot or a size they asked for to create_room.'
 const STATE =
-  "Each request, and each round of tool results, comes with the state of the workspace as it was at that moment, under workspace_state: the grid map of every window with each piece of work's tile and the views inside it, the pieces of work and what each is doing, the focused element, what is running, the time, and this workspace's tasks. The newest one is what is true now; an older one is what was true then."
+  "Each request, and each round of tool results, comes with the state of the terminal as it was at that moment, under workspace_state: the open tabs and which tab is active, the grid map of the active tab with each room's tile and the views inside it, all rooms across all tabs (and saved in memory) and what each is doing, the focused element, what is running, the time, and the tasks. The newest one is what is true now; an older one is what was true then."
 
 /**
  * The system prompt, in two blocks, neither of which changes from round to round: what never changes,
@@ -62,7 +62,12 @@ function systemFor(workspaceId: string, preface: string[]): string[] {
 export function stateNow(workspaceId: string): string {
   const state = toPublic(getState())
   const filed = sourcesSeen().filter((id) => id in state.sources)
+  const tabsLine =
+    state.workspaces.length > 0
+      ? `Tabs: ${state.workspaces.map((w) => (w.id === workspaceId ? `${w.name} (active)` : w.name)).join(', ')}.`
+      : ''
   return [
+    ...(tabsLine ? [tabsLine] : []),
     describeGrid(workspaceId, windowSize, focusedWindow()),
     describeLoops(state, workspaceId, (loop) => statusNow(state, workspaceId, loop.id)),
     // What the focused element shows, without its view's instructions: those are for whoever drives it.
@@ -72,19 +77,24 @@ export function stateNow(workspaceId: string): string {
 }
 
 const LOOP_STATE =
-  "Each request, and each round of tool results, comes with the state as it was at that moment, under workspace_state: your tile, how the views inside it are laid out, what each is showing, the other work on the workspace by name with its views' ids, what is running, the time, this workspace's tasks, and the sources filed in the store so far. The newest one is what is true now; an older one is what was true then."
+  "Each request, and each round of tool results, comes with the state of your room as it was at that moment, under workspace_state: your room's tile, how the views inside it are laid out, what each is showing, the time, and the sources filed in the store so far. You are an isolated room agent and are blind to the work of other rooms. The newest one is what is true now; an older one is what was true then."
 const LOOP_PLACEMENT =
-  'Installed views are listed below with their state shape. Put a view in your tile with place_view { view, state }: size defaults to quarter and anchor to auto, and anchor {"beside": <a view of yours>} puts it next to that one. Change what a view shows with set, and lay your views out with move_element and resize_element. Nothing is moved to make room: when the cells run out, shrink or move your own views, or remove one the work no longer needs. The tile itself, whose id the state gives, is where the user put it: move it, size it, or change its mode only when they ask. Other work has a tile of its own: read what it shows with get when that helps, and leave it as it is. When the user says "this" or "it" of a view they mean the focused one, which the state marks.'
+  'Installed views are listed below with their state shape. Put a view in your tile with place_view { view, state }: size defaults to quarter and anchor to auto, and anchor {"beside": <a view of yours>} puts it next to that one. Change what a view shows with set, and lay your views out with move_element and resize_element. Nothing is moved to make room: when the cells run out, shrink or move your own views, or remove one the work no longer needs. The tile itself, whose id the state gives, is where the user put it: move it, size it, or change its mode only when they ask. When the user says "this" or "it" of a view they mean the focused one, which the state marks.'
 
-/** What a loop's agent is, said once: the work it is on, and that its tile and the views in it are its own. */
-function loopSystem(id: string, desc: string, brief: string): string {
-  const work = `You are Jaspers, at work on one piece of work inside Jaspers Terminal, a financial research app: ${JSON.stringify(desc)}, known as ${loopName(id)}. It has one tile on the user's grid: a command line on top, where the user types to you, and under it the views you place. Each request says what is in it. The installed plugins do the work: your part is to place and change their views and call their sources, and to say what came of it. Requests may arrive through speech to text, so read past small transcription errors.`
-  return brief ? `${work}\n\nWhat you were set to do: ${brief}` : work
+/** What a room's agent is, said once: the room it is in, its brief, and any custom system prompt from Central. */
+function loopSystem(id: string, desc: string, brief: string, systemPrompt?: string): string {
+  const work = `You are Jaspers, the isolated room agent inside Jaspers Terminal, a financial research app, operating room ${loopName(id)}: ${JSON.stringify(desc)}. You are completely blind to other rooms and agents. Your room has one tile on the user's grid: a command line on top, where the user types to you, and under it the views you place. Each request says what is in your room. The installed plugins do the work: your part is to place and change their views and call their sources, and to say what came of it. Requests may arrive through speech to text, so read past small transcription errors.`
+  const parts = [
+    work,
+    ...(systemPrompt ? [`Room system prompt from Central: ${systemPrompt}`] : []),
+    ...(brief ? [`What you were set to do: ${brief}`] : []),
+  ]
+  return parts.join('\n\n')
 }
 
 /**
- * A loop's agent's prompt: what it is and its rules, then what is installed; and each round, its
- * tile first. `preface` goes after what it is, as a task's does for the orchestrator.
+ * A room's agent's prompt: what it is and its rules, then what is installed; and each round, its
+ * tile alone (blind to other rooms). `preface` goes after what it is, as a task's does for the orchestrator.
  */
 export function loopPrompt(workspaceId: string, loopId: string, preface: string[]): RunPrompt {
   return {
@@ -94,7 +104,7 @@ export function loopPrompt(workspaceId: string, loopId: string, preface: string[
       const primer = tilePrimer(gridSizeOf(workspaceId))
       return [
         [
-          loopSystem(loopId, loop?.desc ?? '', loop?.brief ?? ''),
+          loopSystem(loopId, loop?.desc ?? '', loop?.brief ?? '', loop?.systemPrompt),
           ...preface,
           LOOP_STATE,
           primer,
@@ -110,14 +120,13 @@ export function loopPrompt(workspaceId: string, loopId: string, preface: string[
   }
 }
 
-/** What is true right now for a loop's agent: its tile and the views inside it, then what is running, the clock, the tasks, the sources filed. */
+/** What is true right now for a room's agent: its own tile and views, the clock, and the sources filed (blind to other rooms). */
 export function loopStateNow(workspaceId: string, loopId: string): string {
   const state = toPublic(getState())
   const loop = loopsOf(workspaceId).list.find((one) => one.id === loopId)
   return [
     ...(loop ? [describeTiles(state, workspaceId, loop, (id) => getView(id)?.instructions)] : []),
-    ...describeOtherWork(state, workspaceId, loopId),
-    describeWork(state, workspaceId),
+    describeNow(defaultClock()),
     describeFiled(sourcesSeen(), state.sources),
   ].join('\n')
 }

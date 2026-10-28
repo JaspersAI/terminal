@@ -175,12 +175,25 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
         // made fresh, so there is a result of its own to show, and the page is put in the work's tiles
         // with it. The orchestrator's call, and a task's own, answer in text and show nothing.
         const page = source.id === MCP_SOURCE && loop !== undefined ? appOf(args) : null
+        // Central's direct source calls are capped at 5 seconds (fast chat queries); lasting work belongs in a room.
+        const fastCap = loop === undefined && !unread ? AbortSignal.timeout(5_000) : null
+        const callSignal = fastCap && signal ? AbortSignal.any([signal, fastCap]) : (fastCap ?? signal)
         let answer: unknown
-        const result = await runSource(source.id, args, {
-          workspaceId,
-          signal,
-          ...(page ? { fresh: true, raw: (raw: unknown) => (answer = raw) } : {}),
-        })
+        let result: Awaited<ReturnType<typeof runSource>>
+        try {
+          result = await runSource(source.id, args, {
+            workspaceId,
+            signal: callSignal,
+            ...(page ? { fresh: true, raw: (raw: unknown) => (answer = raw) } : {}),
+          })
+        } catch (err) {
+          if (fastCap?.aborted && !signal?.aborted) {
+            throw new Error(
+              `${source.id} took longer than 5 seconds, exceeding Central's fast-lookup limit. Propose setting up a room with create_room for this work instead.`,
+            )
+          }
+          throw err
+        }
         // Everything the source returned is already filed in SQLite by runSource; the inline
         // text handed to the model is formatted as a compact table and capped so a multi-megabyte
         // filing or bar series never crowds the context window, while keeping the dataset and app
