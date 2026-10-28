@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { BROWSER_VIEW, type BrowserBounds, type BrowserSnapshot } from '../../shared/grid/browser.ts'
+import {
+  BROWSER_VIEW,
+  googleAuthUserAgent,
+  type BrowserBounds,
+  type BrowserSnapshot,
+} from '../../shared/grid/browser.ts'
 import {
   EMPTY_GRID,
   layoutOf,
@@ -15,6 +20,7 @@ import {
 } from '../../shared/grid/grid.ts'
 import {
   createBrowserManager,
+  createBrowserUserAgentSync,
   type BrowserManagerState,
   type BrowserViewEvents,
   type ManagedBrowserView,
@@ -368,6 +374,56 @@ test('popups and new-tab actions open switchable tabs inside the same panel, and
   assert.equal(views[0]!.visible, true)
 })
 
+test('adopts OAuth popup child WebContents into a switchable tab without reloading and returns to the opener tab on window.close', async () => {
+  const { manager, placed, views, attached, sent } = createHarness()
+  await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  const opener = views[0]!
+
+  // Page opens an about:blank OAuth popup via window.open('', 'gsi') and then navigates it to accounts.google.com.
+  let adoptedEvents!: BrowserViewEvents
+  let adoptedLoadCalls = 0
+  const adoptedView: ManagedBrowserView = {
+    loadURL: async () => {
+      adoptedLoadCalls++
+    },
+    reload: () => {},
+    canGoBack: () => false,
+    canGoForward: () => false,
+    goBack: () => {},
+    goForward: () => {},
+    getURL: () => 'https://accounts.google.com/v3/signin/identifier',
+    getTitle: () => 'Sign in - Google Accounts',
+    isLoading: () => false,
+    setBounds: () => {},
+    setVisible: () => {},
+    readPageText: async () => 'Sign in with your Google Account',
+    destroy: () => {},
+  }
+  const returned = opener.events.onOpenWindow?.('about:blank', (childEvents) => {
+    adoptedEvents = childEvents
+    return adoptedView
+  })
+  assert.equal(returned, adoptedView)
+  // Adopting a child WebContents must not call loadURL again (Chromium already drives the popup navigation).
+  assert.equal(adoptedLoadCalls, 0)
+  assert.equal(attached.get(1)?.has(adoptedView), true)
+  assert.equal(opener.visible, false)
+
+  adoptedEvents.onDidStartLoading()
+  adoptedEvents.onDidNavigate('https://accounts.google.com/v3/signin/identifier')
+  adoptedEvents.onDidStopLoading()
+  assert.equal(sent.at(-1)?.snapshot.url, 'https://accounts.google.com/v3/signin/identifier')
+  assert.equal(sent.at(-1)?.snapshot.tabs?.length, 2)
+
+  // Popup completes sign-in, posts credentials to window.opener, and calls window.close().
+  adoptedEvents.onClose?.()
+  assert.equal(sent.at(-1)?.snapshot.tabs?.length, 1)
+  assert.equal(sent.at(-1)?.snapshot.url, 'https://www.bloomberg.com/live')
+  assert.equal(opener.visible, true)
+  assert.equal(attached.get(1)?.has(opener), true)
+  assert.equal(attached.get(1)?.has(adoptedView), false)
+})
+
 test('keeps the browser view attached during window resize and across cross-window tile moves without stale detach races', async () => {
   const { manager, placed, views, attached, viewports, getState, setState } = createHarness()
   // Browser tile is on the right half of a 1400x1000 window.
@@ -404,4 +460,77 @@ test('keeps the browser view attached during window resize and across cross-wind
   assert.equal(attached.get(2)?.has(view), true)
   assert.equal(view.visible, true)
   assert.equal(view.destroyed, false)
+})
+
+test('synchronizes WebContents User-Agent for Google auth hosts and uses CDP override during redirects without aborting', () => {
+  const rawUa =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) jaspers-terminal/0.11.1 Chrome/136.0.0.0 Electron/44.3.0 Safari/537.36'
+  const cleanUa =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36'
+  const firefoxUa = googleAuthUserAgent('darwin')
+
+  let committedUrl = 'https://www.linkedin.com/login'
+  let currentUa = cleanUa
+  const setUserAgentCalls: string[] = []
+  const cdpOverrides: string[] = []
+
+  const sync = createBrowserUserAgentSync(
+    {
+      getURL: () => committedUrl,
+      getUserAgent: () => currentUa,
+      setUserAgent: (ua) => {
+        currentUa = ua
+        setUserAgentCalls.push(ua)
+      },
+      setCdpUserAgentOverride: (ua) => {
+        cdpOverrides.push(ua)
+      },
+    },
+    rawUa,
+    'darwin',
+  )
+
+  // Direct navigation to accounts.google.com sets the Firefox UA via setUserAgent before the request leaves.
+  sync.onDidStartNavigation('https://accounts.google.com/v3/signin/identifier', true, false)
+  assert.equal(sync.inFlightUrl(), 'https://accounts.google.com/v3/signin/identifier')
+  assert.equal(currentUa, firefoxUa)
+  assert.deepEqual(setUserAgentCalls, [firefoxUa])
+  assert.deepEqual(cdpOverrides, [])
+
+  committedUrl = 'https://accounts.google.com/v3/signin/identifier'
+  sync.onDidNavigate(committedUrl)
+  assert.equal(sync.inFlightUrl(), undefined)
+
+  // Post-auth 302 redirect off accounts.google.com to myaccount.google.com uses CDP override (not setUserAgent) during redirect.
+  setUserAgentCalls.length = 0
+  sync.onWillRedirect('https://myaccount.google.com/?pli=1', true)
+  assert.equal(sync.inFlightUrl(), 'https://myaccount.google.com/?pli=1')
+  assert.deepEqual(setUserAgentCalls, [])
+  assert.deepEqual(cdpOverrides, [cleanUa])
+
+  // Once the redirect commits, setUserAgent is updated to the clean Chrome UA.
+  committedUrl = 'https://myaccount.google.com/?pli=1'
+  sync.onDidNavigate(committedUrl)
+  assert.equal(currentUa, cleanUa)
+  assert.deepEqual(setUserAgentCalls, [cleanUa])
+
+  // Next direct navigation clears the standing CDP override.
+  setUserAgentCalls.length = 0
+  cdpOverrides.length = 0
+  sync.onDidStartNavigation('https://mail.google.com/mail/u/0/', true, false)
+  assert.deepEqual(setUserAgentCalls, [])
+  assert.deepEqual(cdpOverrides, [''])
+
+  // Redirect from mail.google.com into accounts.google.com applies Firefox via CDP without calling setUserAgent mid-redirect.
+  cdpOverrides.length = 0
+  sync.onWillRedirect('https://accounts.google.com/ServiceLogin', true)
+  assert.deepEqual(setUserAgentCalls, [])
+  assert.deepEqual(cdpOverrides, [firefoxUa])
+
+  // If that redirected navigation fails, the committed page's clean Chrome UA is restored.
+  cdpOverrides.length = 0
+  sync.onDidFailLoad(true)
+  assert.equal(sync.inFlightUrl(), undefined)
+  assert.equal(currentUa, cleanUa)
+  assert.deepEqual(cdpOverrides, [''])
 })
