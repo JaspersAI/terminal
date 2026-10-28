@@ -21,6 +21,7 @@ interface Props {
   /** The composer's spring drives this: it slides down with the panel to sit above the arrow. */
   box: RefObject<HTMLDivElement | null>
   onDismiss: () => void
+  onClear?: () => void
 }
 
 /**
@@ -45,6 +46,7 @@ export function Answer({
   fading,
   box,
   onDismiss,
+  onClear,
 }: Props): ReactElement {
   return (
     <div
@@ -61,19 +63,33 @@ export function Answer({
         onStop={onStop}
         label={label}
         text={text}
-        className="max-h-[40vh] py-4 pr-9 pl-5"
+        className="max-h-[40vh] py-4 pr-16 pl-5"
       />
-      <button
-        type="button"
-        id="agent-answer-dismiss"
-        aria-label="Dismiss the answer"
-        onClick={onDismiss}
-        className="absolute top-0 right-0 flex h-8 w-8 items-center justify-center text-muted-foreground hover:text-foreground"
-      >
-        <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
-          <path d="M1 1 9 9M9 1 1 9" />
-        </svg>
-      </button>
+      <div className="absolute top-0 right-0 flex h-8 items-center">
+        {onClear && earlier.length > 0 && (
+          <button
+            type="button"
+            id="central-clear-button"
+            aria-label="Clear conversation"
+            title="Clear conversation"
+            onClick={onClear}
+            className="px-2 text-xs text-muted-foreground hover:text-foreground"
+          >
+            Clear
+          </button>
+        )}
+        <button
+          type="button"
+          id="agent-answer-dismiss"
+          aria-label="Dismiss the answer"
+          onClick={onDismiss}
+          className="flex h-8 w-8 items-center justify-center text-muted-foreground hover:text-foreground"
+        >
+          <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+            <path d="M1 1 9 9M9 1 1 9" />
+          </svg>
+        </button>
+      </div>
     </div>
   )
 }

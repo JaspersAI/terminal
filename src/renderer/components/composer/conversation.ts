@@ -146,7 +146,7 @@ export function useConversation({
  */
 export function useEarlier({
   request,
-  workspaceId,
+  workspaceId: _workspaceId,
   when,
   said = null,
   welcome = null,
@@ -159,15 +159,15 @@ export function useEarlier({
 }): () => void {
   const { earlier, setEarlier } = request
   const idle = request.shown.length === 0
-  // The workspace whose chat is up, once it has been read: until then what is up is the one before it.
-  const shown = useRef<string | null>(null)
+  // Central's conversation is a single flow across all tabs.
+  const shown = useRef<boolean>(false)
   useEffect(() => {
     if (!when || !idle) return
     let live = true
     window.app.agent.history(PAGE).then(
       (got) => {
         if (!live) return
-        shown.current = workspaceId
+        shown.current = true
         // Under the pages the reader went back through: a reply landing at the end takes none away.
         setEarlier((was) => rejoin(was, got))
       },
@@ -176,7 +176,7 @@ export function useEarlier({
     return () => {
       live = false
     }
-  }, [when, idle, workspaceId, said, welcome])
+  }, [when, idle, said, welcome])
 
   const head = earlier[0]?.id
   const reading = useRef(false)
@@ -185,10 +185,7 @@ export function useEarlier({
 
   /** Reads the page ahead of the first exchange up and puts it above the rest, one read at a time. */
   return function more(): void {
-    // One read off a thread has no id: there is no log to read further into. And what is up has to be
-    // this workspace's chat, not the one before it, still on screen until this one's is read.
-    if (head === undefined || head === first.current || reading.current) return
-    if (shown.current !== workspaceId) return
+    if (head === undefined || head === first.current || reading.current || !shown.current) return
     reading.current = true
     window.app.agent.history(PAGE, head).then(
       (older) => {

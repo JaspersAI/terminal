@@ -40,20 +40,119 @@ function isThinking(block: unknown): boolean {
 /** Exchanges the model is still given when a new one joins a thread. */
 export const RECENT = 3
 
+/** Single canonical chat key for Central across all tabs. */
+export const CENTRAL_CHAT = 'central'
+
+/** Option 1 session boundaries: 15m cold launch gap, or 4h inactivity gap during a sitting. */
+export const COLD_LAUNCH_GAP_MS = 15 * 60_000
+export const SESSION_IDLE_GAP_MS = 4 * 60 * 60_000
+const SESSION_SUMMARY_TAG = '<prior_session_summary>'
+const SESSION_SUMMARY_MAX = 2_400
+
+export function isNewSession(lastAt: number, now: number, kind: 'launch' | 'activity'): boolean {
+  if (!Number.isFinite(lastAt) || lastAt <= 0) return false
+  const elapsed = now - lastAt
+  return kind === 'launch' ? elapsed > COLD_LAUNCH_GAP_MS : elapsed >= SESSION_IDLE_GAP_MS
+}
+
+function isSummaryTurn(turn: Turn | undefined): turn is Extract<Turn, { role: 'user' }> {
+  return turn?.role === 'user' && turn.text.startsWith(SESSION_SUMMARY_TAG)
+}
+
 /**
- * The end of a thread that goes on when a new exchange joins it: its last `count` exchanges, an
- * exchange being a user's turn, or a note in a user's place, and everything said and done until the
- * next. The chat keeps all that was said in a log of its own, so this bounds only what the model
- * works from and what each round costs. What goes on loses its thinking, which a provider refuses
- * once the beginning of its conversation is gone. A thread no longer than that is handed back as it
- * is, the same array, so nothing a provider has read of it changes.
+ * The end of a thread that goes on when a new exchange joins it: its last `count` exchanges (plus
+ * any leading `<prior_session_summary>` exchange), an exchange being a user's turn, or a note in a
+ * user's place, and everything said and done until the next.
  */
 export function recent(turns: Turn[], count: number = RECENT): Turn[] {
+  const hasSummary = isSummaryTurn(turns[0]) && turns[1]?.role === 'assistant'
+  const startIdx = hasSummary ? 2 : 0
   let seen = 0
-  for (let from = turns.length - 1; from > 0; from--) {
-    if (turns[from]!.role === 'user' && ++seen === count) return withoutThinking(turns.slice(from))
+  for (let from = turns.length - 1; from > startIdx; from--) {
+    if (turns[from]!.role === 'user' && ++seen === count) {
+      const head = hasSummary ? turns.slice(0, 2) : []
+      return [...head, ...withoutThinking(turns.slice(from))]
+    }
   }
   return turns
+}
+
+/**
+ * Compresses older exchanges in a thread at a session boundary into a concise `<prior_session_summary>`
+ * exchange at the head of the thread, keeping the last `keepExchanges` exchanges verbatim.
+ */
+export function compressSession(turns: Turn[], keepExchanges = 2): Turn[] {
+  const starts: number[] = []
+  let existingSummary = ''
+  let bodyStart = 0
+  if (isSummaryTurn(turns[0]) && turns[1]?.role === 'assistant') {
+    existingSummary = turns[0]!.text
+      .replace(/^<prior_session_summary>\s*/i, '')
+      .replace(/\s*<\/prior_session_summary>$/i, '')
+      .trim()
+    bodyStart = 2
+  }
+  for (let i = bodyStart; i < turns.length; i++) {
+    if (turns[i]!.role === 'user') starts.push(i)
+  }
+  if (starts.length <= keepExchanges) return turns
+  const cutoff = starts[starts.length - keepExchanges]!
+  const older = turns.slice(bodyStart, cutoff)
+  const kept = withoutThinking(turns.slice(cutoff))
+  const lines: string[] = existingSummary ? [existingSummary] : []
+
+  let currentQuestion = ''
+  let currentCalls: string[] = []
+  let currentAnswer = ''
+  const flushExchange = (): void => {
+    if (!currentQuestion && !currentAnswer && currentCalls.length === 0) return
+    const q = currentQuestion.replace(/\s+/g, ' ').trim().slice(0, 140)
+    const calls = currentCalls.length > 0 ? ` [tools: ${currentCalls.join(', ')}]` : ''
+    const a = currentAnswer.replace(/\s+/g, ' ').trim().slice(0, 180)
+    lines.push(`- User: "${q}"${calls}${a ? ` → Assistant: "${a}"` : ''}`)
+    currentQuestion = ''
+    currentCalls = []
+    currentAnswer = ''
+  }
+
+  for (const turn of older) {
+    if (turn.role === 'user') {
+      flushExchange()
+      currentQuestion = turn.text
+    } else if (turn.role === 'assistant') {
+      if (turn.toolCalls.length > 0) {
+        for (const call of turn.toolCalls) {
+          const desc =
+            typeof call.input.desc === 'string'
+              ? ` (${call.input.desc.slice(0, 40)})`
+              : typeof call.input.room === 'string'
+                ? ` (${call.input.room})`
+                : ''
+          currentCalls.push(`${call.name}${desc}`)
+        }
+      }
+      if (turn.text.trim()) currentAnswer = turn.text
+    }
+  }
+  flushExchange()
+
+  let body = lines.join('\n')
+  if (body.length > SESSION_SUMMARY_MAX) {
+    body = body.slice(body.length - SESSION_SUMMARY_MAX)
+    const firstNewline = body.indexOf('\n')
+    if (firstNewline > 0) body = body.slice(firstNewline + 1)
+  }
+  const summaryUser: Turn = {
+    role: 'user',
+    text: `<prior_session_summary>\n${body}\n</prior_session_summary>`,
+  }
+  const summaryAssistant: Turn = {
+    role: 'assistant',
+    text: 'Understood. I have the context from our prior session.',
+    toolCalls: [],
+    raw: null,
+  }
+  return [summaryUser, summaryAssistant, ...kept]
 }
 
 /** The most one tool's answer may put in front of the model at once. */

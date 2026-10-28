@@ -23,28 +23,22 @@ Rather than appending raw tool responses, multi-thousand-row datasets, and full 
 3. **Context set-aside (`read_again`) and portable threads (`portable`):**
    Every conversation thread is kept whole on disk, while `src/shared/agent/aside.ts` bounds the active wire prompt: once tool outputs in a request exceed `WHOLE_MAX` (`60,000` characters) or belong to earlier requests, long outputs (`LARGE = 1500` characters) are replaced in the prompt with a short header and a note naming `read_again "<callId>"`. The model can retrieve any full output on demand via `read_again` rather than resending prior tool payloads on every turn. When you switch between cloud and local models in **Settings > Language model**, `portable` (`src/shared/agent/history.ts`) strips provider-specific replay payloads (such as thinking blocks) while preserving every user message, assistant reply, and tool call.
 
-## Concurrent Grid Loop subagents (`loop_1`, `loop_2`, …)
+## Concurrent Grid Room agents (`room_1`, `room_2`, …)
 
-Jaspers Terminal separates workspace routing from per-tile execution (`src/main/agent/orchestrator.ts`, `src/main/agent/router.ts`, `src/main/agent/loop.ts`, and `src/shared/loops/loops.ts`):
+Jaspers Terminal separates global Central orchestration across tabs from isolated per-room execution (`src/main/agent/orchestrator.ts`, `src/main/agent/router.ts`, `src/main/agent/loop.ts`, and `src/shared/loops/loops.ts`):
 
 ```mermaid
 flowchart TB
-  User["User Input (Global Composer or @loop_N)"] --> Router["Global Router (orchestrator.ts)"]
-  Router -->|"create_loop (setUpLoop selects plugins & skills)"| Loop1["loop_1 (f1)<br/>Scoped tools, tile frame & thread"]
-  Router -->|"update_loop / handoff_to_loop (handOver / sendToLoop)"| Loop2["loop_2 (f2)<br/>Scoped tools, tile frame & thread"]
-  Router <-->|"read_loop"| Loop1
-  Loop1 -->|"use_plugin (on-demand schema load)"| Registry["Plugin & Skill Registry"]
-  Loop1 -->|"build_plugin"| Builder["Coding Agent (build.ts)"]
+  User["User Input (Central Composer or @room_N)"] --> Router["Central Orchestrator (orchestrator.ts)"]
+  Router -->|"create_room (delegates model, systemPrompt, plugins & skills)"| Room1["room_1 (f1)<br/>Isolated agent, tile frame & thread"]
+  Router -->|"update_room (handOver / sendToLoop)"| Room2["room_2 (f2)<br/>Isolated agent, tile frame & thread"]
+  Router <-->|"read_room & search_rooms"| Room1
+  Room1 -->|"use_plugin (on-demand schema load)"| Registry["Plugin & Skill Registry"]
+  Room1 -->|"build_plugin"| Builder["Coding Agent (build.ts)"]
 ```
 
-- **Global router (`src/main/agent/orchestrator.ts` & `src/main/agent/router.ts`):** The assistant in the global composer oversees the workspace, inspects loops, panels, and the SQLite store (`read_loop`, `get`, `query`) to answer questions and compare work across tiles, and manages the workspace layout, settings, keys, plugin installations, skills, and scheduled tasks. It has no plugin source-fetching or view-mutation tools of its own and knows installed plugins by name only.
-- **Starting a loop (`create_loop` & `setUpLoop`):** For any request that requires data, views, or research, the router calls `create_loop` (`src/main/agent/router.ts`) with a one-line `desc` and a `brief`. Before creating the tile, `setUpLoop` (`src/main/agent/setup.ts`) runs a dedicated one-round catalog selection call (`choose_for_work`) against the full installed catalog to select only the plugins and skills that piece of work needs. For interactive requests, the user is prompted (`Start` / `No`) with `desc` and the chosen plugins before the frame is placed.
-- **Handing off to an existing loop (`update_loop` / `handoff_to_loop` via `handOver` and `sendToLoop`):** Follow-up requests for existing work are routed with `update_loop` (marked `handoff: true` in `src/main/agent/router.ts`, conceptually `handoff_to_loop`). Interactive handoffs dispatch asynchronously via `handOver` (`src/main/agent/loop.ts`) so the global composer closes immediately while the loop works in its own tile; scheduled-task handoffs await completion via `sendToLoop` so the task records the loop's final answer. Users can also target a loop directly by typing in its tile's command line or prefixing `@loop_3` in the global composer.
-- **Numbered frames and isolated sub-grids (`f1` → `loop_1`):** Each loop receives a monotonic workspace ID (`f1`, `f2`, … displayed and addressed as `loop_1`, `loop_2`, … via `loopName` in `src/shared/loops/loops.ts`) that is never reused. Its frame sits on the window's cells, and the views it places (`place_view`) are laid out inside that frame on a sub-grid of the loop's own (`parent`), moving, resizing, minimizing, and maximizing as one unit. Multiple loops run concurrently across tiles and monitors, each with its own `AbortController` and Stop button.
-- **Inspecting, expanding, and managing loops (`read_loop`, `use_plugin`, `close_loop`, `reopen_loop`, `delete_loop`):**
-  - `read_loop` (`src/main/agent/tools/loops.ts`) reads a loop's current status (`working`, `asking`, `done`, `failed`), its views and their outputs, and its last 5 exchanges (`READ_EXCHANGES = 5`).
-  - `use_plugin` (`src/main/agent/tools/loops.ts`) allows a loop subagent to load the full view, source, connection, and skill definitions of another installed plugin on demand and persist that plugin in its loop record.
-  - `close_loop` stops any active run and moves the loop's frame, views, and conversation into `closedLoops` (**Settings > View loops**); `reopen_loop` restores it to the grid with its conversation intact; `delete_loop` permanently deletes the loop and forgets its chat (`forgetChat`).
+- **Central orchestrator (`src/main/agent/orchestrator.ts` & `src/main/agent/router.ts`):** Central maintains a single persistent conversation flow (`central`) across all tabs, compressed at sitting boundaries (`>= 4h` inactivity gap or `> 15m` cold launch) into a `<prior_session_summary>` plus recent exchanges, and clearable via `/clear` or the Clear button. Central has full context of every room across all tabs (`read_room`, `search_rooms`, `get`, `query`), answers simple queries (< 3–6 seconds, such as portfolio value or weather) directly in chat, and proposes setting up a Room (`create_room`) with user confirmation for repeatable or lasting work, exercising high delegation authority over the room's `model`, `systemPrompt`, `plugins`, and `skills`.
+- **Isolated Room agents (`room_1`, `room_2`, …):** Every room has an agent running inside its sandboxed frame that is completely blind to the work of other agents. Every room is saved in memory in chronological order of its last activity (including when its tab is closed) and can be retrieved or searched by keyword from the global Rooms directory (`LoopsDialog`) or by Central (`search_rooms`). Permanent deletion (`delete_room`) requires explicit confirmation.
 
 ## The Coding Agent (`build_plugin`) lifecycle
 

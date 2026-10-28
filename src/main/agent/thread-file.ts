@@ -1,6 +1,8 @@
+import { CENTRAL_CHAT, compressSession, isNewSession } from '../../shared/agent/history'
 import type { Turn } from '../../shared/llm/llm'
 import { settle } from '../../shared/agent/thread-store'
 import { allThreads, saveThread } from '../data/store'
+import { getState } from '../state'
 import type { ThreadStore } from './threads'
 
 // The assistant's threads, kept between sessions, each under its chat's key. Read once at startup,
@@ -10,15 +12,31 @@ import type { ThreadStore } from './threads'
 
 const kept = new Map<string, { model: string; turns: Turn[] }>()
 
-/** Reads what was kept. Anything unreadable is left behind rather than being argued with. */
+/** Reads what was kept. Compresses Central's thread at a cold-launch session boundary (>15m since last turn). */
 export async function startThreads(): Promise<void> {
   const stored = await allThreads()
+  const now = Date.now()
   for (const [chat, one] of Object.entries(stored)) {
     try {
-      const turns = JSON.parse(one.turns) as Turn[]
-      if (Array.isArray(turns) && turns.length > 0) kept.set(chat, { model: one.model, turns })
+      let turns = JSON.parse(one.turns) as Turn[]
+      if (Array.isArray(turns) && turns.length > 0) {
+        if (chat === CENTRAL_CHAT && isNewSession(one.at, now, 'launch')) {
+          turns = compressSession(turns)
+        }
+        kept.set(chat, { model: one.model, turns })
+      }
     } catch {
       // A thread that will not parse is one we do without.
+    }
+  }
+  // Migrate legacy per-workspace Central thread to the unified 'central' key if not present yet.
+  if (!kept.has(CENTRAL_CHAT)) {
+    try {
+      const legacyId = getState().currentWorkspaceId
+      const legacy = kept.get(legacyId)
+      if (legacy) kept.set(CENTRAL_CHAT, legacy)
+    } catch {
+      // State not initialized in isolated tests.
     }
   }
   if (kept.size > 0) console.log(`[threads] carried on ${kept.size} conversation${kept.size === 1 ? '' : 's'}`)

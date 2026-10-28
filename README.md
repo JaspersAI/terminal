@@ -22,7 +22,7 @@
 To keep prompt sizes bounded across local, open-weight, and cloud models, the harness separates data storage, panel state, and per-tile execution from the main conversation thread:
 
 - **Context offloading to local SQLite (`~/Jaspers/data/jaspers.db`):** Tool payloads, time series, and SEC filing text are stored outside the conversation prompt. Every source call is indexed locally into `runs`, `run_rows`, and an external-content FTS5 search index (`docs`), while the model queries slices via SQL (`query`) and reads bounded 4 KB view outputs.
-- **Zod schema contracts and isolated Grid Loops:** Each tile on the 100 × 100 multi-monitor grid is an independent, numbered subagent loop (`loop_1`, `loop_2`, …) with scoped tools, its own conversation thread, and Zod `state` (2 KB max) and `output` (4 KB max) schemas.
+- **Zod schema contracts and isolated Grid Rooms:** Each tile on the 100 × 100 grid is an independent, numbered room (`room_1`, `room_2`, …) with an isolated agent that is blind to other rooms, its own conversation thread, model and system prompt delegated by Central, and Zod `state` (2 KB max) and `output` (4 KB max) schemas. Every room is saved in memory in chronological order of last activity and is searchable by keyword.
 - **Built-in coding agent (`build_plugin`):** When no installed plugin provides a requested data source or view, a builder loop writes a TypeScript plugin from starter templates, checks its types and esbuild bundles, and runs source calls before placing the view on the grid.
 
 <!-- Screenshot: replace with a capture of a workspace once one is ready.

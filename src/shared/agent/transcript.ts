@@ -78,6 +78,15 @@ const TASK_NOTE = /^\(Scheduled task (t\d+) ran on its own, and the reply below 
 export function transcript(turns: Turn[], limit: number, secrets: string[] = []): Exchange[] {
   const exchanges: Exchange[] = []
   for (const [at, turn] of turns.entries()) {
+    // Skip synthetic session-summary turns at the head of Central's thread.
+    if (at === 0 && turn.role === 'user' && turn.text.startsWith('<prior_session_summary>')) continue
+    if (
+      at === 1 &&
+      turn.role === 'assistant' &&
+      turns[0]?.role === 'user' &&
+      turns[0].text.startsWith('<prior_session_summary>')
+    )
+      continue
     // What the user added while a run was at work is read with that round's results: it belongs to
     // the exchange in progress, which its first message began and the run's reply ends.
     if (added(turns, at)) continue

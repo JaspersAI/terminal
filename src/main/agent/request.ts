@@ -5,6 +5,7 @@ import { failedNote, mask, STOPPED_NOTE } from '../../shared/agent/transcript'
 import { handedTurn } from '../../shared/agent/typed'
 import type { Place } from '../../shared/agent/asking'
 import type { Turn } from '../../shared/llm/llm'
+import { signsIn } from '../../shared/llm/providers'
 import { TASK_EXCLUDED_TOOLS } from '../../shared/tasks/tasks'
 import { asksFor, withoutSecretPrompts } from '../actions'
 import { fileExchange } from '../data/store'
@@ -35,7 +36,7 @@ import {
 /** What a run on a task's limits is not offered: a key nobody is there to paste, a question nobody is there to answer, tasks that make tasks. */
 const NOT_A_TASKS = new Set<string>(TASK_EXCLUDED_TOOLS)
 
-export const NEW_THREAD = /^\/new\s*$/i
+export const NEW_THREAD = /^\/(?:new|clear)\s*$/i
 const STARTED_OVER = 'Started a new conversation.'
 
 /** What one of the user's requests is run with: whose chat it continues, and what its run is told and may call. */
@@ -72,10 +73,12 @@ export interface Asked {
   tools: (context: ToolContext) => Tool[]
   /** The state the request is sent with. */
   state: () => string
-  /** In front of its run's log lines: nothing for the global box, the loop's id for a tile's. */
+  /** In front of its run's log lines: nothing for the global box, the room's id for a tile's. */
   label?: string
-  /** The loop the request is for and the tile it shows on, when it was sent for a tile. */
+  /** The room the request is for and the tile it shows on, when it was sent for a tile. */
   tile?: { loop: string; place: Place }
+  /** Optional room-specific model override chosen by Central. */
+  model?: string | null
 }
 
 /** A message the user added to a run at work: what its turn holds, what the tile shows of it, and the name its window gave it. */
@@ -116,8 +119,10 @@ export async function userRequest({
   state,
   label = '',
   tile,
+  model,
 }: Asked): Promise<string> {
-  const config = configured()
+  const base = configured()
+  const config = model && !signsIn(base.provider) ? { ...base, model } : base
   const thread = threadFor(chat, config)
   const conversationId = conversationOf(chat)
   // /new starts the thread over, unless the user has a skill by that name, which is theirs to have.

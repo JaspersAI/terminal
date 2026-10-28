@@ -79,7 +79,7 @@ export function Composer(): ReactElement {
   // Why the last dock did not happen, shown on the status line in place of the hint.
   const [dockProblem, setDockProblem] = useState<string | null>(null)
   const request = useRequest()
-  const { phase, error, busy, working, shown, away, earlier, ask, release, stop } = request
+  const { phase, error, busy, working, shown, away, earlier, ask, release, stop, clear } = request
   // A request on screen still working. One whose box was dismissed from over it works on out of
   // sight and is not counted: it lets the composer go, and is in the conversation when that comes up.
   const watching = shown.some((one) => one.working)
@@ -476,12 +476,20 @@ export function Composer(): ReactElement {
           fading={fading && !open}
           box={box}
           onDismiss={close}
+          onClear={clear}
         />
       ) : showNotice && notice ? (
         noticeInChat ? (
           // The chat, with the reply last; unkeyed, so it is the same box the conversation is. With
           // the composer up the box is wanted, so it fades only away from it.
-          <Answer earlier={earlier} onEarlier={more} fading={noticeFading && !open} box={box} onDismiss={closeNotice} />
+          <Answer
+            earlier={earlier}
+            onEarlier={more}
+            fading={noticeFading && !open}
+            box={box}
+            onDismiss={closeNotice}
+            onClear={clear}
+          />
         ) : (
           <Answer
             key={notice.id}
@@ -504,6 +512,7 @@ export function Composer(): ReactElement {
             fading={conversation.leaving}
             box={box}
             onDismiss={() => closeHistory()}
+            onClear={clear}
           />
         )
       )}

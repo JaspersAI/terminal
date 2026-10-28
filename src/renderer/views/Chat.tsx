@@ -49,7 +49,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
   const disabledSkills = useAppState((s) => s.disabledSkills)
   const notices = useAppState((s) => s.notices)
   const request = useRequest()
-  const { busy, working, shown, earlier, ask, stop } = request
+  const { busy, working, shown, earlier, ask, stop, clear } = request
   const [draft, setDraft] = useState('')
   const attachments = useAttachments()
   const drop = useFileDrop(attachments.attach)
@@ -177,6 +177,11 @@ export function Chat({ panel }: ViewProps): ReactElement {
         </div>
       </form>
       <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
+        {earlier.length > 0 && (
+          <button type="button" id="docked-chat-clear" onClick={clear} className="underline hover:text-foreground">
+            Clear
+          </button>
+        )}
         <button
           type="button"
           id="docked-chat-undock"

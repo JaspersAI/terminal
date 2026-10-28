@@ -3,10 +3,15 @@ import { test } from 'node:test'
 import {
   BUILDER_OUTPUT_MAX,
   capOutput,
+  CENTRAL_CHAT,
   closeOff,
+  COLD_LAUNCH_GAP_MS,
+  compressSession,
+  isNewSession,
   OUTPUT_MAX,
   portable,
   recent,
+  SESSION_IDLE_GAP_MS,
   sourceOutput,
   withoutThinking,
 } from './history.ts'
@@ -212,4 +217,55 @@ test('a thread as another model reads it keeps every word and call, and none of 
   assert.deepEqual(read[1], { role: 'assistant', text: '', toolCalls: [call], raw: null })
   // What had nothing of its provider's is the same turn.
   for (const at of [0, 2, 3]) assert.equal(read[at], turns[at])
+})
+
+test('Option 1 session boundaries trigger on >=4h idle gap or >15m cold launch, and compress prior exchanges into <prior_session_summary>', () => {
+  assert.equal(CENTRAL_CHAT, 'central')
+  const t0 = 1_000_000_000
+  assert.equal(isNewSession(t0, t0 + COLD_LAUNCH_GAP_MS - 1, 'launch'), false)
+  assert.equal(isNewSession(t0, t0 + COLD_LAUNCH_GAP_MS + 1, 'launch'), true)
+  assert.equal(isNewSession(t0, t0 + SESSION_IDLE_GAP_MS - 1, 'activity'), false)
+  assert.equal(isNewSession(t0, t0 + SESSION_IDLE_GAP_MS, 'activity'), true)
+
+  const turns: Turn[] = [
+    asked('Set up a macro monitor for 10Y yields'),
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: [{ id: 'c1', name: 'create_room', input: { desc: '10Y Treasury Monitor' } }],
+      raw: null,
+    },
+    tool('Started room_1.'),
+    replied('Started room_1.'),
+    asked('What is my AAPL position value?'),
+    replied('Your AAPL position is $42,500.'),
+    asked('Check NVDA options IV'),
+    replied('NVDA 30d IV is 48%.'),
+    asked('Compare that to AMD'),
+    replied('AMD 30d IV is 51%.'),
+  ]
+
+  const compressed = compressSession(turns, 2)
+  // First 2 turns are the <prior_session_summary> exchange, followed by the last 2 verbatim exchanges (4 turns).
+  assert.equal(compressed.length, 6)
+  assert.equal(compressed[0]!.role, 'user')
+  assert.match((compressed[0] as { text: string }).text, /^<prior_session_summary>\n/)
+  assert.match((compressed[0] as { text: string }).text, /10Y yields/)
+  assert.match((compressed[0] as { text: string }).text, /create_room/)
+  assert.match((compressed[0] as { text: string }).text, /\$42,500/)
+  assert.equal((compressed[2] as { text: string }).text, 'Check NVDA options IV')
+  assert.equal((compressed[4] as { text: string }).text, 'Compare that to AMD')
+
+  // recent() preserves the leading <prior_session_summary> exchange while cutting verbatim turns to RECENT.
+  const more: Turn[] = [
+    ...compressed,
+    asked('What about INTC?'),
+    replied('INTC 30d IV is 55%.'),
+    asked('And TSM?'),
+    replied('TSM 30d IV is 39%.'),
+  ]
+  const trimmed = recent(more, 3)
+  assert.equal(trimmed[0]!.role, 'user')
+  assert.match((trimmed[0] as { text: string }).text, /^<prior_session_summary>/)
+  assert.equal((trimmed[2] as { text: string }).text, 'Compare that to AMD')
 })

@@ -11,7 +11,7 @@ import {
 } from '../../../shared/agent/aside'
 import { cited, keptOn, type Citation } from '../../../shared/agent/citations'
 import { portableFork, putBack, standing, type Fork } from '../../../shared/agent/fork'
-import { RECENT, recent, withoutThinking } from '../../../shared/agent/history'
+import { compressSession, isNewSession, RECENT, recent, withoutThinking } from '../../../shared/agent/history'
 import { keepTail, settle } from '../../../shared/agent/thread-store'
 import { CLOSED_NOTE, lastExchange, maskExchange, transcript, type Exchange } from '../../../shared/agent/transcript'
 import { attachedFileNames, stripAttachedFiles } from '../../../shared/agent/attachments'
@@ -133,6 +133,47 @@ export function cutToRecent(history: Turn[]): void {
   if (kept === history) return
   console.log(`[agent] thread goes on with its last ${RECENT} exchanges: ${history.length - kept.length} turns dropped`)
   history.splice(0, history.length, ...kept)
+}
+
+let lastCentralActivityAt = Date.now()
+
+/**
+ * Central's thread continuation across tabs: if the user returns after an inactivity gap (>=4 hours,
+ * Option 1 sitting boundary), compresses the prior sitting's exchanges into `<prior_session_summary>`
+ * + last 2 verbatim exchanges; otherwise trims to the recent window while preserving any session summary.
+ */
+export function centralGoesOn(history: Turn[], now = Date.now()): void {
+  if (isNewSession(lastCentralAt(), now, 'activity')) {
+    const compressed = compressSession(history)
+    if (compressed !== history) {
+      console.log('[agent] central session boundary crossed: compressed prior sitting into summary')
+      history.splice(0, history.length, ...compressed)
+    }
+  } else {
+    cutToRecent(history)
+  }
+  lastCentralActivityAt = now
+}
+
+function lastCentralAt(): number {
+  return lastCentralActivityAt
+}
+
+/**
+ * Clears a reusable chat (such as Central's single flow across tabs): resets the model thread in
+ * memory and on disk, and clears its exchange log in SQLite, while allowing future messages on the
+ * same chat key.
+ */
+export function clearChat(chat: string): void {
+  const config = getProviderConfig('llm')
+  if (config) {
+    const thread = threadFor(chat, config)
+    startOver(chat, config, thread)
+  } else {
+    dropThread(chat)
+  }
+  forgetChat(chat)
+  lastCentralActivityAt = Date.now()
 }
 
 /**

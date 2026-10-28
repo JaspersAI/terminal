@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { CENTRAL_CHAT } from '../../../shared/agent/history'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript'
 import { errorMessage } from '../../lib/errors'
-import { get, useAppState } from '../../lib/state'
 import {
   answered,
   awayOn,
@@ -30,11 +30,9 @@ type Voice = Exclude<Phase, 'thinking'>
 
 /**
  * Owns microphone capture and the requests this window has sent, including their streamed replies.
- * A request starts as it is sent, so several can be working at once, each an exchange of its own
- * (`live.ts`); sending never waits on one still in flight.
+ * Central's conversation is a single flow across all tabs (`CENTRAL_CHAT`).
  */
 export function useRequest() {
-  const workspaceId = useAppState((s) => s.currentWorkspaceId)
   const [voice, setVoice] = useState<Voice>('idle')
   /** Why the microphone's part failed. A run's own failure sits on its exchange, under its question. */
   const [error, setError] = useState<string | null>(null)
@@ -47,11 +45,11 @@ export function useRequest() {
   const recorder = (recorderRef.current ??= new Recorder())
   const pressed = useRef(false)
   const busy = voice !== 'idle'
-  /** This workspace's requests as its conversation shows them, in the order they were sent. */
-  const shown = useMemo(() => shownOn(live, workspaceId), [live, workspaceId])
+  /** Central's requests as its single conversation shows them across all tabs, in the order they were sent. */
+  const shown = useMemo(() => shownOn(live, CENTRAL_CHAT), [live])
   /** The ones working out of sight, their box dismissed from over them. */
-  const away = useMemo(() => awayOn(live, workspaceId), [live, workspaceId])
-  const working = workingOn(live, workspaceId)
+  const away = useMemo(() => awayOn(live, CENTRAL_CHAT), [live])
+  const working = workingOn(live, CENTRAL_CHAT)
   // What the orb and the status line go by: the microphone while it has the floor, then the runs.
   const phase: Phase = voice !== 'idle' ? voice : working ? 'thinking' : 'idle'
 
@@ -60,9 +58,16 @@ export function useRequest() {
     setLive(now.current)
   }, [])
 
-  /** The box over this workspace's conversation is put away: what is over goes, what works goes on unseen. */
+  /** The box over Central's conversation is put away: what is over goes, what works goes on unseen. */
   function dismiss(): void {
-    change((list) => dismissed(list, workspaceId))
+    change((list) => dismissed(list, CENTRAL_CHAT))
+  }
+
+  /** Clears Central's single conversation flow across all tabs: thread, log, and visible exchanges. */
+  function clear(): void {
+    setEarlier([])
+    change(() => [])
+    void window.app.agent.clear().catch(() => undefined)
   }
 
   /**
@@ -83,13 +88,16 @@ export function useRequest() {
    */
   async function ask(text: string): Promise<void> {
     setError(null)
+    if (/^\/clear\s*$/i.test(text.trim())) {
+      clear()
+      return
+    }
     // The conversation this question continues, read before the run adds to it. Its newest page only:
     // the view goes to the new question, so whatever the reader had loaded above is let go.
     await reread(true)
     const name = crypto.randomUUID()
     setSequence((value) => value + 1)
-    // The workspace on screen now is the one main runs it on.
-    change((list) => sent(list, name, get().currentWorkspaceId, text))
+    change((list) => sent(list, name, CENTRAL_CHAT, text))
     try {
       const reply = await window.app.agent.run(text, name)
       console.log('[agent]', reply)
@@ -162,7 +170,7 @@ export function useRequest() {
    */
   const stop = useCallback(
     (ask?: string): void => {
-      const mine = now.current.filter((one) => one.working && one.workspaceId === get().currentWorkspaceId)
+      const mine = now.current.filter((one) => one.working && one.workspaceId === CENTRAL_CHAT)
       const target = ask === undefined ? mine[mine.length - 1] : now.current.find((one) => one.ask === ask)
       if (target?.runId) void window.app.agent.stop(target.runId)
     },
@@ -183,6 +191,7 @@ export function useRequest() {
     release,
     stop,
     dismiss,
+    clear,
     setEarlier,
   }
 }
