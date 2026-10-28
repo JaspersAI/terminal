@@ -1000,6 +1000,10 @@ export function moveLoop(
       workspace = customName ? { id: randomUUID(), name: customName } : newWorkspace(state.workspaces)
       created = true
       if (resolvedTarget.name === undefined && options.runId) {
+        if (createdWorkspaceByRun.size >= 100) {
+          const oldest = createdWorkspaceByRun.keys().next().value
+          if (oldest !== undefined) createdWorkspaceByRun.delete(oldest)
+        }
         createdWorkspaceByRun.set(options.runId, workspace.id)
       }
     }

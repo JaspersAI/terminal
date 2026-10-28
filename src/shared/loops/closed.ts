@@ -114,6 +114,104 @@ function onto(rect: Rect, size: GridSize): Rect {
   return { x: Math.min(Math.max(rect.x, 0), size.cols - w), y: Math.min(Math.max(rect.y, 0), size.rows - h), w, h }
 }
 
+/** Scales a rect proportionally when moving between grids of different sizes, then clamps to the target grid. */
+function scaleRect(rect: Rect, from: GridSize, to: GridSize): Rect {
+  if (from.cols === to.cols && from.rows === to.rows) return onto(rect, to)
+  const left = Math.round((rect.x * to.cols) / from.cols)
+  const right = Math.round(((rect.x + rect.w) * to.cols) / from.cols)
+  const top = Math.round((rect.y * to.rows) / from.rows)
+  const bottom = Math.round(((rect.y + rect.h) * to.rows) / from.rows)
+  return onto({ x: left, y: top, w: right - left, h: bottom - top }, to)
+}
+
+/** Places a loop's `[frame, ...children]` and `panels` onto `grid`, preserving or renumbering IDs. */
+function placeLoopOnGrid(
+  grid: Grid,
+  grids: Record<number, Grid>,
+  extraUsed: readonly string[],
+  sourceElements: GridElement[],
+  sourcePanels: Panel[],
+  loopId: string,
+  sourceSize: GridSize = grid.size,
+  rect?: Rect,
+): { grid: Grid; frame: GridElement; resolved: Resolved } {
+  const used = new Set([
+    ...Object.values(grids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
+    ...extraUsed,
+  ])
+  let seq = Math.max(
+    0,
+    ...Object.values(grids).map((g) => g.seq),
+    ...[...used].map((usedId) => Number(usedId.slice(1)) || 0),
+  )
+  const clash = sourceElements.some((e) => used.has(e.id)) || sourcePanels.some((p) => used.has(p.id))
+  const ids = new Map<string, string>()
+  const panelIds = new Map<string, string>()
+  for (const element of sourceElements) {
+    if (clash) {
+      seq += 1
+      ids.set(element.id, `e${seq}`)
+      panelIds.set(element.panelId, `p${seq}`)
+    } else {
+      ids.set(element.id, element.id)
+      panelIds.set(element.panelId, element.panelId)
+      seq = Math.max(seq, Number(element.id.slice(1)) || 0, Number(element.panelId.slice(1)) || 0)
+    }
+  }
+  const [first, ...rest] = sourceElements
+  const home = restored(first!)
+  const frameId = ids.get(first!.id)!
+  const wantedRect = rect ? onto(rect, grid.size) : scaleRect(home.rect, sourceSize, grid.size)
+  const own = layoutOf(grid).elements
+  const top = Math.max(0, ...grid.elements.map((e) => e.z))
+  const found =
+    rect === undefined && home.mode === 'floating' ? null : resolvePlacement(own, grid.size, { rect: wantedRect })
+  const frame: GridElement = {
+    ...home,
+    id: frameId,
+    panelId: panelIds.get(first!.panelId)!,
+    loop: loopId,
+    ...(found ? { rect: found.rect, mode: 'tiled' } : { rect: wantedRect, mode: 'floating', z: top + 1 }),
+  }
+  const inside: GridElement[] = []
+  const childTop = Math.max(0, ...rest.map((e) => e.z))
+  for (const [index, e] of rest.entries()) {
+    const childHome = restored(e)
+    const childWanted = scaleRect(childHome.rect, sourceSize, grid.size)
+    const childPlaced = e.mode === 'floating' ? null : resolvePlacement(inside, grid.size, { rect: childWanted })
+    inside.push({
+      ...childHome,
+      id: ids.get(e.id)!,
+      panelId: panelIds.get(e.panelId)!,
+      parent: frameId,
+      loop: loopId,
+      ...(e.mode === 'floating'
+        ? { rect: childWanted, mode: 'floating' }
+        : childPlaced
+          ? { rect: childPlaced.rect, mode: 'tiled' }
+          : { rect: childWanted, mode: 'floating', z: childTop + index + 1 }),
+    })
+  }
+  const panels = sourcePanels.map((p) => ({
+    ...p,
+    id: panelIds.get(p.id) ?? p.id,
+    elementId: ids.get(p.elementId) ?? p.elementId,
+  }))
+  // A maximized tile would cover it: it goes back to its own cells, as it does for a placement.
+  const shown = grid.elements.map((e) => (e.parent === undefined && e.mode === 'maximized' ? restored(e) : e))
+  return {
+    grid: {
+      ...grid,
+      elements: [...shown, frame, ...inside],
+      panels: [...grid.panels, ...panels],
+      focus: [frameId, ...grid.focus],
+      seq,
+    },
+    frame,
+    resolved: found ? found.resolved : 'exact',
+  }
+}
+
 /**
  * A closed loop reopened in a window: its frame where it was when those cells are free, else the
  * nearest that are, else floating over what is there, and the tiles inside it as they were. It goes
@@ -132,60 +230,8 @@ export function reopened(
   if (!shut) throw new Error(`${loopName(id)} is not closed.`)
   const grid = grids[window]
   if (!grid) throw new Error(`Window ${window} has no grid.`)
-  const used = new Set(
-    Object.values(grids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
-  )
-  let seq = Math.max(0, ...Object.values(grids).map((g) => g.seq))
-  const clash = shut.elements.some((e) => used.has(e.id)) || shut.panels.some((p) => used.has(p.id))
-  const ids = new Map<string, string>()
-  const panelIds = new Map<string, string>()
-  for (const element of shut.elements) {
-    if (clash) {
-      seq += 1
-      ids.set(element.id, `e${seq}`)
-      panelIds.set(element.panelId, `p${seq}`)
-    } else {
-      ids.set(element.id, element.id)
-      panelIds.set(element.panelId, element.panelId)
-      seq = Math.max(seq, Number(element.id.slice(1)) || 0, Number(element.panelId.slice(1)) || 0)
-    }
-  }
-  const [first, ...rest] = shut.elements
-  const home = restored(first!)
-  const frameId = ids.get(first!.id)!
-  const rect = onto(home.rect, grid.size)
-  const own = layoutOf(grid).elements
-  const top = Math.max(0, ...grid.elements.map((e) => e.z))
-  const found = home.mode === 'floating' ? null : resolvePlacement(own, grid.size, { rect })
-  const frame: GridElement = {
-    ...home,
-    id: frameId,
-    panelId: panelIds.get(first!.panelId)!,
-    loop: id,
-    ...(found ? { rect: found.rect, mode: 'tiled' } : { rect, mode: 'floating', z: top + 1 }),
-  }
-  const inside = rest.map((e): GridElement => ({
-    ...e,
-    id: ids.get(e.id)!,
-    panelId: panelIds.get(e.panelId)!,
-    parent: frameId,
-    loop: id,
-    rect: onto(e.rect, grid.size),
-  }))
-  const panels = shut.panels.map(({ error: _error, ...p }) => ({
-    ...p,
-    id: panelIds.get(p.id) ?? p.id,
-    elementId: ids.get(p.elementId) ?? p.elementId,
-  }))
-  // A maximized tile would cover it: it goes back to its own cells, as it does for a placement.
-  const shown = grid.elements.map((e) => (e.parent === undefined && e.mode === 'maximized' ? restored(e) : e))
-  const next: Grid = {
-    ...grid,
-    elements: [...shown, frame, ...inside],
-    panels: [...grid.panels, ...panels],
-    focus: [frameId, ...grid.focus],
-    seq,
-  }
+  const cleanPanels = shut.panels.map(({ error: _error, ...p }) => p)
+  const { grid: next, frame } = placeLoopOnGrid(grid, grids, [], shut.elements, cleanPanels, id)
   const record = withChange(shut.loop, 'reopened', now)
   const list = [...loops.list, record].sort((a, b) => loopNumber(a.id) - loopNumber(b.id))
   const closed = loops.closed!.filter((one) => one !== shut)
@@ -247,7 +293,6 @@ export function movedLoop(
   frame: GridElement
   resolved: Resolved
   fromWindow: number
-  panelIds: ReadonlyMap<string, string>
 } {
   const record = sourceLoops.list.find((one) => one.id === id)
   const found = frameOf(sourceGrids, id)
@@ -280,66 +325,24 @@ export function movedLoop(
   const nextLoopId = loopTaken ? `f${loopSeq}` : id
   const movedRecord: Loop = nextLoopId === id ? record : { ...record, id: nextLoopId }
 
-  const used = new Set([
-    ...Object.values(targetGrids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
-    ...(targetLoops.closed ?? []).flatMap((c) => [...c.elements.map((e) => e.id), ...c.panels.map((p) => p.id)]),
+  const closedUsed = (targetLoops.closed ?? []).flatMap((c) => [
+    ...c.elements.map((e) => e.id),
+    ...c.panels.map((p) => p.id),
   ])
-  let seq = Math.max(
-    0,
-    ...Object.values(targetGrids).map((g) => g.seq),
-    ...[...used].map((usedId) => Number(usedId.slice(1)) || 0),
+  const {
+    grid: nextTargetGrid,
+    frame,
+    resolved,
+  } = placeLoopOnGrid(
+    targetGrid,
+    targetGrids,
+    closedUsed,
+    sourceElements,
+    sourcePanels,
+    nextLoopId,
+    sourceGrid.size,
+    rect,
   )
-  const clash = sourceElements.some((e) => used.has(e.id)) || sourcePanels.some((p) => used.has(p.id))
-  const ids = new Map<string, string>()
-  const panelIds = new Map<string, string>()
-  for (const element of sourceElements) {
-    if (clash) {
-      seq += 1
-      ids.set(element.id, `e${seq}`)
-      panelIds.set(element.panelId, `p${seq}`)
-    } else {
-      ids.set(element.id, element.id)
-      panelIds.set(element.panelId, element.panelId)
-      seq = Math.max(seq, Number(element.id.slice(1)) || 0, Number(element.panelId.slice(1)) || 0)
-    }
-  }
-
-  const [first, ...rest] = sourceElements
-  const home = restored(first!)
-  const frameId = ids.get(first!.id)!
-  const wantedRect = onto(rect ?? home.rect, targetGrid.size)
-  const own = layoutOf(targetGrid).elements
-  const top = Math.max(0, ...targetGrid.elements.map((e) => e.z))
-  const placed =
-    rect === undefined && home.mode === 'floating' ? null : resolvePlacement(own, targetGrid.size, { rect: wantedRect })
-  const frame: GridElement = {
-    ...home,
-    id: frameId,
-    panelId: panelIds.get(first!.panelId)!,
-    loop: nextLoopId,
-    ...(placed ? { rect: placed.rect, mode: 'tiled' } : { rect: wantedRect, mode: 'floating', z: top + 1 }),
-  }
-  const inside = rest.map((e): GridElement => ({
-    ...e,
-    id: ids.get(e.id)!,
-    panelId: panelIds.get(e.panelId)!,
-    parent: frameId,
-    loop: nextLoopId,
-    rect: onto(e.rect, targetGrid.size),
-  }))
-  const panels: Panel[] = sourcePanels.map((p) => ({
-    ...p,
-    id: panelIds.get(p.id) ?? p.id,
-    elementId: ids.get(p.elementId) ?? p.elementId,
-  }))
-  const shown = targetGrid.elements.map((e) => (e.parent === undefined && e.mode === 'maximized' ? restored(e) : e))
-  const nextTargetGrid: Grid = {
-    ...targetGrid,
-    elements: [...shown, frame, ...inside],
-    panels: [...targetGrid.panels, ...panels],
-    focus: [frameId, ...targetGrid.focus],
-    seq,
-  }
   const list = [...targetLoops.list, movedRecord].sort((a, b) => loopNumber(a.id) - loopNumber(b.id))
   const nextTargetLoops: Loops = { ...targetLoops, seq: loopSeq, list }
 
@@ -350,9 +353,8 @@ export function movedLoop(
     targetLoops: nextTargetLoops,
     loop: movedRecord,
     frame,
-    resolved: placed ? placed.resolved : 'exact',
+    resolved,
     fromWindow: found.window,
-    panelIds,
   }
 }
 

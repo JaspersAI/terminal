@@ -312,6 +312,29 @@ test('moving a loop whose loop id or element ids clash in the target workspace a
   assert.equal(moved.targetGrids[1]!.seq, 5)
 })
 
+test('moving a loop into a workspace with a smaller grid size places its tiled child views without overlapping', () => {
+  const source: Record<number, Grid> = {
+    1: {
+      ...EMPTY_GRID,
+      size: { cols: 32, rows: 24 },
+      elements: [
+        element(1, { loop: 'f1', rect: { x: 0, y: 0, w: 32, h: 24 } }),
+        element(2, { loop: 'f1', parent: 'e1', rect: { x: 0, y: 0, w: 16, h: 12 } }),
+        element(3, { loop: 'f1', parent: 'e1', rect: { x: 16, y: 0, w: 16, h: 12 } }),
+      ],
+      panels: [panel(1, frame), panel(2, chart, { symbol: 'AAPL' }), panel(3, chart, { symbol: 'MSFT' })],
+      focus: ['e1'],
+      seq: 3,
+    },
+  }
+  const sourceLoops: Loops = { seq: 1, list: [loop('f1', 'charts')] }
+  const target: Record<number, Grid> = { 1: EMPTY_GRID }
+  const moved = movedLoop(source, sourceLoops, target, { seq: 0, list: [] }, 'f1', 1)
+  const children = moved.targetGrids[1]!.elements.filter((e) => e.parent === 'e1')
+  assert.equal(children.length, 2)
+  assert.notDeepEqual(children[0]!.rect, children[1]!.rect)
+})
+
 test('resolveWorkspaceTarget matches existing workspaces by id or name and treats new or unmatched names as new workspaces', () => {
   const list = [
     { id: 'ws-1', name: 'Retail Portfolio Watch' },
