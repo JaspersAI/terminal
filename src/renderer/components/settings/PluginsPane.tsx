@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent, type ReactElement, type ReactNode } from 'react'
 import { BROWSER_PLUGIN_ID, BROWSER_PLUGIN_TITLE } from '../../../shared/grid/browser'
+import type { ConnectionSummary } from '../../../shared/paths'
 import type { Action, ConnectionInfo, PluginInfo } from '../../../shared/state'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
@@ -10,6 +11,8 @@ import { useInstall, type Install } from './use-install'
 import { BUTTON, FIELD, PRIMARY, Row } from './Row'
 import { Entry, ListHeading, PinnedEntry, PlusIcon, Split } from './Split'
 import { pluginLine, shownEntry } from './summary'
+
+type ShownConnection = ConnectionInfo | ConnectionSummary
 
 /** The entry above the plugins. A plugin's id is a folder name, which never starts with +. */
 const ADD = '+add'
@@ -25,7 +28,7 @@ export function PluginsPane(): ReactElement {
 
 interface ListProps {
   plugins: Record<string, PluginInfo>
-  connections: Record<string, ConnectionInfo>
+  connections: Record<string, ShownConnection>
   /** Settings puts installing above the plugins; the core/plugins view leaves it out. */
   installs?: boolean
 }
@@ -49,7 +52,7 @@ export function PluginList({ plugins, connections, installs = false }: ListProps
     )
   }
 
-  const connectionsOf = (plugin: PluginInfo): ConnectionInfo[] =>
+  const connectionsOf = (plugin: PluginInfo): ShownConnection[] =>
     plugin.connections.flatMap((id) => (connections[id] ? [connections[id]!] : []))
   const shown = shownEntry(open, [
     ...(installs ? [ADD] : []),
@@ -152,7 +155,7 @@ const STATUS_COLOR: Record<ConnectionInfo['status'], string> = {
 
 interface SectionProps {
   plugin: PluginInfo
-  connections: ConnectionInfo[]
+  connections: ShownConnection[]
   installer: Install
 }
 
@@ -347,7 +350,7 @@ function ConnectionBlock({
   connection,
   onFail,
 }: {
-  connection: ConnectionInfo
+  connection: ShownConnection
   onFail: (message: string | null) => void
 }): ReactElement {
   const { id, status, tools } = connection
@@ -385,7 +388,11 @@ function ConnectionBlock({
       {connection.error && <p className="mt-1 break-words text-destructive">{connection.error}</p>}
       <p className="mt-1 text-muted-foreground">
         {tools.length} tool{tools.length === 1 ? '' : 's'}
-        {tools.length > 0 && <span className="font-mono text-xs">: {tools.map((t) => t.name).join(', ')}</span>}
+        {tools.length > 0 && (
+          <span className="font-mono text-xs">
+            : {tools.map((t) => (typeof t === 'string' ? t : t.name)).join(', ')}
+          </span>
+        )}
       </p>
     </div>
   )

@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
-import type { ConnectionInfo, PluginInfo } from '../../shared/state'
+import type { ConnectionSummary } from '../../shared/paths'
+import type { PluginInfo } from '../../shared/state'
 import { useData, usePublish, type PanelRef } from '@jaspers-ai/sdk'
 import { PluginList } from '../components/settings/PluginsPane'
 
@@ -9,7 +10,7 @@ import { PluginList } from '../components/settings/PluginsPane'
  */
 export function Plugins({ panel }: { panel: PanelRef }): ReactElement {
   const plugins = (useData('plugins') as Record<string, PluginInfo> | undefined) ?? {}
-  const connections = (useData('connections') as Record<string, ConnectionInfo> | undefined) ?? {}
+  const connections = (useData('connections') as Record<string, ConnectionSummary> | undefined) ?? {}
   const list = Object.values(plugins)
   usePublish(panel, { ready: list.filter((p) => p.status === 'ready').length, total: list.length })
 

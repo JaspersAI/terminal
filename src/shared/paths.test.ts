@@ -103,6 +103,11 @@ test('a path parses to what it names', () => {
   assert.deepEqual(parsePath('views'), { kind: 'views' })
   assert.deepEqual(parsePath('sources'), { kind: 'sources' })
   assert.deepEqual(parsePath('connections'), { kind: 'connections' })
+  assert.deepEqual(parsePath('connections/screener-mcp/jaspers'), {
+    kind: 'connection',
+    connectionId: 'screener-mcp/jaspers',
+  })
+  assert.deepEqual(parsePath('connections/jaspers'), { kind: 'connection', connectionId: 'jaspers' })
   assert.deepEqual(parsePath('plugins'), { kind: 'plugins' })
   assert.deepEqual(parsePath('skills'), { kind: 'skills' })
   assert.deepEqual(parsePath('panels/p1/state'), { kind: 'panel', panelId: 'p1', field: 'state', rest: [] })
@@ -132,6 +137,8 @@ test('anything else is rejected, with the shapes that are not', () => {
   assert.throws(() => parsePath('panels/'), /panels\/<id>\/state/)
   assert.throws(() => parsePath('sources/x'), /Cannot read "sources\/x"/)
   assert.throws(() => parsePath(`workspaces/${WS}/connections`), /Cannot read/)
+  assert.throws(() => parsePath(`workspaces/${WS}/connections/jaspers/sec`), /Cannot read/)
+  assert.throws(() => parsePath('connections/jaspers/sec/tools'), /Cannot read "connections\/jaspers\/sec\/tools"/)
   assert.throws(() => parsePath('plugins/hello'), /Cannot read "plugins\/hello"/)
   assert.throws(() => parsePath('skills/dcf'), /Cannot read "skills\/dcf"/)
   assert.throws(() => parsePath('panels/p1/nope'), /Cannot read "panels\/p1\/nope"/)
@@ -148,6 +155,8 @@ test('a path formats back to what it was read from', () => {
     'views',
     'sources',
     'connections',
+    'connections/jaspers/sec',
+    'connections/jaspers',
     'plugins',
     'skills',
     'workspace',
@@ -371,4 +380,92 @@ test('panels lists every window, and a panel id finds its window', () => {
   assert.equal(readPath(state, WS, parsePath('panels/p2/summary')), null)
   assert.deepEqual(readPath(state, WS, parsePath('panels/e2/state')), {})
   assert.throws(() => readPath(state, WS, parsePath('panels/p9/state')), /No panel p9/)
+})
+
+test('connections and connections/<id> list tool names without schemas, hide internal server tools, and name known connections on miss', () => {
+  const state = fixture()
+  state.connections = {
+    'screener-mcp/jaspers': {
+      id: 'screener-mcp/jaspers',
+      plugin: 'screener-mcp',
+      transport: 'http',
+      status: 'ready',
+      error: null,
+      tools: [
+        {
+          name: 'screen_companies',
+          description: 'Screen companies with a massive schema.',
+          inputSchema: { type: 'object', properties: { filters: { description: 'x'.repeat(20_000) } } },
+        },
+      ],
+      internal: false,
+      missing: [],
+      instructions: 'Call get_guide first.',
+    },
+    'agents/research': {
+      id: 'agents/research',
+      plugin: 'agents',
+      transport: 'stdio',
+      status: 'error',
+      error: 'MCP error -32001: Request timed out',
+      tools: [
+        {
+          name: 'load_room',
+          description: 'Internal room loader.',
+          inputSchema: { type: 'object', properties: { room: { type: 'string' } } },
+        },
+      ],
+      internal: true,
+      missing: [],
+      instructions: 'Internal instructions.',
+    },
+  }
+
+  const expectedScreener = {
+    id: 'screener-mcp/jaspers',
+    plugin: 'screener-mcp',
+    transport: 'http',
+    status: 'ready',
+    error: null,
+    tools: ['screen_companies'],
+    internal: false,
+    missing: [],
+    instructions: 'Call get_guide first.',
+  }
+  const expectedAgents = {
+    id: 'agents/research',
+    plugin: 'agents',
+    transport: 'stdio',
+    status: 'error',
+    error: 'MCP error -32001: Request timed out',
+    tools: [],
+    internal: true,
+    missing: [],
+    instructions: null,
+  }
+
+  assert.deepEqual(readPath(state, WS, parsePath('connections')), {
+    'screener-mcp/jaspers': expectedScreener,
+    'agents/research': expectedAgents,
+  })
+  assert.deepEqual(readPath(state, WS, parsePath('connections/screener-mcp/jaspers')), expectedScreener)
+  assert.deepEqual(readPath(state, WS, parsePath('connections/screener-mcp')), expectedScreener)
+  assert.deepEqual(readPath(state, WS, parsePath('connections/agents/research')), expectedAgents)
+  assert.throws(
+    () => readPath(state, WS, parsePath('connections/nope/server')),
+    /No connection nope\/server\. Connections are screener-mcp\/jaspers, agents\/research\./,
+  )
+  state.connections['screener-mcp/backup'] = {
+    ...state.connections['screener-mcp/jaspers']!,
+    id: 'screener-mcp/backup',
+  }
+  assert.throws(
+    () => readPath(state, WS, parsePath('connections/screener-mcp')),
+    /No connection screener-mcp\. Connections are screener-mcp\/jaspers, agents\/research, screener-mcp\/backup\./,
+  )
+  state.connections = {}
+  assert.throws(
+    () => readPath(state, WS, parsePath('connections/screener-mcp/jaspers')),
+    /No connection screener-mcp\/jaspers\. No connections are installed\./,
+  )
 })

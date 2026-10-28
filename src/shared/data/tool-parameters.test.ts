@@ -83,7 +83,7 @@ test('a long schema is cut, and says where the whole of it is', () => {
   const big = { ...GUIDE, inputSchema: { type: 'object', description: 'x'.repeat(5000) } }
   const told = withParameters('MCP error -32602: Invalid arguments', big)
   assert.ok(told.length < 3200)
-  assert.match(told, /get connections has it whole\)$/)
+  assert.match(told, /describe_source has it whole\)$/)
 })
 
 test('connection tool lookups resolve <plugin>/<connection>/<tool> and <plugin>/<tool> while ignoring internal and unknown tools', () => {

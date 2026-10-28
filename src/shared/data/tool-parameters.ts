@@ -165,7 +165,7 @@ export function withParameters(message: string, tool: ConnectionTool | undefined
   if (message.includes(prefix) || !ARGUMENT_REFUSAL.test(message)) return message
   const schema = JSON.stringify(tool.inputSchema)
   const shown =
-    schema.length > SCHEMA_MAX ? `${schema.slice(0, SCHEMA_MAX)}… (cut; get connections has it whole)` : schema
+    schema.length > SCHEMA_MAX ? `${schema.slice(0, SCHEMA_MAX)}… (cut; describe_source has it whole)` : schema
   return `${message}${prefix}${shown}`
 }
 
