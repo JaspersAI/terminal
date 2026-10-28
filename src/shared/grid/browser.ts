@@ -149,6 +149,93 @@ export function browserClientHintHeader(raw: string, chromeVersion = '136'): str
   return raw.replace(/"Electron"\s*;\s*v="[^"]*"/gi, `"Google Chrome";v="${safeVersion}"`)
 }
 
+const GOOGLE_AUTH_HOSTS = new Set(['accounts.google.com', 'accounts.youtube.com'])
+
+/** True when `raw` is an `http(s)` address on a Google sign-in host (`accounts.google.com`, `accounts.youtube.com`). */
+export function isGoogleAuthUrl(raw: unknown): boolean {
+  if (!isBrowserUrl(raw)) return false
+  try {
+    return GOOGLE_AUTH_HOSTS.has(new URL(raw.trim()).hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+/** Consistent Firefox User-Agent presented to Google sign-in hosts so embedded sign-in is not rejected. */
+export function googleAuthUserAgent(platform = 'darwin'): string {
+  const os =
+    platform === 'darwin'
+      ? 'Macintosh; Intel Mac OS X 10.15'
+      : platform === 'win32'
+        ? 'Windows NT 10.0; Win64; x64'
+        : 'X11; Linux x86_64'
+  return `Mozilla/5.0 (${os}; rv:140.0) Gecko/20100101 Firefox/140.0`
+}
+
+/** Resolves the User-Agent for a navigation target: Firefox on Google sign-in hosts, cleaned Chrome elsewhere. */
+export function browserUserAgentForUrl(url: unknown, baseUserAgent: string, platform = 'darwin'): string {
+  return isGoogleAuthUrl(url) ? googleAuthUserAgent(platform) : browserUserAgent(baseUserAgent)
+}
+
+/** True for empty or `about:blank` popup URLs that OAuth flows open before navigating or submitting a form. */
+export function isBlankBrowserPopupUrl(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false
+  const trimmed = raw.trim()
+  return trimmed === '' || /^about:blank(?:[?#].*)?$/i.test(trimmed)
+}
+
+/** Rewrites outgoing request headers for `core/browser` so Google sign-in hosts receive a consistent Firefox identity without Chromium client hints while other sites receive the cleaned Chrome identity. */
+export function browserRequestHeaders(
+  headers: Record<string, string>,
+  options: {
+    url: string
+    referrer?: string
+    resourceType?: string
+    pageUrl?: string
+    baseUserAgent?: string
+    chromeVersion?: string
+    platform?: string
+  },
+): Record<string, string> {
+  const requestHeaders = { ...headers }
+  const firefoxUa = googleAuthUserAgent(options.platform)
+  const uaKey = Object.keys(requestHeaders).find((key) => key.toLowerCase() === 'user-agent')
+  const incomingUa = uaKey ? requestHeaders[uaKey] : undefined
+  const isSubresource = options.resourceType !== undefined && options.resourceType !== 'mainFrame'
+  const useGoogleAuth =
+    isGoogleAuthUrl(options.url) ||
+    (isSubresource &&
+      (isGoogleAuthUrl(options.referrer) ||
+        isGoogleAuthUrl(options.pageUrl) ||
+        (!options.pageUrl && incomingUa === firefoxUa)))
+
+  if (useGoogleAuth) {
+    for (const key of Object.keys(requestHeaders)) {
+      if (key.toLowerCase().startsWith('sec-ch-ua')) {
+        delete requestHeaders[key]
+      }
+    }
+    requestHeaders[uaKey ?? 'User-Agent'] = firefoxUa
+    return requestHeaders
+  }
+
+  const fullChrome = options.chromeVersion?.trim() || '136.0.0.0'
+  const majorChrome = fullChrome.split('.')[0] || '136'
+  const cleanBaseUa = options.baseUserAgent ? browserUserAgent(options.baseUserAgent) : ''
+  for (const [key, value] of Object.entries(requestHeaders)) {
+    if (typeof value !== 'string') continue
+    const lower = key.toLowerCase()
+    if (lower === 'user-agent') {
+      requestHeaders[key] = value === firefoxUa && cleanBaseUa ? cleanBaseUa : browserUserAgent(value)
+    } else if (lower === 'sec-ch-ua') {
+      requestHeaders[key] = browserClientHintHeader(value, majorChrome)
+    } else if (lower === 'sec-ch-ua-full-version-list') {
+      requestHeaders[key] = browserClientHintHeader(value, fullChrome)
+    }
+  }
+  return requestHeaders
+}
+
 /** Reads a `core/browser` panel's state, normalizing its URL and falling back to `DEFAULT_BROWSER_URL` when unset or invalid. */
 export function readBrowserState(state: unknown): BrowserState {
   if (!isRecord(state)) return { url: DEFAULT_BROWSER_URL }
