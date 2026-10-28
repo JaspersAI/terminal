@@ -14,6 +14,7 @@ import { getProviderConfig } from '../secrets'
 import { getState } from '../state'
 import { expandSlash } from '../skills/skills'
 import { agentLoop } from './agent'
+import { parseAttachment } from './attachments'
 import { callOff, loopHistory, handOver, runLoop } from './loop'
 import { userRequest } from './request'
 import { routerTools } from './router'
@@ -271,6 +272,7 @@ export function registerAgentIpc(): void {
     }
     return stop(id)
   })
+  ipcMain.handle('agent:parse-file', (_event, name: unknown, bytes: unknown) => parseAttachment(name, bytes))
   // A window that opened partway through a run, or reloaded, asks what is in flight.
   ipcMain.handle('agent:running', () => running())
   ipcMain.handle('agent:history', (_event, limit: unknown, before: unknown, loop: unknown) => {

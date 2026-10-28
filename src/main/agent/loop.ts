@@ -1,4 +1,5 @@
 import type { Place } from '../../shared/agent/asking'
+import { shownQuestion } from '../../shared/agent/attachments'
 import type { Handed } from '../../shared/agent/typed'
 import { closedLoop } from '../../shared/loops/closed'
 import { loopChat, frameOf, gone, shut } from '../../shared/loops/loops'
@@ -108,7 +109,7 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
   // Waiting its turn, it says what it is, so the run at work can take it rather than leave it to run
   // after. A task's handoff says nothing: it is never taken into another run, and runs on its own limits.
   const says: Added | undefined =
-    task === undefined ? { text: turnText(input, written), shown: written ?? input, ask } : undefined
+    task === undefined ? { text: turnText(input, written), shown: shownQuestion(written ?? input), ask } : undefined
   return turns.take(chat, ask, request, '', says)
 }
 
