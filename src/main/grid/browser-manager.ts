@@ -49,6 +49,7 @@ export interface ManagedBrowserView {
   isLoading(): boolean
   setBounds(bounds: BrowserBounds): void
   setVisible(visible: boolean): void
+  setBackgrounded?(backgrounded: boolean): void
   setTheaterMode?(theater: boolean, url: string): void
   setZoomFactor?(zoom: number): void
   readPageText(): Promise<string | null>
@@ -77,6 +78,8 @@ export interface BrowserManagerDeps {
   focusElement(workspaceId: string, elementId: string): void
   zoomElement?(workspaceId: string, elementId: string, direction: 'in' | 'out' | 'reset'): void
   publishPanel?(workspaceId: string, panelId: string, snapshot: BrowserSnapshot): void
+  /** How long a backgrounded tab or inactive-workspace browser view waits before discarding its native view. */
+  idleSuspendMs?: number
 }
 
 export interface BrowserManager {
@@ -108,9 +111,14 @@ interface TabEntry {
   title: string
   loading: boolean
   theater: boolean
+  canGoBack: boolean
+  canGoForward: boolean
   error: string | null
   text: string | null
   loadSeq: number
+  backgrounded: boolean
+  suspended: boolean
+  suspendTimer: ReturnType<typeof setTimeout> | null
   destroyed: boolean
 }
 
@@ -145,11 +153,14 @@ const ACTIONS = new Set<BrowserAction>([
 ])
 /** Chromium's `ERR_ABORTED`, fired when a redirect or a new navigation supersedes one in flight. */
 const ERR_ABORTED = -3
+/** Background tabs and inactive-workspace browser views discard their native WebContentsView after 5 minutes idle. */
+export const DEFAULT_IDLE_SUSPEND_MS = 5 * 60_000
 
 const entryKey = (workspaceId: string, panelId: string): string => `${workspaceId}\n${panelId}`
 
 export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   const entries = new Map<string, Entry>()
+  const idleSuspendMs = deps.idleSuspendMs ?? DEFAULT_IDLE_SUSPEND_MS
 
   function emptySnapshot(workspaceId: string, panelId: string): BrowserSnapshot {
     return {
@@ -174,17 +185,33 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   }
 
   function tabSnapshot(tab: TabEntry, fallbackUrl = ''): BrowserTab {
+    if (tab.suspended) {
+      return {
+        id: tab.id,
+        url: tab.url || fallbackUrl,
+        title: tab.title,
+        loading: false,
+        canGoBack: tab.canGoBack,
+        canGoForward: tab.canGoForward,
+        theater: tab.theater,
+        error: tab.error,
+      }
+    }
     const liveUrl = tab.view.getURL()
     const committedUrl = isBrowserUrl(liveUrl) ? liveUrl : ''
     const url = tab.loading || tab.error !== null ? tab.url || fallbackUrl : committedUrl || tab.url || fallbackUrl
     const title = tab.loading || tab.error !== null ? tab.title : tab.view.getTitle() || tab.title
+    const canGoBack = tab.view.canGoBack()
+    const canGoForward = tab.view.canGoForward()
+    tab.canGoBack = canGoBack
+    tab.canGoForward = canGoForward
     return {
       id: tab.id,
       url,
       title,
       loading: tab.loading || tab.view.isLoading(),
-      canGoBack: tab.view.canGoBack(),
-      canGoForward: tab.view.canGoForward(),
+      canGoBack,
+      canGoForward,
       theater: tab.theater,
       error: tab.error,
     }
@@ -223,8 +250,17 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     deps.getWindow(winNumber)?.sendState(snap)
   }
 
+  function clearSuspendTimer(tab: TabEntry): void {
+    if (tab.suspendTimer !== null) {
+      clearTimeout(tab.suspendTimer)
+      tab.suspendTimer = null
+    }
+  }
+
   function detachFromWindow(entry: Entry): void {
-    for (const tab of entry.tabs) tab.view.setVisible(false)
+    for (const tab of entry.tabs) {
+      if (!tab.suspended) tab.view.setVisible(false)
+    }
     if (entry.attachedWindow !== null && entry.attachedView !== null) {
       deps.getWindow(entry.attachedWindow)?.detach(entry.attachedView)
       entry.attachedWindow = null
@@ -235,13 +271,16 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   function destroyTab(entry: Entry, tab: TabEntry): void {
     if (tab.destroyed) return
     tab.destroyed = true
-    tab.view.setVisible(false)
-    if (entry.attachedView === tab.view && entry.attachedWindow !== null) {
-      deps.getWindow(entry.attachedWindow)?.detach(tab.view)
-      entry.attachedWindow = null
-      entry.attachedView = null
+    clearSuspendTimer(tab)
+    if (!tab.suspended) {
+      tab.view.setVisible(false)
+      if (entry.attachedView === tab.view && entry.attachedWindow !== null) {
+        deps.getWindow(entry.attachedWindow)?.detach(tab.view)
+        entry.attachedWindow = null
+        entry.attachedView = null
+      }
+      tab.view.destroy()
     }
-    tab.view.destroy()
   }
 
   function destroyEntry(entry: Entry): void {
@@ -252,14 +291,126 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     for (const tab of entry.tabs) destroyTab(entry, tab)
   }
 
+  function canSuspendTab(entry: Entry, tab: TabEntry): boolean {
+    if (entry.destroyed || tab.destroyed || tab.suspended || !tab.backgrounded) return false
+    const url = tab.url || entry.stateUrl
+    if (!url) return false
+    if (tab.openerTabId !== null && !isBrowserUrl(tab.url)) return false
+    if (entry.tabs.some((other) => !other.destroyed && other.openerTabId === tab.id)) return false
+    return true
+  }
+
+  function suspendTab(entry: Entry, tab: TabEntry): void {
+    clearSuspendTimer(tab)
+    if (!canSuspendTab(entry, tab)) return
+    const liveUrl = tab.view.getURL()
+    if (isBrowserUrl(liveUrl)) tab.url = liveUrl
+    const liveTitle = tab.view.getTitle()
+    if (liveTitle) tab.title = liveTitle
+    tab.canGoBack = tab.view.canGoBack()
+    tab.canGoForward = tab.view.canGoForward()
+    tab.loading = false
+    tab.view.setVisible(false)
+    if (entry.attachedView === tab.view && entry.attachedWindow !== null) {
+      deps.getWindow(entry.attachedWindow)?.detach(tab.view)
+      entry.attachedWindow = null
+      entry.attachedView = null
+    }
+    tab.suspended = true
+    tab.view.destroy()
+  }
+
+  function wakeTab(entry: Entry, tab: TabEntry): void {
+    clearSuspendTimer(tab)
+    if (!tab.suspended || tab.destroyed || entry.destroyed) return
+    tab.suspended = false
+    tab.backgrounded = false
+    const savedTitle = tab.title
+    const savedText = tab.text
+    const targetUrl = tab.url || entry.stateUrl
+    tab.view = bindTabView(entry, tab, deps.createView)
+    if (targetUrl) {
+      loadTabAddress(entry, tab, targetUrl, { preserveTitle: savedTitle, preserveText: savedText })
+    }
+  }
+
+  function setTabBackgrounded(entry: Entry, tab: TabEntry, backgrounded: boolean): void {
+    if (tab.destroyed || entry.destroyed) return
+    if (!backgrounded) {
+      clearSuspendTimer(tab)
+      if (tab.suspended) {
+        wakeTab(entry, tab)
+        return
+      }
+      if (tab.backgrounded) {
+        tab.backgrounded = false
+        tab.view.setBackgrounded?.(false)
+      }
+      return
+    }
+    if (!tab.backgrounded) {
+      tab.backgrounded = true
+      if (!tab.suspended) tab.view.setBackgrounded?.(true)
+    }
+    if (!tab.suspended && tab.suspendTimer === null && idleSuspendMs > 0 && canSuspendTab(entry, tab)) {
+      tab.suspendTimer = setTimeout(() => {
+        tab.suspendTimer = null
+        suspendTab(entry, tab)
+      }, idleSuspendMs)
+      tab.suspendTimer.unref?.()
+    }
+  }
+
+  function readTabText(entry: Entry, tab: TabEntry): void {
+    if (tab.destroyed || tab.suspended || entry.destroyed || tab.loading || tab.error !== null) return
+    const loadId = tab.loadSeq
+    const currentView = tab.view
+    void currentView
+      .readPageText()
+      .then((text) => {
+        if (
+          tab.destroyed ||
+          tab.suspended ||
+          tab.view !== currentView ||
+          entry.destroyed ||
+          tab.loadSeq !== loadId ||
+          tab.error !== null ||
+          tab.text === text
+        ) {
+          return
+        }
+        tab.text = text
+        pushSnapshot(entry)
+      })
+      .catch(() => undefined)
+  }
+
   function positionEntry(entry: Entry, state: BrowserManagerState): void {
     if (entry.destroyed || entry.tabs.length === 0) return
     const active = activeTab(entry)
-    for (const tab of entry.tabs) {
-      if (tab !== active) tab.view.setVisible(false)
-    }
     const standing = browserStanding(state.grids[entry.workspaceId], entry.panelId)
+    const onCurrentWorkspace = state.currentWorkspaceId === entry.workspaceId
+    const foregroundInGrid = onCurrentWorkspace && Boolean(standing?.visibleInGrid)
+
+    for (const tab of entry.tabs) {
+      if (tab !== active) {
+        if (!tab.suspended) tab.view.setVisible(false)
+        setTabBackgrounded(entry, tab, true)
+      }
+    }
     if (!standing) {
+      setTabBackgrounded(entry, active, true)
+      detachFromWindow(entry)
+      return
+    }
+    const hasUrl = Boolean(active.url || entry.stateUrl)
+    const activeForeground = foregroundInGrid && hasUrl && active.error === null
+    if (activeForeground && active.suspended) {
+      wakeTab(entry, active)
+      return
+    }
+    setTabBackgrounded(entry, active, !activeForeground)
+    if (active.suspended) {
       detachFromWindow(entry)
       return
     }
@@ -279,11 +430,11 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     const scaled = onBoundsWindow && entry.bounds ? scaleBounds(entry.bounds, entry.viewport, viewport) : null
     const clipped = scaled && viewport ? clipBounds(scaled, viewport) : scaled
     const show = shouldShowBrowser({
-      onCurrentWorkspace: state.currentWorkspaceId === entry.workspaceId,
+      onCurrentWorkspace,
       visibleInGrid: standing.visibleInGrid,
       rendererVisible: onBoundsWindow && entry.rendererVisible,
       bounds: clipped,
-      hasUrl: Boolean(active.url || entry.stateUrl),
+      hasUrl,
       hasError: active.error !== null,
     })
     if (show && win && clipped) {
@@ -299,22 +450,22 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     }
   }
 
-  function createTab(
+  function bindTabView(
     entry: Entry,
-    initialUrl: string,
+    tab: TabEntry,
     customCreateView: (events: BrowserViewEvents) => ManagedBrowserView = deps.createView,
-    openerTabId: string | null = null,
-  ): TabEntry {
-    const id = `t${++entry.nextTabSeq}`
-    let tab!: TabEntry
-    const view = customCreateView({
+  ): ManagedBrowserView {
+    let view!: ManagedBrowserView
+    const isCurrent = (): boolean =>
+      Boolean(tab && !tab.destroyed && !tab.suspended && !entry.destroyed && tab.view === view)
+    view = customCreateView({
       onDidStartLoading() {
-        if (!tab || tab.destroyed || entry.destroyed) return
+        if (!isCurrent()) return
         tab.loading = true
         pushSnapshot(entry)
       },
       onDidStopLoading() {
-        if (!tab || tab.destroyed || entry.destroyed) return
+        if (!isCurrent()) return
         tab.loading = false
         if (tab.error !== null) {
           pushSnapshot(entry)
@@ -328,19 +479,12 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         tab.view.setTheaterMode?.(tab.theater, tab.url)
         positionEntry(entry, deps.getState())
         pushSnapshot(entry)
-        const loadId = tab.loadSeq
-        void tab.view
-          .readPageText()
-          .then((text) => {
-            if (tab.destroyed || entry.destroyed || tab.loadSeq !== loadId || tab.error !== null || tab.text === text)
-              return
-            tab.text = text
-            pushSnapshot(entry)
-          })
-          .catch(() => undefined)
+        if (activeTab(entry) === tab) {
+          readTabText(entry, tab)
+        }
       },
       onDidNavigate(url) {
-        if (!tab || tab.destroyed || entry.destroyed) return
+        if (!isCurrent()) return
         const normalized = normalizeBrowserUrl(url)
         if (normalized) {
           tab.url = normalized
@@ -354,24 +498,24 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         pushSnapshot(entry)
       },
       onDidFailLoad(errorCode, errorDescription, isMainFrame) {
-        if (!tab || tab.destroyed || entry.destroyed || !isMainFrame || errorCode === ERR_ABORTED) return
+        if (!isCurrent() || !isMainFrame || errorCode === ERR_ABORTED) return
         tab.loading = false
         tab.error = errorDescription || `Load failed (${errorCode}).`
         positionEntry(entry, deps.getState())
         pushSnapshot(entry)
       },
       onPageTitleUpdated(title) {
-        if (!tab || tab.destroyed || entry.destroyed) return
+        if (!isCurrent()) return
         tab.title = title
         pushSnapshot(entry)
       },
       onFocus() {
-        if (!tab || tab.destroyed || entry.destroyed) return
+        if (!isCurrent()) return
         const standing = browserStanding(deps.getState().grids[entry.workspaceId], entry.panelId)
         if (standing && !standing.focused) deps.focusElement(entry.workspaceId, standing.element.id)
       },
       onZoom(direction) {
-        if (!tab || tab.destroyed || entry.destroyed) return
+        if (!isCurrent()) return
         const standing = browserStanding(deps.getState().grids[entry.workspaceId], entry.panelId)
         if (standing && standing.focused && standing.visibleInGrid) {
           deps.zoomElement?.(entry.workspaceId, (standing.frame ?? standing.element).id, direction)
@@ -399,23 +543,39 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         return opened.view
       },
       onClose() {
-        if (!tab || tab.destroyed || entry.destroyed) return
+        if (!isCurrent()) return
         closeTabById(entry, tab.id, true)
       },
     })
-    tab = {
+    return view
+  }
+
+  function createTab(
+    entry: Entry,
+    initialUrl: string,
+    customCreateView: (events: BrowserViewEvents) => ManagedBrowserView = deps.createView,
+    openerTabId: string | null = null,
+  ): TabEntry {
+    const id = `t${++entry.nextTabSeq}`
+    const tab: TabEntry = {
       id,
       openerTabId,
-      view,
+      view: null as unknown as ManagedBrowserView,
       url: initialUrl,
       title: '',
       loading: false,
       theater: isVideoPageUrl(initialUrl),
+      canGoBack: false,
+      canGoForward: false,
       error: null,
       text: null,
       loadSeq: 0,
+      backgrounded: false,
+      suspended: false,
+      suspendTimer: null,
       destroyed: false,
     }
+    tab.view = bindTabView(entry, tab, customCreateView)
     return tab
   }
 
@@ -474,19 +634,39 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     return entry
   }
 
-  function loadTabAddress(entry: Entry, tab: TabEntry, url: string): void {
+  function loadTabAddress(
+    entry: Entry,
+    tab: TabEntry,
+    url: string,
+    options?: { preserveTitle?: string; preserveText?: string | null },
+  ): void {
+    clearSuspendTimer(tab)
+    if (tab.suspended) {
+      tab.suspended = false
+      tab.backgrounded = false
+      tab.view = bindTabView(entry, tab, deps.createView)
+    }
     const loadId = ++tab.loadSeq
     tab.url = url
-    tab.title = ''
-    tab.text = null
+    tab.title = options?.preserveTitle ?? ''
+    tab.text = options?.preserveText ?? null
     tab.error = null
     tab.loading = true
     tab.theater = isVideoPageUrl(url)
     tab.view.setTheaterMode?.(tab.theater, url)
     positionEntry(entry, deps.getState())
     pushSnapshot(entry)
-    void tab.view.loadURL(url).catch((err: unknown) => {
-      if (tab.destroyed || entry.destroyed || tab.loadSeq !== loadId || isAbortedLoad(err)) return
+    const currentView = tab.view
+    void currentView.loadURL(url).catch((err: unknown) => {
+      if (
+        tab.destroyed ||
+        tab.suspended ||
+        tab.view !== currentView ||
+        entry.destroyed ||
+        tab.loadSeq !== loadId ||
+        isAbortedLoad(err)
+      )
+        return
       tab.loading = false
       tab.error = err instanceof Error ? err.message : String(err)
       positionEntry(entry, deps.getState())
@@ -495,6 +675,10 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   }
 
   function reloadTab(entry: Entry, tab: TabEntry): void {
+    if (tab.suspended) {
+      wakeTab(entry, tab)
+      return
+    }
     const targetUrl = tab.url || entry.stateUrl
     const liveUrl = tab.view.getURL()
     if ((tab.error !== null || !isBrowserUrl(liveUrl) || liveUrl !== targetUrl) && targetUrl) {
@@ -611,8 +795,16 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         const found = entry.tabs.find((one) => one.id === targetId)
         if (found) {
           entry.activeTabId = found.id
-          positionEntry(entry, deps.getState())
-          pushSnapshot(entry)
+          const wasSuspended = found.suspended
+          if (wasSuspended) {
+            wakeTab(entry, found)
+          } else {
+            positionEntry(entry, deps.getState())
+            pushSnapshot(entry)
+            if (found.text === null && !found.loading && found.error === null) {
+              readTabText(entry, found)
+            }
+          }
         }
         return snapshotOf(entry)
       }
@@ -626,13 +818,20 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       const active = activeTab(entry)
       if (action === 'toggle-theater') {
         active.theater = !active.theater
-        active.view.setTheaterMode?.(active.theater, active.url || entry.stateUrl)
+        if (!active.suspended) {
+          active.view.setTheaterMode?.(active.theater, active.url || entry.stateUrl)
+        }
         pushSnapshot(entry)
         return snapshotOf(entry)
       }
 
       if (action === 'reload') {
         reloadTab(entry, active)
+        return snapshotOf(entry)
+      }
+
+      if (active.suspended) {
+        wakeTab(entry, active)
         return snapshotOf(entry)
       }
 
@@ -702,6 +901,65 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
 
     closeAll() {
       for (const entry of [...entries.values()]) destroyEntry(entry)
+    },
+  }
+}
+
+export interface BrowserLoadTarget {
+  isLoadingMainFrame(): boolean
+}
+
+export interface BrowserLoadTracker {
+  isLoading(): boolean
+  onDidStartNavigation(isMainFrame: boolean, isSameDocument: boolean): void
+  onDidStartLoading(): void
+  onDidFinishFrameLoad(isMainFrame: boolean): void
+  onDidStopLoading(): void
+  onDidFailLoad(isMainFrame: boolean): void
+}
+
+/**
+ * Tracks main-frame page loads and ignores subframe (ad/tracker iframe) load activity so recurring
+ * third-party iframe reloads do not trigger page-load state churn, theater script re-injection, or
+ * full-DOM `innerText` extraction.
+ */
+export function createBrowserLoadTracker(
+  target: BrowserLoadTarget,
+  events: { onDidStartLoading(): void; onDidStopLoading(): void },
+): BrowserLoadTracker {
+  let mainFrameLoading = false
+
+  return {
+    isLoading: () => mainFrameLoading || target.isLoadingMainFrame(),
+    onDidStartNavigation(isMainFrame, isSameDocument) {
+      if (!isMainFrame || isSameDocument) return
+      if (!mainFrameLoading) {
+        mainFrameLoading = true
+        events.onDidStartLoading()
+      }
+    },
+    onDidStartLoading() {
+      if (!mainFrameLoading && target.isLoadingMainFrame()) {
+        mainFrameLoading = true
+        events.onDidStartLoading()
+      }
+    },
+    onDidFinishFrameLoad(isMainFrame) {
+      if (isMainFrame && mainFrameLoading && !target.isLoadingMainFrame()) {
+        mainFrameLoading = false
+        events.onDidStopLoading()
+      }
+    },
+    onDidStopLoading() {
+      if (mainFrameLoading) {
+        mainFrameLoading = false
+        events.onDidStopLoading()
+      }
+    },
+    onDidFailLoad(isMainFrame) {
+      if (isMainFrame && mainFrameLoading && !target.isLoadingMainFrame()) {
+        mainFrameLoading = false
+      }
     },
   }
 }
