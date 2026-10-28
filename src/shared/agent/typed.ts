@@ -11,6 +11,7 @@
 import type { Turn } from '../llm/llm'
 // The extension is explicit because Node's test runner resolves this import at run time.
 import { stripSkillContent } from '../skills/skills.ts'
+import { stripAttachedFiles } from './attachments.ts'
 
 /** The line under which a user's turn holds what the assistant wrote for a piece of work. */
 export const HANDED =
@@ -40,7 +41,10 @@ export function writtenPart(text: string): string | null {
  * end, since a block that never closes is a skill's and never the user's.
  */
 export function typedWords(text: string): string {
-  return stripSkillContent(typedPart(text)).replace(/<skill_content\b[\s\S]*$/, '')
+  return stripAttachedFiles(stripSkillContent(typedPart(text))).replace(
+    /<(?:skill_content|attached_file)\b[\s\S]*$/,
+    '',
+  )
 }
 
 /** True when the user typed this exact text in the conversation: a user turn holds it, outside what a /name put in the turn and what the assistant wrote under it. */
@@ -51,7 +55,13 @@ export function saidByUser(turns: Turn[], text: string): boolean {
 /** True when a user turn holds this skill where the user's own words are: main put it there for a /name, and nothing else writes that tag there. */
 export function ranByUser(turns: Turn[], id: string): boolean {
   const tag = `<skill_content name="${id}">`
-  return turns.some((turn) => turn.role === 'user' && typedPart(turn.text).includes(tag))
+  return turns.some(
+    (turn) =>
+      turn.role === 'user' &&
+      stripAttachedFiles(typedPart(turn.text))
+        .replace(/<attached_file\b[\s\S]*$/, '')
+        .includes(tag),
+  )
 }
 
 /** What a run hands a piece of work: the user's request as typed, when a user typed it, what was written for this work, and the task whose run hands it over, when one does. */

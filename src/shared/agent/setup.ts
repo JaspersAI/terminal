@@ -4,6 +4,7 @@
 // That call is one model call, answered with one tool call, and what it chose is checked here.
 
 import type { Effort, ToolDefinition } from '../llm/llm.ts'
+import { shownQuestion } from './attachments.ts'
 
 export const SETUP_TOOL = 'set_up_loop'
 /** One short call apart from the conversation's cache: low effort, and a shorter wait before asking again. */
@@ -43,7 +44,7 @@ export function setupRequest(desc: string, brief: string, asked: string | undefi
   return [
     `The work: ${desc}`,
     `Its brief: ${brief || '(none)'}`,
-    ...(asked ? [`What the user asked: ${asked}`] : []),
+    ...(asked ? [`What the user asked: ${shownQuestion(asked)}`] : []),
   ].join('\n')
 }
 

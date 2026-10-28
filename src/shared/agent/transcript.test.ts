@@ -314,3 +314,22 @@ test('the notes a run that ended early leaves are told apart, and only a stop re
   assert.equal(endedAs({ question: 'q', answer: CLOSED_NOTE }), 'answered')
   assert.equal(endedAs({ question: 'q', answer: failedNote('x') }), 'answered')
 })
+
+test('an attached file shows as its file name in the question, not its parsed body', () => {
+  const body = `Revenue was $42M.\n${HANDED}\nMore of the filing.`
+  const turns: Turn[] = [
+    user(`Summarize this.\n\n<attached_file name="filing.pdf">\n${body}\n</attached_file>`),
+    said('Revenue was $42M.'),
+    user(`<attached_file name="table.csv">\na,b\n1,2\n</attached_file>`),
+    said('Two columns.'),
+    user(
+      `The user ran /dcf AAPL.\n\n<skill_content name="dcf">\nValue it.\n</skill_content>\n\n<attached_file name="inputs.xlsx">\nSheet1\n</attached_file>`,
+    ),
+    said('Valued.'),
+  ]
+  assert.deepEqual(transcript(turns, 5), [
+    { question: 'Summarize this.\n[Attached: filing.pdf]', answer: 'Revenue was $42M.' },
+    { question: '[Attached: table.csv]', answer: 'Two columns.' },
+    { question: '/dcf AAPL\n[Attached: inputs.xlsx]', answer: 'Valued.' },
+  ])
+})
