@@ -1,4 +1,4 @@
-import type { ConnectionInfo, MemoryScope, PluginInfo, SkillInfo } from '../../../shared/state'
+import type { ConnectionInfo, PluginInfo, SkillInfo } from '../../../shared/state'
 import { everyText, shortLocal, taskStatus, type Task, type TaskStatus } from '../../../shared/tasks/tasks.ts'
 
 // What a row in a Settings list says of its entry, in one short line, and which entry a split list
@@ -61,21 +61,4 @@ export function shownEntry(open: string | null, ids: readonly string[]): { id: s
 /** A skill by the /name that loads it, or by its id when /name would not. */
 export function skillTitle(skill: SkillInfo): string {
   return skill.userInvocable && skill.error === null ? `/${skill.id}` : skill.id
-}
-
-/** An entry id in the Memory pane's split list, distinct across general and coding scopes. */
-export function memoryEntryId(scope: MemoryScope, name: string): string {
-  return scope === 'coding' ? `coding:${name}` : name
-}
-
-/** The scope and memory name an entry id in the Memory pane refers to. */
-export function parseMemoryEntryId(id: string): { scope: MemoryScope; name: string } {
-  return id.startsWith('coding:')
-    ? { scope: 'coding', name: id.slice('coding:'.length) }
-    : { scope: 'general', name: id }
-}
-
-/** Where a memory file lives under the Jaspers home, as shown in the Memory detail header. */
-export function memoryPathLabel(scope: MemoryScope, name: string): string {
-  return scope === 'coding' ? `memory/coding/${name}.md` : `memory/${name}.md`
 }

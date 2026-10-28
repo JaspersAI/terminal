@@ -10,6 +10,7 @@ import { REFERENCE } from './build/reference'
 import { pluginLine } from './build/check'
 import { listFilesSync, openFolder } from './build/folder'
 import { builderTools, builtPlugins, ownerOf, type BuildSession } from './build/tools'
+import { readCodingMemories } from './memory'
 import { conversationTools } from './tools/conversation'
 import { sourceTools } from './tools/data'
 import { codingMemoryTools } from './tools/memory'
@@ -67,7 +68,7 @@ export async function runBuild(request: string, id: string, parent: ToolContext)
   const keep = (): void => keepOpen(chat, config, thread, fork, era)
   // Once, so the run's block of the prompt reads the same every round.
   const built = builtPlugins(id)
-  const memories = getState().codingMemories
+  const memories = await readCodingMemories()
   const begun = !folder.live && listFilesSync(folder).length > 0
   emit({ kind: 'status', runId: parent.runId, line: `Building ${id}` })
   // Whether the builder used every round it gets: its end was then not its own choice.

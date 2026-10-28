@@ -96,6 +96,7 @@ test('general and coding memory tools read and write only their own scope', asyn
   const codingRecall = codingTools.find((t) => t.name === 'recall')!
 
   assert.match(generalRemember.description, /preference/)
+  assert.match(generalRemember.description, /not plugin code or API details/)
   assert.match(codingRemember.description, /plugin|coding|correct/i)
 
   assert.equal(

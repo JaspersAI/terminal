@@ -27,7 +27,7 @@ export function createMemoryTools(scope: MemoryScope = 'general', ops: MemoryOps
   const rememberDescription =
     scope === 'coding'
       ? 'Write down a coding lesson from building plugins that is worth knowing on future builds: an issue you hit, a compiler/validation or SDK pitfall you had to correct yourself on, an API endpoint/auth/response quirk, or a correction from the user or follow-up request. Saved specifically for the plugin coding process, separate from general user memories. `about` is the one line you will see in future build instructions when deciding whether to read it. Writing over a name that exists replaces it.'
-      : 'Write down something about this user that is worth knowing next time: a preference, how they work, what they follow. Not what is in this conversation already, and not a fact about the world you could look up. `about` is the one line you will see later when deciding whether to read it, so make it say what the memory bears on. Writing over a name that exists replaces it.'
+      : 'Write down something about this user that is worth knowing next time: a preference, how they work, what they follow. Not what is in this conversation already, not a fact about the world you could look up, and not plugin code or API details, which the builder remembers on its own. `about` is the one line you will see later when deciding whether to read it, so make it say what the memory bears on. Writing over a name that exists replaces it.'
   const recallDescription =
     scope === 'coding'
       ? 'Read one of the coding memories from earlier plugin builds listed in your instructions, by name, when its line looks like it bears on this build.'

@@ -15,10 +15,6 @@ export const INDEX_MAX = 60
 
 export type MemoryScope = 'general' | 'coding'
 
-export function isMemoryScope(value: unknown): value is MemoryScope {
-  return value === 'general' || value === 'coding'
-}
-
 /** A memory as the tree and the prompt know it: what it is called and what it is about, never its body. */
 export interface MemoryInfo {
   /** The file name without .md, which is how a tool names it. */
