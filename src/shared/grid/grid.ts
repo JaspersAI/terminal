@@ -737,6 +737,21 @@ export function setPanelState(
   return { grid: withPanel(grid, panel), panel }
 }
 
+/** Runs a view's summarize callback on its current state and output, returning null if none is defined or if it throws on partial output. */
+export function summarizePanel(
+  summarize: ((state: unknown, output: unknown) => string) | undefined,
+  state: Record<string, unknown>,
+  output: Record<string, unknown>,
+): string | null {
+  if (!summarize) return null
+  try {
+    const summary = summarize(state, output)
+    return typeof summary === 'string' ? summary : null
+  } catch {
+    return null
+  }
+}
+
 /** What the view is showing now, and the line about it for the model. Publishing the same again changes nothing. */
 export function publishOutput(
   grid: Grid,
