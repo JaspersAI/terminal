@@ -31,6 +31,7 @@ let termsRefreshing: Promise<void> | null = null
  * Concurrent callers share one request in flight.
  */
 export function refreshTerms(): Promise<void> {
+  if (process.env['JASPERS_EYE_URL']?.trim() === 'off') return Promise.resolve()
   termsRefreshing ??= pullTerms(TERMS, fetch, TERMS_TIMEOUT_MS)
     .then((fetched) => {
       if (!fetched) return

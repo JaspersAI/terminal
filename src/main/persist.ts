@@ -135,7 +135,13 @@ function workspacePath(workspaceId: string): string {
 
 /** Reads the tree. Files from older versions are patched into shape; no file is a new user. */
 export function load(): MainState {
-  const state: StateFile = { ...EMPTY, ...(readJson<Partial<StateFile>>(statePath()) ?? {}) }
+  const raw = readJson<Partial<StateFile>>(statePath())
+  const eyeOff = raw === null && process.env['JASPERS_EYE_URL']?.trim() === 'off'
+  const state: StateFile = {
+    ...EMPTY,
+    ...(eyeOff ? { termsAccepted: true, acceptedTerms: bundledTerms, termsText: bundledTerms } : {}),
+    ...(raw ?? {}),
+  }
   // Files written before the model field existed, or with a stale model on Jaspers, get the registry default.
   for (const kind of ['llm', 'voice', 'search'] as const) {
     const stored = state[kind]
