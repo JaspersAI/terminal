@@ -155,9 +155,24 @@ export function makeRoom(
 
 /**
  * The call with this id and what it answered, as the thread holds them, or null when it holds no such
- * call. Of two with one id the later is meant. One nothing answered has no answer.
+ * call. Of two with one id the later is meant. One nothing answered has no answer. A `read_again` call
+ * whose target is still in the thread resolves to that target, so reading a `read_again` never nests.
  */
 export function callOf(turns: Turn[], id: string): { call: ToolCall; answer: string | null } | null {
+  let found = findCall(turns, id)
+  if (!found) return null
+  const seen = new Set<string>()
+  for (;;) {
+    const target = readAgainTarget(found.call)
+    if (!target || seen.has(target)) return found
+    seen.add(found.call.id)
+    const next = findCall(turns, target)
+    if (!next) return found
+    found = next
+  }
+}
+
+function findCall(turns: Turn[], id: string): { call: ToolCall; answer: string | null } | null {
   for (let at = turns.length - 1; at >= 0; at--) {
     const turn = turns[at]!
     const call = turn.role === 'assistant' ? turn.toolCalls.find((one) => one.id === id) : undefined
@@ -169,6 +184,27 @@ export function callOf(turns: Turn[], id: string): { call: ToolCall; answer: str
     return { call, answer: null }
   }
   return null
+}
+
+function readAgainTarget(call: ToolCall): string | null {
+  if (call.name !== READ_AGAIN) return null
+  const given = call.input.call ?? call.input.id
+  const id = typeof given === 'string' ? given.trim().replace(/^"(.*)"$/, '$1') : ''
+  return id || null
+}
+
+function originOf(callId: string, calls: ReadonlyMap<string, ToolCall>): ToolCall | undefined {
+  let current = calls.get(callId)
+  const seen = new Set<string>()
+  while (current) {
+    const target = readAgainTarget(current)
+    if (!target || seen.has(target)) return current
+    seen.add(current.id)
+    const next = calls.get(target)
+    if (!next) return current
+    current = next
+  }
+  return undefined
 }
 
 /** The marks once `cut` turns are gone from the front of their thread: on the turns they were on, or at its start. */
@@ -210,20 +246,25 @@ function long(
 }
 
 function standsAside(result: ToolResult, calls: ReadonlyMap<string, ToolCall>, kept: ReadonlySet<string>): boolean {
-  return result.output.length > LARGE && !kept.has(calls.get(result.callId)?.name ?? '')
+  return result.output.length > LARGE && !kept.has(originOf(result.callId, calls)?.name ?? '')
 }
 
 /**
- * Where the answers that stay whole begin: the newest round, or, when every call of that round reads
- * an answer again, the round before it, which the model was reading when it asked.
+ * Where the answers that stay whole begin: the newest round, or, when every call of a streak of newest
+ * rounds reads an answer again, the round before that streak, which the model was reading when it asked.
  */
 function keptWhole(turns: Turn[], calls: ReadonlyMap<string, ToolCall>): number {
   const newest = newestRound(turns)
   if (newest < 0) return newest
-  const round = turns[newest] as Answered
-  if (!round.results.every((result) => calls.get(result.callId)?.name === READ_AGAIN)) return newest
-  const before = newestRound(turns.slice(0, newest))
-  return before < 0 ? newest : before
+  let from = newest
+  while (from >= 0) {
+    const round = turns[from] as Answered
+    if (!round.results.every((result) => calls.get(result.callId)?.name === READ_AGAIN)) break
+    const before = newestRound(turns.slice(0, from))
+    if (before < 0) break
+    from = before
+  }
+  return from
 }
 
 /** The last round of answers in a thread, or -1 in one with none. */
@@ -308,11 +349,88 @@ function shortList(items: unknown[], id: string): unknown[] {
   ]
 }
 
+const SHORTENED_TEXT_END = /… \[[\d,]+ characters, set aside: read_again "([^"]+)" has the call as it was made\]$/
+const SHORTENED_TEXT_ANY = /… \[[\d,]+ characters, set aside: read_again "([^"]+)" has the call as it was made\]/
+const SHORTENED_LIST = /^… \[[\d,]+ more of [\d,]+, set aside: read_again "([^"]+)" has them all\]$/
+
+/**
+ * Restores any argument in `input` that repeats a `[… set aside: read_again "<id>" …]` note from an
+ * earlier call in `turns`, or throws when the note names no matching call (for instance when a model
+ * imitates the truncation note in a new call instead of writing the full argument).
+ */
+export function restoreInput(input: Record<string, unknown>, turns: Turn[]): Record<string, unknown> {
+  return restoreValue(input, [], turns) as Record<string, unknown>
+}
+
+function restoreValue(value: unknown, path: (string | number)[], turns: Turn[]): unknown {
+  if (typeof value === 'string') {
+    const match = SHORTENED_TEXT_END.exec(value)
+    if (match) {
+      const id = match[1]!
+      const prefix = value.slice(0, match.index)
+      const found = prefix.length > 0 ? callOf(turns, id) : null
+      const original = found ? atPath(found.call.input, path) : undefined
+      if (typeof original === 'string' && original.startsWith(prefix)) return original
+      throw new Error(
+        `Write the full argument out: "[… set aside: read_again \\"${id}\\" has the call as it was made]" is a note from an earlier shortened turn, not text to include in a new call.`,
+      )
+    }
+    const embedded = SHORTENED_TEXT_ANY.exec(value)
+    if (embedded) {
+      throw new Error(
+        `Write the full argument out: "[… set aside: read_again \\"${embedded[1]!}\\" has the call as it was made]" is a note from an earlier shortened turn, not text to include in a new call.`,
+      )
+    }
+    return value
+  }
+  if (Array.isArray(value)) {
+    const last = value[value.length - 1]
+    if (typeof last === 'string') {
+      const match = SHORTENED_LIST.exec(last)
+      if (match) {
+        const id = match[1]!
+        const found = callOf(turns, id)
+        const original = found ? atPath(found.call.input, path) : undefined
+        const headCount = value.length - 1
+        if (
+          Array.isArray(original) &&
+          original.length >= headCount &&
+          headCount > 0 &&
+          value
+            .slice(0, headCount)
+            .every((item, index) => JSON.stringify(item) === JSON.stringify(shortened(original[index], id)))
+        ) {
+          return original.map((item, index) => restoreValue(item, [...path, index], turns))
+        }
+        throw new Error(
+          `Write the full argument out: "[… set aside: read_again \\"${id}\\" has them all]" is a note from an earlier shortened turn, not a list to include in a new call.`,
+        )
+      }
+    }
+    const mapped = value.map((item, index) => restoreValue(item, [...path, index], turns))
+    return mapped.every((item, index) => item === value[index]) ? value : mapped
+  }
+  if (typeof value !== 'object' || value === null) return value
+  const record = value as Record<string, unknown>
+  const entries = Object.entries(record).map(([key, one]) => [key, restoreValue(one, [...path, key], turns)] as const)
+  return entries.every(([key, one]) => one === record[key]) ? value : Object.fromEntries(entries)
+}
+
+function atPath(root: unknown, path: (string | number)[]): unknown {
+  let current = root
+  for (const key of path) {
+    if (typeof current !== 'object' || current === null) return undefined
+    current = (current as Record<string | number, unknown>)[key]
+  }
+  return current
+}
+
 /** What stands where an answer the model has read was: how much it was, the way back to it, and how it began. */
 function asideNote(result: ToolResult, calls: ReadonlyMap<string, ToolCall>): string {
-  const call = calls.get(result.callId)
+  const call = originOf(result.callId, calls)
   const whose = call ? `${call.name}'s answer` : 'this answer'
-  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. read_again "${result.callId}" brings it back. It began: ${result.output.slice(0, HEAD)}…]`
+  const id = call?.id ?? result.callId
+  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. read_again "${id}" brings it back. It began: ${result.output.slice(0, HEAD)}…]`
 }
 
 /** What stands where an answer the model never read would have been. */

@@ -34,6 +34,7 @@ export function pluginLine(info: PluginInfo | undefined, id: string, live = fals
   if (info.views.length > 0) parts.push(`views ${info.views.join(', ')}`)
   if (info.connections.length > 0) parts.push(`connections ${info.connections.join(', ')}`)
   if (info.host !== 'none') parts.push(`host ${info.host}`)
+  if (info.errors.length > 0) parts.push(`error: ${info.errors[0]}`)
   return `${id}: ${parts.join(', ')}`
 }
 

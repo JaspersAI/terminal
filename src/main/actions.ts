@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import type { ZodError } from 'zod'
 import {
+  activeViewErrors,
   NO_ROOM_TO_RESTORE,
   failPanel,
   layoutOf,
@@ -774,18 +775,23 @@ export function placeChecked(
       (next) => tidied(next, workspaceId, before),
     )
     // The key asked for in the box of a frame whose place it took went with the frame.
-    if (placement.replace !== undefined) dismissSecretRequest({ workspaceId, on: placement.replace })
+    if (placement.replace !== undefined) {
+      dismissSecretRequest({ workspaceId, on: placement.replace })
+      syncPluginViewErrors()
+    }
     return placed
   }
   const owner = loop ?? (placement.replace === undefined ? undefined : tileLoop(workspaceId, placement.replace))
   if (owner === undefined) {
     const made = withLoopFor(had, content, { title: view?.title, plugin: view?.plugin ?? null }, Date.now())
-    return changeWindow(
+    const placed = changeWindow(
       workspaceId,
       window,
       (grid) => placeFramed(grid, { ...placement, content, state, loop: made.loop.id }),
       (next) => withLoops(next, workspaceId, made.loops),
     )
+    if (placement.replace !== undefined) syncPluginViewErrors()
+    return placed
   }
   const frame = frameOf(getGrids(workspaceId), owner)?.element.id
   if (frame === undefined) throw new Error(`Unknown work ${owner}.`)
@@ -794,7 +800,11 @@ export function placeChecked(
       `${frame} is the work's own tile, which holds its views: a view goes inside it. Leave replace out, or name one of the views in it.`,
     )
   }
-  return changeInside(workspaceId, frame, (grid) => placeView(grid, { ...placement, content, state, loop: owner }))
+  const placed = changeInside(workspaceId, frame, (grid) =>
+    placeView(grid, { ...placement, content, state, loop: owner }),
+  )
+  if (placement.replace !== undefined) syncPluginViewErrors()
+  return placed
 }
 
 /**
@@ -856,6 +866,7 @@ export function removeChecked(workspaceId: string, elementId: string): void {
   // The key asked for in a frame's box goes with the frame. A question asked there ends with the run
   // that asked it, which stops when its work closes (`watchLoops`).
   dismissSecretRequest({ workspaceId, on: elementId })
+  syncPluginViewErrors()
 }
 
 /** Closes a loop: its frame goes, with every tile inside it, and the loop is kept for View loops to reopen. One that is not open is nothing to do. */
@@ -903,6 +914,7 @@ export function deleteLoop(workspaceId: string, loopId: string): void {
       (next) => withLoops(next, workspaceId, withoutLoop(next.loops[workspaceId] ?? NO_LOOPS, loopId)),
     )
     dismissSecretRequest({ workspaceId, on: frame.element.id })
+    syncPluginViewErrors()
     return
   }
   update((state) => withLoops(state, workspaceId, withoutLoop(state.loops[workspaceId] ?? NO_LOOPS, loopId)))
@@ -922,7 +934,9 @@ export function setPanelStateChecked(workspaceId: string, panelId: string, path:
     )
   }
   checkState(panel.content, setIn(panel.state, path, value))
-  return changeGridOf(workspaceId, panel.id, (grid) => setPanelState(grid, panel.id, path, value)).panel
+  const updated = changeGridOf(workspaceId, panel.id, (grid) => setPanelState(grid, panel.id, path, value)).panel
+  if (panel.error) syncPluginViewErrors()
+  return updated
 }
 
 /** What the view is showing now. The summary comes from the view's own summarize. */
@@ -946,20 +960,27 @@ export function publishChecked(workspaceId: string, panelId: string, output: Rec
     : output['room'] === null && panel.content.kind === 'view' && panel.content.view === 'research/room'
       ? null
       : undefined
-  return changeGridOf(workspaceId, panel.id, (grid) => {
+  const updated = changeGridOf(workspaceId, panel.id, (grid) => {
     const next = publishOutput(grid, panel.id, output, summary)
     return roomText !== undefined ? publishText(next.grid, panel.id, roomText) : next
   }).panel
+  if (panel.error) syncPluginViewErrors()
+  return updated
 }
 
 /** The whole of what the view shows as text, for a model to read at length. The engine cuts what is past its cap. */
 export function publishTextChecked(workspaceId: string, panelId: string, text: string | null): Panel {
-  return changeGridOf(workspaceId, panelId, (grid) => publishText(grid, panelId, text)).panel
+  const panel = panelOf(findElement(workspaceId, panelId).grid, panelId)
+  const updated = changeGridOf(workspaceId, panelId, (grid) => publishText(grid, panelId, text)).panel
+  if (panel.error && text !== null) syncPluginViewErrors()
+  return updated
 }
 
 /** Records what a panel's view threw in its frame, so the assistant can see why it is not showing anything. */
 export function failPanelChecked(workspaceId: string, panelId: string, error: string): Panel {
-  return changeGridOf(workspaceId, panelId, (grid) => failPanel(grid, panelId, error)).panel
+  const panel = changeGridOf(workspaceId, panelId, (grid) => failPanel(grid, panelId, error)).panel
+  syncPluginViewErrors()
+  return panel
 }
 
 /** How long a tool that placed or updated a view waits for its frame to report an immediate mount error or output. */
@@ -1023,7 +1044,31 @@ export function refreshChecked(workspaceId: string, panelId: string, at = Date.n
       grid: inside.panels.reduce((next, one) => refreshPanel(next, one.id, at).grid, inside),
     }))
   }
-  return changeGridOf(workspaceId, panelId, (layout) => refreshPanel(layout, panelId, at)).panel
+  const updated = changeGridOf(workspaceId, panelId, (layout) => refreshPanel(layout, panelId, at)).panel
+  syncPluginViewErrors()
+  return updated
+}
+
+/** Synchronizes `errors` on every `ready` plugin with the active runtime view errors on `state.grids`. */
+function syncPluginViewErrors(): void {
+  update((state) => {
+    let changed = false
+    const plugins: typeof state.plugins = {}
+    for (const [id, plugin] of Object.entries(state.plugins)) {
+      if (plugin.status !== 'ready') {
+        plugins[id] = plugin
+        continue
+      }
+      const errors = activeViewErrors(state.grids, id)
+      if (errors.length === plugin.errors.length && errors.every((e, i) => e === plugin.errors[i])) {
+        plugins[id] = plugin
+      } else {
+        plugins[id] = { ...plugin, errors }
+        changed = true
+      }
+    }
+    return changed ? { ...state, plugins } : state
+  })
 }
 
 /** A view whose plugin is not installed takes any state: it keeps what it had. */

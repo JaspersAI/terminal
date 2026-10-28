@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { callOf, cutFrom, INSTRUCTIONS, LARGE, makeRoom, sent, setAside, startOf, WHOLE_MAX } from './aside.ts'
+import {
+  callOf,
+  cutFrom,
+  INSTRUCTIONS,
+  LARGE,
+  makeRoom,
+  restoreInput,
+  sent,
+  setAside,
+  startOf,
+  WHOLE_MAX,
+} from './aside.ts'
 import type { ToolCall, Turn } from '../llm/llm.ts'
 
 type Assistant = Extract<Turn, { role: 'assistant' }>
@@ -261,9 +272,114 @@ test('a round that only reads answers again keeps the round before it whole: the
   assert.match(out[0]!, /^\[Set aside: /)
   assert.equal(out[1]!.length, half)
   assert.equal(out[2]!.length, half)
+  // A second read_again round in a row keeps both read_again rounds and the round before them whole together.
+  const back2: Turn[] = [...back, calling('r2', 'read_again', { call: 'c1' }), answer('r2', big(half))]
+  assert.equal(setAside(back2, put.sending), null, 'consecutive read_again rounds stay whole together')
   // A new call after that is a new round: what came before it stands aside as ever.
-  const next: Turn[] = [...back, calling('c3', 'fetch_page'), answer('c3', big(LARGE + 1))]
-  assert.deepEqual(setAside(next, put.sending)!.sending, { asked: 0, aside: 8 })
+  const next: Turn[] = [...back2, calling('c3', 'fetch_page'), answer('c3', big(LARGE + 1))]
+  assert.deepEqual(setAside(next, put.sending)!.sending, { asked: 0, aside: 10 })
+})
+
+test('read_again resolves through an earlier read_again to the original call, and its note names the original call', () => {
+  const turns: Turn[] = [
+    asked('go'),
+    calling('c1', 'get', { path: 'plugins' }),
+    answer('c1', `plugins-list\n${big(4_000)}`),
+    calling('r1', 'read_again', { call: 'c1' }),
+    answer('r1', `get {"path":"plugins"}\n\nplugins-list\n${big(4_000)}`),
+    calling('f1', 'read_file', { path: 'plugin.tsx' }),
+    answer('f1', `file-body\n${big(4_000)}`),
+    calling('rf1', 'read_again', { call: 'f1' }),
+    answer('rf1', `read_file {"path":"plugin.tsx"}\n\nfile-body\n${big(4_000)}`),
+    replied('checked'),
+    asked('next'),
+  ]
+  assert.deepEqual(callOf(turns, 'r1'), {
+    call: { id: 'c1', name: 'get', input: { path: 'plugins' } },
+    answer: `plugins-list\n${big(4_000)}`,
+  })
+  const notes = outputs(sent(turns, startOf(turns), INSTRUCTIONS))
+  assert.match(notes[1]!, /get's answer/)
+  assert.match(notes[1]!, /read_again "c1"/)
+  assert.doesNotMatch(notes[1]!, /read_again "r1"/)
+  // A read_again of an INSTRUCTIONS call (like read_file) stays whole just as the original does.
+  assert.equal(notes[2], outputs(turns)[2])
+  assert.equal(notes[3], outputs(turns)[3])
+})
+
+test('a call that repeats a shortened argument from an earlier turn gets the original back, and a fabricated set-aside note is refused', () => {
+  const fullRequest = `Build the options-chain plugin with Yahoo, Alpaca, Massive, and Databento. ${big(1_800, 'a')}`
+  const sics = Array.from({ length: 400 }, (_, at) => String(2000 + at))
+  const turns: Turn[] = [
+    asked('build it'),
+    calling('c1', 'build_plugin', { id: 'options-chain', request: fullRequest }),
+    answer('c1', 'failed'),
+    calling('c2', 'run_source', { source: 'screener/screen', input: { sics } }),
+    answer('c2', 'ok'),
+    replied('retrying'),
+    asked('try again'),
+  ]
+  const shortenedTurns = sent(turns, startOf(turns))
+  const shortenedBuild = calls(shortenedTurns[1])[0]!.input
+  const shortenedScreen = calls(shortenedTurns[3])[0]!.input
+
+  // When the model reuses the shortened argument from c1 or c2, restoreInput brings back the original value.
+  assert.deepEqual(restoreInput(shortenedBuild, turns), { id: 'options-chain', request: fullRequest })
+  assert.deepEqual(restoreInput(shortenedScreen, turns), { source: 'screener/screen', input: { sics } })
+
+  // Plain inputs without set-aside notes pass through untouched.
+  const plain = { id: 'options-chain', request: 'Build a clean plugin.' }
+  assert.equal(restoreInput(plain, turns), plain)
+
+  // When the model fabricates a set-aside note in a new call (or edits the prefix so it is not c1's), it is refused.
+  assert.throws(
+    () =>
+      restoreInput(
+        {
+          id: 'option-chain',
+          request:
+            'Fix two bugs in option-chain… [1,932 characters, set aside: read_again "call_8759668" has the call as it was made]',
+        },
+        turns,
+      ),
+    /Write the full argument|set aside/,
+  )
+  assert.throws(
+    () =>
+      restoreInput(
+        {
+          id: 'option-chain',
+          request:
+            'Different prefix entirely… [1,875 characters, set aside: read_again "c1" has the call as it was made]',
+        },
+        turns,
+      ),
+    /Write the full argument|set aside/,
+  )
+  // Appending new text after a set-aside note, or changing leading list items before a list set-aside note, is refused too.
+  assert.throws(
+    () =>
+      restoreInput(
+        {
+          id: 'options-chain',
+          request: `${shortenedBuild.request as string}\nAlso add Databento.`,
+        },
+        turns,
+      ),
+    /Write the full argument|set aside/,
+  )
+  const shortenedSics = (shortenedScreen.input as { sics: string[] }).sics
+  assert.throws(
+    () =>
+      restoreInput(
+        {
+          source: 'screener/screen',
+          input: { sics: ['9999', ...shortenedSics.slice(1)] },
+        },
+        turns,
+      ),
+    /Write the full argument|set aside/,
+  )
 })
 
 test('a round that reads again beside a new call is a new round like any other', () => {

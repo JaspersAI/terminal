@@ -33,6 +33,7 @@ import {
   panelOf,
   PANEL_ERROR_MAX,
   PANEL_TEXT_MAX,
+  activeViewErrors,
   clearPluginPanelErrors,
   failPanel,
   panelTargetsSettled,
@@ -494,6 +495,10 @@ test('a view error is recorded on its panel, shown on the map, and cleared when 
   const rebuilt = clearPluginPanelErrors(failed.grid, 'option-chain')
   assert.equal(panelOf(rebuilt, 'e2').error, undefined)
   assert.equal(clearPluginPanelErrors(rebuilt, 'option-chain'), rebuilt)
+  assert.deepEqual(activeViewErrors({ ws1: { 1: failed.grid } }, 'option-chain'), [
+    'option-chain/table: children is not defined',
+  ])
+  assert.deepEqual(activeViewErrors({ ws1: { 1: rebuilt } }, 'option-chain'), [])
   assert.equal(
     viewErrorMessage({ message: '  children is not defined ', stack: 'at Table' }),
     'children is not defined',
