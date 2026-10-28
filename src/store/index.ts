@@ -56,6 +56,11 @@ rpc.handle('chat.forget', (params) => {
   open().forgetChat((params as { chat: string }).chat)
   return null
 })
+rpc.handle('chat.move', (params) => {
+  const { from, to } = params as { from: string; to: string }
+  open().moveChat(from, to)
+  return null
+})
 rpc.handle('notify', (params) => {
   const { at, source, text } = params as { at: number; source: string; text: string }
   return open().notify(at, source, text)

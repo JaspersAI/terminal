@@ -212,7 +212,12 @@ export function describeLoops(state: AppState, workspaceId: string, statusOf: (l
       : [
           `Closed work, which reopen_loop brings back: ${closed.map((one) => `${loopName(one.id)}, ${JSON.stringify(one.desc)}`).join('; ')}.`,
         ]
-  if (loops.length === 0) return ['Work on this workspace: none.', ...shut].join('\n')
+  const others = state.workspaces.filter((one) => one.id !== workspaceId)
+  const workspaces =
+    others.length === 0
+      ? []
+      : [`Other workspaces: ${others.map((one) => `${JSON.stringify(one.name)} (${one.id})`).join(', ')}.`]
+  if (loops.length === 0) return ['Work on this workspace: none.', ...shut, ...workspaces].join('\n')
   const grids = state.grids[workspaceId] ?? {}
   return [
     'Work on this workspace, each piece with a tile and an agent of its own:',
@@ -221,6 +226,7 @@ export function describeLoops(state: AppState, workspaceId: string, statusOf: (l
       return `- ${loopName(one.id)}, ${statusOf(one)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
     }),
     ...shut,
+    ...workspaces,
   ].join('\n')
 }
 

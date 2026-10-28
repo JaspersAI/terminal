@@ -11,6 +11,7 @@ import type { AppState } from './state'
 
 export type StorePath =
   | { kind: 'workspace'; workspaceId?: string }
+  | { kind: 'workspaces' }
   | { kind: 'panels'; workspaceId?: string }
   /** One panel's entry in the listing, by its id or its element's. */
   | { kind: 'panelEntry'; workspaceId?: string; panelId: string }
@@ -29,7 +30,7 @@ export type StorePath =
     }
 
 /** The slices that are the same everywhere, so a workspace prefix on one means nothing. */
-const REGISTRIES = ['views', 'sources', 'connections', 'plugins', 'skills'] as const
+const REGISTRIES = ['workspaces', 'views', 'sources', 'connections', 'plugins', 'skills'] as const
 type Registry = (typeof REGISTRIES)[number]
 
 /** One panel in the `panels` listing: enough to pick one, not its contents. */
@@ -49,13 +50,13 @@ export interface PanelSummary {
 }
 
 const SHAPES =
-  'workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, panels/<id>/error, and any of those under workspaces/<workspace id>/'
+  'workspace, workspaces, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, panels/<id>/error, and any of those under workspaces/<workspace id>/'
 
 /** Parse a store path, preserving any workspace prefix; throw if its shape is unsupported. */
 export function parsePath(raw: string): StorePath {
   const segments = raw.split('/')
   if (segments.some((s) => s === '')) reject(raw)
-  const prefixed = segments[0] === 'workspaces'
+  const prefixed = segments[0] === 'workspaces' && segments.length > 1
   if (prefixed && segments.length < 3) reject(raw)
   const workspaceId = prefixed ? segments[1]! : undefined
   const [head, panelId, field, ...rest] = prefixed ? segments.slice(2) : segments

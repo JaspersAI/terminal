@@ -228,6 +228,8 @@ export interface Store {
   clearThread(chat: string): void
   /** Forgets a chat for good: its thread, and every exchange of its log. */
   forgetChat(chat: string): void
+  /** Moves a chat's kept thread and every exchange of its log to a new chat key. */
+  moveChat(from: string, to: string): void
   /** Files one exchange of a chat, as it was shown. Answers its id. */
   fileExchange(chat: string, at: number, exchange: Exchange): number
   /**
@@ -296,6 +298,7 @@ export function openStore(file: string): Store {
   const readThreads = db.prepare('select chat, at, model, turns from threads')
   const deleteThread = db.prepare('delete from threads where chat = ?')
   const deleteExchanges = db.prepare('delete from exchanges where chat = ?')
+  const moveExchanges = db.prepare('update exchanges set chat = ? where chat = ?')
   const insertExchange = db.prepare(
     'insert into exchanges (chat, at, question, answer, task, welcome, citations, steps, error) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
@@ -364,6 +367,23 @@ export function openStore(file: string): Store {
     forgetChat(chat) {
       deleteThread.run(chat)
       deleteExchanges.run(chat)
+    },
+
+    moveChat(from, to) {
+      if (from === to) return
+      db.exec('begin')
+      try {
+        const row = readThread.get(from) as StoredThread | undefined
+        if (row) {
+          writeThread.run(to, row.at, row.model, row.turns)
+          deleteThread.run(from)
+        }
+        moveExchanges.run(to, from)
+        db.exec('commit')
+      } catch (error) {
+        db.exec('rollback')
+        throw error
+      }
     },
 
     fileExchange(chat, at, { question, answer, task, welcome, citations, steps, error }) {

@@ -15,7 +15,9 @@ import {
   type Grid,
   type GridElement,
   type GridSize,
+  type Panel,
   type Rect,
+  type Resolved,
 } from '../grid/grid.ts'
 import {
   frameOf,
@@ -192,6 +194,165 @@ export function reopened(
     grids: { ...grids, [window]: next },
     loops: closed.length > 0 ? { ...kept, list, closed } : { ...kept, list },
     frame,
+  }
+}
+
+export type WorkspaceTarget<W extends { id: string; name: string }> =
+  { kind: 'existing'; workspace: W } | { kind: 'new'; name?: string }
+
+/**
+ * Resolves a workspace argument from a tool call against the existing workspaces: by exact id, by
+ * case-insensitive name (with or without a trailing " workspace"), as a generic new workspace
+ * ("new", "new workspace", "a new workspace"), or as a new workspace with the given name.
+ */
+export function resolveWorkspaceTarget<W extends { id: string; name: string }>(
+  workspaces: readonly W[],
+  raw: string,
+): WorkspaceTarget<W> {
+  const trimmed = raw.trim()
+  if (!trimmed) throw new Error('workspace must be a workspace name, id, or "new".')
+  const byId = workspaces.find((w) => w.id === trimmed)
+  if (byId) return { kind: 'existing', workspace: byId }
+  const lower = trimmed.toLowerCase()
+  const stripped = lower.replace(/\s+workspace$/i, '').trim()
+  const byName =
+    workspaces.find((w) => w.name.trim().toLowerCase() === lower) ??
+    (stripped ? workspaces.find((w) => w.name.trim().toLowerCase() === stripped) : undefined)
+  if (byName) return { kind: 'existing', workspace: byName }
+  if (/^(?:a\s+)?new(?:\s+workspace)?$/i.test(trimmed)) return { kind: 'new' }
+  return { kind: 'new', name: trimmed.replace(/\s+workspace$/i, '').trim() || trimmed }
+}
+
+/**
+ * Moves an open loop from one workspace to another: its frame, the tiles inside it, and their
+ * panels (keeping state, output, summary, text, and refreshedAt) leave the source workspace without
+ * leaving a closed copy behind, and land in the target workspace's window. Its loop id (`f34`) and
+ * element/panel ids are kept when unused in the target workspace (across open grids and closed
+ * loops), and take the next sequence numbers when they clash.
+ */
+export function movedLoop(
+  sourceGrids: Record<number, Grid>,
+  sourceLoops: Loops,
+  targetGrids: Record<number, Grid>,
+  targetLoops: Loops,
+  id: string,
+  window: number,
+  rect?: Rect,
+): {
+  sourceGrids: Record<number, Grid>
+  sourceLoops: Loops
+  targetGrids: Record<number, Grid>
+  targetLoops: Loops
+  loop: Loop
+  frame: GridElement
+  resolved: Resolved
+  fromWindow: number
+  panelIds: ReadonlyMap<string, string>
+} {
+  const record = sourceLoops.list.find((one) => one.id === id)
+  const found = frameOf(sourceGrids, id)
+  if (!record || !found) throw new Error(`${loopName(id)} is not open.`)
+  const targetGrid = targetGrids[window]
+  if (!targetGrid) throw new Error(`Window ${window} has no grid.`)
+
+  const sourceGrid = sourceGrids[found.window]!
+  const childElements = sourceGrid.elements.filter((e) => e.parent === found.element.id)
+  const sourceElements = [found.element, ...childElements]
+  const sourceIds = new Set(sourceElements.map((e) => e.id))
+  const sourcePanels = sourceGrid.panels.filter((p) => sourceIds.has(p.elementId))
+
+  const nextSourceGrid: Grid = {
+    ...sourceGrid,
+    elements: sourceGrid.elements.filter((e) => !sourceIds.has(e.id)),
+    panels: sourceGrid.panels.filter((p) => !sourceIds.has(p.elementId)),
+    focus: sourceGrid.focus.filter((f) => !sourceIds.has(f)),
+  }
+  const nextSourceGrids: Record<number, Grid> = { ...sourceGrids, [found.window]: nextSourceGrid }
+  const nextSourceLoops: Loops = {
+    ...sourceLoops,
+    list: sourceLoops.list.filter((one) => one.id !== id),
+  }
+
+  const loopTaken =
+    targetLoops.list.some((one) => one.id === id) || (targetLoops.closed ?? []).some((one) => one.loop.id === id)
+  const number = loopNumber(id)
+  const loopSeq = loopTaken ? targetLoops.seq + 1 : Math.max(targetLoops.seq, number)
+  const nextLoopId = loopTaken ? `f${loopSeq}` : id
+  const movedRecord: Loop = nextLoopId === id ? record : { ...record, id: nextLoopId }
+
+  const used = new Set([
+    ...Object.values(targetGrids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
+    ...(targetLoops.closed ?? []).flatMap((c) => [...c.elements.map((e) => e.id), ...c.panels.map((p) => p.id)]),
+  ])
+  let seq = Math.max(
+    0,
+    ...Object.values(targetGrids).map((g) => g.seq),
+    ...[...used].map((usedId) => Number(usedId.slice(1)) || 0),
+  )
+  const clash = sourceElements.some((e) => used.has(e.id)) || sourcePanels.some((p) => used.has(p.id))
+  const ids = new Map<string, string>()
+  const panelIds = new Map<string, string>()
+  for (const element of sourceElements) {
+    if (clash) {
+      seq += 1
+      ids.set(element.id, `e${seq}`)
+      panelIds.set(element.panelId, `p${seq}`)
+    } else {
+      ids.set(element.id, element.id)
+      panelIds.set(element.panelId, element.panelId)
+      seq = Math.max(seq, Number(element.id.slice(1)) || 0, Number(element.panelId.slice(1)) || 0)
+    }
+  }
+
+  const [first, ...rest] = sourceElements
+  const home = restored(first!)
+  const frameId = ids.get(first!.id)!
+  const wantedRect = onto(rect ?? home.rect, targetGrid.size)
+  const own = layoutOf(targetGrid).elements
+  const top = Math.max(0, ...targetGrid.elements.map((e) => e.z))
+  const placed =
+    rect === undefined && home.mode === 'floating' ? null : resolvePlacement(own, targetGrid.size, { rect: wantedRect })
+  const frame: GridElement = {
+    ...home,
+    id: frameId,
+    panelId: panelIds.get(first!.panelId)!,
+    loop: nextLoopId,
+    ...(placed ? { rect: placed.rect, mode: 'tiled' } : { rect: wantedRect, mode: 'floating', z: top + 1 }),
+  }
+  const inside = rest.map((e): GridElement => ({
+    ...e,
+    id: ids.get(e.id)!,
+    panelId: panelIds.get(e.panelId)!,
+    parent: frameId,
+    loop: nextLoopId,
+    rect: onto(e.rect, targetGrid.size),
+  }))
+  const panels: Panel[] = sourcePanels.map((p) => ({
+    ...p,
+    id: panelIds.get(p.id) ?? p.id,
+    elementId: ids.get(p.elementId) ?? p.elementId,
+  }))
+  const shown = targetGrid.elements.map((e) => (e.parent === undefined && e.mode === 'maximized' ? restored(e) : e))
+  const nextTargetGrid: Grid = {
+    ...targetGrid,
+    elements: [...shown, frame, ...inside],
+    panels: [...targetGrid.panels, ...panels],
+    focus: [frameId, ...targetGrid.focus],
+    seq,
+  }
+  const list = [...targetLoops.list, movedRecord].sort((a, b) => loopNumber(a.id) - loopNumber(b.id))
+  const nextTargetLoops: Loops = { ...targetLoops, seq: loopSeq, list }
+
+  return {
+    sourceGrids: nextSourceGrids,
+    sourceLoops: nextSourceLoops,
+    targetGrids: { ...targetGrids, [window]: nextTargetGrid },
+    targetLoops: nextTargetLoops,
+    loop: movedRecord,
+    frame,
+    resolved: placed ? placed.resolved : 'exact',
+    fromWindow: found.window,
+    panelIds,
   }
 }
 

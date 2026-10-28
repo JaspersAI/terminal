@@ -14,11 +14,12 @@ export interface ToldPlugin {
 
 export interface Menu {
   plugins: ToldPlugin[]
+  workspaces?: { id: string; name: string }[]
 }
 
 /** What a tile's menu says of its work, or null when the workspace has no such work. */
 export function menuOf(
-  state: Pick<AppState, 'loops' | 'plugins' | 'connections'>,
+  state: Pick<AppState, 'loops' | 'plugins' | 'connections'> & Partial<Pick<AppState, 'workspaces'>>,
   workspaceId: string,
   loopId: string,
 ): Menu | null {
@@ -32,5 +33,7 @@ export function menuOf(
     })
     return { id, installed: plugin !== undefined, connections }
   })
-  return { plugins }
+  if (state.workspaces === undefined) return { plugins }
+  const workspaces = state.workspaces.filter((w) => w.id !== workspaceId).map(({ id, name }) => ({ id, name }))
+  return { plugins, workspaces }
 }

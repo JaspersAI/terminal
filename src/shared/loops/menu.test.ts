@@ -48,3 +48,19 @@ test('work that is not there has no menu', () => {
   assert.equal(menuOf(state, WS, 'f9'), null)
   assert.equal(menuOf(state, 'elsewhere', 'f1'), null)
 })
+
+test("a tile's menu lists the other workspaces it can move to", () => {
+  const state = {
+    workspaces: [
+      { id: WS, name: 'Retail Portfolio Watch' },
+      { id: 'ws-2', name: 'Apple-Local Models' },
+    ],
+    loops: { [WS]: [work('f1', [])] },
+    plugins: {},
+    connections: {},
+  }
+  assert.deepEqual(menuOf(state, WS, 'f1'), {
+    plugins: [],
+    workspaces: [{ id: 'ws-2', name: 'Apple-Local Models' }],
+  })
+})

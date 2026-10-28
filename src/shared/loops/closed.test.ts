@@ -2,7 +2,15 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_GRID, failPanel, type Grid, type GridElement, type Panel, type PanelContent } from '../grid/grid.ts'
 import { gone, loopName, readLoops, showsChat, shut, type Loop, type Loops } from './loops.ts'
-import { closedHolding, closedWithout, loopLog, reopened, withoutLoop } from './closed.ts'
+import {
+  closedHolding,
+  closedWithout,
+  loopLog,
+  movedLoop,
+  reopened,
+  resolveWorkspaceTarget,
+  withoutLoop,
+} from './closed.ts'
 
 const loop = (id: string, desc: string, more: Partial<Loop> = {}): Loop => ({
   id,
@@ -232,4 +240,90 @@ test('a file from before loops had their name reads the same: a closed record an
     elements: elements.map(({ loop: tag, ...element }) => ({ ...element, flurb: tag })),
   }))
   assert.deepEqual(readLoops(saved.list, 0, older), closed)
+})
+
+test('moving a loop to another workspace carries its frame, views, panel state and output, and keeps its loop and element ids when free', () => {
+  const source = workspace()
+  source[1] = {
+    ...source[1]!,
+    panels: source[1]!.panels.map((p) =>
+      p.id === 'p2' ? { ...p, output: { rows: [1, 2] }, summary: 'FLWS 1D', text: 'full text', refreshedAt: 42 } : p,
+    ),
+  }
+  const target: Record<number, Grid> = { 1: EMPTY_GRID }
+  const targetLoops: Loops = { seq: 0, list: [] }
+  const moved = movedLoop(source, both, target, targetLoops, 'f1', 1)
+
+  // Gone from source grids and open loops, and not added to source closed loops.
+  assert.deepEqual(
+    moved.sourceGrids[1]!.elements.map((e) => e.id),
+    ['e3'],
+  )
+  assert.deepEqual(
+    moved.sourceLoops.list.map((one) => one.id),
+    ['f2'],
+  )
+  assert.equal(moved.sourceLoops.closed, undefined)
+  assert.equal(moved.sourceLoops.seq, 2)
+
+  // Preserved in target with the same loop id, element ids, panel ids, and panel data.
+  assert.equal(moved.loop.id, 'f1')
+  assert.equal(moved.frame.id, 'e1')
+  assert.deepEqual(
+    moved.targetGrids[1]!.elements.map((e) => [e.id, e.loop, e.parent ?? null]),
+    [
+      ['e1', 'f1', null],
+      ['e2', 'f1', 'e1'],
+    ],
+  )
+  const movedPanel = moved.targetGrids[1]!.panels.find((p) => p.id === 'p2')!
+  assert.deepEqual(movedPanel.state, { symbol: 'FLWS' })
+  assert.deepEqual(movedPanel.output, { rows: [1, 2] })
+  assert.equal(movedPanel.summary, 'FLWS 1D')
+  assert.equal(movedPanel.text, 'full text')
+  assert.equal(movedPanel.refreshedAt, 42)
+  assert.equal(moved.targetGrids[1]!.seq, 2)
+  assert.equal(moved.targetLoops.seq, 1)
+  assert.deepEqual(
+    moved.targetLoops.list.map((one) => one.id),
+    ['f1'],
+  )
+})
+
+test('moving a loop whose loop id or element ids clash in the target workspace assigns the next free ids', () => {
+  const source = workspace()
+  const target = workspace()
+  const targetLoops: Loops = { seq: 2, list: [loop('f1', 'existing-1'), loop('f2', 'existing-2')] }
+  const moved = movedLoop(source, both, target, targetLoops, 'f1', 1)
+
+  assert.equal(moved.loop.id, 'f3')
+  assert.equal(moved.targetLoops.seq, 3)
+  assert.deepEqual(
+    moved.targetLoops.list.map((one) => one.id),
+    ['f1', 'f2', 'f3'],
+  )
+  assert.deepEqual(
+    moved.targetGrids[1]!.elements.filter((e) => e.loop === 'f3').map((e) => [e.id, e.parent ?? null]),
+    [
+      ['e4', null],
+      ['e5', 'e4'],
+    ],
+  )
+  assert.equal(moved.targetGrids[1]!.seq, 5)
+})
+
+test('resolveWorkspaceTarget matches existing workspaces by id or name and treats new or unmatched names as new workspaces', () => {
+  const list = [
+    { id: 'ws-1', name: 'Retail Portfolio Watch' },
+    { id: 'ws-2', name: 'Apple-Local Models' },
+  ]
+  assert.deepEqual(resolveWorkspaceTarget(list, 'ws-2'), { kind: 'existing', workspace: list[1]! })
+  assert.deepEqual(resolveWorkspaceTarget(list, 'apple-local models'), { kind: 'existing', workspace: list[1]! })
+  assert.deepEqual(resolveWorkspaceTarget(list, 'Apple-Local Models workspace'), {
+    kind: 'existing',
+    workspace: list[1]!,
+  })
+  assert.deepEqual(resolveWorkspaceTarget(list, 'new'), { kind: 'new' })
+  assert.deepEqual(resolveWorkspaceTarget(list, 'a new workspace'), { kind: 'new' })
+  assert.deepEqual(resolveWorkspaceTarget(list, 'Macro Research'), { kind: 'new', name: 'Macro Research' })
 })

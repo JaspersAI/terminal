@@ -541,3 +541,27 @@ test('an exchange keeps the steps its run took and why it failed, and one with n
   assert.ok(!('steps' in third!) && !('error' in third!))
   db.close()
 })
+
+test('moving a chat carries its thread and exchanges to the new key and leaves other chats alone', () => {
+  const { store: db } = store()
+  db.saveThread('w1/f34', { at: 10, model: 'm', turns: '[{"role":"user","text":"s1"}]' })
+  db.saveThread('w1', { at: 5, model: 'm', turns: '[{"role":"user","text":"stay"}]' })
+  db.fileExchange('w1/f34', 1, { question: 'q1', answer: 'a1', steps: ['s1'] })
+  db.fileExchange('w1/f34', 2, { question: 'q2', answer: 'a2' })
+  db.fileExchange('w1', 3, { question: 'root', answer: 'root' })
+
+  db.moveChat('w1/f34', 'w2/f34')
+  assert.equal(db.loadThread('w1/f34'), null)
+  assert.deepEqual(db.exchanges('w1/f34', 10), [])
+  assert.equal(db.loadThread('w2/f34')?.turns, '[{"role":"user","text":"s1"}]')
+  assert.deepEqual(
+    db.exchanges('w2/f34', 10).map((e) => [e.question, e.answer]),
+    [
+      ['q1', 'a1'],
+      ['q2', 'a2'],
+    ],
+  )
+  assert.equal(db.loadThread('w1')?.turns, '[{"role":"user","text":"stay"}]')
+  assert.equal(db.exchanges('w1', 10).length, 1)
+  db.close()
+})

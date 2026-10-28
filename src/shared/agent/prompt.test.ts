@@ -766,10 +766,24 @@ test('the orchestrator is told each loop on the workspace by its name: what it i
     describeLoops({ ...tree(EMPTY_GRID), closedLoops: { [WS]: [closed] } }, WS, () => 'idle'),
     'Work on this workspace: none.\nClosed work, which reopen_loop brings back: loop_3, "Screen".',
   )
-  // Another workspace's work is its own business.
+  // Another workspace's work is its own business, and other workspaces are listed by name and id.
   assert.equal(
     describeLoops({ ...state, loops: { other: [backtest] } }, WS, () => 'idle'),
     'Work on this workspace: none.',
+  )
+  assert.equal(
+    describeLoops(
+      {
+        ...tree(EMPTY_GRID),
+        workspaces: [
+          { id: WS, name: 'Workspace 1' },
+          { id: 'ws-2', name: 'Apple-Local Models' },
+        ],
+      },
+      WS,
+      () => 'idle',
+    ),
+    'Work on this workspace: none.\nOther workspaces: "Apple-Local Models" (ws-2).',
   )
 })
 

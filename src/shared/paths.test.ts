@@ -257,6 +257,12 @@ test('workspace is the workspace a path resolves against, or the one its prefix 
   assert.deepEqual(readPath(state, WS, parsePath('workspace')), { id: WS, name: 'Workspace 1' })
   assert.deepEqual(readPath(state, 'ws-2', parsePath('workspace')), { id: 'ws-2', name: 'Research' })
   assert.deepEqual(readPath(state, WS, parsePath('workspaces/ws-2/workspace')), { id: 'ws-2', name: 'Research' })
+  assert.deepEqual(readPath(state, WS, parsePath('workspaces')), [
+    { id: WS, name: 'Workspace 1' },
+    { id: 'ws-2', name: 'Research' },
+  ])
+  assert.equal(formatPath(parsePath('workspaces')), 'workspaces')
+  assert.throws(() => parsePath('workspaces/ws-2/workspaces'), /Cannot read/)
   assert.throws(() => readPath(state, WS, parsePath('workspaces/nope/workspace')), /Unknown workspace/)
 })
 
