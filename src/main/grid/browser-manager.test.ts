@@ -20,6 +20,7 @@ import {
   type Grid,
 } from '../../shared/grid/grid.ts'
 import {
+  createBrowserLoadTracker,
   createBrowserManager,
   createBrowserUserAgentSync,
   type BrowserManagerState,
@@ -36,14 +37,16 @@ interface FakeView extends ManagedBrowserView {
   loading: boolean
   bounds: BrowserBounds | null
   visible: boolean
+  backgrounded: boolean
   theater: boolean
   zoomFactor: number
   destroyed: boolean
   reloads: number
   pageText: string | null
+  readPageTextCalls: number
 }
 
-function createHarness() {
+function createHarness(options: { idleSuspendMs?: number } = {}) {
   const placed = placeFramed(EMPTY_GRID, {
     content: { kind: 'view', view: BROWSER_VIEW },
     state: { url: 'https://www.bloomberg.com/live' },
@@ -104,11 +107,13 @@ function createHarness() {
         loading: false,
         bounds: null,
         visible: false,
+        backgrounded: false,
         theater: false,
         zoomFactor: 1,
         destroyed: false,
         reloads: 0,
         pageText: 'Bloomberg Live TV stream',
+        readPageTextCalls: 0,
         async loadURL(url: string) {
           view.history = [...view.history.slice(0, view.index + 1), url]
           view.index = view.history.length - 1
@@ -148,13 +153,19 @@ function createHarness() {
         setVisible(visible) {
           view.visible = visible
         },
+        setBackgrounded(backgrounded) {
+          view.backgrounded = backgrounded
+        },
         setTheaterMode(theater) {
           view.theater = theater
         },
         setZoomFactor(zoom) {
           view.zoomFactor = zoom
         },
-        readPageText: async () => view.pageText,
+        readPageText: async () => {
+          view.readPageTextCalls++
+          return view.pageText
+        },
         destroy() {
           view.destroyed = true
         },
@@ -162,6 +173,7 @@ function createHarness() {
       views.push(view)
       return view
     },
+    idleSuspendMs: options.idleSuspendMs,
     setPanelUrl: (workspaceId, panelId, url) => {
       const grid = state.grids[workspaceId]![1]!
       const updated = setPanelState(grid, panelId, ['url'], url).grid
@@ -581,4 +593,126 @@ test('applies tile zoom factor to WebContentsView while keeping bounds unscaled,
   updateGrid('ws-1', second.grid)
   view.events.onZoom?.('in')
   assert.equal(zoomed.length, 1)
+})
+
+test('createBrowserLoadTracker tracks main-frame loads and ignores subframe ad/tracker reloads', () => {
+  let mainFrameLoading = false
+  let starts = 0
+  let stops = 0
+  const tracker = createBrowserLoadTracker(
+    { isLoadingMainFrame: () => mainFrameLoading },
+    {
+      onDidStartLoading: () => {
+        starts++
+      },
+      onDidStopLoading: () => {
+        stops++
+      },
+    },
+  )
+
+  assert.equal(tracker.isLoading(), false)
+
+  // Main-frame navigation starts loading.
+  mainFrameLoading = true
+  tracker.onDidStartNavigation(true, false)
+  tracker.onDidStartLoading()
+  assert.equal(tracker.isLoading(), true)
+  assert.equal(starts, 1)
+  assert.equal(stops, 0)
+
+  // Main frame finishes while a slow ad subframe is still loading.
+  mainFrameLoading = false
+  tracker.onDidFinishFrameLoad(true)
+  assert.equal(tracker.isLoading(), false)
+  assert.equal(stops, 1)
+
+  // When the slow subframe later stops, onDidStopLoading does not fire a second time.
+  tracker.onDidStopLoading()
+  assert.equal(stops, 1)
+
+  // Subframe ad reloads on an already-loaded page do not trigger main-frame start/stop events.
+  tracker.onDidStartNavigation(false, false)
+  tracker.onDidStartLoading()
+  assert.equal(tracker.isLoading(), false)
+  assert.equal(starts, 1)
+  tracker.onDidFinishFrameLoad(false)
+  tracker.onDidStopLoading()
+  assert.equal(stops, 1)
+
+  // Same-document (hash/pushState) navigation does not start a full-page load.
+  tracker.onDidStartNavigation(true, true)
+  assert.equal(tracker.isLoading(), false)
+  assert.equal(starts, 1)
+})
+
+test('backgrounds inactive tabs and workspaces, suspends idle background WebContentsViews to free memory, and wakes them on selection', async () => {
+  const { manager, placed, views, attached, getState, setState } = createHarness({ idleSuspendMs: 25 })
+  const initial = await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  const firstTabId = initial.tabs![0]!.id
+  const tab1View = views[0]!
+  tab1View.title = 'Bloomberg Live TV'
+  tab1View.events.onPageTitleUpdated('Bloomberg Live TV')
+  assert.equal(tab1View.backgrounded, false)
+
+  // Temporary overlay occlusion (e.g. menu or feedback popover) hides the view visually without backgrounding/pausing it.
+  await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, false)
+  assert.equal(tab1View.visible, false)
+  assert.equal(tab1View.backgrounded, false)
+  await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  assert.equal(tab1View.visible, true)
+
+  // Opening a second tab backgrounds Tab 1 immediately, then suspends Tab 1's WebContentsView after idleSuspendMs.
+  const opened = await manager.navigate(1, 'ws-1', placed.panel.id, 'new-tab', 'https://www.bloomberg.com/')
+  const secondTabId = opened.activeTabId!
+  const tab2View = views[1]!
+  assert.equal(tab1View.backgrounded, true)
+  assert.equal(tab2View.backgrounded, false)
+  assert.equal(tab1View.destroyed, false)
+
+  // Wait for the idle suspension timer to discard Tab 1's background WebContentsView.
+  await new Promise((resolve) => setTimeout(resolve, 45))
+  assert.equal(tab1View.destroyed, true)
+  assert.equal(tab2View.destroyed, false)
+
+  // Tab 1 remains in the tab bar with its URL, title, and theater state intact while suspended.
+  const whileSuspended = await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  const suspendedMeta = whileSuspended.tabs?.find((t) => t.id === firstTabId)
+  assert.ok(suspendedMeta)
+  assert.equal(suspendedMeta.url, 'https://www.bloomberg.com/live')
+  assert.equal(suspendedMeta.title, 'Bloomberg Live TV')
+  assert.equal(suspendedMeta.theater, true)
+
+  // Selecting Tab 1 wakes it with a fresh WebContentsView and reloads its address.
+  const reselected = await manager.navigate(1, 'ws-1', placed.panel.id, 'select-tab', firstTabId)
+  assert.equal(views.length, 3)
+  const wokenTab1View = views[2]!
+  assert.equal(reselected.activeTabId, firstTabId)
+  assert.equal(wokenTab1View.getURL(), 'https://www.bloomberg.com/live')
+  assert.equal(wokenTab1View.visible, true)
+  assert.equal(wokenTab1View.backgrounded, false)
+  assert.equal(attached.get(1)?.has(wokenTab1View), true)
+  assert.equal(tab2View.backgrounded, true)
+
+  // Switching to Workspace 2 backgrounds all tabs in Workspace 1 and suspends them after idleSuspendMs.
+  setState({ ...getState(), currentWorkspaceId: 'ws-2' })
+  manager.sweep()
+  assert.equal(wokenTab1View.backgrounded, true)
+  await new Promise((resolve) => setTimeout(resolve, 45))
+  assert.equal(wokenTab1View.destroyed, true)
+  assert.equal(tab2View.destroyed, true)
+
+  // Switching back to Workspace 1 wakes only the active tab (Tab 1), leaving inactive Tab 2 suspended until selected.
+  setState({ ...getState(), currentWorkspaceId: 'ws-1' })
+  manager.sweep()
+  assert.equal(views.length, 4)
+  const wsWokenView = views[3]!
+  assert.equal(wsWokenView.getURL(), 'https://www.bloomberg.com/live')
+  assert.equal(wsWokenView.visible, true)
+  assert.equal(wsWokenView.backgrounded, false)
+
+  await manager.navigate(1, 'ws-1', placed.panel.id, 'select-tab', secondTabId)
+  assert.equal(views.length, 5)
+  assert.equal(views[4]!.getURL(), 'https://www.bloomberg.com/')
+  manager.closeAll()
 })

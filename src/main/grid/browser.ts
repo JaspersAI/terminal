@@ -21,6 +21,7 @@ import { PANEL_TEXT_MAX, panelOf, stepZoom, tileZoom } from '../../shared/grid/g
 import { publishChecked, publishTextChecked, setPanelStateChecked } from '../actions'
 import { getState, subscribe } from '../state'
 import {
+  createBrowserLoadTracker,
   createBrowserManager,
   createBrowserUserAgentSync,
   type BrowserManager,
@@ -101,6 +102,25 @@ const THEATER_SCRIPT = (theater: boolean): string => `
 })()
 `
 
+const BACKGROUND_MEDIA_SCRIPT = (backgrounded: boolean): string => `
+(() => {
+  if (typeof document === 'undefined') return;
+  for (const el of document.querySelectorAll('video, audio')) {
+    if (!(el instanceof HTMLMediaElement)) continue;
+    const media = el;
+    if (${backgrounded ? 'true' : 'false'}) {
+      if (!media.paused) {
+        media.__jaspersPaused = true;
+        try { media.pause(); } catch {}
+      }
+    } else if (media.__jaspersPaused) {
+      delete media.__jaspersPaused;
+      try { void media.play()?.catch(() => {}); } catch {}
+    }
+  }
+})()
+`
+
 const nativeViews = new WeakMap<ManagedBrowserView, WebContentsView>()
 const watchedWindows = new WeakSet<BrowserWindow>()
 const inFlightUrlsByWebContentsId = new Map<number, string>()
@@ -117,7 +137,8 @@ function browserWebPreferences(part: Session): WebPreferences {
     webSecurity: true,
     allowRunningInsecureContent: false,
     navigateOnDragDrop: false,
-    backgroundThrottling: false,
+    backgroundThrottling: true,
+    spellcheck: false,
   }
 }
 
@@ -165,10 +186,20 @@ function createNativeView(
   raw.setVisible(false)
   let lastBounds: BrowserBounds | null = null
   let lastVisible = false
+  let lastBackgrounded = false
+  let appliedTheater = false
+  let closedByManager = false
   const { webContents } = raw
   const baseUa = browserUserAgent(part.getUserAgent()) || webContents.getUserAgent()
   const startUa = browserUserAgentForUrl(initialUrl, baseUa, process.platform)
   if (startUa && webContents.getUserAgent() !== startUa) webContents.setUserAgent(startUa)
+
+  const loadTracker = createBrowserLoadTracker(
+    {
+      isLoadingMainFrame: () => !webContents.isDestroyed() && webContents.isLoadingMainFrame(),
+    },
+    events,
+  )
 
   const uaSync = createBrowserUserAgentSync(
     {
@@ -180,8 +211,13 @@ function createNativeView(
       setCdpUserAgentOverride: (userAgent) => {
         if (webContents.isDestroyed()) return
         try {
+          if (userAgent === '') {
+            if (webContents.debugger.isAttached()) {
+              webContents.debugger.detach()
+            }
+            return
+          }
           if (!webContents.debugger.isAttached()) {
-            if (userAgent === '') return
             webContents.debugger.attach('1.3')
           }
           void webContents.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent }).catch(() => {
@@ -202,6 +238,7 @@ function createNativeView(
     if (!details.isMainFrame || details.isSameDocument || !isBrowserUrl(details.url)) return
     inFlightUrlsByWebContentsId.set(webContents.id, details.url)
     uaSync.onDidStartNavigation(details.url, details.isMainFrame, details.isSameDocument)
+    loadTracker.onDidStartNavigation(details.isMainFrame, details.isSameDocument)
     if (!isBrowserUrl(webContents.getURL())) events.onDidNavigate(details.url)
   })
   webContents.on('will-navigate', (event) => {
@@ -247,8 +284,9 @@ function createNativeView(
     }
   })
 
-  webContents.on('did-start-loading', () => events.onDidStartLoading())
-  webContents.on('did-stop-loading', () => events.onDidStopLoading())
+  webContents.on('did-start-loading', () => loadTracker.onDidStartLoading())
+  webContents.on('did-frame-finish-load', (_event, isMainFrame) => loadTracker.onDidFinishFrameLoad(isMainFrame))
+  webContents.on('did-stop-loading', () => loadTracker.onDidStopLoading())
   webContents.on('did-navigate', (_event, url) => {
     inFlightUrlsByWebContentsId.delete(webContents.id)
     uaSync.onDidNavigate(url)
@@ -261,6 +299,7 @@ function createNativeView(
     if (isMainFrame) {
       inFlightUrlsByWebContentsId.delete(webContents.id)
       uaSync.onDidFailLoad(isMainFrame)
+      loadTracker.onDidFailLoad(isMainFrame)
     }
     events.onDidFailLoad(errorCode, errorDescription, isMainFrame)
   })
@@ -268,7 +307,7 @@ function createNativeView(
   webContents.on('focus', () => events.onFocus())
   webContents.once('destroyed', () => {
     inFlightUrlsByWebContentsId.delete(webContents.id)
-    events.onClose?.()
+    if (!closedByManager) events.onClose?.()
   })
   webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
@@ -302,7 +341,7 @@ function createNativeView(
     },
     getURL: () => (webContents.isDestroyed() ? '' : webContents.getURL()),
     getTitle: () => (webContents.isDestroyed() ? '' : webContents.getTitle()),
-    isLoading: () => !webContents.isDestroyed() && webContents.isLoading(),
+    isLoading: () => loadTracker.isLoading(),
     setBounds: (bounds) => {
       if (webContents.isDestroyed()) return
       if (
@@ -323,9 +362,21 @@ function createNativeView(
       lastVisible = visible
       if (!visible) lastBounds = null
       raw.setVisible(visible)
+      webContents.setBackgroundThrottling(!visible || lastBackgrounded)
+    },
+    setBackgrounded: (backgrounded) => {
+      if (webContents.isDestroyed() || lastBackgrounded === backgrounded) return
+      lastBackgrounded = backgrounded
+      webContents.setBackgroundThrottling(backgrounded || !lastVisible)
+      webContents.setAudioMuted(backgrounded)
+      if (isBrowserUrl(webContents.getURL())) {
+        void webContents.executeJavaScript(BACKGROUND_MEDIA_SCRIPT(backgrounded), false).catch(() => undefined)
+      }
     },
     setTheaterMode: (theater, url) => {
       if (webContents.isDestroyed()) return
+      if (!theater && !appliedTheater) return
+      appliedTheater = theater
       if (/youtube\.com|youtu\.be/i.test(url)) {
         void part.cookies
           .set({
@@ -356,6 +407,7 @@ function createNativeView(
       }
     },
     destroy: () => {
+      closedByManager = true
       if (!webContents.isDestroyed()) {
         raw.setVisible(false)
         webContents.close()

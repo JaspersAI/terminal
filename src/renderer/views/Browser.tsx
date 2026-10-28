@@ -8,7 +8,7 @@ import {
   type FormEvent,
   type ReactElement,
 } from 'react'
-import { useData, usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
+import { useData, usePanelState } from '@jaspers-ai/sdk'
 import { usePanelWorking } from '@jaspers-ai/sdk/host'
 import {
   DEFAULT_BROWSER_URL,
@@ -100,9 +100,6 @@ export function Browser({ panel }: ViewProps): ReactElement {
   const activeTabId = snapshot.activeTabId || tabs[0]!.id
   const theaterOn = output.theater === true
 
-  usePublish(panel, output as unknown as Record<string, unknown>)
-  usePublishText(panel, snapshot.text)
-
   useEffect(() => {
     setInputError(null)
   }, [stateUrl])
@@ -154,7 +151,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
 
   useLayoutEffect(() => {
     syncBounds()
-  })
+  }, [syncBounds])
 
   useEffect(() => {
     const anchor = viewportRef.current
