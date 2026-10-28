@@ -53,19 +53,24 @@ export function createIframeBridge(): Bridge {
     subscribe(path: string, listener: (value: unknown) => void) {
       let subId: number | null = null
       let live = true
-      void call('store.subscribe', { path }).then((id) => {
-        if (!live) {
-          void call('store.unsubscribe', { subId: id })
-          return
-        }
-        subId = id as number
-        listeners.set(subId, listener)
-      })
+      void call('store.subscribe', { path }).then(
+        (id) => {
+          if (!live) {
+            void call('store.unsubscribe', { subId: id }).catch(() => {})
+            return
+          }
+          subId = id as number
+          listeners.set(subId, listener)
+        },
+        () => {
+          if (live) listener(undefined)
+        },
+      )
       return () => {
         live = false
         if (subId === null) return
         listeners.delete(subId)
-        void call('store.unsubscribe', { subId })
+        void call('store.unsubscribe', { subId }).catch(() => {})
         subId = null
       }
     },

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
-import type { Action, AppState, Workspace } from '../../shared/state'
-import { errorMessage } from './errors'
+import type { Action, AppState, Workspace } from '../../shared/state.ts'
+import { errorMessage } from './errors.ts'
 
 // The renderer's mirror of the tree main owns. Components read it with `useAppState`, plain code
 // with `get`; anything that wants it changed calls `dispatch`, which asks main. Nothing here edits

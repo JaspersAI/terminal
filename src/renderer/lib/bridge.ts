@@ -1,9 +1,9 @@
-import { sameValue } from '../../shared/data/hash'
-import { parsePath, readPath, type StorePath } from '../../shared/paths'
+import { sameValue } from '../../shared/data/hash.ts'
+import { parsePath, readPath, type StorePath } from '../../shared/paths.ts'
 import type { Bridge, RunOptions } from '@jaspers-ai/sdk'
-import type { RunResult } from '../../shared/data/datasets'
-import { errorMessage } from './errors'
-import { dispatch, get, subscribe } from './state'
+import type { RunResult } from '../../shared/data/datasets.ts'
+import { errorMessage } from './errors.ts'
+import { dispatch, get, subscribe } from './state.ts'
 
 // The bridge a built-in view gets: reads are the tree the renderer already mirrors, writes are
 // dispatches to main. Nothing here validates: main does, against the view's schema, wherever the
@@ -11,11 +11,16 @@ import { dispatch, get, subscribe } from './state'
 
 export const hostBridge: Bridge = {
   async get(path) {
-    return read(parsePath(path))
+    const parsed = parse(path)
+    return parsed ? read(parsed) : undefined
   },
 
   subscribe(path, listener) {
-    const parsed = parsePath(path)
+    const parsed = parse(path)
+    if (!parsed) {
+      listener(undefined)
+      return () => {}
+    }
     let last = read(parsed)
     listener(last)
     return subscribe(() => {
@@ -85,10 +90,17 @@ async function unwrap<T>(call: Promise<T>): Promise<T> {
 }
 
 /**
- * A path without a workspace means the one on screen. A subscription outlives the panel it reads
- * by a moment when an element closes, so a path that no longer resolves reads as undefined here
- * rather than throwing at whoever is listening.
+ * A path a view does not share with this version of the app, or one whose panel has closed since,
+ * reads as undefined rather than throwing at whoever is listening.
  */
+function parse(path: string): StorePath | null {
+  try {
+    return parsePath(path)
+  } catch {
+    return null
+  }
+}
+
 function read(path: StorePath): unknown {
   try {
     return readPath(get(), get().currentWorkspaceId, path)
