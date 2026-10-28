@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useBridge, useData, usePanel, type SourceData } from '@jaspers-ai/sdk'
-import { EMPTY_ROWS as EMPTY, sqlAfterFailure, type Rows } from './cells'
+import { beginSqlRun, EMPTY_ROWS as EMPTY, sqlAfterFailure, type Rows } from './cells'
 
 // How a generic view gets its rows. Two ways in, one shape out: a source by registry id, which is
 // what a plugin's data is reached by, or SQL over the store, which is the only way to see further
@@ -23,7 +23,6 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
   const fromSource: SourceData = useData(source ?? '', args ?? {})
   const [fromSql, setFromSql] = useState<Rows>(EMPTY)
   const [sqlNonce, setSqlNonce] = useState(0)
-  const loadedSql = useRef<string | null>(null)
 
   useEffect(() => {
     if (!panel || !sql || source) return
@@ -40,14 +39,11 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
 
   useEffect(() => {
     if (!sql || source) {
-      loadedSql.current = null
       setFromSql(EMPTY)
       return
     }
     let live = true
-    const signature = `${sql}\n${limit ?? ''}`
-    const sameQuery = loadedSql.current === signature
-    setFromSql((previous) => (sameQuery ? { ...previous, loading: true, error: null } : { ...EMPTY, loading: true }))
+    setFromSql(beginSqlRun)
     const read = bridge.query
     if (!read) {
       setFromSql({ ...EMPTY, error: 'This view cannot read the store here.' })
@@ -56,7 +52,6 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
     void read(sql, limit)
       .then((result) => {
         if (!live) return
-        loadedSql.current = signature
         setFromSql({
           rows: result.rows.map((row) => Object.fromEntries(result.columns.map((column, i) => [column, row[i]]))),
           columns: result.columns,
@@ -69,7 +64,7 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
       .catch((error: unknown) => {
         if (!live) return
         const message = error instanceof Error ? error.message : String(error)
-        setFromSql((previous) => sqlAfterFailure(previous, message, sameQuery))
+        setFromSql((previous) => sqlAfterFailure(previous, message))
       })
     return () => {
       live = false
