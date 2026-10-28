@@ -29,8 +29,8 @@ import { useAppState } from '../../lib/state'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
 import { loopName, showsChat } from '../../../shared/loops/loops'
-import { barLabel, BORN, boxOpens, canZoomLoop, sameActivity, type Activity, type TileState } from './box'
-import { LoopBox } from './LoopBox'
+import { barLabel, boxActivity, canZoomLoop, tileBoxExpanded, tileBoxSeen } from './box'
+import { LoopBox, updateTileBox, useTileBox } from './LoopBox'
 import { LoopMenu } from './LoopMenu'
 import { Held } from './Held'
 import { send, stepTileZoom, toggleMaximized, toggleMinimized } from './send'
@@ -68,8 +68,8 @@ const HANGING = 1000
  * a loop: its bar names it, loop_3, then what the work is. Under the bar is the loop's command line,
  * its box: a line typed there goes to the loop's agent (`LoopBox`). The box is folded to its line by
  * default. A small label in the bar says how the loop stands, asking, working with its newest step,
- * done, or failed (`barLabel`), and pressing it opens the box under the line: a deep research loop's
- * conversation, or for any other the steps and the reply of its last request. In a tile with no view
+ * done, failed, or conversation (`barLabel`), and pressing it opens the box under the line to show
+ * the loop's conversation. In a tile with no view
  * yet, a run opens the box itself, so what the work is doing is what the tile shows, and the first
  * view to land folds it (`boxOpens`). Under the box are the views the loop shows, laid out inside the
  * tile (`Board`): they have no bar and no box of their own, so a loop reads as one thing however many
@@ -133,16 +133,11 @@ export function ElementFrame({
     }
     prevFocused.current = focused
   }, [focused])
-  // Only a deep research loop shows its conversation; any other is its command line and its views.
+  // A deep research loop's field invites follow-up questions; any other invites view commands.
   const chat = loop !== undefined && showsChat(loop)
-  // Its box is folded under its line until the label in the bar opens it, or a run begins with no view
-  // in the tile yet. How its requests stand, the label says.
-  const [expanded, setExpanded] = useState(false)
-  const [activity, setActivity] = useState<Activity | null>(null)
-  const showActivity = useCallback(
-    (next: Activity | null) => setActivity((had) => (sameActivity(had, next) ? had : next)),
-    [],
-  )
+  const place = useMemo(() => ({ workspaceId, on: element.id }), [workspaceId, element.id])
+  const { expanded, live, earlier } = useTileBox(place)
+  const activity = useMemo(() => boxActivity(live), [live])
   const called = loop ? loopName(loop.id) : ''
   const { x, y, w, h } = rect
   const content = panel?.content
@@ -188,16 +183,13 @@ export function ElementFrame({
   const doing = useLoopStatus(workspaceId, element.loop)
   const status = need ? 'asking' : doing
   // What the bar says of the loop, which opens and folds its box.
-  const said = loop ? barLabel(status, activity, chat) : null
+  const said = loop ? barLabel(status, activity, chat || earlier.length > 0) : null
   // The box opens itself as the bar says a run is at work in a tile with no view yet, and folds as the
   // first view lands: between those it is the user's. The tile as the box last saw it, born empty and idle.
   const working = said?.kind === 'working'
-  const seen = useRef<TileState>(BORN)
   useEffect(() => {
-    const opens = boxOpens(seen.current, { empty, working })
-    seen.current = { empty, working }
-    if (opens !== null) setExpanded(opens)
-  }, [empty, working])
+    updateTileBox(place, (current) => tileBoxSeen(current, { empty, working }))
+  }, [place, empty, working])
   // A minimized tile is as tall as its bar, so its menu cannot be drawn inside it: it hangs below.
   const hangs = minimized && menu
 
@@ -359,10 +351,10 @@ export function ElementFrame({
             data-loop-mark={status === 'idle' ? undefined : status}
             aria-expanded={expanded}
             aria-controls={`loop-box-${element.id}`}
-            aria-label={`${said.text}. ${expanded ? 'Fold' : 'Open'} ${chat ? 'the conversation' : 'the steps and the reply'}.`}
+            aria-label={`${said.text}. ${expanded ? 'Fold' : 'Open'} the conversation.`}
             title={said.text}
             onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => setExpanded((was) => !was)}
+            onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
             // Above the corner that resizes, as the bar's buttons are.
             className={`relative z-20 flex h-6 max-w-[45%] min-w-0 shrink-0 cursor-default items-center gap-1.5 px-1.5 text-xs hover:text-foreground ${
               said.kind === 'failed' ? 'text-destructive' : 'text-muted-foreground'
@@ -541,9 +533,6 @@ export function ElementFrame({
             fills={empty}
             need={need}
             onSkip={skipNeed}
-            expanded={expanded}
-            onExpand={setExpanded}
-            onActivity={showActivity}
             zoom={zoom}
           />
         )}

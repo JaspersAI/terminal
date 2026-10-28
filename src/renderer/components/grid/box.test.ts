@@ -5,14 +5,28 @@ import {
   barLabel,
   BORN,
   boxActivity,
+  boxesHeard,
+  boxesKept,
+  boxesSeeded,
   boxFresh,
   boxHeard,
   boxOpens,
   boxSent,
   boxSettled,
   canZoomLoop,
+  IDLE_BOX,
   sameActivity,
+  shouldReadTileBox,
+  tileBoxExpanded,
+  tileBoxOf,
+  tileBoxOlder,
+  tileBoxRead,
+  tileBoxSeen,
+  tileBoxSent,
+  tileBoxSettled,
   WAITING,
+  withTileBox,
+  type TileBox,
 } from './box.ts'
 
 /** This box's tile. */
@@ -197,4 +211,139 @@ test('a loop zooms on keyboard shortcuts only when it is selected, focused, visi
   assert.equal(canZoomLoop({ ...ready, covered: true }), false)
   assert.equal(canZoomLoop({ ...ready, modalOpen: true }), false)
   assert.equal(canZoomLoop({ ...ready, outsideFocused: true }), false)
+})
+
+test('a tile box keeps its expanded state, seen state, and conversation across workspace switches and runs on other workspaces', () => {
+  let boxes: ReadonlyMap<string, TileBox> = new Map()
+  assert.equal(tileBoxOf(boxes, HERE), IDLE_BOX)
+  assert.equal(shouldReadTileBox(tileBoxOf(boxes, HERE)), true)
+
+  // Mounted on a tile that already has a view, its initial log is read and the user opens the box.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSeen(box, { empty: false, working: false }))
+  boxes = withTileBox(boxes, HERE, (box) =>
+    tileBoxRead(box, [{ id: 1, question: 'summarize stories', answer: 'Here are 10 stories.' }], new Set(), 30),
+  )
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, true))
+  assert.equal(tileBoxOf(boxes, HERE).expanded, true)
+  assert.equal(tileBoxOf(boxes, HERE).read, true)
+  assert.equal(shouldReadTileBox(tileBoxOf(boxes, HERE)), false)
+
+  // Switching to another workspace and back remounts ElementFrame with the same { empty: false, working: false }:
+  // because `seen` was kept, `tileBoxSeen` does not fold the open box.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSeen(box, { empty: false, working: false }))
+  assert.equal(tileBoxOf(boxes, HERE).expanded, true)
+  assert.deepEqual(
+    tileBoxOf(boxes, HERE).earlier.map((one) => one.answer),
+    ['Here are 10 stories.'],
+  )
+
+  // Sending a follow-up while the box is open keeps both the earlier exchange and the new one in view.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSent(box, HERE, 'a2', 'where is your previous response?'))
+  boxes = boxesHeard(boxes, start('run2', 'e1', { ask: 'a2', request: 'where is your previous response?' }))
+  boxes = boxesHeard(boxes, { kind: 'done', runId: 'run2', text: 'Right above this message.' })
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSent(box, HERE, 'a3', 'and a third question?'))
+  boxes = boxesHeard(boxes, start('run3', 'e1', { ask: 'a3', request: 'and a third question?' }))
+  assert.equal(tileBoxOf(boxes, HERE).earlier.length, 1)
+  assert.deepEqual(
+    tileBoxOf(boxes, HERE).live.map((one) => [one.question, one.answer, one.working]),
+    [
+      ['where is your previous response?', 'Right above this message.', false],
+      ['and a third question?', null, true],
+    ],
+  )
+
+  // While the user is on another workspace, run3 finishes on w1/e1: boxesHeard updates w1/e1 in place.
+  boxes = boxesHeard(boxes, { kind: 'done', runId: 'run3', text: 'Third answer.' })
+  assert.deepEqual(
+    tileBoxOf(boxes, HERE).live.map((one) => [one.question, one.answer, one.working]),
+    [
+      ['where is your previous response?', 'Right above this message.', false],
+      ['and a third question?', 'Third answer.', false],
+    ],
+  )
+})
+
+test('a run that finishes while the box is folded keeps Done in the bar until opened, then retires into earlier', () => {
+  let boxes: ReadonlyMap<string, TileBox> = new Map()
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxRead(box, [{ id: 1, question: 'q1', answer: 'a1' }], new Set(), 30))
+  assert.equal(shouldReadTileBox(tileBoxOf(boxes, HERE)), false)
+
+  // Folded, a second run starts and finishes.
+  boxes = boxesHeard(boxes, start('run2', 'e1', { request: 'q2' }))
+  boxes = boxesHeard(boxes, { kind: 'done', runId: 'run2', text: 'a2' })
+  const folded = tileBoxOf(boxes, HERE)
+  assert.equal(folded.expanded, false)
+  assert.equal(folded.read, false)
+  // While folded with a finished row in `live`, the log is not read yet so `Done` stays in the bar.
+  assert.equal(shouldReadTileBox(folded), false)
+  assert.deepEqual(boxActivity(folded.live), { state: 'working' in folded.live ? 'working' : 'done', step: null })
+
+  // Opening the box triggers a read of the log and retires the finished row from `live` into `earlier`.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, true))
+  assert.equal(shouldReadTileBox(tileBoxOf(boxes, HERE)), true)
+  const done = new Set(tileBoxOf(boxes, HERE).live.map((one) => one.ask))
+  boxes = withTileBox(boxes, HERE, (box) =>
+    tileBoxRead(
+      box,
+      [
+        { id: 1, question: 'q1', answer: 'a1' },
+        { id: 2, question: 'q2', answer: 'a2' },
+      ],
+      done,
+      30,
+    ),
+  )
+  const opened = tileBoxOf(boxes, HERE)
+  assert.equal(opened.live.length, 0)
+  assert.deepEqual(
+    opened.earlier.map((one) => [one.question, one.answer]),
+    [
+      ['q1', 'a1'],
+      ['q2', 'a2'],
+    ],
+  )
+  assert.equal(shouldReadTileBox(opened), false)
+
+  // Scrolling up prepends older pages when the head matches, and settles requests that never began a run.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxOlder(box, 1, [{ id: 0, question: 'q0', answer: 'a0' }], 30))
+  assert.deepEqual(
+    tileBoxOf(boxes, HERE).earlier.map((one) => one.id),
+    [0, 1, 2],
+  )
+  assert.equal(tileBoxOf(boxes, HERE).more, false)
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSent(box, HERE, 'new1', '/new'))
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSettled(box, 'new1', 'Started a new conversation.', null))
+  assert.equal(tileBoxOf(boxes, HERE).live[0]?.answer, 'Started a new conversation.')
+})
+
+test('boxesSeeded seeds in-flight tile runs and boxesKept drops only tiles removed from every grid', () => {
+  let boxes: ReadonlyMap<string, TileBox> = new Map()
+  boxes = boxesSeeded(
+    boxes,
+    [
+      { runId: 'r1', origin: 'user', workspaceId: 'w1', loop: 'f1', on: 'e1', request: 'in w1' },
+      { runId: 'r2', origin: 'user', workspaceId: 'w2', loop: 'f1', on: 'e1', request: 'in w2' },
+      { runId: 'r3', origin: 'user', workspaceId: 'w1', loop: 'f2', on: 'e2', request: 'already ended' },
+      { runId: 'r4', origin: 'user', workspaceId: 'w1' },
+    ],
+    new Set(['r3']),
+  )
+  assert.equal(tileBoxOf(boxes, { workspaceId: 'w1', on: 'e1' }).live[0]?.question, 'in w1')
+  assert.equal(tileBoxOf(boxes, { workspaceId: 'w2', on: 'e1' }).live[0]?.question, 'in w2')
+  assert.equal(tileBoxOf(boxes, { workspaceId: 'w1', on: 'e2' }), IDLE_BOX)
+
+  // Both w1 and w2 stay in `grids` when switching workspaces; removing e1 from w2 drops only w2/e1.
+  const both = {
+    w1: { 1: { elements: [{ id: 'e1' }] } },
+    w2: { 1: { elements: [{ id: 'e1' }] } },
+  }
+  assert.equal(boxesKept(boxes, both), boxes)
+  const afterClose = {
+    w1: { 1: { elements: [{ id: 'e1' }] } },
+    w2: { 1: { elements: [] } },
+  }
+  const kept = boxesKept(boxes, afterClose)
+  assert.notEqual(kept, boxes)
+  assert.equal(tileBoxOf(kept, { workspaceId: 'w1', on: 'e1' }).live[0]?.question, 'in w1')
+  assert.equal(tileBoxOf(kept, { workspaceId: 'w2', on: 'e1' }), IDLE_BOX)
 })
