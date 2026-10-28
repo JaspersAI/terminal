@@ -376,10 +376,15 @@ test('popups and new-tab actions open switchable tabs inside the same panel, and
 
 test('adopts OAuth popup child WebContents into a switchable tab without reloading and returns to the opener tab on window.close', async () => {
   const { manager, placed, views, attached, sent } = createHarness()
-  await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  const initial = await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
   const opener = views[0]!
+  const openerTabId = initial.tabs![0]!.id
 
-  // Page opens an about:blank OAuth popup via window.open('', 'gsi') and then navigates it to accounts.google.com.
+  // Open a second regular tab first, then switch back to the first tab so opener is t1 while [t1, t2] exist.
+  await manager.navigate(1, 'ws-1', placed.panel.id, 'new-tab', 'https://example.com/other')
+  await manager.navigate(1, 'ws-1', placed.panel.id, 'select-tab', openerTabId)
+
+  // Page in t1 opens an about:blank OAuth popup via window.open('', 'gsi') and then navigates it to accounts.google.com.
   let adoptedEvents!: BrowserViewEvents
   let adoptedLoadCalls = 0
   const adoptedView: ManagedBrowserView = {
@@ -413,11 +418,12 @@ test('adopts OAuth popup child WebContents into a switchable tab without reloadi
   adoptedEvents.onDidNavigate('https://accounts.google.com/v3/signin/identifier')
   adoptedEvents.onDidStopLoading()
   assert.equal(sent.at(-1)?.snapshot.url, 'https://accounts.google.com/v3/signin/identifier')
-  assert.equal(sent.at(-1)?.snapshot.tabs?.length, 2)
+  assert.equal(sent.at(-1)?.snapshot.tabs?.length, 3)
 
-  // Popup completes sign-in, posts credentials to window.opener, and calls window.close().
+  // Popup completes sign-in, posts credentials to window.opener, and calls window.close(): returns to t1 (the opener), not t2.
   adoptedEvents.onClose?.()
-  assert.equal(sent.at(-1)?.snapshot.tabs?.length, 1)
+  assert.equal(sent.at(-1)?.snapshot.tabs?.length, 2)
+  assert.equal(sent.at(-1)?.snapshot.activeTabId, openerTabId)
   assert.equal(sent.at(-1)?.snapshot.url, 'https://www.bloomberg.com/live')
   assert.equal(opener.visible, true)
   assert.equal(attached.get(1)?.has(opener), true)

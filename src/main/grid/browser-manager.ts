@@ -99,6 +99,7 @@ export interface BrowserManager {
 
 interface TabEntry {
   id: string
+  openerTabId: string | null
   view: ManagedBrowserView
   url: string
   title: string
@@ -298,6 +299,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     entry: Entry,
     initialUrl: string,
     customCreateView: (events: BrowserViewEvents) => ManagedBrowserView = deps.createView,
+    openerTabId: string | null = null,
   ): TabEntry {
     const id = `t${++entry.nextTabSeq}`
     let tab!: TabEntry
@@ -368,7 +370,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (createChildView) {
           const normalized = normalizeBrowserUrl(url) ?? ''
           if (!normalized && !isBlankBrowserPopupUrl(url)) return null
-          const opened = createTab(entry, normalized, createChildView)
+          const opened = createTab(entry, normalized, createChildView, tab.id)
           opened.loading = Boolean(normalized)
           entry.tabs.push(opened)
           entry.activeTabId = opened.id
@@ -378,7 +380,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         }
         const normalized = normalizeBrowserUrl(url)
         if (!normalized) return null
-        const opened = createTab(entry, normalized)
+        const opened = createTab(entry, normalized, deps.createView, tab.id)
         entry.tabs.push(opened)
         entry.activeTabId = opened.id
         loadTabAddress(entry, opened, normalized)
@@ -386,31 +388,12 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       },
       onClose() {
         if (!tab || tab.destroyed || entry.destroyed) return
-        const index = entry.tabs.findIndex((one) => one.id === tab.id)
-        if (index < 0) return
-        if (entry.tabs.length <= 1) {
-          const [removed] = entry.tabs.splice(index, 1)
-          if (removed) destroyTab(entry, removed)
-          const replacement = createTab(entry, DEFAULT_BROWSER_URL)
-          entry.tabs.push(replacement)
-          entry.activeTabId = replacement.id
-          entry.stateUrl = DEFAULT_BROWSER_URL
-          deps.setPanelUrl(entry.workspaceId, entry.panelId, DEFAULT_BROWSER_URL)
-          loadTabAddress(entry, replacement, DEFAULT_BROWSER_URL)
-          return
-        }
-        const [removed] = entry.tabs.splice(index, 1)
-        if (removed) destroyTab(entry, removed)
-        if (entry.activeTabId === tab.id) {
-          const nextTab = entry.tabs[Math.min(index, entry.tabs.length - 1)]!
-          entry.activeTabId = nextTab.id
-        }
-        positionEntry(entry, deps.getState())
-        pushSnapshot(entry)
+        closeTabById(entry, tab.id, true)
       },
     })
     tab = {
       id,
+      openerTabId,
       view,
       url: initialUrl,
       title: '',
@@ -422,6 +405,33 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       destroyed: false,
     }
     return tab
+  }
+
+  function closeTabById(entry: Entry, targetId: string, replaceSingleTab: boolean): void {
+    const index = entry.tabs.findIndex((one) => one.id === targetId)
+    if (index < 0) return
+    if (entry.tabs.length <= 1) {
+      if (replaceSingleTab) {
+        const [removed] = entry.tabs.splice(index, 1)
+        if (removed) destroyTab(entry, removed)
+        const replacement = createTab(entry, DEFAULT_BROWSER_URL)
+        entry.tabs.push(replacement)
+        entry.activeTabId = replacement.id
+      }
+      entry.stateUrl = DEFAULT_BROWSER_URL
+      deps.setPanelUrl(entry.workspaceId, entry.panelId, DEFAULT_BROWSER_URL)
+      loadTabAddress(entry, entry.tabs[0]!, DEFAULT_BROWSER_URL)
+      return
+    }
+    const [removed] = entry.tabs.splice(index, 1)
+    if (removed) destroyTab(entry, removed)
+    if (entry.activeTabId === targetId) {
+      const opener = removed?.openerTabId ? entry.tabs.find((one) => one.id === removed.openerTabId) : undefined
+      const nextTab = opener ?? entry.tabs[Math.min(index, entry.tabs.length - 1)]!
+      entry.activeTabId = nextTab.id
+    }
+    positionEntry(entry, deps.getState())
+    pushSnapshot(entry)
   }
 
   function ensureEntry(workspaceId: string, panel: Panel): Entry {
@@ -597,23 +607,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
 
       if (action === 'close-tab') {
         const targetId = typeof rawUrl === 'string' && rawUrl ? rawUrl : entry.activeTabId
-        const index = entry.tabs.findIndex((one) => one.id === targetId)
-        if (index >= 0) {
-          if (entry.tabs.length <= 1) {
-            entry.stateUrl = DEFAULT_BROWSER_URL
-            deps.setPanelUrl(workspaceId, panel.id, DEFAULT_BROWSER_URL)
-            loadTabAddress(entry, entry.tabs[0]!, DEFAULT_BROWSER_URL)
-          } else {
-            const [removed] = entry.tabs.splice(index, 1)
-            if (removed) destroyTab(entry, removed)
-            if (entry.activeTabId === targetId) {
-              const nextTab = entry.tabs[Math.min(index, entry.tabs.length - 1)]!
-              entry.activeTabId = nextTab.id
-            }
-            positionEntry(entry, deps.getState())
-            pushSnapshot(entry)
-          }
-        }
+        closeTabById(entry, targetId, false)
         return snapshotOf(entry)
       }
 
