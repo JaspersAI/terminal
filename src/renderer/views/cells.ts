@@ -56,10 +56,21 @@ export interface Rows {
 export const EMPTY_ROWS: Rows = { rows: [], columns: [], loading: false, error: null, text: null, truncated: false }
 
 /**
- * The state of a SQL query when it fails. A refresh of the same query that already had rows keeps
- * showing those rows rather than dropping the view's columns and series on a transient error.
+ * Starts a SQL query on a view: keeps already-loaded rows and columns on screen while a refresh or
+ * updated query runs, rather than blanking the panel before the new rows arrive.
  */
-export function sqlAfterFailure(previous: Rows, message: string, keepPrevious: boolean): Rows {
+export function beginSqlRun(previous: Rows): Rows {
+  if (previous.rows.length > 0) {
+    return { ...previous, loading: true, error: null }
+  }
+  return { ...EMPTY_ROWS, loading: true }
+}
+
+/**
+ * The state of a SQL query when it fails. A panel that already had rows loaded keeps showing those
+ * rows rather than dropping the view's columns and series on a transient refresh or timeout error.
+ */
+export function sqlAfterFailure(previous: Rows, message: string, keepPrevious: boolean = true): Rows {
   if (keepPrevious && previous.rows.length > 0) {
     return { ...previous, loading: false, error: null }
   }

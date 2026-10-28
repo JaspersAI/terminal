@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { cellText, isNumeric, isYearColumn, shownRows, shownText, sqlAfterFailure, type Rows } from './cells.ts'
+import {
+  beginSqlRun,
+  cellText,
+  isNumeric,
+  isYearColumn,
+  shownRows,
+  shownText,
+  sqlAfterFailure,
+  type Rows,
+} from './cells.ts'
 
 test('a cell is written grouped, unless its column says otherwise', () => {
   assert.equal(cellText(1234567), '1,234,567')
@@ -58,21 +67,27 @@ test('a shown fraction keeps trailing zeroes, including when it rounds to a whol
   assert.equal(cellText(1.5), '1.5')
 })
 
-test('sqlAfterFailure keeps loaded rows on a failed refresh of the same SQL query and surfaces the error otherwise', () => {
+test('beginSqlRun and sqlAfterFailure keep loaded rows across refreshes and updated SQL queries, and surface errors when empty', () => {
   const loaded: Rows = {
     rows: [{ date: '2026-10-22', equity: 100_000 }],
     columns: ['date', 'equity'],
-    loading: true,
+    loading: false,
     error: null,
     text: null,
     truncated: false,
   }
-  assert.deepEqual(sqlAfterFailure(loaded, 'The query took too long.', true), {
+  const running = beginSqlRun(loaded)
+  assert.deepEqual(running, {
+    ...loaded,
+    loading: true,
+    error: null,
+  })
+  assert.deepEqual(sqlAfterFailure(running, 'The query took too long. Narrow it, or add a LIMIT.'), {
     ...loaded,
     loading: false,
     error: null,
   })
-  assert.deepEqual(sqlAfterFailure(loaded, 'The query took too long.', false), {
+  assert.deepEqual(sqlAfterFailure(running, 'The query took too long.', false), {
     rows: [],
     columns: [],
     loading: false,
@@ -80,8 +95,16 @@ test('sqlAfterFailure keeps loaded rows on a failed refresh of the same SQL quer
     text: null,
     truncated: false,
   })
-  const empty: Rows = { rows: [], columns: [], loading: true, error: null, text: null, truncated: false }
-  assert.deepEqual(sqlAfterFailure(empty, 'The query took too long.', true), {
+  const empty = beginSqlRun({ rows: [], columns: [], loading: false, error: 'stale', text: null, truncated: false })
+  assert.deepEqual(empty, {
+    rows: [],
+    columns: [],
+    loading: true,
+    error: null,
+    text: null,
+    truncated: false,
+  })
+  assert.deepEqual(sqlAfterFailure(empty, 'The query took too long.'), {
     rows: [],
     columns: [],
     loading: false,
