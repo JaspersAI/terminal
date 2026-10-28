@@ -541,3 +541,137 @@ test('an exchange keeps the steps its run took and why it failed, and one with n
   assert.ok(!('steps' in third!) && !('error' in third!))
   db.close()
 })
+
+test('a refreshed dataset run replaces earlier rows for the same call, while a failed refresh keeps them', () => {
+  const { store: db } = store()
+  db.record(
+    run({
+      source: 'charts/history',
+      args: '{"symbol":"AAPL"}',
+      argsHash: 'h-aapl',
+      fetchedAt: 1000,
+      rows: [{ symbol: 'AAPL', date: '2026-10-27', close: 230 }],
+      text: '[{"symbol":"AAPL","date":"2026-10-27","close":230}]',
+    }),
+  )
+  const secondId = db.record(
+    run({
+      source: 'charts/history',
+      args: '{"symbol":"AAPL"}',
+      argsHash: 'h-aapl',
+      fetchedAt: 2000,
+      rows: [{ symbol: 'AAPL', date: '2026-10-27', close: 235 }],
+      text: '[{"symbol":"AAPL","date":"2026-10-27","close":235}]',
+    }),
+  )
+  // A failed refresh of the same call is recorded without dropping the last good dataset.
+  db.record(
+    run({
+      source: 'charts/history',
+      args: '{"symbol":"AAPL"}',
+      argsHash: 'h-aapl',
+      fetchedAt: 3000,
+      rows: null,
+      text: null,
+      error: 'upstream timeout',
+    }),
+  )
+
+  const joined = db.query({
+    sql: "select r.id, json_extract(d.data, '$.close') close from runs r join run_rows d on d.run_id = r.id where r.source = 'charts/history'",
+  })
+  assert.deepEqual(joined.rows, [[secondId, 235]])
+
+  const docs = db.query({
+    sql: "select rowid, snippet(docs, 0, '[', ']', '…', 6) from docs where docs match 'AAPL'",
+  })
+  assert.equal(docs.rows.length, 1)
+  assert.equal(docs.rows[0]![0], secondId)
+  db.close()
+})
+
+test('periodic refreshes bound history per call and per source, and opening an accumulated store trims it', () => {
+  const { store: db, file } = store()
+  for (let i = 1; i <= 140; i++) {
+    db.record(
+      run({
+        source: 'massive/aggregates',
+        args: JSON.stringify({ ticker: 'AAPL', to: i }),
+        argsHash: `h-agg-${i}`,
+        fetchedAt: i * 1000,
+        rows: [{ ticker: 'AAPL', date: '2026-10-27', close: 200 + i }],
+      }),
+    )
+  }
+  const kept = db.query({ sql: "select count(*) from runs where source = 'massive/aggregates'" }).rows[0]![0]
+  assert.equal(kept, 100)
+  db.close()
+
+  // Simulate an older store file that accumulated duplicate dataset runs for the same call before trimming existed.
+  const raw = new DatabaseSync(file)
+  for (let i = 1; i <= 30; i++) {
+    const res = raw
+      .prepare(
+        "insert into runs (source, args, args_hash, workspace, fetched_at, row_count, text) values ('yfinance/quote', '{\"symbol\":\"AAPL\"}', 'h-quote-aapl', 'w1', ?, 1, ?)",
+      )
+      .run(i * 1000, `quote ${i}`)
+    const id = Number(res.lastInsertRowid)
+    raw
+      .prepare('insert into run_rows (run_id, idx, data) values (?, 0, ?)')
+      .run(id, JSON.stringify({ symbol: 'AAPL', price: 100 + i }))
+    raw.prepare('insert into docs (rowid, text) values (?, ?)').run(id, `quote ${i}`)
+  }
+  raw.close()
+
+  const reopened = openStore(file)
+  const quotes = reopened.query({
+    sql: "select json_extract(d.data, '$.price') from runs r join run_rows d on d.run_id = r.id where r.source = 'yfinance/quote'",
+  })
+  assert.deepEqual(quotes.rows, [[130]])
+  reopened.close()
+})
+
+test('correlated symbol and date lookups over run_rows use expression indexes instead of full scans', () => {
+  const { store: db } = store()
+  for (const symbol of ['AAPL', 'NVDA', 'MSFT']) {
+    db.record(
+      run({
+        source: 'charts/history',
+        args: JSON.stringify({ symbol }),
+        argsHash: `h-${symbol}`,
+        fetchedAt: 1000,
+        rows: [
+          { symbol, date: '2026-10-26', close: 100 },
+          { symbol, date: '2026-10-27', close: 110 },
+        ],
+      }),
+    )
+  }
+  const result = db.query({
+    sql: `select json_extract(d.data, '$.date') dt, sum(json_extract(d.data, '$.close')) total
+          from runs r join run_rows d on d.run_id = r.id
+          where r.source = 'charts/history'
+            and r.fetched_at = (
+              select max(r2.fetched_at) from runs r2 join run_rows d2 on d2.run_id = r2.id
+              where r2.source = 'charts/history'
+                and json_extract(d2.data, '$.symbol') = json_extract(d.data, '$.symbol')
+                and json_extract(d2.data, '$.date') = json_extract(d.data, '$.date')
+            )
+          group by dt
+          order by dt`,
+  })
+  assert.deepEqual(result.rows, [
+    ['2026-10-26', 300],
+    ['2026-10-27', 330],
+  ])
+  const indexes = db
+    .query({
+      sql: "select name from sqlite_master where type = 'index' and tbl_name = 'run_rows' order by name",
+    })
+    .rows.map((r) => r[0])
+  assert.ok(indexes.includes('run_rows_symbol'))
+  assert.ok(indexes.includes('run_rows_ticker'))
+  assert.ok(indexes.includes('run_rows_coalesce_sym'))
+  assert.ok(indexes.includes('run_rows_date'))
+  db.close()
+})
