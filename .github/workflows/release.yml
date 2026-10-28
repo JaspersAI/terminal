@@ -4,7 +4,8 @@ name: Release
 # on a Windows runner, the installer, signed with Azure Artifact Signing; on a macOS runner, the DMG
 # and the zip installed Macs update from, signed with the Developer ID and notarized. Each is smoke
 # tested, then uploaded to the terminal-releases Blob store together with the feed its installed apps
-# check, and copied to the unversioned name the website's download button links to.
+# check, and copied to the unversioned name the website's download button links to. Once both are up,
+# the tag gets a GitHub release linking the two, its notes the commits since the previous tag.
 #
 # To release: bump `version` in package.json, commit, tag that commit `v<version>`, push the tag. The
 # run's summary links the installer and the DMG. A failed job is re-run on its own, in place. Run by
@@ -25,6 +26,8 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 45
+    outputs:
+      installer: ${{ steps.upload.outputs.url }}
     defaults:
       run:
         shell: bash
@@ -95,6 +98,7 @@ jobs:
       # download: scripts/upload-release.mjs says why in that order. It needs the Blob SDK, installed
       # beside it.
       - name: Upload the installer and the feed
+        id: upload
         if: github.ref_type == 'tag'
         env:
           BLOB_READ_WRITE_TOKEN: ${{ secrets.RELEASES_BLOB_TOKEN }}
@@ -106,7 +110,9 @@ jobs:
           node "$RUNNER_TEMP/blob/upload-release.mjs" "$FEED" dist/latest.yml \
             dist/Jaspers-Terminal-Setup-*.exe dist/Jaspers-Terminal-Setup-*.exe.blockmap \
             --download Jaspers-Terminal-Setup.exe
-          echo "**Windows installer:** $FEED/$(basename dist/Jaspers-Terminal-Setup-*.exe)" >> "$GITHUB_STEP_SUMMARY"
+          url="$FEED/$(basename dist/Jaspers-Terminal-Setup-*.exe)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "**Windows installer:** $url" >> "$GITHUB_STEP_SUMMARY"
           echo "**Website download:** $FEED/Jaspers-Terminal-Setup.exe" >> "$GITHUB_STEP_SUMMARY"
       - if: github.ref_type != 'tag'
         run: |
@@ -117,6 +123,8 @@ jobs:
     # Notarization takes a few minutes as a rule, but Apple's queue can hold a submission for an hour
     # or more, and a job that gives up has to submit again.
     timeout-minutes: 120
+    outputs:
+      dmg: ${{ steps.upload.outputs.url }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -200,6 +208,7 @@ jobs:
       # The zip, which installed Macs download, and the DMG, which people install from, with their
       # blockmaps; then latest-mac.yml; then the DMG as the website's download. As on Windows.
       - name: Upload the DMG, the zip, and the feed
+        id: upload
         if: github.ref_type == 'tag'
         env:
           BLOB_READ_WRITE_TOKEN: ${{ secrets.RELEASES_BLOB_TOKEN }}
@@ -212,8 +221,53 @@ jobs:
             dist/Jaspers-Terminal-*-arm64.zip dist/Jaspers-Terminal-*-arm64.zip.blockmap \
             dist/Jaspers-Terminal-*-arm64.dmg dist/Jaspers-Terminal-*-arm64.dmg.blockmap \
             --download Jaspers-Terminal-arm64.dmg
-          echo "**Mac DMG:** $FEED/$(basename dist/Jaspers-Terminal-*-arm64.dmg)" >> "$GITHUB_STEP_SUMMARY"
+          url="$FEED/$(basename dist/Jaspers-Terminal-*-arm64.dmg)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "**Mac DMG:** $url" >> "$GITHUB_STEP_SUMMARY"
           echo "**Website download:** $FEED/Jaspers-Terminal-arm64.dmg" >> "$GITHUB_STEP_SUMMARY"
       - if: github.ref_type != 'tag'
         run: |
           echo "Mac, dry run: built, signed, notarized, and smoke tested. Nothing uploaded." >> "$GITHUB_STEP_SUMMARY"
+
+  # A release page is a place installers are taken from without the website, so it says what the
+  # website does about the Terms of Use. One that already exists, written or edited by hand, or left by
+  # an earlier attempt of this run, is left as it is.
+  github-release:
+    needs: [windows, mac]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Write the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSTALLER: ${{ needs.windows.outputs.installer }}
+          DMG: ${{ needs.mac.outputs.dmg }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists, left as it is." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^")
+          {
+            echo '## Changes'
+            echo
+            git log --no-merges --format='- %s' "$previous..$GITHUB_REF_NAME" | grep -vxF -- "- chore: ${GITHUB_REF_NAME#v}" || true
+            echo
+            echo '## Download'
+            echo
+            echo "- [macOS (Apple silicon)]($DMG)"
+            echo "- [Windows]($INSTALLER)"
+            echo
+            echo 'Installed apps download updates automatically and install them when you quit.'
+            echo
+            echo 'By downloading you agree to the Terms of Use: https://jsprai.com/terms'
+            echo
+            echo "[Full changelog]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$previous...$GITHUB_REF_NAME)"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md"
+          echo "**GitHub release:** $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
