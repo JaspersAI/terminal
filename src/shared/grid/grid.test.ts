@@ -1434,3 +1434,24 @@ test('a tile zooms in, out, and resets between 50% and 200%, omitting default 1 
   assert.equal('zoom' in reset.element, false)
   assert.equal(elementZoom(reset.element), 1)
 })
+
+test('publishOutput returns the same grid and panel when an equal output object is published again', () => {
+  const placed = placeView(EMPTY_GRID, { content: view('core/browser') })
+  const first = publishOutput(
+    placed.grid,
+    placed.panel.id,
+    { url: 'https://www.bloomberg.com/', loading: false, tabCount: 1 },
+    'Bloomberg (www.bloomberg.com)',
+  )
+  assert.notEqual(first.grid, placed.grid)
+
+  // A freshly deserialized object with identical entries changes nothing.
+  const second = publishOutput(
+    first.grid,
+    placed.panel.id,
+    { tabCount: 1, loading: false, url: 'https://www.bloomberg.com/' },
+    'Bloomberg (www.bloomberg.com)',
+  )
+  assert.equal(second.grid, first.grid)
+  assert.equal(second.panel, first.panel)
+})

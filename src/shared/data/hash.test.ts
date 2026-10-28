@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { sameValue, stableStringify } from './hash.ts'
+import { reconcile, sameValue, stableStringify } from './hash.ts'
 
 test('two objects with the same entries in another order read the same', () => {
   assert.equal(stableStringify({ b: 1, a: 2 }), stableStringify({ a: 2, b: 1 }))
@@ -29,4 +29,45 @@ test('two values read the same when they say the same thing, whatever their refe
   assert.equal(sameValue(undefined, null), false)
   assert.equal(sameValue(null, {}), false)
   assert.equal(sameValue(NaN, NaN), true)
+})
+
+test('reconcile preserves previous object and array references across deserialized snapshots when values match', () => {
+  const prev = {
+    views: { 'core/browser': { title: 'Browser' } },
+    grids: {
+      ws1: {
+        1: {
+          panels: [
+            { id: 'p1', output: { loading: false, title: 'Bloomberg' }, text: 'page text' },
+            { id: 'p2', output: { rows: [1, 2, 3] }, text: null },
+          ],
+        },
+      },
+    },
+    eye: { frames: 10 },
+  }
+  const next = JSON.parse(JSON.stringify(prev)) as typeof prev
+  next.eye.frames = 11
+
+  const merged = reconcile(prev, next)
+  assert.notEqual(merged, prev)
+  assert.equal(merged.eye.frames, 11)
+  // Unchanged branches keep their exact previous references so selectors do not trigger re-renders.
+  assert.equal(merged.views, prev.views)
+  assert.equal(merged.grids, prev.grids)
+  assert.equal(merged.grids.ws1[1].panels[0], prev.grids.ws1[1].panels[0])
+  assert.equal(merged.grids.ws1[1].panels[1], prev.grids.ws1[1].panels[1])
+
+  // Updating one panel keeps sibling panels and views referentially identical.
+  const nextPanelChange = JSON.parse(JSON.stringify(merged)) as typeof prev
+  nextPanelChange.grids.ws1[1].panels[0]!.output.title = 'Bloomberg Live'
+  const merged2 = reconcile(merged, nextPanelChange)
+  assert.equal(merged2.views, prev.views)
+  assert.notEqual(merged2.grids.ws1[1].panels[0], prev.grids.ws1[1].panels[0])
+  assert.equal(merged2.grids.ws1[1].panels[0]!.output.title, 'Bloomberg Live')
+  assert.equal(merged2.grids.ws1[1].panels[1], prev.grids.ws1[1].panels[1])
+
+  // Identical full snapshot returns the exact previous root reference.
+  const clone = JSON.parse(JSON.stringify(merged2)) as typeof prev
+  assert.equal(reconcile(merged2, clone), merged2)
 })

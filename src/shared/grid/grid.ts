@@ -13,6 +13,8 @@
 // bare elements or a rect is given the size too, so a caller cannot forget which grid it is working
 // on and quietly get 16 × 12.
 
+import { sameValue } from '../data/hash.ts'
+
 /** How many cells a workspace's windows have. One size for the workspace, on each of its grids. */
 export interface GridSize {
   cols: number
@@ -743,7 +745,8 @@ export function publishOutput(
   summary: string | null,
 ): { grid: Grid; panel: Panel } {
   const current = panelOf(grid, panelId)
-  if (current.output === output && current.summary === summary && !current.error) return { grid, panel: current }
+  if (sameValue(current.output, output) && current.summary === summary && !current.error)
+    return { grid, panel: current }
   const { error: _was, ...rest } = current
   const panel: Panel = { ...rest, output, summary }
   return { grid: withPanel(grid, panel), panel }

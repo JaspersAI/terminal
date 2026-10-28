@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { reconcile } from '../../shared/data/hash'
 import type { Action, AppState, Workspace } from '../../shared/state'
 import { errorMessage } from './errors'
 
@@ -56,6 +57,8 @@ export function currentWorkspace(state: AppState): Workspace {
 }
 
 function publish(next: AppState): void {
-  current = next
+  const merged = current ? reconcile(current, next) : next
+  if (merged === current) return
+  current = merged
   for (const listener of listeners) listener()
 }
