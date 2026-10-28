@@ -292,3 +292,18 @@ function show(value: unknown): string {
 export function unsetRequiredSecret<T extends { set: boolean; optional?: boolean }>(secrets: T[]): T | undefined {
   return secrets.find((secret) => !secret.set && !secret.optional)
 }
+
+/**
+ * Classifies a relative path emitted by the plugins root watcher into its plugin id and whether
+ * the change affects `skills` or `code`, returning `null` for dotfiles, `node_modules`, and `__pycache__`.
+ */
+export function classifyPluginWatchPath(filename: string): { id: string; kind: 'code' | 'skills' } | null {
+  if (!filename) return null
+  const segments = filename.split(/[/\\]/).filter((s) => s.length > 0)
+  const id = segments[0]
+  if (!id) return null
+  for (const seg of segments) {
+    if (seg.startsWith('.') || seg === 'node_modules' || seg === '__pycache__') return null
+  }
+  return { id, kind: segments[1] === 'skills' ? 'skills' : 'code' }
+}

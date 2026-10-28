@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { qualifyConnection, unsetRequiredSecret, validatePluginDefinition, viewPolicy, viewSandbox } from './plugins.ts'
+import {
+  classifyPluginWatchPath,
+  qualifyConnection,
+  unsetRequiredSecret,
+  validatePluginDefinition,
+  viewPolicy,
+  viewSandbox,
+} from './plugins.ts'
 
 // The schemas are stubs: the check is that a schema is there and can parse, which is all main needs
 // before it hands the definition to the registry. Everything here is what a plugin's file exports.
@@ -414,4 +421,25 @@ test('a bare connection name is qualified with its plugin; a slashed one is left
   assert.equal(qualifyConnection('fmp', 'mcp'), 'fmp/mcp')
   assert.equal(qualifyConnection('screener', 'jaspers/sec'), 'jaspers/sec')
   assert.equal(qualifyConnection(null, 'jaspers/sec'), 'jaspers/sec')
+})
+
+test('classifyPluginWatchPath routes code and skill changes while ignoring nested dotfiles, virtualenvs, and caches', () => {
+  assert.deepEqual(classifyPluginWatchPath('fmp/plugin.tsx'), { id: 'fmp', kind: 'code' })
+  assert.deepEqual(classifyPluginWatchPath('fmp\\src\\helpers.ts'), { id: 'fmp', kind: 'code' })
+  assert.deepEqual(classifyPluginWatchPath('fmp'), { id: 'fmp', kind: 'code' })
+  assert.deepEqual(classifyPluginWatchPath('fmp/skills/analysis/SKILL.md'), { id: 'fmp', kind: 'skills' })
+
+  for (const ignored of [
+    '',
+    '.DS_Store',
+    'fmp/.DS_Store',
+    'fmp/.venv/lib/python3.12/site-packages/foo.py',
+    'fmp/__pycache__/server.cpython-312.pyc',
+    'fmp/node_modules/pkg/index.js',
+    'fmp/.install.json',
+    'fmp/.build.json',
+    'fmp/skills/.DS_Store',
+  ]) {
+    assert.equal(classifyPluginWatchPath(ignored), null, ignored)
+  }
 })

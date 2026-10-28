@@ -5,7 +5,7 @@ import { checkEnvelope, readBuildRecordFile } from './build-record'
 import fs from 'node:fs'
 import path from 'node:path'
 import { describeSource } from '../../shared/plugins/install'
-import type { ValidatedPlugin } from '../../shared/plugins/plugins'
+import { classifyPluginWatchPath, type ValidatedPlugin } from '../../shared/plugins/plugins'
 import { evaluatePlugin } from './plugin-eval'
 import { removeHost, startHost } from './plugin-host'
 import type { PluginInfo } from '../../shared/state'
@@ -43,6 +43,8 @@ const timers = new Map<string, NodeJS.Timeout>()
 const codeChanged = new Set<string>()
 /** One build at a time per plugin, so two saves in a row cannot register out of order. */
 const queue = new Map<string, Promise<void>>()
+/** Last good build output per plugin so unchanged watcher rescans do not bump version or restart hosts. */
+const lastBuilt = new Map<string, { dir: string; code: string; bundle: string }>()
 let checkingUpdates: Promise<void> | null = null
 let updatesStarted = false
 
@@ -69,28 +71,50 @@ export function bundlePath(id: string): string {
  * A plugin folder, from its file to its registration. Failure at any step keeps whatever was
  * registered before and says why, since a half-written file is the usual reason to be here.
  */
-function load(id: string, dir: string): Promise<void> {
-  const next = (queue.get(id) ?? Promise.resolve()).then(() => build(id, dir))
+function load(id: string, dir: string, fromWatch = false): Promise<void> {
+  const next = (queue.get(id) ?? Promise.resolve()).then(() => build(id, dir, fromWatch))
   queue.set(id, next)
   return next
 }
 
-async function build(id: string, dir: string): Promise<void> {
-  begin(id, dir)
+async function build(id: string, dir: string, fromWatch = false): Promise<void> {
+  const wasReady = fromWatch && getState().plugins[id]?.status === 'ready'
+  if (!wasReady) begin(id, dir)
   registerPluginSkills(id, dir)
   try {
-    const code = await bundlePlugin(dir, bundlePath(id))
+    const outPath = bundlePath(id)
+    const code = await bundlePlugin(dir, outPath)
+    let bundle = ''
+    try {
+      bundle = fs.readFileSync(outPath, 'utf8')
+    } catch {
+      // Bundle file was not readable; proceed with registration.
+    }
+    const previousBuilt = lastBuilt.get(id)
+    if (
+      wasReady &&
+      previousBuilt &&
+      previousBuilt.dir === dir &&
+      previousBuilt.code === code &&
+      previousBuilt.bundle === bundle
+    ) {
+      return
+    }
     const validated = evaluatePlugin(code, id)
     // A plugin the assistant built is held to what the user approved: anything wider is this build's
     // error, and the last good registration stays, as after any failed build.
     const refused = checkEnvelope(validated, dir)
     if (refused) throw new Error(refused)
+    lastBuilt.set(id, { dir, code, bundle })
     // Its connections first, so a source's line in the prompt finds the connection it runs on.
     registerConnections(id, dir, validated.connections)
     registerPlugin(id, validated.sources, viewDefs(validated))
     const version = (getState().plugins[id]?.version ?? 0) + 1
     const values = secretValues(id)
+    const nextProvenance = provenance(dir, getState().plugins[id]?.install?.available ?? null)
     setPluginInfo(id, {
+      ...nextProvenance,
+      dir,
       status: 'ready',
       version,
       sources: Object.keys(validated.sources).map((name) => `${id}/${name}`),
@@ -113,6 +137,7 @@ async function build(id: string, dir: string): Promise<void> {
       await startHost(id, { code, dir, capabilities: validated.capabilities, eager: validated.start !== null })
     else await removeHost(id, 'the plugin has no code of its own to run')
   } catch (err) {
+    lastBuilt.delete(id)
     const errors = messages(err)
     setPluginInfo(id, { status: 'error', errors })
     console.warn(`plugins: ${id} ${errors[0]}`)
@@ -168,18 +193,17 @@ function watch(): void {
       watchers.push(
         fs.watch(root, { recursive: true }, (_event, filename) => {
           if (!filename) return
-          // The folder name is the plugin id, whatever changed inside it.
-          const segments = filename.split(path.sep)
-          const id = segments[0]
-          if (!id || ignored(id) || filename.includes('node_modules')) return
-          if (segments[1] !== 'skills') codeChanged.add(id)
+          const classified = classifyPluginWatchPath(filename)
+          if (!classified) return
+          const { id, kind } = classified
+          if (kind === 'code') codeChanged.add(id)
           const waiting = timers.get(id)
           if (waiting) clearTimeout(waiting)
           timers.set(
             id,
             setTimeout(() => {
               timers.delete(id)
-              if (codeChanged.delete(id)) rescan(id)
+              if (codeChanged.delete(id)) rescan(id, true)
               else rescanSkills(id)
             }, WATCH_DELAY_MS),
           )
@@ -192,9 +216,9 @@ function watch(): void {
 }
 
 /** One folder changed: build what is there now, or let go of what is not. */
-function rescan(id: string): void {
+function rescan(id: string, fromWatch = false): void {
   const dir = discover().get(id)
-  if (dir) void load(id, dir)
+  if (dir) void load(id, dir, fromWatch)
   // Behind any build still running, so a build that finishes late cannot bring a removed plugin back.
   else if (getState().plugins[id])
     queue.set(
@@ -207,10 +231,11 @@ function rescan(id: string): void {
 function rescanSkills(id: string): void {
   const dir = discover().get(id)
   if (dir && getState().plugins[id]) registerPluginSkills(id, dir)
-  else rescan(id)
+  else rescan(id, true)
 }
 
 function remove(id: string): void {
+  lastBuilt.delete(id)
   unregisterPlugin(id)
   unregisterConnections(id)
   unregisterPluginSkills(id)
@@ -276,13 +301,14 @@ function provenance(dir: string, available: string | null = null): Pick<PluginIn
 
 /** Builds a folder again now: after packages were installed into it, or on an explicit save. */
 export function rebuildPlugin(id: string): void {
+  lastBuilt.delete(id)
   const waiting = timers.get(id)
   if (waiting) {
     clearTimeout(waiting)
     timers.delete(id)
   }
   codeChanged.delete(id)
-  rescan(id)
+  rescan(id, false)
 }
 
 /** esbuild says where it stopped; everything else says what it said. */
