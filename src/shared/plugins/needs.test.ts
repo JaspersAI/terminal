@@ -16,11 +16,12 @@ test('a plugin with every key set and every connection signed in needs nothing',
   assert.equal(pluginNeed(ready, { 'news/feed': connection('news/feed', 'ready') }), null)
 })
 
-test('a key it declares and does not have is asked for, by its label', () => {
+test('a key it declares and does not have is asked for, by its label, while an optional key is not', () => {
   const need = pluginNeed(
     plugin({
       secrets: [
         { key: 'region', label: 'Region', set: true },
+        { key: 'live', label: 'Live key', set: false, optional: true },
         { key: 'apikey', label: 'Finnhub API key', set: false },
       ],
     }),
@@ -28,6 +29,10 @@ test('a key it declares and does not have is asked for, by its label', () => {
   )
   assert.deepEqual(need, { kind: 'key', key: 'apikey', label: 'Finnhub API key' })
   assert.equal(need && needId(need), 'key:apikey')
+  assert.equal(
+    pluginNeed(plugin({ secrets: [{ key: 'live', label: 'Live key', set: false, optional: true }] }), {}),
+    null,
+  )
 })
 
 test('a connection to sign in to is asked for once the keys are in', () => {

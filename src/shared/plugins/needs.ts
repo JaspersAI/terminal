@@ -6,6 +6,7 @@
 
 import type { Panel } from '../grid/grid'
 import type { ConnectionInfo, PluginInfo, ViewInfo } from '../state'
+import { unsetRequiredSecret } from './plugins.ts'
 
 export type PluginNeed =
   /** A key the plugin declares and has no value for, with the label its author gave it. */
@@ -19,7 +20,7 @@ export function pluginNeed(
   connections: Record<string, ConnectionInfo>,
 ): PluginNeed | null {
   if (!plugin) return null
-  const unset = plugin.secrets.find((secret) => !secret.set)
+  const unset = unsetRequiredSecret(plugin.secrets)
   if (unset) return { kind: 'key', key: unset.key, label: unset.label }
   const unsigned = plugin.connections.find((id) => connections[id]?.status === 'needs-auth')
   return unsigned ? { kind: 'authorization', connection: unsigned } : null
