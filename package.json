@@ -35,7 +35,7 @@
     "@types/yauzl": "^3.4.0",
     "@vercel/blob": "^2.8.2",
     "@vitejs/plugin-react": "^5.2.0",
-    "electron": "^44.3.0",
+    "electron": "^44.10.0",
     "electron-builder": "^26.16.1",
     "electron-vite": "^5.0.0",
     "playwright-core": "^1.63.0",
@@ -44,10 +44,10 @@
     "react-dom": "^19.3.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^7.3.6"
+    "vite": "^7.3.7"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "echarts": "^6.1.0",
     "electron-updater": "^6.8.9",
     "esbuild": "^0.28.2",
@@ -55,6 +55,11 @@
     "tar": "^7.5.22",
     "yaml": "^2.9.1",
     "yauzl": "^3.4.0",
-    "zod": "^4.6.2"
+    "zod": "^4.6.7"
+  },
+  "overrides": {
+    "@vercel/cli-config": {
+      "zod": "$zod"
+    }
   }
 }
