@@ -120,12 +120,9 @@ export async function userRequest({
   const config = configured()
   const thread = threadFor(chat, config)
   const conversationId = conversationOf(chat)
-  // A /name is the skill's instructions by the time the model reads the turn.
-  const { text: bareInput, attachments } = splitAttachments(input)
-  const expanded = attachments.length === 0 ? expandSlash(input) : expandSlash(bareInput)
   // /new starts the thread over, unless the user has a skill by that name, which is theirs to have.
   // A run still in flight goes on and is shown, and what it says does not join the new conversation.
-  if (expanded === null && attachments.length === 0 && NEW_THREAD.test(input)) {
+  if (NEW_THREAD.test(input) && expandSlash(input) === null) {
     startOver(chat, config, thread)
     forgetApprovals(conversationId)
     // In the chat like anything else said: it marks where what the assistant remembers begins.
