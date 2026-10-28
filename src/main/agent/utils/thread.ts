@@ -14,6 +14,7 @@ import { portableFork, putBack, standing, type Fork } from '../../../shared/agen
 import { RECENT, recent, withoutThinking } from '../../../shared/agent/history'
 import { keepTail, settle } from '../../../shared/agent/thread-store'
 import { CLOSED_NOTE, lastExchange, maskExchange, transcript, type Exchange } from '../../../shared/agent/transcript'
+import { attachedFileNames, stripAttachedFiles } from '../../../shared/agent/attachments'
 import { ranByUser, saidByUser } from '../../../shared/agent/typed'
 import { isOverflow } from '../../../shared/llm/limits'
 import type { Turn } from '../../../shared/llm/llm'
@@ -309,8 +310,20 @@ export function restate(history: Turn[], state: string, note?: string): void {
   last.context = [state, ...(note ? [note] : [])].join('\n')
 }
 
-/** A user turn for the log: what was typed, and the size of any skill a /name loaded into it. */
+/** A user turn for the log: what was typed, and the size of any skill or attached files in it. */
 export function userLine(text: string): string {
-  const typed = stripSkillContent(text).trim()
-  return typed.length === text.trim().length ? typed : `${typed} [+ skill, ${text.length - typed.length} characters]`
+  const withoutSkills = stripSkillContent(text)
+  const files = attachedFileNames(withoutSkills)
+  const typed = stripAttachedFiles(withoutSkills).trim()
+  const parts: string[] = []
+  if (withoutSkills.trim().length !== text.trim().length) {
+    parts.push(`+ skill, ${text.length - withoutSkills.trim().length} characters`)
+  }
+  if (files.length > 0) {
+    parts.push(
+      `+ ${files.length === 1 ? files[0]! : `${files.length} files`}, ${withoutSkills.trim().length - typed.length} characters`,
+    )
+  }
+  if (parts.length === 0) return typed
+  return `${typed ? `${typed} ` : ''}[${parts.join('; ')}]`
 }

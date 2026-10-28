@@ -1,3 +1,4 @@
+import { shownQuestion, splitAttachments } from '../../shared/agent/attachments'
 import { forkOf } from '../../shared/agent/fork'
 import { closeOff } from '../../shared/agent/history'
 import { failedNote, mask, STOPPED_NOTE } from '../../shared/agent/transcript'
@@ -89,7 +90,14 @@ export interface Added {
  * line what the assistant wrote for the work when it handed the request over.
  */
 export function turnText(input: string, written?: string): string {
-  const typed = expandSlash(input) ?? input
+  const { text, attachments } = splitAttachments(input)
+  const expanded = attachments.length === 0 ? expandSlash(input) : expandSlash(text)
+  const typed =
+    expanded !== null
+      ? [expanded, ...attachments].join('\n\n')
+      : attachments.length > 0
+        ? [text, ...attachments].filter(Boolean).join('\n\n')
+        : input
   return written === undefined ? typed : handedTurn(typed, written)
 }
 
@@ -113,10 +121,11 @@ export async function userRequest({
   const thread = threadFor(chat, config)
   const conversationId = conversationOf(chat)
   // A /name is the skill's instructions by the time the model reads the turn.
-  const expanded = expandSlash(input)
+  const { text: bareInput, attachments } = splitAttachments(input)
+  const expanded = attachments.length === 0 ? expandSlash(input) : expandSlash(bareInput)
   // /new starts the thread over, unless the user has a skill by that name, which is theirs to have.
   // A run still in flight goes on and is shown, and what it says does not join the new conversation.
-  if (expanded === null && NEW_THREAD.test(input)) {
+  if (expanded === null && attachments.length === 0 && NEW_THREAD.test(input)) {
     startOver(chat, config, thread)
     forgetApprovals(conversationId)
     // In the chat like anything else said: it marks where what the assistant remembers begins.
@@ -124,7 +133,7 @@ export async function userRequest({
     return STARTED_OVER
   }
   // What the tile and the chat's log say was asked: the assistant's words for the work when it wrote some.
-  const shown = written ?? input
+  const shown = shownQuestion(written ?? input)
   const entry = begin(
     task === undefined ? 'user' : 'task',
     workspaceId,

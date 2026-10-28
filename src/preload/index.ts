@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { AgentEvent, AgentOrigin } from '../shared/agent/agent'
+import type { AttachedFile } from '../shared/agent/attachments'
 import type { AppOpened } from '../shared/plugins/apps'
 import type { BrowserAction, BrowserBounds, BrowserSnapshot } from '../shared/grid/browser'
 import type { ConnectionForm } from '../shared/plugins/connection-plugin'
@@ -48,6 +49,9 @@ const api = {
      */
     run: (input: string, ask?: string, on?: string): Promise<string> =>
       ipcRenderer.invoke('agent:run', input, ask ?? null, on ?? null),
+    /** Parses an attached file in main into its name and extracted text. */
+    parseFile: (name: string, bytes: ArrayBuffer): Promise<AttachedFile> =>
+      ipcRenderer.invoke('agent:parse-file', name, bytes),
     /**
      * Stops one run, or every run in flight. Answers whether anything was running. With `ask`, the
      * request sent under that name is the only one stopped: its run, or its wait for a turn on a tile.
