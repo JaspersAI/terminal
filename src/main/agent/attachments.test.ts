@@ -12,7 +12,7 @@ function makeZip(entries: Record<string, string | Buffer>): Buffer {
   for (const name of names) {
     const nameBuf = Buffer.from(name, 'utf8')
     const dataBuf = typeof entries[name] === 'string' ? Buffer.from(entries[name], 'utf8') : entries[name]!
-    const crc = crc32(dataBuf)
+    const crc = zlib.crc32(dataBuf)
     const local = Buffer.alloc(30 + nameBuf.length)
     local.writeUInt32LE(0x04034b50, 0)
     local.writeUInt16LE(20, 4)
@@ -61,15 +61,6 @@ function makeZip(entries: Record<string, string | Buffer>): Buffer {
   eocd.writeUInt32LE(offset, 16)
   eocd.writeUInt16LE(0, 20)
   return Buffer.concat([...localParts, centralDir, eocd])
-}
-
-function crc32(buf: Buffer): number {
-  let crc = 0xffffffff
-  for (const byte of buf) {
-    crc ^= byte
-    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
-  }
-  return (crc ^ 0xffffffff) >>> 0
 }
 
 test('parses plain text, Markdown, JSON, and CSV files', async () => {
@@ -170,4 +161,46 @@ test('refuses empty, binary, or unreadable files with a clear message', async ()
     () => parseAttachment('scan.pdf', Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF')),
     /no extractable text/i,
   )
+})
+
+test('bounds extreme XLSX column coordinates and isolates PDF stream dictionaries per object', async () => {
+  const xlsx = makeZip({
+    'xl/worksheets/sheet1.xml':
+      '<?xml version="1.0"?><worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Left</t></is></c><c r="ZZZZZZ1"><v>42</v></c></row></sheetData></worksheet>',
+  })
+  const sheet = await parseAttachment('wide.xlsx', xlsx)
+  assert.ok(sheet.text.includes('Left'), sheet.text)
+  assert.ok(sheet.text.includes('42'), sheet.text)
+
+  const cmap = [
+    '/CIDInit /ProcSet findresource begin',
+    '1 beginbfrange',
+    '<0001> <0002> <0041>',
+    '<0010> <0010> <D83DDE00>',
+    'endbfrange',
+    'end',
+  ].join('\n')
+  const pdf = Buffer.from(
+    [
+      '%PDF-1.7',
+      '1 0 obj',
+      '<< /Type /FontDescriptor /Subtype /Type1C >>',
+      'endobj',
+      '2 0 obj',
+      `<< /Length ${cmap.length} >>`,
+      'stream',
+      cmap,
+      'endstream',
+      'endobj',
+      '3 0 obj',
+      '<< /Length 28 >>',
+      'stream',
+      'BT <00010002> Tj (Keep) Tj ET',
+      'endstream',
+      'endobj',
+      '%%EOF',
+    ].join('\n'),
+  )
+  const parsedPdf = await parseAttachment('fonts.pdf', pdf)
+  assert.ok(parsedPdf.text.includes('ABKeep'), parsedPdf.text)
 })

@@ -166,23 +166,22 @@ function readZipEntries(
   })
 }
 
+function localName(tag: string): string {
+  const colon = tag.indexOf(':')
+  return (colon >= 0 ? tag.slice(colon + 1) : tag).toLowerCase()
+}
+
 async function parseDocx(name: string, buffer: Buffer): Promise<string> {
   const entries = await readZipEntries(name, buffer, (p) => p === 'word/document.xml')
   const xml = entries.get('word/document.xml')
   if (!xml) throw new Error(`${name} is not a valid Word (.docx) document.`)
   const lines: string[] = []
   let paragraph = ''
-  let inTableRow = false
   let rowCells: string[] = []
   let cellParagraphs: string[] = []
   let inCell = false
   let inText = false
   let ignored = 0
-
-  const localName = (tag: string): string => {
-    const colon = tag.indexOf(':')
-    return (colon >= 0 ? tag.slice(colon + 1) : tag).toLowerCase()
-  }
 
   const parser = new Parser(
     {
@@ -194,7 +193,6 @@ async function parseDocx(name: string, buffer: Buffer): Promise<string> {
         }
         if (ignored > 0) return
         if (tag === 'tr') {
-          inTableRow = true
           rowCells = []
         } else if (tag === 'tc') {
           inCell = true
@@ -234,11 +232,9 @@ async function parseDocx(name: string, buffer: Buffer): Promise<string> {
           rowCells.push(cellParagraphs.join(' '))
           cellParagraphs = []
         } else if (tag === 'tr') {
-          inTableRow = false
           if (rowCells.some((c) => c !== '')) lines.push(rowCells.join('\t'))
           rowCells = []
         }
-        void inTableRow
       },
     },
     { xmlMode: true, decodeEntities: true },
@@ -279,11 +275,6 @@ function parseSharedStrings(xml: string): string[] {
   let inSi = false
   let inT = false
   let inPhonetic = 0
-
-  const localName = (tag: string): string => {
-    const colon = tag.indexOf(':')
-    return (colon >= 0 ? tag.slice(colon + 1) : tag).toLowerCase()
-  }
 
   const parser = new Parser(
     {
@@ -326,7 +317,7 @@ function resolveSheets(entries: Map<string, string>): { name: string; xml: strin
     const parser = new Parser(
       {
         onopentag(rawTag, attrs) {
-          if (rawTag.toLowerCase().endsWith('relationship') && attrs.Id && attrs.Target) {
+          if (localName(rawTag) === 'relationship' && attrs.Id && attrs.Target) {
             const target = attrs.Target.replace(/^\/+/, '')
             relTargets.set(attrs.Id, target.startsWith('xl/') ? target : `xl/${target}`)
           }
@@ -344,7 +335,7 @@ function resolveSheets(entries: Map<string, string>): { name: string; xml: strin
     const parser = new Parser(
       {
         onopentag(rawTag, attrs) {
-          if (!rawTag.toLowerCase().endsWith('sheet') || !attrs.name) return
+          if (localName(rawTag) !== 'sheet' || !attrs.name) return
           index += 1
           const rId = attrs['r:id'] ?? attrs.id ?? ''
           const target = relTargets.get(rId) ?? `xl/worksheets/sheet${index}.xml`
@@ -375,8 +366,12 @@ function resolveSheets(entries: Map<string, string>): { name: string; xml: strin
   return resolved
 }
 
+const MAX_SHEET_COLS = 256
+const MAX_COL_GAP = 32
+
 function parseWorksheet(xml: string, sharedStrings: readonly string[]): string[] {
   const rows: string[] = []
+  let totalChars = 0
   let rowCells: string[] = []
   let colIndex = 0
   let cellType = ''
@@ -386,14 +381,10 @@ function parseWorksheet(xml: string, sharedStrings: readonly string[]): string[]
   let inIs = false
   let inT = false
 
-  const localName = (tag: string): string => {
-    const colon = tag.indexOf(':')
-    return (colon >= 0 ? tag.slice(colon + 1) : tag).toLowerCase()
-  }
-
   const parser = new Parser(
     {
       onopentag(rawTag, attrs) {
+        if (totalChars > ATTACHMENT_LIMITS.maxChars * 2) return
         const tag = localName(rawTag)
         if (tag === 'row') {
           rowCells = []
@@ -404,7 +395,9 @@ function parseWorksheet(xml: string, sharedStrings: readonly string[]): string[]
           inlineText = ''
           if (attrs.r) {
             const colLetters = /^[A-Za-z]+/.exec(attrs.r)?.[0]
-            if (colLetters) colIndex = columnIndex(colLetters)
+            if (colLetters) {
+              colIndex = Math.min(columnIndex(colLetters), MAX_SHEET_COLS, rowCells.length + MAX_COL_GAP)
+            }
           }
         } else if (tag === 'v') {
           inV = true
@@ -415,10 +408,12 @@ function parseWorksheet(xml: string, sharedStrings: readonly string[]): string[]
         }
       },
       ontext(data) {
+        if (totalChars > ATTACHMENT_LIMITS.maxChars * 2) return
         if (inV) cellValue += data
         else if (inIs && inT) inlineText += data
       },
       onclosetag(rawTag) {
+        if (totalChars > ATTACHMENT_LIMITS.maxChars * 2) return
         const tag = localName(rawTag)
         if (tag === 'v') {
           inV = false
@@ -437,12 +432,17 @@ function parseWorksheet(xml: string, sharedStrings: readonly string[]): string[]
           } else {
             resolved = cellValue.trim()
           }
-          while (rowCells.length < colIndex) rowCells.push('')
-          rowCells[colIndex] = resolved.replace(/[\r\n\t]+/g, ' ').trim()
-          colIndex += 1
+          const targetCol = Math.min(colIndex, MAX_SHEET_COLS, rowCells.length + MAX_COL_GAP)
+          while (rowCells.length < targetCol) rowCells.push('')
+          rowCells[targetCol] = resolved.replace(/[\r\n\t]+/g, ' ').trim()
+          colIndex = targetCol + 1
         } else if (tag === 'row') {
           while (rowCells.length > 0 && rowCells[rowCells.length - 1] === '') rowCells.pop()
-          if (rowCells.some((c) => c !== '')) rows.push(rowCells.join('\t'))
+          if (rowCells.some((c) => c !== '')) {
+            const line = rowCells.join('\t')
+            rows.push(line)
+            totalChars += line.length + 1
+          }
         }
       },
     },
@@ -462,18 +462,27 @@ function columnIndex(letters: string): number {
 
 function parsePdf(name: string, buffer: Buffer): string {
   const raw = buffer.toString('latin1')
-  const streamRegex = /<<([\s\S]*?)>>\s*stream(?:\r\n|\n|\r)/g
+  const streamStartRegex = />>\s*stream(?:\r\n|\n|\r)/g
   const decodedStreams: string[] = []
   const cmap = new Map<string, string>()
   let unpacked = 0
+  let lastEnd = 0
 
   let match: RegExpExecArray | null
-  while ((match = streamRegex.exec(raw)) !== null) {
-    const dict = match[1] ?? ''
+  while ((match = streamStartRegex.exec(raw)) !== null) {
+    const dictWindowStart = Math.max(
+      lastEnd,
+      match.index - 4096,
+      raw.lastIndexOf('endobj', match.index),
+      raw.lastIndexOf('endstream', match.index),
+    )
+    const dictOpen = raw.indexOf('<<', dictWindowStart)
+    const dict = dictOpen >= 0 && dictOpen < match.index ? raw.slice(dictOpen + 2, match.index) : ''
     const start = match.index + match[0].length
     const end = raw.indexOf('endstream', start)
     if (end < 0) break
-    streamRegex.lastIndex = end + 'endstream'.length
+    lastEnd = end + 'endstream'.length
+    streamStartRegex.lastIndex = lastEnd
     if (/\/Subtype\s*\/(?:Image|Form|Type1C|CIDFontType0C|OpenType)\b/i.test(dict)) continue
     if (/\/Type\s*\/(?:XRef|ObjStm|Metadata)\b/i.test(dict)) continue
 
@@ -539,11 +548,16 @@ function readCmap(text: string, cmap: Map<string, string>): void {
     for (const range of (block[1] ?? '').matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
       const from = Number.parseInt(range[1]!, 16)
       const to = Number.parseInt(range[2]!, 16)
-      const base = Number.parseInt(range[3]!, 16)
+      const baseText = decodeHexUnicode(range[3]!)
+      const base = baseText.codePointAt(0)
       const width = range[1]!.length
-      if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(base) || to - from > 1024) continue
+      if (!Number.isFinite(from) || !Number.isFinite(to) || base === undefined || to < from || to - from > 1024)
+        continue
       for (let code = from; code <= to; code++) {
-        cmap.set(code.toString(16).toUpperCase().padStart(width, '0'), String.fromCodePoint(base + (code - from)))
+        const cp = base + (code - from)
+        if (cp >= 0 && cp <= 0x10ffff) {
+          cmap.set(code.toString(16).toUpperCase().padStart(width, '0'), String.fromCodePoint(cp))
+        }
       }
     }
   }
