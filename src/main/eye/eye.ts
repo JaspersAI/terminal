@@ -236,6 +236,7 @@ async function frames(at: number, why: CaptureWhy): Promise<void> {
   }
   let taken = 0
   for (const { number, win } of openWindows()) {
+    if (win.isDestroyed()) continue
     const written = await captureWindow(number, win.webContents, at)
     if (written === null) continue
     if (live === null || !getState().eye.recording) return
@@ -260,6 +261,7 @@ async function captureWindow(
   at: number,
   always = false,
 ): Promise<{ name: string; bytes: number } | null> {
+  if (contents.isDestroyed()) return null
   const shot = await contents.capturePage()
   // A window hidden to the menu bar has nothing on screen to capture on some platforms.
   if (shot.isEmpty()) return null
@@ -289,6 +291,7 @@ export async function sendFeedback(text: string, secrets: string[]): Promise<{ f
   const frames: string[] = []
   if (!skipped) {
     for (const { number, win } of openWindows()) {
+      if (win.isDestroyed()) continue
       try {
         const written = await captureWindow(number, win.webContents, at, true)
         if (!written) continue

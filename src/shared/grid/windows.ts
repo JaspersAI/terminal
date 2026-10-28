@@ -81,3 +81,15 @@ export function windowAt(
   if (under.length === 0) return null
   return under.find((b) => b.window === focused)?.window ?? under[0]!.window
 }
+
+/**
+ * Whether any live window is visible and focused. A window whose `closed` listeners are running is
+ * already destroyed while still in the window map, and calling `isVisible` or `isFocused` on it
+ * throws in Electron.
+ */
+export function anyWindowInFront(
+  windows: Iterable<{ isDestroyed(): boolean; isVisible(): boolean; isFocused(): boolean }>,
+): boolean {
+  for (const win of windows) if (!win.isDestroyed() && win.isVisible() && win.isFocused()) return true
+  return false
+}

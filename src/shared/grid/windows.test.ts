@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_GRID } from './grid.ts'
 import {
+  anyWindowInFront,
   checkWindows,
   isOpenWindow,
   lowestFreeWindow,
@@ -56,4 +57,24 @@ test('the window under a screen point, the focused one first, never the source',
   assert.equal(windowAt({ x: 750, y: 150 }, bounds, 1, 3), 3)
   assert.equal(windowAt({ x: 750, y: 150 }, bounds, 1, 1), 2)
   assert.equal(windowAt({ x: 2000, y: 150 }, bounds, 1, 1), null)
+})
+
+test('a destroyed window in the list is skipped without touching its native handle', () => {
+  const destroyed = {
+    isDestroyed: () => true,
+    isVisible: (): boolean => {
+      throw new TypeError('Object has been destroyed')
+    },
+    isFocused: (): boolean => {
+      throw new TypeError('Object has been destroyed')
+    },
+  }
+  const win = (visible: boolean, focused: boolean) => ({
+    isDestroyed: () => false,
+    isVisible: () => visible,
+    isFocused: () => focused,
+  })
+  assert.equal(anyWindowInFront([destroyed]), false)
+  assert.equal(anyWindowInFront([destroyed, win(true, false), win(false, true)]), false)
+  assert.equal(anyWindowInFront([destroyed, win(true, true)]), true)
 })

@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, screen, shell, type Rectangle, type WebCon
 import path from 'node:path'
 import type { DragMove, DragOver } from '../../shared/grid/drag'
 import {
+  anyWindowInFront,
   isOpenWindow,
   lowestFreeWindow,
   MAIN_WINDOW,
@@ -138,8 +139,11 @@ function showWhenRendered(win: BrowserWindow): void {
 }
 
 function hide(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
   if (win.isFullScreen()) {
-    win.once('leave-full-screen', () => win.hide())
+    win.once('leave-full-screen', () => {
+      if (!win.isDestroyed()) win.hide()
+    })
     win.setFullScreen(false)
   } else {
     win.hide()
@@ -159,7 +163,7 @@ export function openWindow(n?: number): number {
     if (open.length + 1 >= WINDOWS_MAX) throw new Error(`${WINDOWS_MAX} windows are open; close one first.`)
   }
   const number = n ?? lowestFreeWindow(open)
-  const at = cascadeFrom(windows.get(focused) ?? windows.get(MAIN_WINDOW))
+  const at = cascadeFrom(windowOf(focused) ?? windowOf(MAIN_WINDOW))
   update((state) => {
     const next = [...state.windows, number].sort((a, b) => a - b)
     return {
@@ -191,18 +195,17 @@ export function openAllStored(show: boolean): void {
 
 /** Shows and focuses every window, making the main one again if something destroyed it. */
 export function showAll(): void {
-  if (!windows.has(MAIN_WINDOW)) createWindow(MAIN_WINDOW, true)
-  for (const win of windows.values()) {
+  if (!windowOf(MAIN_WINDOW)) createWindow(MAIN_WINDOW, true)
+  for (const { win } of openWindows()) {
     if (win.isMinimized()) win.restore()
     win.show()
   }
-  windows.get(MAIN_WINDOW)?.focus()
+  windowOf(MAIN_WINDOW)?.focus()
 }
 
 /** Whether any window is visible and focused, where a notice is seen in the app itself. */
 export function anyInFront(): boolean {
-  for (const win of windows.values()) if (win.isVisible() && win.isFocused()) return true
-  return false
+  return anyWindowInFront(windows.values())
 }
 
 export function focusedWindow(): number {
@@ -366,7 +369,7 @@ export function useAllScreens(): { windows: number[]; displays: number; surplus:
   const open = windowsOn()
   const placements = spreadWindows(displays, open)
   const surplus = surplusWindows(placements, open)
-  const opening = placements.map((p) => p.window).filter((n) => n !== MAIN_WINDOW && !windows.has(n))
+  const opening = placements.map((p) => p.window).filter((n) => n !== MAIN_WINDOW && !windowOf(n))
   // One change for every window being opened, so the renderer hears one update and every workspace
   // has a grid for each of them before their pages load.
   if (opening.length > 0) {
@@ -382,7 +385,7 @@ export function useAllScreens(): { windows: number[]; displays: number; surplus:
   for (const { window, area } of placements) {
     // A window made here shows once its page has rendered, as every new window does; filling it only
     // places it.
-    const made = !windows.has(window)
+    const made = !windowOf(window)
     if (made) createWindow(window, true, { x: area.x, y: area.y })
     fill(window, area, !made)
   }
@@ -417,11 +420,11 @@ export function useOneScreen(): { closed: number[]; moved: string[] } {
   const { moved } = gatherIntoMain(getState().currentWorkspaceId)
   const closed = [...getState().windows]
   for (const n of closed) {
-    const win = windows.get(n)
-    if (win && !win.isDestroyed()) win.close()
+    windowOf(n)?.close()
   }
-  const made = !windows.has(MAIN_WINDOW)
-  const main = windows.get(MAIN_WINDOW) ?? createWindow(MAIN_WINDOW, true)
+  const existing = windowOf(MAIN_WINDOW)
+  const made = !existing
+  const main = existing ?? createWindow(MAIN_WINDOW, true)
   const displays = allDisplays()
   const on = displays.find((d) => d.id === displayOf(main)) ?? displays[0]
   if (on) fill(MAIN_WINDOW, on.area, !made)
