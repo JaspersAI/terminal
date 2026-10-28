@@ -214,5 +214,7 @@ export function toPublic(state: MainState): AppState {
 /** Every window gets the whole tree after every change, whoever made it. */
 function publish(next: MainState): void {
   const state = toPublic(next)
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('state:changed', state)
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('state:changed', state)
+  }
 }

@@ -81,3 +81,20 @@ export function windowAt(
   if (under.length === 0) return null
   return under.find((b) => b.window === focused)?.window ?? under[0]!.window
 }
+
+/** The methods of a window that `anyWindowInFront` reads, with `isDestroyed` checked before the others. */
+export interface FrontWindow {
+  isDestroyed(): boolean
+  isVisible(): boolean
+  isFocused(): boolean
+}
+
+/**
+ * Whether any window is still alive, visible, and focused. A window's `closed` event fires after
+ * Electron has destroyed the C++ object and before every `closed` listener has removed it from the
+ * open map, so `isDestroyed()` must come before `isVisible()` or `isFocused()`.
+ */
+export function anyWindowInFront(windows: Iterable<FrontWindow>): boolean {
+  for (const win of windows) if (!win.isDestroyed() && win.isVisible() && win.isFocused()) return true
+  return false
+}

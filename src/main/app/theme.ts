@@ -19,6 +19,8 @@ export function startTheme(): void {
   })
   // The system's own switch lands here too, while the setting follows it.
   nativeTheme.on('updated', () => {
-    for (const win of BrowserWindow.getAllWindows()) win.setBackgroundColor(windowBackground())
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.setBackgroundColor(windowBackground())
+    }
   })
 }
