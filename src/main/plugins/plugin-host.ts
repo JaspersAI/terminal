@@ -9,7 +9,7 @@ import { askForMissingSecret } from '../actions'
 import { hasShellApproval } from './shell-approval'
 import { createTools } from './capabilities/tools'
 import { jaspersHome } from '../home'
-import { call as callTool } from './mcp'
+import { call as callTool, prepareConnection } from './mcp'
 import { complete } from '../llm/llm'
 import { clearLive, deleteLive, hasLive, setLive } from './live'
 import { secretValues } from './connections'
@@ -364,7 +364,12 @@ function serve(host: Host, capabilities: Capability[]): void {
     need('llm')
     return llm.complete(params, signal)
   })
-  const tools = createTools({ connections: () => getState().connections, call: callTool, ask: askForMissingSecret })
+  const tools = createTools({
+    connections: () => getState().connections,
+    call: callTool,
+    ask: askForMissingSecret,
+    prepare: prepareConnection,
+  })
   rpc.handle('tools.connections', (params) => {
     need('tools')
     return tools.connections(params)

@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { checkLiveKey, checkLiveValue, liveKeyOf, researchLiveText, researchRoomOf } from './live.ts'
+import {
+  checkLiveKey,
+  checkLiveValue,
+  liveKeyOf,
+  needsResearchTextSync,
+  researchLiveText,
+  researchRoomOf,
+  safeSummarizeView,
+  shouldFetchResearchThread,
+} from './live.ts'
+import { parsePath } from '../paths.ts'
 
 test('a key is names joined by slashes', () => {
   assert.equal(checkLiveKey('rooms/flws-credit-7k2p/m/000001'), 'rooms/flws-credit-7k2p/m/000001')
@@ -202,4 +212,49 @@ test('researchLiveText prefers the final answer after tool steps and falls back 
     citations: [],
   }))
   assert.equal(finished, '#1 [Basic Analyst]: ## Summary\n\nThe revolver matures in 2027. [2]')
+})
+
+test('needsResearchTextSync only syncs panel text for text, panel entry, and panel listing paths', () => {
+  assert.equal(needsResearchTextSync(parsePath('panels')), true)
+  assert.equal(needsResearchTextSync(parsePath('panels/e90')), true)
+  assert.equal(needsResearchTextSync(parsePath('panels/e90/text')), true)
+  assert.equal(needsResearchTextSync(parsePath('panels/e90/error')), false)
+  assert.equal(needsResearchTextSync(parsePath('panels/e90/state')), false)
+  assert.equal(needsResearchTextSync(parsePath('panels/e90/output')), false)
+  assert.equal(needsResearchTextSync(parsePath('panels/e90/summary')), false)
+  assert.equal(needsResearchTextSync(parsePath('plugins')), false)
+})
+
+test('shouldFetchResearchThread skips minimized panels, panels with live text, and panels that already have persisted text', () => {
+  const roomPanel = {
+    content: { kind: 'view' as const, view: 'research/room' },
+    state: { room: 'flws-latest-filings-vtku' },
+    output: null,
+    text: null,
+  }
+  assert.equal(shouldFetchResearchThread(roomPanel), true)
+  assert.equal(shouldFetchResearchThread(roomPanel, { minimized: true }), false)
+  assert.equal(shouldFetchResearchThread(roomPanel, { hasLiveText: true }), false)
+  assert.equal(shouldFetchResearchThread({ ...roomPanel, text: '#1 [You → Basic Analyst]: hi' }), false)
+  assert.equal(
+    shouldFetchResearchThread({
+      ...roomPanel,
+      content: { kind: 'view', view: 'core/table' },
+    }),
+    false,
+  )
+})
+
+test('safeSummarizeView returns the existing summary instead of throwing when a view summarize callback fails on partial output', () => {
+  const brokenSummarize = (_state: unknown, output: unknown): string => {
+    const out = output as { name?: string; analysts: { status: string }[] }
+    const busy = out.analysts.filter((a) => a.status !== 'idle')
+    return `${out.name ?? 'Room'} · ${busy.length}`
+  }
+  assert.equal(
+    safeSummarizeView(brokenSummarize, {}, { room: 'flws-room' }, 'FLWS Latest Filings · idle · 4 msgs · 0 files'),
+    'FLWS Latest Filings · idle · 4 msgs · 0 files',
+  )
+  assert.equal(safeSummarizeView(brokenSummarize, {}, { room: 'flws-room' }), null)
+  assert.equal(safeSummarizeView(brokenSummarize, {}, { name: 'FLWS', analysts: [] }, 'previous'), 'FLWS · 0')
 })

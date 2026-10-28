@@ -1,3 +1,4 @@
+import { untilAborted } from '../../shared/abort'
 import { extractRows, mapToolResult, type Dataset, type RunResult } from '../../shared/data/datasets'
 import { stableStringify } from '../../shared/data/hash'
 import type { RunRecord } from '../../shared/data/store'
@@ -9,6 +10,7 @@ import { messageOf } from '../../shared/rpc'
 import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { call } from '../plugins/mcp'
 import { runInHost } from '../plugins/plugin-host'
+import { waitForPluginBuild } from '../plugins/plugins'
 import { getSource, type RegisteredSource } from '../plugins/registry'
 import { getState } from '../state'
 import { sourceEvent } from '../../shared/app/eye-events'
@@ -53,7 +55,11 @@ export async function runSource(
   args: unknown,
   options: RunOptions = {},
 ): Promise<RunResult & { text: string }> {
-  const source = getSource(id)
+  let source = getSource(id)
+  if (!source) {
+    await untilAborted(waitForPluginBuild(id), options.signal)
+    source = getSource(id)
+  }
   if (!source) throw new Error(`Unknown source ${id}.`)
   const def = source.def
   const workspaceId = options.workspaceId ?? null

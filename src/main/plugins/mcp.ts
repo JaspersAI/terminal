@@ -31,6 +31,7 @@ import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { getConnection, missingOf, secretValues, setInfo, statusFor } from './connections'
 import { oauthProvider } from './oauth'
 import { refreshOnce } from './oauth-refresh'
+import { waitForPluginBuild } from './plugins'
 import { accountAddress, asAccount, callAsAccount, signedIn } from '../jaspers/jaspers'
 import { RefusedError, SignedOutError } from '../jaspers/session'
 import { getState } from '../state'
@@ -318,6 +319,18 @@ export function onMissingSecret(ask: (id: string) => Promise<void>): void {
 }
 
 /**
+ * Waits for a connection's owning plugin build and any in-flight or retryable connection handshake.
+ */
+export async function prepareConnection(id: string, signal?: AbortSignal): Promise<void> {
+  if (!clients.has(id) && !connecting.has(id) && !getConnection(id)) {
+    await untilAborted(waitForPluginBuild(id), signal)
+  }
+  if (!clients.has(id) && (connecting.has(id) || getState().connections[id]?.status === 'error')) {
+    await untilAborted(reconnect(id), signal)
+  }
+}
+
+/**
  * One tool call on one connection. A connection missing its key asks the user for it first; one that
  * is still not ready says what it needs instead.
  */
@@ -327,6 +340,9 @@ export async function call(
   args: Record<string, unknown>,
   opts: { signal?: AbortSignal; timeoutMs?: number; from?: Caller } = {},
 ): Promise<unknown> {
+  if (!clients.has(id) && !connecting.has(id) && !getConnection(id)) {
+    await untilAborted(waitForPluginBuild(id), opts.signal)
+  }
   if (askForMissingSecret && !clients.has(id) && getState().connections[id]?.status === 'needs-secret') {
     await untilAborted(askForMissingSecret(id), opts.signal)
   }
@@ -403,9 +419,7 @@ export function toolOf(id: string, tool: string): { info: ConnectionTool | undef
 
 /** One of a connection's pages, read from its server: `resources/read` on a `ui://` address. */
 export async function readPage(id: string, uri: string): Promise<{ html: string; csp: unknown; border: boolean }> {
-  if (!clients.has(id) && (connecting.has(id) || getState().connections[id]?.status === 'error')) {
-    await reconnect(id)
-  }
+  await prepareConnection(id)
   const live = clients.get(id)
   if (!live) throw unavailable(id)
   const entry = getConnection(id)

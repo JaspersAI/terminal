@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { beginSourceRun, failSourceRun, shownSourceData } from '../../../packages/sdk/src/hooks.ts'
+import {
+  beginSourceRun,
+  failSourceRun,
+  hasNewReadyConnection,
+  hasSourceAppeared,
+  shownSourceData,
+} from '../../../packages/sdk/src/hooks.ts'
 import { asTable, extractRows, mapToolResult } from './datasets.ts'
 
 test('an array of objects is the rows, with nothing around them', () => {
@@ -199,4 +205,31 @@ test('while a loop agent is working, a failed source run hides its error and sta
     meta: { count: 1 },
   }
   assert.equal(shownSourceData(loaded, true), loaded)
+})
+
+test('hasNewReadyConnection and hasSourceAppeared only trigger retries when a connection becomes ready or the requested source appears', () => {
+  const connecting = { 'research/jaspers': { status: 'connecting' } }
+  const ready = { 'research/jaspers': { status: 'ready' } }
+  const dropped = { 'research/jaspers': { status: 'error' } }
+
+  // Dropping to error or starting to connect does not trigger a doomed retry.
+  assert.equal(hasNewReadyConnection(ready, dropped), false)
+  assert.equal(hasNewReadyConnection(ready, connecting), false)
+  assert.equal(hasNewReadyConnection({}, connecting), false)
+  assert.equal(hasNewReadyConnection(ready, ready), false)
+
+  // Transitioning to ready triggers recovery.
+  assert.equal(hasNewReadyConnection(connecting, ready), true)
+  assert.equal(hasNewReadyConnection(dropped, ready), true)
+  assert.equal(hasNewReadyConnection({}, ready), true)
+
+  // Unrelated source metadata updates do not retry a source that was already registered.
+  const beforeSources = { 'filings-feed/filings': { description: 'v1' } }
+  const unrelatedChange = {
+    'filings-feed/filings': { description: 'v1' },
+    'fmp/news': { description: 'updated' },
+  }
+  assert.equal(hasSourceAppeared('filings-feed/filings', beforeSources, unrelatedChange), false)
+  assert.equal(hasSourceAppeared('filings-feed/filings', {}, beforeSources), true)
+  assert.equal(hasSourceAppeared('', {}, beforeSources), false)
 })

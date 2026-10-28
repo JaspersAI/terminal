@@ -1,5 +1,5 @@
 import { describeLoop, describePlugin } from '../../../shared/agent/prompt'
-import { layoutOf } from '../../../shared/grid/grid'
+import { isElementMinimized, layoutOf } from '../../../shared/grid/grid'
 import { frameOf, loopChat, loopName, named, type Loop } from '../../../shared/loops/loops'
 import type { AppState } from '../../../shared/state'
 import { usePlugin } from '../../loops/loops'
@@ -54,7 +54,9 @@ const readLoop: Tool = {
       const grid = grids[frame.window]
       if (grid) {
         for (const panel of layoutOf(grid, frame.element.id).panels) {
-          await syncResearchPanelText(workspaceId, panel, signal)
+          await syncResearchPanelText(workspaceId, panel, signal, {
+            minimized: isElementMinimized(grid, panel.elementId),
+          })
         }
       }
     }

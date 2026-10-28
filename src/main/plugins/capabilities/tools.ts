@@ -19,6 +19,8 @@ export interface ToolsDeps {
   ): Promise<unknown>
   /** Asks the user for a connection's missing key and waits; throws when they do not give it. */
   ask?(connection: string): Promise<void>
+  /** Waits for a connection whose plugin is still building or whose initial handshake is in flight. */
+  prepare?(connection: string): Promise<void>
 }
 
 /** Search tools on a large filing set can take most of a minute; a slow one is not a dead one. */
@@ -37,9 +39,19 @@ export function createTools(deps: ToolsDeps) {
   // Asking for everything names nothing, and holds nothing up. A refusal leaves the connection as it is.
   const askNamed = async (raw: unknown): Promise<void> => {
     const filter = record(raw)['connections']
-    if (!deps.ask || !Array.isArray(filter)) return
+    if (!Array.isArray(filter)) return
+    const names = filter.filter((c): c is string => typeof c === 'string')
+    if (deps.prepare) {
+      for (const id of names) {
+        const current = deps.connections()[id]
+        if (!current || current.status === 'connecting' || current.status === 'error') {
+          await deps.prepare(id).catch(() => undefined)
+        }
+      }
+    }
+    if (!deps.ask) return
     for (const c of Object.values(deps.connections())) {
-      if (filter.includes(c.id) && c.status === 'needs-secret') await deps.ask(c.id).catch(() => undefined)
+      if (names.includes(c.id) && c.status === 'needs-secret') await deps.ask(c.id).catch(() => undefined)
     }
   }
 

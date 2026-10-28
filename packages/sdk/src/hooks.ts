@@ -27,11 +27,11 @@ export function usePanelState<T>(panel: PanelRef, key: string, init: T): [T, (ne
       // Only the first read decides whether the key was there, so only it may write the default in.
       if (first) {
         first = false
-        if (next === undefined) void bridge.setState(ref, [key], initial.current)
+        if (next === undefined) void bridge.setState(ref, [key], initial.current).catch(() => {})
       }
     })
   }, [bridge, ref, path, key])
-  const set = useMemo(() => (next: T) => void bridge.setState(ref, [key], next), [bridge, ref, key])
+  const set = useMemo(() => (next: T) => void bridge.setState(ref, [key], next).catch(() => {}), [bridge, ref, key])
   return [value ?? init, set]
 }
 
@@ -46,7 +46,7 @@ export function usePublish(panel: PanelRef, output: Record<string, unknown>): vo
     if (json === published.current) return
     const timer = setTimeout(() => {
       published.current = json
-      void bridge.publish(ref, output)
+      void bridge.publish(ref, output).catch(() => {})
     }, PUBLISH_DELAY_MS)
     return () => clearTimeout(timer)
   })
@@ -66,7 +66,7 @@ export function usePublishText(panel: PanelRef, text: string | null): void {
     if (text === published.current) return
     const timer = setTimeout(() => {
       published.current = text
-      void bridge.publishText(ref, text)
+      void bridge.publishText(ref, text).catch(() => {})
     }, PUBLISH_DELAY_MS)
     return () => clearTimeout(timer)
   }, [bridge, ref, text])
@@ -131,6 +131,29 @@ export function shownSourceData(
     loading: result.data === undefined && result.text === undefined,
     error: null,
   }
+}
+
+/** True when `next` has at least one connection with `status === 'ready'` that was not `'ready'` in `previous`. */
+export function hasNewReadyConnection(previous: unknown, next: unknown): boolean {
+  if (!isPlainObject(next)) return false
+  const prev = isPlainObject(previous) ? previous : {}
+  for (const [id, entry] of Object.entries(next)) {
+    if (isPlainObject(entry) && entry['status'] === 'ready') {
+      const before = prev[id]
+      if (!isPlainObject(before) || before['status'] !== 'ready') return true
+    }
+  }
+  return false
+}
+
+/** True when `target` is registered in `next` and was not registered in `previous`. */
+export function hasSourceAppeared(target: string, previous: unknown, next: unknown): boolean {
+  if (!target || !isPlainObject(next) || !(target in next)) return false
+  return !isPlainObject(previous) || !(target in previous)
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Whatever a store path holds, kept up to date. Undefined until the first value arrives. */
@@ -208,23 +231,30 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   // build it after it opens.
   useEffect(() => {
     if (!isSource) return
-    const again = (registry: string): (() => void) => {
+    const watch = (registry: string, shouldRetry: (previous: unknown, next: unknown) => boolean): (() => void) => {
       let seen = false
-      return bridge.subscribe(registry, () => {
+      let previous: unknown = undefined
+      return bridge.subscribe(registry, (next) => {
         // The first delivery is the current value, not a change.
         if (!seen) {
           seen = true
+          previous = next
           return
         }
-        if (failed.current) {
+        const prev = previous
+        previous = next
+        if (failed.current && shouldRetry(prev, next)) {
           fresh.current = true
           setNonce((n) => n + 1)
         }
       })
     }
-    const offs = [again('connections'), again('sources')]
+    const offs = [
+      watch('connections', hasNewReadyConnection),
+      watch('sources', (prev, next) => hasSourceAppeared(target, prev, next)),
+    ]
     return () => offs.forEach((off) => off())
-  }, [bridge, isSource])
+  }, [bridge, isSource, target])
 
   // A refresh of the panel (refresh_element, a task on it) runs the source again, fresh. The first
   // delivery is the stamp there now, not a change.

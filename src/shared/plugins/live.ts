@@ -3,6 +3,7 @@
 // Pure; the store itself is main's.
 
 import type { Panel, PanelContent } from '../grid/grid.ts'
+import type { StorePath } from '../paths.ts'
 
 /** One megabyte of JSON. Past it, a value belongs in several keys or in a file. */
 export const LIVE_VALUE_MAX = 1024 * 1024
@@ -52,6 +53,39 @@ export function researchRoomOf(panel: Pick<Panel, 'state' | 'output'> & { conten
   if (fromOutput) return fromOutput
   const fromState = typeof panel.state['room'] === 'string' ? panel.state['room'].trim() : ''
   return fromState || null
+}
+
+/** Whether reading `path` needs a research room panel's transcript text synchronized beforehand. */
+export function needsResearchTextSync(
+  path: StorePath,
+): path is Extract<StorePath, { kind: 'panels' | 'panelEntry' | 'panel' }> {
+  if (path.kind === 'panels' || path.kind === 'panelEntry') return true
+  return path.kind === 'panel' && path.field === 'text'
+}
+
+/** Whether `syncResearchPanelText` should run `research/thread` in the background when no live room value is in memory. */
+export function shouldFetchResearchThread(
+  panel: Pick<Panel, 'state' | 'output' | 'text'> & { content: PanelContent },
+  options?: { minimized?: boolean; hasLiveText?: boolean },
+): boolean {
+  if (options?.minimized || options?.hasLiveText) return false
+  if (!researchRoomOf(panel)) return false
+  return typeof panel.text !== 'string' || panel.text.trim().length === 0
+}
+
+/** Runs a view's `summarize` callback, falling back to `fallback` when it throws on partial output. */
+export function safeSummarizeView(
+  summarize: ((state: unknown, output: unknown) => string) | undefined,
+  state: unknown,
+  output: unknown,
+  fallback: string | null = null,
+): string | null {
+  if (!summarize) return null
+  try {
+    return summarize(state, output) ?? null
+  } catch {
+    return fallback
+  }
 }
 
 /**

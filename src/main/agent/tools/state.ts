@@ -9,8 +9,15 @@ import {
   type StorePath,
 } from '../../../shared/paths'
 import { coerceViewState, schemaAt } from '../../../shared/agent/view-state'
-import { panelOf, type Panel } from '../../../shared/grid/grid'
-import { RESEARCH_PLUGIN, RESEARCH_THREAD_SOURCE, researchLiveText, researchRoomOf } from '../../../shared/plugins/live'
+import { isElementMinimized, panelOf, type Panel } from '../../../shared/grid/grid'
+import {
+  needsResearchTextSync,
+  RESEARCH_PLUGIN,
+  RESEARCH_THREAD_SOURCE,
+  researchLiveText,
+  researchRoomOf,
+  shouldFetchResearchThread,
+} from '../../../shared/plugins/live'
 import { publishTextChecked, setPanelStateChecked, settlePanel } from '../../actions'
 import { runSource } from '../../data/sources'
 import { ownTile } from '../../loops/loops'
@@ -31,7 +38,12 @@ const TEXT_PAGE = 50_000
  * Ensures a research/room panel's `text` reflects the room's full thread (via `research/thread` or
  * its live values in memory) before `get` or `read_loop` reads the panel.
  */
-export async function syncResearchPanelText(workspaceId: string, panel: Panel, signal?: AbortSignal): Promise<void> {
+export async function syncResearchPanelText(
+  workspaceId: string,
+  panel: Panel,
+  signal?: AbortSignal,
+  options?: { minimized?: boolean },
+): Promise<void> {
   const room = researchRoomOf(panel)
   if (!room) return
   const readLive = (): string | null =>
@@ -42,20 +54,21 @@ export async function syncResearchPanelText(workspaceId: string, panel: Panel, s
     )
   const liveText = readLive()
   if (liveText !== null) {
-    publishTextChecked(workspaceId, panel.id, liveText)
+    publishTextChecked(workspaceId, panel.id, liveText, { keepError: true })
     return
   }
+  if (!shouldFetchResearchThread(panel, { minimized: options?.minimized, hasLiveText: false })) return
   if (getSource(RESEARCH_THREAD_SOURCE)) {
     try {
       const result = await runSource(RESEARCH_THREAD_SOURCE, { room }, { workspaceId, signal })
       const after = readLive()
       if (after !== null) {
-        publishTextChecked(workspaceId, panel.id, after)
+        publishTextChecked(workspaceId, panel.id, after, { keepError: true })
         return
       }
       const text = result.text.trim()
       if (text && text !== 'The room has no messages yet.') {
-        publishTextChecked(workspaceId, panel.id, result.text)
+        publishTextChecked(workspaceId, panel.id, result.text, { keepError: true })
       }
     } catch {
       // Leave panel.text as it is when the room cannot be read.
@@ -64,19 +77,25 @@ export async function syncResearchPanelText(workspaceId: string, panel: Panel, s
 }
 
 async function syncPathPanels(workspaceId: string, path: StorePath, signal?: AbortSignal): Promise<void> {
-  if (path.kind !== 'panel' && path.kind !== 'panelEntry' && path.kind !== 'panels') return
+  if (!needsResearchTextSync(path)) return
   const targetWorkspace = path.workspaceId ?? workspaceId
   const grids = getState().grids[targetWorkspace]
   if (!grids) return
   if (path.kind === 'panels') {
     for (const grid of Object.values(grids)) {
-      for (const panel of grid.panels) await syncResearchPanelText(targetWorkspace, panel, signal)
+      for (const panel of grid.panels) {
+        await syncResearchPanelText(targetWorkspace, panel, signal, {
+          minimized: isElementMinimized(grid, panel.elementId),
+        })
+      }
     }
     return
   }
   try {
-    const { panel } = panelIn(grids, path.panelId)
-    await syncResearchPanelText(targetWorkspace, panel, signal)
+    const { grid, panel } = panelIn(grids, path.panelId)
+    await syncResearchPanelText(targetWorkspace, panel, signal, {
+      minimized: path.kind === 'panelEntry' && isElementMinimized(grid, panel.elementId),
+    })
   } catch {
     // Unknown panel: readPath will throw its standard error.
   }

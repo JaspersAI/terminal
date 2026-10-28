@@ -141,3 +141,24 @@ test('a connection a plugin names that is missing its key asks the user first, a
   ])
   assert.deepEqual(await refused.list({ connections: ['fmp/mcp'] }), [])
 })
+
+test('a named connection whose plugin is still building or connecting is prepared before listing or reading its status', async () => {
+  const map: Record<string, ConnectionInfo> = {}
+  const prepared: string[] = []
+  const tools = createTools({
+    connections: () => map,
+    call: async () => ({}),
+    prepare: async (id) => {
+      prepared.push(id)
+      map[id] = connection(id, 'ready', ['fetch_filings'], 'Use fetch_filings.')
+    },
+  })
+  assert.deepEqual(await tools.connections({ connections: ['research/jaspers'] }), [
+    { id: 'research/jaspers', status: 'ready', instructions: 'Use fetch_filings.' },
+  ])
+  assert.deepEqual(
+    (await tools.list({ connections: ['research/jaspers'] })).map((t) => t.id),
+    ['research/jaspers/fetch_filings'],
+  )
+  assert.deepEqual(prepared, ['research/jaspers'])
+})

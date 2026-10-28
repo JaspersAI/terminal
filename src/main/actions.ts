@@ -100,7 +100,7 @@ import { signIn, signOut, signedIn } from './jaspers/jaspers'
 import { allowApps } from './plugins/app-consent'
 import { getLive } from './plugins/live'
 import { getView } from './plugins/registry'
-import { RESEARCH_PLUGIN, researchLiveText, researchRoomOf } from '../shared/plugins/live'
+import { RESEARCH_PLUGIN, researchLiveText, researchRoomOf, safeSummarizeView } from '../shared/plugins/live'
 import { seal } from './secrets'
 import { getState, update, subscribe } from './state'
 import { setOpenAtLogin } from './app/background'
@@ -948,7 +948,7 @@ export function publishChecked(workspaceId: string, panelId: string, output: Rec
     const result = def.output.safeParse(output)
     if (!result.success) throw new Error(`Invalid output for ${def.id}: ${issues(result.error)}`)
   }
-  const summary = def?.summarize?.(panel.state, output) ?? null
+  const summary = safeSummarizeView(def?.summarize, panel.state, output, panel.summary ?? null)
   const room = researchRoomOf({ content: panel.content, state: panel.state, output })
   const roomText = room
     ? (researchLiveText(
@@ -968,10 +968,15 @@ export function publishChecked(workspaceId: string, panelId: string, output: Rec
 }
 
 /** The whole of what the view shows as text, for a model to read at length. The engine cuts what is past its cap. */
-export function publishTextChecked(workspaceId: string, panelId: string, text: string | null): Panel {
+export function publishTextChecked(
+  workspaceId: string,
+  panelId: string,
+  text: string | null,
+  options?: { keepError?: boolean },
+): Panel {
   const panel = panelOf(findElement(workspaceId, panelId).grid, panelId)
-  const updated = changeGridOf(workspaceId, panelId, (grid) => publishText(grid, panelId, text)).panel
-  if (panel.error && text !== null) syncPluginViewErrors()
+  const updated = changeGridOf(workspaceId, panelId, (grid) => publishText(grid, panelId, text, options)).panel
+  if (panel.error && text !== null && !options?.keepError) syncPluginViewErrors()
   return updated
 }
 

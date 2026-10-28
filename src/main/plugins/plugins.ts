@@ -285,6 +285,19 @@ export function rebuildPlugin(id: string): void {
   rescan(id)
 }
 
+/**
+ * Waits for any pending or in-flight build of the plugin named by `idOrTarget` (`<plugin>` or
+ * `<plugin>/...`) so a source or connection call made while plugins are still building at startup or
+ * reloading does not fail with `unknown` before registration finishes.
+ */
+export async function waitForPluginBuild(idOrTarget: string): Promise<void> {
+  const id = idOrTarget.split('/')[0]?.trim() ?? ''
+  if (!id) return
+  if (timers.has(id)) rebuildPlugin(id)
+  const pending = queue.get(id)
+  if (pending) await pending.catch(() => undefined)
+}
+
 /** esbuild says where it stopped; everything else says what it said. */
 function messages(err: unknown): string[] {
   const errors = (err as { errors?: esbuild.Message[] }).errors
