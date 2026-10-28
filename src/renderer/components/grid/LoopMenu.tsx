@@ -132,22 +132,22 @@ export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose 
         <button
           type="button"
           data-close
-          onClick={() => send({ type: 'loop.close', workspaceId, loop: loop.id })}
+          onClick={() => send({ type: 'room.close', workspaceId, room: loop.id })}
           className={item}
         >
-          Close this loop
+          Close this room
         </button>
         {confirming ? (
           <div data-confirm className="px-2 py-1">
-            <p>Delete it for good, with its conversation? Closing keeps it in View loops, in Settings.</p>
+            <p>Permanently delete it, with its conversation? Closing keeps it saved in Rooms.</p>
             <div className="mt-1 flex gap-1">
               <button
                 type="button"
                 data-delete-now
-                onClick={() => send({ type: 'loop.delete', workspaceId, loop: loop.id })}
+                onClick={() => send({ type: 'room.delete', workspaceId, room: loop.id })}
                 className="border border-destructive px-2 py-0.5 text-destructive"
               >
-                Delete
+                Delete permanently
               </button>
               <button
                 type="button"
@@ -161,7 +161,7 @@ export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose 
           </div>
         ) : (
           <button type="button" data-delete onClick={() => setConfirming(true)} className={`${item} text-destructive`}>
-            Delete this loop
+            Delete this room
           </button>
         )}
       </div>

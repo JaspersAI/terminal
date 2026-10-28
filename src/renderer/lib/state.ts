@@ -9,10 +9,15 @@ import { errorMessage } from './errors'
 // main through one push, so the renderer's state has one source.
 
 let current: AppState | null = null
+let localTabId: string | null = null
 const listeners = new Set<() => void>()
 
 /** Subscribes to main's pushes, then reads the tree once. `main.tsx` awaits this before the first render. */
 export async function load(): Promise<void> {
+  if (typeof window !== 'undefined' && window.app.windowNumber > 1) {
+    document.title = 'Terminal (copy)'
+    if (window.app.initialTabId) localTabId = window.app.initialTabId
+  }
   const stop = window.app.state.onChange(publish)
   import.meta.hot?.dispose(stop)
   const snapshot = await window.app.state.get()
@@ -45,14 +50,25 @@ export function useAppState<T>(select?: (state: AppState) => T): T | AppState {
 /** Asks main for a change. Resolves once main applied it; the new tree arrives by push. Rejects with main's message. */
 export async function dispatch(action: Action): Promise<void> {
   try {
+    if (
+      typeof window !== 'undefined' &&
+      window.app.windowNumber > 1 &&
+      (action.type === 'tab.select' || action.type === 'workspace.select')
+    ) {
+      localTabId = action.id
+    }
     await window.app.state.dispatch(action)
   } catch (err) {
     throw new Error(errorMessage(err))
   }
 }
 
-/** The workspace on screen. Main guarantees the current id matches one. */
+/** The tab on screen in this window. A detached "Terminal (copy)" window starts on its detached tab. */
 export function currentWorkspace(state: AppState): Workspace {
+  if (localTabId) {
+    const found = state.workspaces.find((w) => w.id === localTabId)
+    if (found) return found
+  }
   return state.workspaces.find((w) => w.id === state.currentWorkspaceId) ?? state.workspaces[0]!
 }
 

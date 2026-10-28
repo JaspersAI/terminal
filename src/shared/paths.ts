@@ -70,7 +70,7 @@ const SHAPES =
 export function parsePath(raw: string): StorePath {
   const segments = raw.split('/')
   if (segments.some((s) => s === '')) reject(raw)
-  const prefixed = segments[0] === 'workspaces'
+  const prefixed = segments[0] === 'workspaces' || segments[0] === 'tabs'
   if (prefixed && segments.length < 3) reject(raw)
   const workspaceId = prefixed ? segments[1]! : undefined
   const [head, panelId, field, ...rest] = prefixed ? segments.slice(2) : segments
@@ -86,7 +86,7 @@ export function parsePath(raw: string): StorePath {
     if (panelId !== undefined || workspaceId) reject(raw)
     return { kind: registry }
   }
-  if (head === 'workspace' && panelId === undefined) return { kind: 'workspace', ...at }
+  if ((head === 'workspace' || head === 'tab') && panelId === undefined) return { kind: 'workspace', ...at }
   if (head === 'tasks' && panelId === undefined) return { kind: 'tasks', ...at }
   if (head !== 'panels') reject(raw)
   if (panelId === undefined) return { kind: 'panels', ...at }

@@ -61,7 +61,7 @@ export function Home({ welcome }: Props): ReactElement {
   return (
     <>
       <div inert={!termsAccepted || settings || loops || askSignIn || askEye} className="contents">
-        <Workspace />
+        <Workspace onOpenRooms={() => setLoops(true)} />
         {!docked && <Composer />}
       </div>
       {settings && (

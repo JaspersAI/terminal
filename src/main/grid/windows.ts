@@ -36,10 +36,11 @@ let focused = MAIN_WINDOW
 /** How far a new window sits from the one it was opened from, so it reads as a new window and not a change to the old one. */
 const CASCADE = 40
 
-export function createWindow(n: number, show: boolean, at?: { x: number; y: number }): BrowserWindow {
+export function createWindow(n: number, show: boolean, at?: { x: number; y: number }, tabId?: string): BrowserWindow {
   const win = new BrowserWindow({
     width: 1400,
     height: 1000,
+    ...(n > MAIN_WINDOW ? { title: 'Terminal (copy)' } : {}),
     ...at,
     backgroundColor: windowBackground(),
     // Shown below once the page has rendered; never, when the launch is to stay hidden.
@@ -51,6 +52,12 @@ export function createWindow(n: number, show: boolean, at?: { x: number; y: numb
       backgroundThrottling: false,
     },
   })
+  if (n > MAIN_WINDOW) {
+    win.on('page-title-updated', (event) => {
+      event.preventDefault()
+      if (!win.isDestroyed()) win.setTitle('Terminal (copy)')
+    })
+  }
   windows.set(n, win)
   if (show) showWhenRendered(win)
 
@@ -95,9 +102,12 @@ export function createWindow(n: number, show: boolean, at?: { x: number; y: numb
   if (dev) {
     const url = new URL(dev)
     url.searchParams.set('window', String(n))
+    if (tabId) url.searchParams.set('tab', tabId)
     void win.loadURL(url.toString())
   } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'), { query: { window: String(n) } })
+    void win.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      query: { window: String(n), ...(tabId ? { tab: tabId } : {}) },
+    })
   }
   return win
 }
@@ -155,7 +165,7 @@ function hide(win: BrowserWindow): void {
  * Opens an extension window: the number given, or the lowest free one. Every workspace gets a grid
  * for it first, so the window has something to show the moment it loads. Returns the number.
  */
-export function openWindow(n?: number): number {
+export function openWindow(n?: number, tabId?: string): number {
   const { windows: open } = getState()
   if (n !== undefined) {
     if (!Number.isInteger(n) || n <= MAIN_WINDOW || n > WINDOWS_MAX)
@@ -173,7 +183,7 @@ export function openWindow(n?: number): number {
       grids: Object.fromEntries(Object.entries(state.grids).map(([id, grids]) => [id, withWindows(grids, next)])),
     }
   })
-  createWindow(number, true, at)
+  createWindow(number, true, at, tabId)
   return number
 }
 

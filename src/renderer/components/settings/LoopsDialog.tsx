@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { CHANGE_TEXT, loopLog, type LogEntry } from '../../../shared/loops/closed'
+import { CHANGE_TEXT, globalRoomLog, searchRooms, type GlobalLogEntry } from '../../../shared/loops/closed'
 import { loopName } from '../../../shared/loops/loops'
 import { shortLocal } from '../../../shared/tasks/tasks'
 import { errorMessage } from '../../lib/errors'
@@ -11,30 +11,76 @@ interface Props {
 }
 
 /**
- * View loops, opened from Settings: every loop of the workspace on screen, open and closed, the one
- * changed last first, with when it was made, closed, and reopened. A loop closed on the canvas is kept
- * here with its views and its conversation, and Reopen puts it back where it was; an open one can be
- * closed from here as from its tile, and either can be deleted for good. It stands over the workspace,
- * so a loop reopened is seen coming back behind it. Escape, the cross, or a press on the backdrop
- * closes it.
+ * Rooms (global room directory & tile log), opened from the header bar or Settings: every room across
+ * all tabs in the terminal, open and saved in memory, ordered chronologically by its most recent
+ * activity first, with keyword search across descriptions, prompts, plugins, panel summaries, and
+ * conversations. A closed room is kept in memory with its views and conversation, and Reopen brings it
+ * onto the current tab; an open room can be jumped to or closed, and permanent deletion requires
+ * explicit confirmation.
  */
 export function LoopsDialog({ onClose }: Props): ReactElement {
   const workspace = useAppState(currentWorkspace)
-  const open = useAppState((s) => s.loops[workspace.id])
-  const closed = useAppState((s) => s.closedLoops[workspace.id])
-  const log = useMemo(() => loopLog(open ?? [], closed ?? []), [open, closed])
+  const workspaces = useAppState((s) => s.workspaces)
+  const open = useAppState((s) => s.loops)
+  const closed = useAppState((s) => s.closedLoops)
+  const grids = useAppState((s) => s.grids)
+  const allEntries = useMemo(() => globalRoomLog(workspaces, open, closed), [workspaces, open, closed])
+  const [query, setQuery] = useState('')
+  const [exchangeText, setExchangeText] = useState<Record<string, string>>({})
   const [failed, setFailed] = useState<string | null>(null)
   const dialog = useRef<HTMLDivElement>(null)
+  const searchInput = useRef<HTMLInputElement>(null)
   const close = useRef(onClose)
   close.current = onClose
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
   const now = Date.now()
 
-  // Focus starts inside, so keys land here and not on the workspace underneath.
-  useEffect(() => dialog.current?.focus(), [])
+  useEffect(() => {
+    searchInput.current?.focus() ?? dialog.current?.focus()
+  }, [])
 
-  // Escape is heard in the capture phase and goes no further, as for Settings: the answer box and a
-  // tile's box close on Escape too, and this is on top of both.
+  // Load recent exchange text per room so keyword search covers room conversations as well as metadata.
+  useEffect(() => {
+    let active = true
+    const ids = allEntries.map((e) => e.loop.id)
+    Promise.all(
+      ids.map(async (id) => {
+        try {
+          const hist = await window.app.agent.history(10, undefined, id)
+          return [id, hist.map((ex) => `${ex.question}\n${ex.answer}`).join('\n')] as const
+        } catch {
+          return [id, ''] as const
+        }
+      }),
+    ).then((pairs) => {
+      if (!active) return
+      setExchangeText(Object.fromEntries(pairs))
+    })
+    return () => {
+      active = false
+    }
+  }, [allEntries])
+
+  const extraText = useMemo(() => {
+    const map: Record<string, string> = { ...exchangeText }
+    for (const entry of allEntries) {
+      const tabGrids = grids[entry.workspaceId] ?? {}
+      const panelLines: string[] = []
+      for (const grid of Object.values(tabGrids)) {
+        const roomElemIds = new Set(grid.elements.filter((e) => e.loop === entry.loop.id).map((e) => e.id))
+        for (const p of grid.panels) {
+          if (!roomElemIds.has(p.elementId)) continue
+          if (p.summary) panelLines.push(p.summary)
+          if (p.text) panelLines.push(p.text.slice(0, 2000))
+        }
+      }
+      map[entry.loop.id] = [map[entry.loop.id] ?? '', ...panelLines].filter(Boolean).join('\n')
+    }
+    return map
+  }, [allEntries, grids, exchangeText])
+
+  const log = useMemo(() => searchRooms(allEntries, query, extraText), [allEntries, query, extraText])
+
   useEffect(() => {
     const down = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
@@ -68,7 +114,7 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
       >
         <button
           type="button"
-          aria-label="Close loops"
+          aria-label="Close rooms"
           onClick={onClose}
           className="absolute top-2 right-2 z-10 flex h-8 w-8 items-center justify-center bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
         >
@@ -78,17 +124,33 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
         </button>
         <div className="shrink-0 px-6 pt-5 pb-4">
           <h2 id="loops-title" className="text-base font-semibold">
-            Loops
+            Rooms
           </h2>
           <p className="mt-1 pr-8 text-sm text-muted-foreground">
-            Every loop in {workspace.name}, the one changed last first. A loop closed on the canvas is kept here with
-            its views and its conversation: reopen it to carry on where it stopped.
+            Every room saved in memory across all tabs, ordered chronologically by last activity. Reopen a saved room
+            onto {workspace.name} to carry on where it stopped, or search by keyword.
           </p>
+          <div className="mt-3">
+            <input
+              ref={searchInput}
+              id="rooms-search-input"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search rooms by keyword, plugin, description, or conversation…"
+              aria-label="Search rooms"
+              className="w-full border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
+            />
+          </div>
           {failed && <p className="mt-2 text-sm text-destructive">{failed}</p>}
         </div>
-        {log.length === 0 ? (
+        {allEntries.length === 0 ? (
           <p className="border-t border-border px-6 py-5 text-sm text-muted-foreground">
-            No loops in this workspace yet. Ask the assistant for one.
+            No rooms in memory yet. Ask Central to set one up.
+          </p>
+        ) : log.length === 0 ? (
+          <p className="border-t border-border px-6 py-5 text-sm text-muted-foreground">
+            No rooms match &ldquo;{query.trim()}&rdquo;.
           </p>
         ) : (
           <ol id="loop-log" className="min-h-0 overflow-y-auto border-t border-border px-6">
@@ -96,10 +158,15 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
               <LogRow
                 key={entry.loop.id}
                 entry={entry}
+                currentTabId={workspace.id}
                 when={(at) => shortLocal(at, now, timeZone)}
-                onClose={() => act({ type: 'loop.close', workspaceId: workspace.id, loop: entry.loop.id })}
-                onReopen={() => act({ type: 'loop.reopen', workspaceId: workspace.id, loop: entry.loop.id })}
-                onDelete={() => act({ type: 'loop.delete', workspaceId: workspace.id, loop: entry.loop.id })}
+                onJump={() => {
+                  act({ type: 'tab.select', id: entry.workspaceId })
+                  onClose()
+                }}
+                onClose={() => act({ type: 'room.close', workspaceId: entry.workspaceId, room: entry.loop.id })}
+                onReopen={() => act({ type: 'room.reopen', workspaceId: workspace.id, room: entry.loop.id })}
+                onDelete={() => act({ type: 'room.delete', workspaceId: entry.workspaceId, room: entry.loop.id })}
               />
             ))}
           </ol>
@@ -110,32 +177,45 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
 }
 
 interface RowProps {
-  entry: LogEntry
+  entry: GlobalLogEntry
+  currentTabId: string
   when: (at: number) => string
+  onJump: () => void
   onClose: () => void
   onReopen: () => void
   onDelete: () => void
 }
 
-/** One loop: its name and what it is, whether it is open, its changes, newest first, and what can be done with it. */
-function LogRow({ entry, when, onClose, onReopen, onDelete }: RowProps): ReactElement {
+/** One room in the global directory: its name, status/tab, description, activity history, and actions. */
+function LogRow({ entry, currentTabId, when, onJump, onClose, onReopen, onDelete }: RowProps): ReactElement {
   const [confirming, setConfirming] = useState(false)
-  const { loop, open, changes } = entry
+  const { loop, open, changes, workspaceId, workspaceName, lastActiveAt } = entry
   const [last, ...earlier] = changes
   return (
     <li
       data-loop={loop.id}
+      data-room={loop.id}
       data-open={open}
       className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 border-b border-border py-3 last:border-b-0"
     >
       <div className="min-w-0 flex-1 text-sm">
         <p className="truncate">
           <span className="font-medium">{loopName(loop.id)}</span>
-          <span className={open ? 'text-foreground' : 'text-muted-foreground'}> · {open ? 'Open' : 'Closed'}</span>
+          <span className={open ? 'text-foreground' : 'text-muted-foreground'}>
+            {' · '}
+            {open ? `Open in ${workspaceName}` : 'Saved in memory'}
+          </span>
+          {loop.model && <span className="text-xs text-muted-foreground"> · {loop.model}</span>}
         </p>
         <p className="truncate text-muted-foreground">{loop.desc}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {CHANGE_TEXT[last!.change]} {when(last!.at)}
+          Last active {when(lastActiveAt)}
+          {last && (
+            <>
+              {' · '}
+              {CHANGE_TEXT[last.change]} {when(last.at)}
+            </>
+          )}
           {earlier.map((one, at) => (
             <span key={at}>
               {' · '}
@@ -147,9 +227,9 @@ function LogRow({ entry, when, onClose, onReopen, onDelete }: RowProps): ReactEl
       <div className="flex shrink-0 items-center gap-1.5">
         {confirming ? (
           <>
-            <span className="text-xs text-muted-foreground">Delete it and its conversation?</span>
+            <span className="text-xs text-muted-foreground">Permanently delete room and its conversation?</span>
             <button type="button" data-delete-now onClick={onDelete} className={`${BUTTON} text-destructive`}>
-              Delete
+              Delete permanently
             </button>
             <button type="button" onClick={() => setConfirming(false)} className={BUTTON}>
               Keep
@@ -157,6 +237,11 @@ function LogRow({ entry, when, onClose, onReopen, onDelete }: RowProps): ReactEl
           </>
         ) : (
           <>
+            {open && workspaceId !== currentTabId && (
+              <button type="button" data-jump onClick={onJump} className={BUTTON}>
+                Go to tab
+              </button>
+            )}
             {open ? (
               <button type="button" data-close onClick={onClose} className={BUTTON}>
                 Close

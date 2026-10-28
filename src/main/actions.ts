@@ -45,7 +45,7 @@ import {
   type Loop,
   type LoopSpec,
 } from '../shared/loops/loops'
-import { closedLoop, reopened, withoutLoop } from '../shared/loops/closed'
+import { archiveTabRooms, closedLoop, globalSeq, reopenAcrossTabs, withoutLoop } from '../shared/loops/closed'
 import { readBudget } from '../shared/agent/budget'
 import { isTheme } from '../shared/app/theme'
 import { EYE_CONSENT, readEye, readFeedbackText } from '../shared/app/eye'
@@ -78,7 +78,7 @@ import { connectionsOf } from './plugins/connections'
 import { secretProgress, secretRefs, type SecretProgress } from '../shared/plugins/connections'
 import { unsetRequiredSecret } from '../shared/plugins/plugins'
 import { isOpenWindow, MAIN_WINDOW, WINDOWS_MAX, withWindows } from '../shared/grid/windows'
-import { loopsOf, tidied, withLoops } from './loops/loops'
+import { findRoomTab, loopsOf, tidied, touchLoop, withLoops } from './loops/loops'
 import {
   changeGrid,
   changeGridOf,
@@ -128,6 +128,11 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'workspace.rename': (raw) => renameWorkspace(asString(raw.id), asString(raw.name)),
   'workspace.select': (raw) => selectWorkspace(asString(raw.id)),
   'workspace.delete': (raw) => deleteWorkspace(asString(raw.id)),
+  'tab.create': () => createWorkspace(),
+  'tab.rename': (raw) => renameWorkspace(asString(raw.id), asString(raw.name)),
+  'tab.select': (raw) => selectWorkspace(asString(raw.id)),
+  'tab.delete': (raw) => deleteWorkspace(asString(raw.id)),
+  'tab.detach': (raw) => detachTab(asString(raw.id)),
   // An element is addressed by id alone: ids are unique across a workspace's windows, and main finds the grid.
   'element.focus': (raw) => focus(asString(raw.workspaceId), asString(raw.elementId)),
   'element.remove': (raw) => {
@@ -140,15 +145,30 @@ const HANDLERS: Record<Action['type'], Handler> = {
     // One that is already gone is nothing to do: another window may have deleted it a moment ago.
     deleteLoop(asString(raw.workspaceId), loop)
   },
+  'room.delete': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.delete names a room by its id.')
+    deleteLoop(asString(raw.workspaceId), room)
+  },
   'loop.close': (raw) => {
     const loop = asString(raw.loop)
     if (!LOOP_ID.test(loop)) throw new Error('loop.close names a loop by its id.')
     closeLoop(asString(raw.workspaceId), loop)
   },
+  'room.close': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.close names a room by its id.')
+    closeLoop(asString(raw.workspaceId), room)
+  },
   'loop.reopen': (raw) => {
     const loop = asString(raw.loop)
     if (!LOOP_ID.test(loop)) throw new Error('loop.reopen names a loop by its id.')
     reopenLoop(asString(raw.workspaceId), loop, raw.window === undefined ? undefined : asWindow(raw.window))
+  },
+  'room.reopen': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.reopen names a room by its id.')
+    reopenLoop(asString(raw.workspaceId), room, raw.window === undefined ? undefined : asWindow(raw.window))
   },
   'element.setMode': (raw) => {
     const workspaceId = asString(raw.workspaceId)
@@ -664,71 +684,80 @@ export function completeOnboarding(): void {
   update((state) => ({ ...state, onboardingComplete: true }))
 }
 
-// Workspaces.
+// Tabs (Workspaces).
 
-/** "Workspace N", N the lowest no workspace is named after, since a deleted one leaves a gap. */
+/** "Tab N", N the lowest no tab is named after, since a closed one leaves a gap. */
 function newWorkspace(workspaces: Workspace[]): Workspace {
   const names = new Set(workspaces.map((w) => w.name))
   let n = 1
-  while (names.has(`Workspace ${n}`)) n++
-  return { id: randomUUID(), name: `Workspace ${n}` }
+  while (names.has(`Tab ${n}`) || names.has(`Workspace ${n}`)) n++
+  return { id: randomUUID(), name: `Tab ${n}` }
 }
 
-/** Adds "Workspace N" with an empty grid per open window and makes it current. */
+/** Adds "Tab N" with an empty grid per open window and makes it current. */
 export function createWorkspace(): void {
   update((state) => {
     const workspace = newWorkspace(state.workspaces)
+    const seq = globalSeq(state.loops)
     return {
       ...state,
       workspaces: [...state.workspaces, workspace],
       currentWorkspaceId: workspace.id,
       grids: { ...state.grids, [workspace.id]: withWindows({}, state.windows) },
-      loops: { ...state.loops, [workspace.id]: NO_LOOPS },
+      loops: { ...state.loops, [workspace.id]: { seq, list: [] } },
     }
   })
+}
+
+/** Detaches a tab into a second Terminal window titled "Terminal (copy)" starting on that tab. */
+export function detachTab(id: string): void {
+  const state = getState()
+  if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown tab.')
+  openWindow(undefined, id)
 }
 
 export function renameWorkspace(id: string, rawName: string): void {
   const name = rawName.trim()
   if (!name || name.length > WORKSPACE_NAME_MAX) {
-    throw new Error(`Workspace names are 1 to ${WORKSPACE_NAME_MAX} characters.`)
+    throw new Error(`Tab names are 1 to ${WORKSPACE_NAME_MAX} characters.`)
   }
   update((state) => {
-    if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown workspace.')
+    if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown tab.')
     return { ...state, workspaces: state.workspaces.map((w) => (w.id === id ? { ...w, name } : w)) }
   })
 }
 
 export function selectWorkspace(id: string): void {
   update((state) => {
-    if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown workspace.')
+    if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown tab.')
     return state.currentWorkspaceId === id ? state : { ...state, currentWorkspaceId: id }
   })
 }
 
 /**
- * Drops a workspace with its grids, its loops, and its tasks; persist removes its folder. The last one stays.
- * Deleting the current one makes its neighbor current, the one after it or else the one before.
+ * Closes a tab, archiving all of its open and closed rooms into global room memory (on the neighbor tab)
+ * so every room and its conversation remain retrievable and searchable. The last tab stays.
+ * Closing the current tab makes its neighbor current, the one after it or else the one before.
  */
 export function deleteWorkspace(id: string): void {
   update((state) => {
     const index = state.workspaces.findIndex((w) => w.id === id)
-    if (index < 0) throw new Error('Unknown workspace.')
-    if (state.workspaces.length === 1) throw new Error('The last workspace cannot be deleted.')
-    if (state.tasks.some((t) => t.workspaceId === id && t.running))
-      throw new Error('A task of this workspace is running.')
+    if (index < 0) throw new Error('Unknown tab.')
+    if (state.workspaces.length === 1) throw new Error('The last tab cannot be closed.')
+    if (state.tasks.some((t) => t.workspaceId === id && t.running)) throw new Error('A task of this tab is running.')
     const workspaces = state.workspaces.filter((w) => w.id !== id)
+    const neighborId = workspaces[Math.min(index, workspaces.length - 1)]!.id
     const grids = { ...state.grids }
+    const closingGrids = grids[id] ?? {}
     delete grids[id]
     const loops = { ...state.loops }
+    const closingLoops = loops[id] ?? NO_LOOPS
     delete loops[id]
+    loops[neighborId] = archiveTabRooms(closingLoops, closingGrids, id, loops[neighborId] ?? NO_LOOPS, Date.now())
     return {
       ...state,
       workspaces,
-      currentWorkspaceId:
-        state.currentWorkspaceId === id
-          ? workspaces[Math.min(index, workspaces.length - 1)]!.id
-          : state.currentWorkspaceId,
+      currentWorkspaceId: state.currentWorkspaceId === id ? neighborId : state.currentWorkspaceId,
       grids,
       loops,
       tasks: state.tasks.filter((t) => t.workspaceId !== id),
@@ -787,7 +816,14 @@ export function placeChecked(
   }
   const owner = loop ?? (placement.replace === undefined ? undefined : tileLoop(workspaceId, placement.replace))
   if (owner === undefined) {
-    const made = withLoopFor(had, content, { title: view?.title, plugin: view?.plugin ?? null }, Date.now())
+    const now = Date.now()
+    const made = withLoopFor(
+      had,
+      content,
+      { title: view?.title, plugin: view?.plugin ?? null },
+      now,
+      globalSeq(getState().loops),
+    )
     const placed = changeWindow(
       workspaceId,
       window,
@@ -807,12 +843,13 @@ export function placeChecked(
   const placed = changeInside(workspaceId, frame, (grid) =>
     placeView(grid, { ...placement, content, state, loop: owner }),
   )
+  touchLoop(workspaceId, owner)
   if (placement.replace !== undefined) syncPluginViewErrors()
   return placed
 }
 
 /**
- * Makes a loop as specified, with its frame, in one change. Its agent puts its views inside the
+ * Makes a room as specified, with its frame, in one change. Its agent puts its views inside the
  * frame; until the first one the frame shows what the agent is doing.
  */
 export function createLoop(
@@ -821,7 +858,7 @@ export function createLoop(
   spec: LoopSpec,
   placement: Placement,
 ): { loop: Loop; element: GridElement } {
-  const made = withLoopAsked(loopsOf(workspaceId), spec, Date.now())
+  const made = withLoopAsked(loopsOf(workspaceId), spec, Date.now(), globalSeq(getState().loops))
   const { element } = changeGrid(
     workspaceId,
     window,
@@ -873,55 +910,64 @@ export function removeChecked(workspaceId: string, elementId: string): void {
   syncPluginViewErrors()
 }
 
-/** Closes a loop: its frame goes, with every tile inside it, and the loop is kept for View loops to reopen. One that is not open is nothing to do. */
+/** Closes a room: its frame goes, with every tile inside it, and the room is kept in memory to reopen. One that is not open is nothing to do. */
 export function closeLoop(workspaceId: string, loopId: string): void {
-  const frame = frameOf(getGrids(workspaceId), loopId)
-  if (frame) removeChecked(workspaceId, frame.element.id)
+  const tabId = findRoomTab(getState(), loopId) ?? workspaceId
+  const frame = frameOf(getGrids(tabId), loopId)
+  if (frame) removeChecked(tabId, frame.element.id)
 }
 
 /**
- * Reopens a closed loop in a window: the one its frame was in when that is open, else the main
- * window. Its frame comes back with the tiles that were inside it, and its conversation goes on.
+ * Reopens a closed room onto `workspaceId` in a window: the one its frame was in when that is open,
+ * else the main window. Its frame comes back with the tiles that were inside it, and its conversation goes on.
  */
 export function reopenLoop(workspaceId: string, loopId: string, window?: number): GridElement {
-  const shut = closedLoop(loopsOf(workspaceId), loopId)
+  const state = getState()
+  const sourceTabId = Object.keys(state.loops).find((id) => closedLoop(state.loops[id] ?? NO_LOOPS, loopId))
+  const shut = sourceTabId ? closedLoop(state.loops[sourceTabId] ?? NO_LOOPS, loopId) : undefined
   if (!shut) throw new Error(`${loopName(loopId)} is not closed.`)
-  const where = window ?? (isOpenWindow(getState().windows, shut.window) ? shut.window : MAIN_WINDOW)
+  const where = window ?? (isOpenWindow(state.windows, shut.window) ? shut.window : MAIN_WINDOW)
   getGrid(workspaceId, where)
   let frame: GridElement | undefined
-  update((state) => {
-    const back = reopened(
-      state.grids[workspaceId] ?? {},
-      state.loops[workspaceId] ?? NO_LOOPS,
-      loopId,
-      where,
-      Date.now(),
-    )
+  update((current) => {
+    const back = reopenAcrossTabs(current.grids, current.loops, workspaceId, loopId, where, Date.now())
     frame = back.frame
-    return withLoops({ ...state, grids: { ...state.grids, [workspaceId]: back.grids } }, workspaceId, back.loops)
+    return { ...current, grids: back.grids, loops: back.loops }
   })
   return frame!
 }
 
 /**
- * Deletes a loop for good, open or closed: an open one's frame goes, with every tile inside it, and
- * its record. What follows a loop leaving the tree, its run stopped and its conversation forgotten,
- * is done where every way one goes is seen (`watchLoops`).
+ * Deletes a room for good, open or closed, across any tab: an open one's frame goes, with every tile
+ * inside it, and its record. What follows a room leaving the tree, its run stopped and its conversation
+ * forgotten, is done where every way one goes is seen (`watchLoops`).
  */
 export function deleteLoop(workspaceId: string, loopId: string): void {
-  const frame = frameOf(getGrids(workspaceId), loopId)
+  const tabId = findRoomTab(getState(), loopId) ?? workspaceId
+  const frame = frameOf(getGrids(tabId), loopId)
   if (frame) {
     changeGridOf(
-      workspaceId,
+      tabId,
       frame.element.id,
       (grid) => removeElement(grid, frame.element.id),
-      (next) => withLoops(next, workspaceId, withoutLoop(next.loops[workspaceId] ?? NO_LOOPS, loopId)),
+      (next) => withLoops(next, tabId, withoutLoop(next.loops[tabId] ?? NO_LOOPS, loopId)),
     )
-    dismissSecretRequest({ workspaceId, on: frame.element.id })
+    dismissSecretRequest({ workspaceId: tabId, on: frame.element.id })
     syncPluginViewErrors()
     return
   }
-  update((state) => withLoops(state, workspaceId, withoutLoop(state.loops[workspaceId] ?? NO_LOOPS, loopId)))
+  update((state) => {
+    const nextLoops = { ...state.loops }
+    let changed = false
+    for (const [id, loops] of Object.entries(state.loops)) {
+      const stripped = withoutLoop(loops, loopId)
+      if (stripped !== loops) {
+        nextLoops[id] = stripped
+        changed = true
+      }
+    }
+    return changed ? { ...state, loops: nextLoops } : state
+  })
 }
 
 /**

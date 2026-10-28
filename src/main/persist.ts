@@ -22,6 +22,7 @@ import {
   type Loop,
   type Loops,
 } from '../shared/loops/loops'
+import { unifyTabRooms } from '../shared/loops/closed'
 import { findProvider, signsIn } from '../shared/llm/providers'
 import type { Workspace, Budgets } from '../shared/state'
 import { isTheme, type Theme } from '../shared/app/theme'
@@ -151,26 +152,38 @@ export function load(): MainState {
   // Files written before workspaces existed get one, and the current id always points at a real workspace.
   // Either patch is written with the first change, since grids and tasks are filed under the id.
   if (!Array.isArray(state.workspaces) || state.workspaces.length === 0) {
-    state.workspaces = [{ id: randomUUID(), name: 'Workspace 1' }]
+    state.workspaces = [{ id: randomUUID(), name: 'Tab 1' }]
     stateDirty = true
+  } else {
+    state.workspaces = state.workspaces.map((w) => {
+      const m = /^Workspace (\d+)$/.exec(w.name)
+      if (!m) return w
+      stateDirty = true
+      return { ...w, name: `Tab ${m[1]}` }
+    })
   }
   if (!state.workspaces.some((w) => w.id === state.currentWorkspaceId)) {
     state.currentWorkspaceId = state.workspaces[0]!.id
     stateDirty = true
   }
   const windows = checkWindows(state.windows)
-  const grids: Record<string, Record<number, Grid>> = {}
-  const loops: Record<string, Loops> = {}
+  const rawGrids: Record<string, Record<number, Grid>> = {}
+  const rawLoops: Record<string, Loops> = {}
   for (const w of state.workspaces) {
     const stored = loadWorkspace(workspacePath(w.id))
     const windowed = withWindows(stored.grids, windows)
-    // Every tile has a loop, and every loop a frame its other tiles are inside. A file from before
+    // Every tile has a room, and every room a frame its other tiles are inside. A file from before
     // either is made so here, and is written so with the first change, as the patches above are.
     const whole = adopt(windowed, stored.loops, seenInFile, Date.now())
     if (whole.grids !== windowed || whole.loops !== stored.loops) dirtyWorkspaces.add(w.id)
-    grids[w.id] = whole.grids
-    loops[w.id] = whole.loops
+    rawGrids[w.id] = whole.grids
+    rawLoops[w.id] = whole.loops
   }
+  const unified = unifyTabRooms(state.workspaces, rawGrids, rawLoops)
+  if (unified.grids !== rawGrids || unified.loops !== rawLoops) {
+    for (const w of state.workspaces) dirtyWorkspaces.add(w.id)
+  }
+  const { grids, loops } = unified
   const tasksFile = readJson<Partial<TasksFile>>(tasksPath())
   const tasks = loadTasks(Array.isArray(tasksFile?.tasks) ? tasksFile.tasks : [], state.workspaces)
   const eye = readEye(state.eye)

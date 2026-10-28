@@ -20,8 +20,10 @@ import { MAIN_WINDOW, WINDOWS_MAX } from '../shared/grid/windows'
 // Everything the renderer may touch goes through this bridge.
 const api = {
   platform: process.platform,
-  /** Which window this page is, from its URL: 1 is the main window, the rest are extensions. */
+  /** Which window this page is, from its URL: 1 is the main window, >1 is a detached "Terminal (copy)" window. */
   windowNumber: readWindowNumber(),
+  /** The tab a detached "Terminal (copy)" window was opened to show, if any. */
+  initialTabId: new URLSearchParams(window.location.search).get('tab') || null,
   versions: {
     electron: process.versions.electron,
     chrome: process.versions.chrome,
@@ -79,6 +81,8 @@ const api = {
      */
     history: (limit: number, before?: number, loop?: string): Promise<Exchange[]> =>
       ipcRenderer.invoke('agent:history', limit, before ?? null, loop ?? null),
+    /** Clears Central's single conversation flow across all tabs: thread and log. */
+    clear: (): Promise<void> => ipcRenderer.invoke('agent:clear'),
     /** The welcome after setup, once the workspace is on screen: main says its messages into the chat on its own. */
     welcome: (): Promise<void> => ipcRenderer.invoke('agent:welcome'),
     /** What a run is doing, as it does it. For showing only: the reply comes back from `run`. */

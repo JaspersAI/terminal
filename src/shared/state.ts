@@ -1,6 +1,6 @@
 import type { MemoryInfo } from './agent/memory.ts'
 export type { Memory, MemoryInfo } from './agent/memory.ts'
-export type { Loop } from './loops/loops'
+export type { Loop, Room } from './loops/loops'
 
 // Shared by main, preload, and renderer. Keep this file free of Node and DOM imports.
 
@@ -25,14 +25,17 @@ export interface ProviderSetting {
   hasToken: boolean
 }
 
-/** A named surface the user works on. Only a name so far; views will land on it later. */
+/** A named tab surface the user works on. */
 export interface Workspace {
   id: string
   name: string
 }
 
+export type Tab = Workspace
+
 /** Names are trimmed and capped. Main rejects anything else. */
 export const WORKSPACE_NAME_MAX = 80
+export const TAB_NAME_MAX = WORKSPACE_NAME_MAX
 
 /**
  * An installed view, as the renderer and the orchestrator see it. Main's registry holds the rest of
@@ -338,14 +341,23 @@ export type Action =
   | { type: 'workspace.rename'; id: string; name: string }
   | { type: 'workspace.select'; id: string }
   | { type: 'workspace.delete'; id: string }
+  | { type: 'tab.create' }
+  | { type: 'tab.rename'; id: string; name: string }
+  | { type: 'tab.select'; id: string }
+  | { type: 'tab.delete'; id: string }
+  /** Detaches a tab into a second Terminal window titled "Terminal (copy)" starting with that tab. */
+  | { type: 'tab.detach'; id: string }
   | { type: 'element.focus'; workspaceId: string; elementId: string }
   | { type: 'element.remove'; workspaceId: string; elementId: string }
-  /** Deletes a loop for good, open or closed: its frame with every tile inside it, its record, and its conversation. What Delete in its menu and in View loops asks for. */
+  /** Deletes a room for good, open or closed: its frame with every tile inside it, its record, and its conversation. */
   | { type: 'loop.delete'; workspaceId: string; loop: string }
-  /** Closes a loop: its frame goes, and the loop is kept, conversation and tiles, for View loops to reopen. */
+  | { type: 'room.delete'; workspaceId: string; room: string }
+  /** Closes a room: its frame goes, and the room is kept in memory, conversation and tiles, to reopen. */
   | { type: 'loop.close'; workspaceId: string; loop: string }
-  /** Reopens a closed loop, in the window given or the one it was closed in. */
+  | { type: 'room.close'; workspaceId: string; room: string }
+  /** Reopens a closed room onto the target tab, in the window given or the main window. */
   | { type: 'loop.reopen'; workspaceId: string; loop: string; window?: number }
+  | { type: 'room.reopen'; workspaceId: string; room: string; window?: number }
   | { type: 'element.setMode'; workspaceId: string; elementId: string; mode: ElementMode }
   | { type: 'element.setZoom'; workspaceId: string; elementId: string; zoom: number }
   | { type: 'element.setRect'; workspaceId: string; elementId: string; rect: Rect }
