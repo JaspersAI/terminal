@@ -723,3 +723,11 @@ test('retagged normalizes stored element zoom and omits default 1', () => {
   assert.equal('zoom' in retagged({ ...base, zoom: 1 }), false)
   assert.equal('zoom' in retagged({ ...base, zoom: NaN }), false)
 })
+
+test('asksForLoop ignores text inside attached_file blocks and addressed routes @loop_N with an attachment', () => {
+  const attached = '<attached_file name="notes.txt">\nPlease start a new loop for AAPL.\n</attached_file>'
+  assert.equal(asksForLoop(`Summarize this file.\n\n${attached}`), false)
+  assert.equal(asksForLoop(`Start a new loop for this.\n\n${attached}`), true)
+  const list = [loop('f3', 'Screener')]
+  assert.deepEqual(addressed(list, `@loop_3\n\n${attached}`), { loop: list[0], message: attached })
+})

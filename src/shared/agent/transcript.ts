@@ -1,5 +1,6 @@
 import type { Citation, Turn } from '../llm/llm'
 import { stripSkillContent } from '../skills/skills.ts'
+import { shownQuestion, stripAttachedFiles } from './attachments.ts'
 import { writtenPart } from './typed.ts'
 import { WELCOME_NOTE } from './welcome.ts'
 
@@ -164,10 +165,15 @@ export function rejoin(up: Exchange[], read: Exchange[]): Exchange[] {
  * assistant wrote for that work; a /name turn is a line saying what was run, then the skill it loaded.
  */
 function typed(text: string): string {
-  // With the skills taken out first: a skill whose own text carries the handoff's line is not a handoff.
-  return (
-    writtenPart(stripSkillContent(text)) ?? /^The user ran (\/[\s\S]*?)\.\n\n<skill_content\b/.exec(text)?.[1] ?? text
+  // With the skills and attached files taken out first: a skill or file whose own text carries the
+  // handoff's line is not a handoff.
+  const handoff = writtenPart(stripAttachedFiles(stripSkillContent(text)))
+  if (handoff !== null) return shownQuestion(handoff)
+  const unslashed = text.replace(
+    /^The user ran (\/[\s\S]*?)\.\n\n<skill_content\b[^>]*>[\s\S]*?<\/skill_content>/,
+    '$1',
   )
+  return shownQuestion(stripSkillContent(unslashed))
 }
 
 /** A source with every secret value taken out of what it says. Its id stays: the reply's markers name it. */
