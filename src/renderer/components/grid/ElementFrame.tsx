@@ -21,7 +21,7 @@ import { useAppState } from '../../lib/state'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
 import { loopName, showsChat } from '../../../shared/loops/loops'
-import { barLabel, BORN, boxOpens, sameActivity, type Activity, type TileState } from './box'
+import { barLabel, BORN, boxOpens, mountsTileViews, sameActivity, type Activity, type TileState } from './box'
 import { LoopBox } from './LoopBox'
 import { LoopMenu } from './LoopMenu'
 import { Held } from './Held'
@@ -333,8 +333,8 @@ export function ElementFrame({
           onClose={closeMenu}
         />
       )}
-      {/* Under the bar. Minimized, it is all still here, cut off by the tile's own height and inert:
-          nothing in it is seen, reached, or counted as drawn, and a view keeps what it holds. */}
+      {/* Under the bar. Minimized, the box stays mounted and inert so the bar follows the loop's
+          status while questions wait; the views stay unmounted until the tile is restored. */}
       <div inert={minimized} className={`flex min-h-0 flex-1 flex-col ${minimized ? 'overflow-hidden' : ''}`}>
         {loop && (
           <LoopBox
@@ -354,22 +354,23 @@ export function ElementFrame({
           />
         )}
         {/* With no view yet, and the box above folded, where the views will go. */}
-        {empty && !expanded && (
+        {!minimized && empty && !expanded && (
           <p className="m-auto px-2 text-center text-xs text-muted-foreground">What {called} shows goes here.</p>
         )}
-        {frame ? (
-          <Board
-            workspaceId={workspaceId}
-            windowNumber={windowNumber}
-            grid={grid}
-            frame={element}
-            focused={focused}
-            working={working}
-            waiting={undrawn}
-          />
-        ) : (
-          <Held workspaceId={workspaceId} elementId={element.id} panel={panel} focused={focused} working={working} />
-        )}
+        {mountsTileViews(element.mode) &&
+          (frame ? (
+            <Board
+              workspaceId={workspaceId}
+              windowNumber={windowNumber}
+              grid={grid}
+              frame={element}
+              focused={focused}
+              working={working}
+              waiting={undrawn}
+            />
+          ) : (
+            <Held workspaceId={workspaceId} elementId={element.id} panel={panel} focused={focused} working={working} />
+          ))}
       </div>
       {frameEdges(element.mode).map((handle) => (
         <div

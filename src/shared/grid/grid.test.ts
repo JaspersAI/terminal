@@ -36,8 +36,10 @@ import {
   activeViewErrors,
   clearPluginPanelErrors,
   failPanel,
+  isElementMinimized,
   panelTargetsSettled,
   viewErrorMessage,
+  watchedViewPanels,
   publishOutput,
   publishText,
   rangeName,
@@ -489,6 +491,11 @@ test('a view error is recorded on its panel, shown on the map, and cleared when 
   assert.equal(setPanelState(failed.grid, 'e2', ['symbol'], 'FLWS').panel.error, undefined)
   assert.equal(publishOutput(failed.grid, 'e2', { rows: [] }, '0 rows').panel.error, undefined)
   assert.equal(publishText(failed.grid, 'e2', 'Option chain').panel.error, undefined)
+  assert.equal(
+    publishText(failed.grid, 'e2', 'Option chain', { keepError: true }).panel.error,
+    'children is not defined',
+  )
+  assert.equal(publishText(failed.grid, 'e2', 'Option chain', { keepError: true }).panel.text, 'Option chain')
   assert.equal(publishText(failed.grid, 'e2', null).panel.error, 'children is not defined')
   assert.equal(refreshPanel(failed.grid, 'e2', 1000).panel.error, undefined)
   assert.equal(clearPluginPanelErrors(failed.grid, 'other'), failed.grid)
@@ -498,6 +505,11 @@ test('a view error is recorded on its panel, shown on the map, and cleared when 
   assert.deepEqual(activeViewErrors({ ws1: { 1: failed.grid } }, 'option-chain'), [
     'option-chain/table: children is not defined',
   ])
+  const minimizedFrame = withLayout(failed.grid, undefined, setMode(layoutOf(failed.grid), 'e1', 'minimized').grid)
+  assert.equal(isElementMinimized(minimizedFrame, 'e1'), true)
+  assert.equal(isElementMinimized(minimizedFrame, 'e2'), true)
+  assert.equal(isElementMinimized(failed.grid, 'e2'), false)
+  assert.deepEqual(activeViewErrors({ ws1: { 1: minimizedFrame } }, 'option-chain'), [])
   assert.deepEqual(activeViewErrors({ ws1: { 1: rebuilt } }, 'option-chain'), [])
   assert.equal(
     viewErrorMessage({ message: '  children is not defined ', stack: 'at Table' }),
@@ -524,6 +536,10 @@ test('panelTargetsSettled watches a view panel or a frame’s child views until 
   })
   const published = publishOutput(grid, 'e2', { rows: [] }, '0 rows').grid
   assert.deepEqual(panelTargetsSettled(published, 'p1', before), { settled: true, error: null })
+  const minimized = withLayout(grid, undefined, setMode(layoutOf(grid), 'e1', 'minimized').grid)
+  assert.deepEqual(watchedViewPanels(minimized, 'p1'), [])
+  assert.deepEqual(watchedViewPanels(minimized, 'p2'), [])
+  assert.deepEqual(panelTargetsSettled(minimized, 'p1', before), { settled: true, error: null })
   const emptyFrame = placeFrame(EMPTY_GRID, { content: { kind: 'frame' } }).grid
   assert.deepEqual(panelTargetsSettled(emptyFrame, 'p1', new Map()), { settled: true, error: null })
 })

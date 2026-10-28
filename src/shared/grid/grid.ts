@@ -696,16 +696,22 @@ export function publishOutput(
 export const PANEL_TEXT_MAX = 200_000
 
 /** The view's text, published apart from its output since it is read at length and changes less often. The same again changes nothing. */
-export function publishText(grid: Grid, panelId: string, text: string | null): { grid: Grid; panel: Panel } {
+export function publishText(
+  grid: Grid,
+  panelId: string,
+  text: string | null,
+  options?: { keepError?: boolean },
+): { grid: Grid; panel: Panel } {
   const current = panelOf(grid, panelId)
   // Cut, not refused: a refused publish would leave the last text standing, about something else.
   const next =
     text !== null && text.length > PANEL_TEXT_MAX
       ? `${text.slice(0, PANEL_TEXT_MAX)}\n\n[The rest is cut: a panel's text holds ${PANEL_TEXT_MAX.toLocaleString('en-US')} characters at most.]`
       : text
-  if (current.text === next && (text === null || !current.error)) return { grid, panel: current }
+  const clearError = text !== null && !options?.keepError
+  if (current.text === next && (!clearError || !current.error)) return { grid, panel: current }
   const { error: _was, ...rest } = current
-  const panel: Panel = text !== null ? { ...rest, text: next } : { ...current, text: next }
+  const panel: Panel = clearError ? { ...rest, text: next } : { ...current, text: next }
   return { grid: withPanel(grid, panel), panel }
 }
 
@@ -748,6 +754,16 @@ export function clearPluginPanelErrors(grid: Grid, plugin: string): Grid {
   return { ...grid, panels }
 }
 
+/** Whether an element or the frame holding it is minimized in `grid`. */
+export function isElementMinimized(grid: Grid, elementId: string): boolean {
+  const element = grid.elements.find((e) => e.id === elementId)
+  if (!element) return false
+  if (element.mode === 'minimized') return true
+  if (element.parent === undefined) return false
+  const frame = grid.elements.find((e) => e.id === element.parent)
+  return frame?.mode === 'minimized'
+}
+
 /** Distinct `<viewId>: <error>` lines currently held by panels of `pluginId` across all workspaces and windows. */
 export function activeViewErrors(grids: Record<string, Record<number, Grid>>, pluginId: string): string[] {
   const prefix = `${pluginId}/`
@@ -755,7 +771,12 @@ export function activeViewErrors(grids: Record<string, Record<number, Grid>>, pl
   for (const windows of Object.values(grids)) {
     for (const grid of Object.values(windows)) {
       for (const panel of grid.panels) {
-        if (panel.error && panel.content.kind === 'view' && panel.content.view.startsWith(prefix)) {
+        if (
+          panel.error &&
+          panel.content.kind === 'view' &&
+          panel.content.view.startsWith(prefix) &&
+          !isElementMinimized(grid, panel.elementId)
+        ) {
           seen.add(`${panel.content.view}: ${panel.error}`)
         }
       }
@@ -767,8 +788,11 @@ export function activeViewErrors(grids: Record<string, Record<number, Grid>>, pl
 /** The view panels a panel write or refresh affects: the panel itself for a view, or the views inside it for a frame. */
 export function watchedViewPanels(grid: Grid, panelId: string): Panel[] {
   const panel = panelOf(grid, panelId)
+  if (isElementMinimized(grid, panel.elementId)) return []
   if (panel.content.kind === 'view') return [panel]
-  return layoutOf(grid, panel.elementId).panels.filter((p) => p.content.kind === 'view')
+  return layoutOf(grid, panel.elementId).panels.filter(
+    (p) => p.content.kind === 'view' && !isElementMinimized(grid, p.elementId),
+  )
 }
 
 /**

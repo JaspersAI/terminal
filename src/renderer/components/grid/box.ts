@@ -8,6 +8,7 @@
 // The extensions are explicit because Node's test runner resolves these imports at run time.
 import { THINKING, type AgentEvent } from '../../../shared/agent/agent.ts'
 import type { Place } from '../../../shared/agent/asking'
+import type { ElementMode } from '../../../shared/grid/grid'
 import type { LoopStatus } from '../../../shared/loops/loops'
 import { answered, failed, heard, over, sent, without, type LiveExchange } from '../composer/live.ts'
 
@@ -150,4 +151,9 @@ export function barLabel(status: LoopStatus, activity: Activity | null, chat: bo
   if (activity?.state === 'failed') return { kind: 'failed', text: 'Failed' }
   if (activity?.state === 'done') return { kind: 'done', text: 'Done' }
   return chat ? { kind: 'conversation', text: 'Conversation' } : null
+}
+
+/** Whether a tile mounts its views: a minimized tile is only its bar, so its views stay unmounted until restored. */
+export function mountsTileViews(mode: ElementMode): boolean {
+  return mode !== 'minimized'
 }

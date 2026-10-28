@@ -1,4 +1,5 @@
 import {
+  activeViewErrors,
   DEFAULT_SIZE,
   EMPTY_GRID,
   focusElement,
@@ -200,7 +201,23 @@ function seeded(workspaceId: string, grid: Grid): Grid {
 
 function write(workspaceId: string, changed: Record<number, Grid>, also?: (state: MainState) => MainState): void {
   update((state) => {
-    const next = { ...state, grids: { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], ...changed } } }
+    const grids = { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], ...changed } }
+    let pluginsChanged = false
+    const plugins: typeof state.plugins = {}
+    for (const [id, plugin] of Object.entries(state.plugins)) {
+      if (plugin.status !== 'ready') {
+        plugins[id] = plugin
+        continue
+      }
+      const errors = activeViewErrors(grids, id)
+      if (errors.length === plugin.errors.length && errors.every((e, i) => e === plugin.errors[i])) {
+        plugins[id] = plugin
+      } else {
+        plugins[id] = { ...plugin, errors }
+        pluginsChanged = true
+      }
+    }
+    const next = { ...state, grids, ...(pluginsChanged ? { plugins } : {}) }
     return also ? also(next) : next
   })
 }

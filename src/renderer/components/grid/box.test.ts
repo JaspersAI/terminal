@@ -10,6 +10,7 @@ import {
   boxOpens,
   boxSent,
   boxSettled,
+  mountsTileViews,
   sameActivity,
   WAITING,
 } from './box.ts'
@@ -176,4 +177,11 @@ test('the box opens itself as a run begins in a tile with no view yet, and folds
   assert.equal(boxOpens(shown, shown), null)
   assert.equal(boxOpens({ empty: false, working: false }, shown), null)
   assert.equal(boxOpens(BORN, BORN), null)
+})
+
+test('a minimized tile does not mount its views until it is restored', () => {
+  assert.equal(mountsTileViews('minimized'), false)
+  assert.equal(mountsTileViews('tiled'), true)
+  assert.equal(mountsTileViews('floating'), true)
+  assert.equal(mountsTileViews('maximized'), true)
 })
