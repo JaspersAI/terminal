@@ -1,8 +1,18 @@
-import { ipcMain, session, WebContentsView, type BrowserWindow, type Session } from 'electron'
+import {
+  ipcMain,
+  session,
+  WebContentsView,
+  type BrowserWindow,
+  type Session,
+  type WebContents,
+  type WebPreferences,
+} from 'electron'
 import {
   BROWSER_PARTITION,
-  browserClientHintHeader,
+  browserRequestHeaders,
   browserUserAgent,
+  browserUserAgentForUrl,
+  isBlankBrowserPopupUrl,
   isBrowserUrl,
   type BrowserBounds,
 } from '../../shared/grid/browser'
@@ -11,6 +21,7 @@ import { publishChecked, publishTextChecked, setPanelStateChecked } from '../act
 import { getState, subscribe } from '../state'
 import {
   createBrowserManager,
+  createBrowserUserAgentSync,
   type BrowserManager,
   type BrowserViewEvents,
   type ManagedBrowserView,
@@ -91,29 +102,46 @@ const THEATER_SCRIPT = (theater: boolean): string => `
 
 const nativeViews = new WeakMap<ManagedBrowserView, WebContentsView>()
 const watchedWindows = new WeakSet<BrowserWindow>()
+const inFlightUrlsByWebContentsId = new Map<number, string>()
 let configuredSession: Session | null = null
 let activeManager: BrowserManager | null = null
+
+function browserWebPreferences(part: Session): WebPreferences {
+  return {
+    session: part,
+    sandbox: true,
+    contextIsolation: true,
+    nodeIntegration: false,
+    nodeIntegrationInSubFrames: false,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    navigateOnDragDrop: false,
+    backgroundThrottling: false,
+  }
+}
 
 function browserSession(): Session {
   if (configuredSession) return configuredSession
   const partition = session.fromPartition(BROWSER_PARTITION)
-  const cleanUa = browserUserAgent(partition.getUserAgent())
+  const rawUa = partition.getUserAgent()
+  const cleanUa = browserUserAgent(rawUa)
   if (cleanUa) partition.setUserAgent(cleanUa)
   const fullChrome = process.versions.chrome || '136.0.0.0'
-  const majorChrome = fullChrome.split('.')[0] || '136'
   partition.webRequest.onBeforeSendHeaders((details, callback) => {
-    const requestHeaders = { ...details.requestHeaders }
-    for (const [key, value] of Object.entries(requestHeaders)) {
-      if (typeof value !== 'string') continue
-      const lower = key.toLowerCase()
-      if (lower === 'user-agent') {
-        requestHeaders[key] = browserUserAgent(value)
-      } else if (lower === 'sec-ch-ua') {
-        requestHeaders[key] = browserClientHintHeader(value, majorChrome)
-      } else if (lower === 'sec-ch-ua-full-version-list') {
-        requestHeaders[key] = browserClientHintHeader(value, fullChrome)
-      }
+    let pageUrl =
+      details.webContentsId !== undefined ? inFlightUrlsByWebContentsId.get(details.webContentsId) : undefined
+    if (!pageUrl && details.webContents && !details.webContents.isDestroyed()) {
+      pageUrl = details.webContents.getURL()
     }
+    const requestHeaders = browserRequestHeaders(details.requestHeaders, {
+      url: details.url,
+      referrer: details.referrer,
+      resourceType: details.resourceType,
+      pageUrl,
+      baseUserAgent: cleanUa || rawUa,
+      chromeVersion: fullChrome,
+      platform: process.platform,
+    })
     callback({ requestHeaders })
   })
   partition.setPermissionRequestHandler((_webContents, permission, callback) => {
@@ -124,54 +152,123 @@ function browserSession(): Session {
   return partition
 }
 
-function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
+function createNativeView(
+  events: BrowserViewEvents,
+  adoptedWebContents?: WebContents,
+  initialUrl = '',
+): ManagedBrowserView {
   const part = browserSession()
-  const raw = new WebContentsView({
-    webPreferences: {
-      session: part,
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      nodeIntegrationInSubFrames: false,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-      navigateOnDragDrop: false,
-      backgroundThrottling: false,
-    },
-  })
+  const raw = adoptedWebContents
+    ? new WebContentsView({ webContents: adoptedWebContents })
+    : new WebContentsView({ webPreferences: browserWebPreferences(part) })
   raw.setVisible(false)
   let lastBounds: BrowserBounds | null = null
   let lastVisible = false
   const { webContents } = raw
-  const cleanUa = browserUserAgent(webContents.getUserAgent())
-  if (cleanUa) webContents.setUserAgent(cleanUa)
+  const baseUa = browserUserAgent(part.getUserAgent()) || webContents.getUserAgent()
+  const startUa = browserUserAgentForUrl(initialUrl, baseUa, process.platform)
+  if (startUa && webContents.getUserAgent() !== startUa) webContents.setUserAgent(startUa)
+
+  const uaSync = createBrowserUserAgentSync(
+    {
+      getURL: () => (webContents.isDestroyed() ? '' : webContents.getURL()),
+      getUserAgent: () => (webContents.isDestroyed() ? '' : webContents.getUserAgent()),
+      setUserAgent: (ua) => {
+        if (!webContents.isDestroyed()) webContents.setUserAgent(ua)
+      },
+      setCdpUserAgentOverride: (userAgent) => {
+        if (webContents.isDestroyed()) return
+        try {
+          if (!webContents.debugger.isAttached()) {
+            if (userAgent === '') return
+            webContents.debugger.attach('1.3')
+          }
+          void webContents.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent }).catch(() => {
+            uaSync.onDebuggerDetach()
+          })
+        } catch {
+          uaSync.onDebuggerDetach()
+        }
+      },
+    },
+    baseUa,
+    process.platform,
+  )
+  webContents.debugger.on('detach', () => uaSync.onDebuggerDetach())
 
   webContents.on('will-attach-webview', (event) => event.preventDefault())
+  webContents.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || details.isSameDocument || !isBrowserUrl(details.url)) return
+    inFlightUrlsByWebContentsId.set(webContents.id, details.url)
+    uaSync.onDidStartNavigation(details.url, details.isMainFrame, details.isSameDocument)
+    if (!isBrowserUrl(webContents.getURL())) events.onDidNavigate(details.url)
+  })
   webContents.on('will-navigate', (event) => {
     if (!isBrowserUrl(event.url)) event.preventDefault()
   })
   webContents.on('will-redirect', (event) => {
-    if (!isBrowserUrl(event.url)) event.preventDefault()
+    if (!isBrowserUrl(event.url)) {
+      event.preventDefault()
+      return
+    }
+    if (event.isMainFrame) {
+      inFlightUrlsByWebContentsId.set(webContents.id, event.url)
+      uaSync.onWillRedirect(event.url, event.isMainFrame)
+    }
   })
   // Additional browser windows open as switchable tabs inside the same browser panel rather than new windows or tiles.
+  // Adopting Chromium's child WebContents preserves window.opener and POST state for OAuth sign-in popups.
   webContents.setWindowOpenHandler(({ url }) => {
-    if (isBrowserUrl(url)) {
-      setImmediate(() => events.onOpenWindow?.(url))
+    if (!isBrowserUrl(url) && !isBlankBrowserPopupUrl(url)) {
+      return { action: 'deny' }
     }
-    return { action: 'deny' }
+    return {
+      action: 'allow',
+      outlivesOpener: true,
+      overrideBrowserWindowOptions: {
+        show: false,
+        webPreferences: browserWebPreferences(part),
+      },
+      createWindow: (options) => {
+        const guest = (options as { webContents?: WebContents }).webContents
+        if (!guest) {
+          if (isBrowserUrl(url)) {
+            setImmediate(() => events.onOpenWindow?.(url))
+          }
+          return webContents
+        }
+        const opened = events.onOpenWindow?.(url, (childEvents) => createNativeView(childEvents, guest, url))
+        if (!opened && !guest.isDestroyed()) {
+          guest.close()
+        }
+        return guest
+      },
+    }
   })
 
   webContents.on('did-start-loading', () => events.onDidStartLoading())
   webContents.on('did-stop-loading', () => events.onDidStopLoading())
-  webContents.on('did-navigate', (_event, url) => events.onDidNavigate(url))
+  webContents.on('did-navigate', (_event, url) => {
+    inFlightUrlsByWebContentsId.delete(webContents.id)
+    uaSync.onDidNavigate(url)
+    events.onDidNavigate(url)
+  })
   webContents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
     if (isMainFrame) events.onDidNavigate(url)
   })
   webContents.on('did-fail-load', (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+    if (isMainFrame) {
+      inFlightUrlsByWebContentsId.delete(webContents.id)
+      uaSync.onDidFailLoad(isMainFrame)
+    }
     events.onDidFailLoad(errorCode, errorDescription, isMainFrame)
   })
   webContents.on('page-title-updated', (_event, title) => events.onPageTitleUpdated(title))
   webContents.on('focus', () => events.onFocus())
+  webContents.once('destroyed', () => {
+    inFlightUrlsByWebContentsId.delete(webContents.id)
+    events.onClose?.()
+  })
 
   const managed: ManagedBrowserView = {
     loadURL: (url) => (webContents.isDestroyed() ? Promise.resolve() : webContents.loadURL(url)),

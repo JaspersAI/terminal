@@ -5,8 +5,11 @@
 import {
   BROWSER_VIEW,
   browserStanding,
+  browserUserAgent,
+  browserUserAgentForUrl,
   clipBounds,
   DEFAULT_BROWSER_URL,
+  isBlankBrowserPopupUrl,
   isBrowserUrl,
   isVideoPageUrl,
   normalizeBounds,
@@ -29,7 +32,8 @@ export interface BrowserViewEvents {
   onDidFailLoad(errorCode: number, errorDescription: string, isMainFrame: boolean): void
   onPageTitleUpdated(title: string): void
   onFocus(): void
-  onOpenWindow?(url: string): void
+  onOpenWindow?(url: string, createView?: (events: BrowserViewEvents) => ManagedBrowserView): ManagedBrowserView | null
+  onClose?(): void
 }
 
 export interface ManagedBrowserView {
@@ -290,10 +294,14 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     }
   }
 
-  function createTab(entry: Entry, initialUrl: string): TabEntry {
+  function createTab(
+    entry: Entry,
+    initialUrl: string,
+    customCreateView: (events: BrowserViewEvents) => ManagedBrowserView = deps.createView,
+  ): TabEntry {
     const id = `t${++entry.nextTabSeq}`
     let tab!: TabEntry
-    const view = deps.createView({
+    const view = customCreateView({
       onDidStartLoading() {
         if (!tab || tab.destroyed || entry.destroyed) return
         tab.loading = true
@@ -355,14 +363,50 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         const standing = browserStanding(deps.getState().grids[entry.workspaceId], entry.panelId)
         if (standing && !standing.focused) deps.focusElement(entry.workspaceId, standing.element.id)
       },
-      onOpenWindow(url) {
-        if (entry.destroyed) return
+      onOpenWindow(url, createChildView) {
+        if (entry.destroyed) return null
+        if (createChildView) {
+          const normalized = normalizeBrowserUrl(url) ?? ''
+          if (!normalized && !isBlankBrowserPopupUrl(url)) return null
+          const opened = createTab(entry, normalized, createChildView)
+          opened.loading = Boolean(normalized)
+          entry.tabs.push(opened)
+          entry.activeTabId = opened.id
+          positionEntry(entry, deps.getState())
+          pushSnapshot(entry)
+          return opened.view
+        }
         const normalized = normalizeBrowserUrl(url)
-        if (!normalized) return
+        if (!normalized) return null
         const opened = createTab(entry, normalized)
         entry.tabs.push(opened)
         entry.activeTabId = opened.id
         loadTabAddress(entry, opened, normalized)
+        return opened.view
+      },
+      onClose() {
+        if (!tab || tab.destroyed || entry.destroyed) return
+        const index = entry.tabs.findIndex((one) => one.id === tab.id)
+        if (index < 0) return
+        if (entry.tabs.length <= 1) {
+          const [removed] = entry.tabs.splice(index, 1)
+          if (removed) destroyTab(entry, removed)
+          const replacement = createTab(entry, DEFAULT_BROWSER_URL)
+          entry.tabs.push(replacement)
+          entry.activeTabId = replacement.id
+          entry.stateUrl = DEFAULT_BROWSER_URL
+          deps.setPanelUrl(entry.workspaceId, entry.panelId, DEFAULT_BROWSER_URL)
+          loadTabAddress(entry, replacement, DEFAULT_BROWSER_URL)
+          return
+        }
+        const [removed] = entry.tabs.splice(index, 1)
+        if (removed) destroyTab(entry, removed)
+        if (entry.activeTabId === tab.id) {
+          const nextTab = entry.tabs[Math.min(index, entry.tabs.length - 1)]!
+          entry.activeTabId = nextTab.id
+        }
+        positionEntry(entry, deps.getState())
+        pushSnapshot(entry)
       },
     })
     tab = {
@@ -652,6 +696,86 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
 
     closeAll() {
       for (const entry of [...entries.values()]) destroyEntry(entry)
+    },
+  }
+}
+
+export interface BrowserUserAgentTarget {
+  getURL(): string
+  getUserAgent(): string
+  setUserAgent(userAgent: string): void
+  setCdpUserAgentOverride?(userAgent: string): void
+}
+
+export interface BrowserUserAgentSync {
+  inFlightUrl(): string | undefined
+  onDidStartNavigation(url: string, isMainFrame: boolean, isSameDocument: boolean): void
+  onWillRedirect(url: string, isMainFrame: boolean): void
+  onDidNavigate(url: string): void
+  onDidFailLoad(isMainFrame: boolean): void
+  onDebuggerDetach(): void
+}
+
+export function createBrowserUserAgentSync(
+  target: BrowserUserAgentTarget,
+  baseUserAgent: string,
+  platform = 'darwin',
+): BrowserUserAgentSync {
+  const cleanUa = browserUserAgent(baseUserAgent)
+  let cdpOverrideUa: string | null = null
+  let inFlightMainFrameUrl: string | undefined
+
+  const resolveUa = (url: string): string => browserUserAgentForUrl(url, cleanUa || baseUserAgent, platform)
+
+  return {
+    inFlightUrl: () => inFlightMainFrameUrl,
+    onDidStartNavigation(url, isMainFrame, isSameDocument) {
+      if (!isMainFrame || isSameDocument || !isBrowserUrl(url)) return
+      inFlightMainFrameUrl = url
+      const targetUa = resolveUa(url)
+      if (targetUa && target.getUserAgent() !== targetUa) {
+        target.setUserAgent(targetUa)
+      }
+      if (cdpOverrideUa !== null) {
+        cdpOverrideUa = null
+        target.setCdpUserAgentOverride?.('')
+      }
+    },
+    onWillRedirect(url, isMainFrame) {
+      if (!isMainFrame || !isBrowserUrl(url)) return
+      inFlightMainFrameUrl = url
+      const targetUa = resolveUa(url)
+      if (!targetUa) return
+      const effectiveUa = cdpOverrideUa ?? target.getUserAgent()
+      if (effectiveUa === targetUa) return
+      const nextOverride = target.getUserAgent() === targetUa ? '' : targetUa
+      cdpOverrideUa = nextOverride || null
+      target.setCdpUserAgentOverride?.(nextOverride)
+    },
+    onDidNavigate(url) {
+      inFlightMainFrameUrl = undefined
+      if (!isBrowserUrl(url)) return
+      const targetUa = resolveUa(url)
+      if (targetUa && target.getUserAgent() !== targetUa) {
+        target.setUserAgent(targetUa)
+      }
+    },
+    onDidFailLoad(isMainFrame) {
+      if (!isMainFrame) return
+      inFlightMainFrameUrl = undefined
+      const committedUrl = target.getURL()
+      if (!isBrowserUrl(committedUrl)) return
+      const targetUa = resolveUa(committedUrl)
+      if (targetUa && target.getUserAgent() !== targetUa) {
+        target.setUserAgent(targetUa)
+      }
+      if (cdpOverrideUa !== null) {
+        cdpOverrideUa = null
+        target.setCdpUserAgentOverride?.('')
+      }
+    },
+    onDebuggerDetach() {
+      cdpOverrideUa = null
     },
   }
 }
