@@ -143,7 +143,7 @@ let lastCentralActivityAt = Date.now()
  * + last 2 verbatim exchanges; otherwise trims to the recent window while preserving any session summary.
  */
 export function centralGoesOn(history: Turn[], now = Date.now()): void {
-  if (isNewSession(lastCentralAt(), now, 'activity')) {
+  if (isNewSession(lastCentralActivityAt, now, 'activity')) {
     const compressed = compressSession(history)
     if (compressed !== history) {
       console.log('[agent] central session boundary crossed: compressed prior sitting into summary')
@@ -153,10 +153,6 @@ export function centralGoesOn(history: Turn[], now = Date.now()): void {
     cutToRecent(history)
   }
   lastCentralActivityAt = now
-}
-
-function lastCentralAt(): number {
-  return lastCentralActivityAt
 }
 
 /**

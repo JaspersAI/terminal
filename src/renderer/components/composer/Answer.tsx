@@ -66,7 +66,7 @@ export function Answer({
         className="max-h-[40vh] py-4 pr-16 pl-5"
       />
       <div className="absolute top-0 right-0 flex h-8 items-center">
-        {onClear && earlier.length > 0 && (
+        {onClear && (earlier.length > 0 || (live?.length ?? 0) > 0) && (
           <button
             type="button"
             id="central-clear-button"

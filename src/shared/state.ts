@@ -1,6 +1,6 @@
 import type { MemoryInfo } from './agent/memory.ts'
 export type { Memory, MemoryInfo } from './agent/memory.ts'
-export type { Loop, Room } from './loops/loops'
+export type { Loop } from './loops/loops'
 
 // Shared by main, preload, and renderer. Keep this file free of Node and DOM imports.
 
@@ -31,11 +31,8 @@ export interface Workspace {
   name: string
 }
 
-export type Tab = Workspace
-
 /** Names are trimmed and capped. Main rejects anything else. */
 export const WORKSPACE_NAME_MAX = 80
-export const TAB_NAME_MAX = WORKSPACE_NAME_MAX
 
 /**
  * An installed view, as the renderer and the orchestrator see it. Main's registry holds the rest of

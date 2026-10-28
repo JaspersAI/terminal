@@ -2,7 +2,7 @@ import type { Place } from '../../shared/agent/asking'
 import { shownQuestion } from '../../shared/agent/attachments'
 import type { Handed } from '../../shared/agent/typed'
 import { closedLoop } from '../../shared/loops/closed'
-import { loopChat, frameOf, gone, shut } from '../../shared/loops/loops'
+import { loopChat, frameOf, gone, LOOP_ID, shut } from '../../shared/loops/loops'
 import type { Exchange } from '../../shared/agent/transcript'
 import { findRoomTab, loopsOf, touchLoop } from '../loops/loops'
 import { getGrids } from '../grid/grid'
@@ -23,9 +23,15 @@ import { createTurns } from './utils/turns'
 
 const turns = createTurns()
 
-/** The room a tile on a tab belongs to, and which tab holds it. The docked chat has none. */
-function loopOn(preferredTabId: string, on: string): { workspaceId: string; loop: string } {
+/** The room a tile or room id belongs to, and which tab holds it. The docked chat has none. */
+function loopOn(preferredTabId: string, on: string): { workspaceId: string; loop: string; elementId: string } {
   const state = getState()
+  if (LOOP_ID.test(on)) {
+    const workspaceId = findRoomTab(state, on) ?? preferredTabId
+    const frame = frameOf(state.grids[workspaceId] ?? {}, on)
+    if (!frame) throw new Error(`Unknown work ${on}.`)
+    return { workspaceId, loop: on, elementId: frame.element.id }
+  }
   const checkTab = (tabId: string): string | null => {
     for (const grid of Object.values(state.grids[tabId] ?? {})) {
       const element = grid.elements.find((e) => e.id === on)
@@ -35,18 +41,18 @@ function loopOn(preferredTabId: string, on: string): { workspaceId: string; loop
     return null
   }
   const local = checkTab(preferredTabId)
-  if (local) return { workspaceId: preferredTabId, loop: local }
+  if (local) return { workspaceId: preferredTabId, loop: local, elementId: on }
   for (const tabId of Object.keys(state.grids)) {
     const found = checkTab(tabId)
-    if (found) return { workspaceId: tabId, loop: found }
+    if (found) return { workspaceId: tabId, loop: found, elementId: on }
   }
   throw new Error(`${on} has no conversation of its own.`)
 }
 
 /** A message sent from a tile's box. */
 export function runLoop(input: string, on: string, ask?: string): Promise<string> {
-  const { workspaceId, loop } = loopOn(getState().currentWorkspaceId, on)
-  return runOn(workspaceId, loop, on, { input, ask })
+  const { workspaceId, loop, elementId } = loopOn(getState().currentWorkspaceId, on)
+  return runOn(workspaceId, loop, elementId, { input, ask })
 }
 
 /**

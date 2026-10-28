@@ -55,8 +55,6 @@ export interface Loop {
   log?: LoopChange[]
 }
 
-export type Room = Loop
-
 /** One change in a loop's life, after it was made. */
 export interface LoopChange {
   at: number
@@ -111,8 +109,6 @@ export interface LoopSpec {
   chat?: string
 }
 
-export type RoomSpec = LoopSpec
-
 /** A tab's rooms with one more, made as the orchestrator asked, under the next id: its desc cut. */
 export function withLoopAsked(loops: Loops, spec: LoopSpec, now: number, minSeq = 0): { loops: Loops; loop: Loop } {
   const seq = Math.max(loops.seq, minSeq) + 1
@@ -151,8 +147,6 @@ export function loopNumber(id: string): number {
 export function loopName(id: string): string {
   return `room_${loopNumber(id)}`
 }
-
-export const roomName = loopName
 
 /** The plugin of the Jaspers deep research agent: its research rooms. */
 export const DEEP_RESEARCH_PLUGIN = 'research'
@@ -613,8 +607,6 @@ export function loopChat(workspaceId: string, loop: string | Pick<Loop, 'id' | '
   return `${workspaceId}/${loop}`
 }
 
-export const roomChat = loopChat
-
 /**
  * What a room's agent is not offered, of what the global assistant has: arranging the window and
  * what is focused in it, the window's cells behind the tiles, the app's settings, and reading or
@@ -733,8 +725,6 @@ export function asksForLoop(asked: string | undefined, answered = false): boolea
   return false
 }
 
-export const asksForRoom = asksForLoop
-
 /**
  * Why no room was started, in words for the orchestrator's model, or null when the user said Start.
  * Only that one choice starts one: a no, a closed question, a question nobody answered in time, and
@@ -823,10 +813,10 @@ export function gone(prev: Record<string, Loops>, next: Record<string, Loops>): 
   })
 }
 
-/** The chats of the loops that were open and are not: closed, deleted, or their workspace was. What they were doing stops. */
+/** The chats of the rooms that were open and are not: closed, deleted, or their tab was closed. What they were doing stops. */
 export function shut(prev: Record<string, Loops>, next: Record<string, Loops>): string[] {
   return Object.entries(prev).flatMap(([workspaceId, had]) => {
     const open = new Set((next[workspaceId]?.list ?? []).map((one) => one.id))
-    return had.list.filter((one) => !open.has(one.id)).map((one) => loopChat(workspaceId, one.id))
+    return had.list.filter((one) => !open.has(one.id)).map((one) => loopChat(workspaceId, one))
   })
 }

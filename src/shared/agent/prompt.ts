@@ -203,14 +203,19 @@ export function describeCatalog(state: AppState): string {
  * it is, and its tile, which the grid map shows with the views inside it. It is how a request is known
  * to belong to work that exists.
  */
-export function describeLoops(state: AppState, workspaceId: string, statusOf: (loop: Loop) => LoopStatus): string {
+export function describeLoops(
+  state: AppState,
+  workspaceId: string,
+  statusOf: (loop: Loop, workspaceId?: string) => LoopStatus,
+): string {
   const loops = state.loops[workspaceId] ?? []
   const tabNameOf = new Map(state.workspaces.map((w) => [w.id, w.name]))
   const otherTabs = Object.entries(state.loops)
     .filter(([tabId, list]) => tabId !== workspaceId && list.length > 0 && tabNameOf.has(tabId))
     .flatMap(([tabId, list]) =>
       list.map(
-        (one) => `${loopName(one.id)} (in ${tabNameOf.get(tabId)!}, ${statusOf(one)}): ${JSON.stringify(one.desc)}`,
+        (one) =>
+          `${loopName(one.id)} (in ${tabNameOf.get(tabId)!}, ${statusOf(one, tabId)}): ${JSON.stringify(one.desc)}`,
       ),
     )
   const closed = Object.values(state.closedLoops).flat()
@@ -227,18 +232,11 @@ export function describeLoops(state: AppState, workspaceId: string, statusOf: (l
     'Work on this workspace, each piece with a tile and an agent of its own:',
     ...loops.map((one) => {
       const tile = frameOf(grids, one.id)?.element.id ?? 'none'
-      return `- ${loopName(one.id)}, ${statusOf(one)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
+      return `- ${loopName(one.id)}, ${statusOf(one, workspaceId)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
     }),
     ...otherLine,
     ...shut,
   ].join('\n')
-}
-
-/**
- * A room's agent is completely blind to the work of other agents, so describeOtherWork returns nothing.
- */
-export function describeOtherWork(_state: AppState, _workspaceId: string, _loopId: string): string[] {
-  return []
 }
 
 /** The plugins a loop's agent is not told of, in one line that says how to be. Nothing when there are none. */

@@ -12,7 +12,7 @@ import { askedIn } from '../../../shared/agent/asking'
 import { withAttachments } from '../../../shared/agent/attachments'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
 import { errorMessage } from '../../lib/errors'
-import { useAppState } from '../../lib/state'
+import { currentWorkspace, useAppState } from '../../lib/state'
 import { Answer } from './Answer'
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from './Attachments'
 import { dockChat } from './dock'
@@ -90,7 +90,7 @@ export function Composer(): ReactElement {
   const [menuIndex, setMenuIndex] = useState(0)
   // The draft the skills menu was closed on with Escape; typing opens it again.
   const [menuClosedOn, setMenuClosedOn] = useState<string | null>(null)
-  const workspaceId = useAppState((s) => s.currentWorkspaceId)
+  const workspaceId = useAppState((s) => currentWorkspace(s).id)
   // The welcome after setup, while it is being said in this workspace's chat: how many of its messages
   // are there so far. It holds the composer up with the field showing, so the user sees where to answer.
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))

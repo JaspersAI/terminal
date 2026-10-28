@@ -212,7 +212,7 @@ export function LoopBox({
     const ask = crypto.randomUUID()
     updateTileBox(place, (b) => tileBoxSent(b, place, ask, text))
     // A request that began is ended by its run's events. What comes back here settles one that never did.
-    window.app.agent.run(text, ask, elementId).then(
+    window.app.agent.run(text, ask, loop.id).then(
       (reply) => updateTileBox(place, (b) => tileBoxSettled(b, ask, reply, null)),
       (err: unknown) => updateTileBox(place, (b) => tileBoxSettled(b, ask, '', errorMessage(err))),
     )

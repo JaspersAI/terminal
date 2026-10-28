@@ -69,7 +69,7 @@ export function stateNow(workspaceId: string): string {
   return [
     ...(tabsLine ? [tabsLine] : []),
     describeGrid(workspaceId, windowSize, focusedWindow()),
-    describeLoops(state, workspaceId, (loop) => statusNow(state, workspaceId, loop.id)),
+    describeLoops(state, workspaceId, (loop, tabId = workspaceId) => statusNow(state, tabId, loop.id)),
     // What the focused element shows, without its view's instructions: those are for whoever drives it.
     describeRound(state, workspaceId, () => undefined, undefined, focusedWindow()),
     ...(filed.length > 0 ? [describeFiled(filed, state.sources)] : []),

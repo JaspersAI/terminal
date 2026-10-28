@@ -50,12 +50,17 @@ export function useAppState<T>(select?: (state: AppState) => T): T | AppState {
 /** Asks main for a change. Resolves once main applied it; the new tree arrives by push. Rejects with main's message. */
 export async function dispatch(action: Action): Promise<void> {
   try {
-    if (
-      typeof window !== 'undefined' &&
-      window.app.windowNumber > 1 &&
-      (action.type === 'tab.select' || action.type === 'workspace.select')
-    ) {
-      localTabId = action.id
+    if (typeof window !== 'undefined' && window.app.windowNumber > 1) {
+      if (action.type === 'tab.select' || action.type === 'workspace.select') {
+        if (localTabId !== action.id) {
+          localTabId = action.id
+          for (const listener of listeners) listener()
+        }
+        return
+      }
+      if (action.type === 'tab.create' || action.type === 'workspace.create') {
+        localTabId = null
+      }
     }
     await window.app.state.dispatch(action)
   } catch (err) {

@@ -267,8 +267,8 @@ export function registerAgentIpc(): void {
     if (typeof input !== 'string' || !input.trim()) throw new Error('Nothing to send.')
     if (ask != null && (typeof ask !== 'string' || !ASK_ID.test(ask)))
       throw new Error('agent:run names a request with a short id.')
-    if (on != null && (typeof on !== 'string' || !ELEMENT_ID.test(on)))
-      throw new Error('agent:run names the tile a message is for by its element id.')
+    if (on != null && (typeof on !== 'string' || (!ELEMENT_ID.test(on) && !LOOP_ID.test(on))))
+      throw new Error('agent:run names the tile or room a message is for by its id.')
     return on == null ? run(input.trim(), ask ?? undefined) : runLoop(input.trim(), on, ask ?? undefined)
   })
   ipcMain.handle('agent:stop', (_event, runId: unknown, ask: unknown) => {

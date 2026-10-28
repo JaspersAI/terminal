@@ -322,6 +322,8 @@ test('closing a tab archives its open and closed rooms into global memory withou
     back.grids['t1']![1]!.elements.some((e) => e.loop === 'f1'),
     true,
   )
+  // Closing f1 on t1 stops its canonical chat ('t2/f1'), not 't1/f1'.
+  assert.deepEqual(shut(back.loops, { t1: { seq: 5, list: [loop('f5', 'main work')] } }), ['t2/f1'])
 })
 
 test('unifyTabRooms deduplicates colliding room ids across legacy workspaces while preserving their chat keys', () => {

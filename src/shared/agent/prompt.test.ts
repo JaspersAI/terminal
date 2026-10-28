@@ -21,7 +21,6 @@ import {
   describeInstalledFor,
   describeInstalledToRoute,
   describeCatalog,
-  describeOtherWork,
   describeOthers,
   describePlugin,
   describeRound,
@@ -769,7 +768,7 @@ test('the orchestrator is told each room on the tab by its name: what it is doin
     describeLoops({ ...tree(EMPTY_GRID), closedLoops: { [WS]: [closed] } }, WS, () => 'idle'),
     'Work on this workspace: none.\nClosed work, which reopen_room brings back: room_3, "Screen".',
   )
-  // Central also sees rooms open on other tabs so it has full context across the terminal.
+  // Central also sees rooms open on other tabs with their tab-specific status so it has full context across the terminal.
   assert.equal(
     describeLoops(
       {
@@ -781,9 +780,9 @@ test('the orchestrator is told each room on the tab by its name: what it is doin
         loops: { other: [backtest] },
       },
       WS,
-      () => 'idle',
+      (loop, tabId) => (tabId === 'other' && loop.id === 'f2' ? 'working' : 'idle'),
     ),
-    'Work on this workspace: none.\nRooms open on other tabs: room_2 (in Tab 2, idle): "Backtest FLWS".',
+    'Work on this workspace: none.\nRooms open on other tabs: room_2 (in Tab 2, working): "Backtest FLWS".',
   )
 })
 
@@ -933,17 +932,6 @@ test("a loop's agent is told its tile, how the views inside it are laid out, and
       'output: null',
     ].join('\n'),
   )
-})
-
-test('a room agent is completely blind to other rooms on the workspace (describeOtherWork returns empty)', () => {
-  const frame = placeView(EMPTY_GRID, { content: { kind: 'frame' }, size: 'half', anchor: 'left', loop: 'f1' })
-  const other = placeView(layoutOf(frame.grid), { content: { kind: 'frame' }, loop: 'f2' })
-  const both = withLayout(frame.grid, undefined, other.grid)
-  const grid = inside(both, 'e2', { content: { kind: 'view', view: 'core/note' }, state: { text: 'a' }, loop: 'f2' })
-  const screener = { ...NOTE_LOOP, id: 'f2', desc: 'Screener: food and retail' }
-  const empty = { ...NOTE_LOOP, id: 'f3', desc: 'Not placed' }
-  const state = { ...tree(grid), loops: { [WS]: [NOTE_LOOP, screener, empty] } }
-  assert.deepEqual(describeOtherWork(state, WS, 'f1'), [])
 })
 
 test('what is running, the time, and the tasks are said the same with or without a focus line', () => {

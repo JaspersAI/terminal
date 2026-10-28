@@ -10,6 +10,7 @@ import {
 import { usePublish } from '@jaspers-ai/sdk'
 import { askedIn } from '../../shared/agent/asking'
 import { withAttachments } from '../../shared/agent/attachments'
+import { MAIN_WINDOW } from '../../shared/grid/windows'
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from '../components/composer/Attachments'
 import { useEarlier, useNoticeTimer } from '../components/composer/conversation'
 import { pasteLinks } from '../components/composer/paste'
@@ -38,10 +39,9 @@ import type { ViewProps } from './index'
 
 export function Chat({ panel }: ViewProps): ReactElement {
   const workspaceId = panel.workspaceId
-  const windowNumber = window.app.windowNumber
   // This chat's own element, so undocking removes the one the user is looking at.
   const elementId = useAppState(
-    (s) => s.grids[workspaceId]?.[windowNumber]?.panels.find((p) => p.id === panel.id)?.elementId ?? null,
+    (s) => s.grids[workspaceId]?.[MAIN_WINDOW]?.panels.find((p) => p.id === panel.id)?.elementId ?? null,
   )
   const secretRequest = useAppState((s) => askedIn(s.secretRequests))
   const question = useAppState((s) => askedIn(s.questions))
@@ -177,7 +177,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
         </div>
       </form>
       <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
-        {earlier.length > 0 && (
+        {(earlier.length > 0 || shown.length > 0) && (
           <button type="button" id="docked-chat-clear" onClick={clear} className="underline hover:text-foreground">
             Clear
           </button>

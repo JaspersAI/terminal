@@ -30,11 +30,12 @@ export async function setUpLoop(
   const state = toPublic(getState())
   const havePlugins = Object.keys(state.plugins)
   const haveSkills = usableSkills(state, 'model').map((one) => one.id)
-  if (given?.plugins !== undefined || given?.skills !== undefined) {
-    const direct = setUpOf({ plugins: given.plugins ?? [], skills: given.skills ?? [] }, havePlugins, haveSkills)
-    if (direct.plugins.length > 0 || direct.skills.length > 0 || (given.plugins?.length ?? 0) === 0) {
-      return direct
-    }
+  const direct =
+    given?.plugins !== undefined || given?.skills !== undefined
+      ? setUpOf({ plugins: given.plugins ?? [], skills: given.skills ?? [] }, havePlugins, haveSkills)
+      : { plugins: [], skills: [] }
+  if (direct.plugins.length > 0 || (havePlugins.length === 0 && haveSkills.length === 0)) {
+    return direct
   }
   const log = (line: string): void => console.log(`[agent] setup ${line}`)
   const controller = new AbortController()
@@ -60,13 +61,10 @@ export async function setUpLoop(
     })
     const call = reply.toolCalls.find((one) => one.name === SETUP_TOOL)
     if (!call) throw new Error(`Setting up the work chose nothing${reply.text ? `: ${reply.text}` : '.'}`)
-    const chosen = setUpOf(
-      call.input,
-      Object.keys(state.plugins),
-      usableSkills(state, 'model').map((one) => one.id),
-    )
-    log(`plugins ${chosen.plugins.join(', ') || 'none'}; skills ${chosen.skills.join(', ') || 'none'}`)
-    return chosen
+    const chosen = setUpOf(call.input, havePlugins, haveSkills)
+    const mergedSkills = [...new Set([...chosen.skills, ...direct.skills])]
+    log(`plugins ${chosen.plugins.join(', ') || 'none'}; skills ${mergedSkills.join(', ') || 'none'}`)
+    return { plugins: chosen.plugins, skills: mergedSkills }
   } finally {
     context.signal?.removeEventListener('abort', stopped)
   }
