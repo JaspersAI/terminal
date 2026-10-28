@@ -114,6 +114,7 @@ const NAMING = [
   'symbol',
   'ticker',
   'query',
+  'file',
   'url',
   'id',
   'source',
