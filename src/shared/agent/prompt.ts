@@ -70,7 +70,7 @@ export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, APP_RUN].join(' ')
 // in its bar, and its views are what is seen first. So the reply is short, and what is to be looked at
 // is a view.
 const SAID_BRIEFLY =
-  "This work has a conversation of its own with the user, kept whole and sent to you whole: what they type in your tile's command line, your steps, and your replies. Your tile keeps it folded behind a small status in its bar, and opened it shows the latest request with your steps and reply; what the user sees first is your views. So reply in one or two plain sentences that say what came of the request, and put what the user is to look at in a view: what the plugins show, never a note of your own words."
+  "This work has a conversation of its own with the user, kept whole and sent to you whole: what they type in your tile's command line, your steps, and your replies. Your tile keeps it folded behind a small status in its bar, and opened it shows that conversation; what the user sees first is your views. So reply in one or two plain sentences that say what came of the request, and put what the user is to look at in a view: what the plugins show, never a note of your own words."
 
 /** The rules for a loop's agent: the plugins do the work, what it shows shows within seconds, and its reply is its conversation, shown in its tile when the loop shows its chat, and said briefly when not. */
 export function loopRules(chatShown: boolean): string {
