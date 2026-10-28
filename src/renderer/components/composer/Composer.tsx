@@ -9,10 +9,12 @@ import {
   type ReactElement,
 } from 'react'
 import { askedIn } from '../../../shared/agent/asking'
+import { withAttachments } from '../../../shared/agent/attachments'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
 import { errorMessage } from '../../lib/errors'
 import { useAppState } from '../../lib/state'
 import { Answer } from './Answer'
+import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from './Attachments'
 import { dockChat } from './dock'
 import { hears } from './hears'
 import { Orb } from './Orb'
@@ -82,6 +84,7 @@ export function Composer(): ReactElement {
   // sight and is not counted: it lets the composer go, and is in the conversation when that comes up.
   const watching = shown.some((one) => one.working)
   const [draft, setDraft] = useState('')
+  const attachments = useAttachments()
   const skills = useAppState((s) => s.skills)
   const disabledSkills = useAppState((s) => s.disabledSkills)
   const [menuIndex, setMenuIndex] = useState(0)
@@ -120,10 +123,16 @@ export function Composer(): ReactElement {
       nearby ||
       peekFocused ||
       draft !== '' ||
+      attachments.hasAny ||
       secretRequest !== null ||
       question !== null ||
       welcoming,
   )
+  const drop = useFileDrop((files) => {
+    setMode('text')
+    poke()
+    attachments.attach(files)
+  })
   const { browsing, conversation, historyClosed, fading, noticeFading, close, closeHistory, closeNotice, more } =
     useConversation({
       open,
@@ -136,7 +145,8 @@ export function Composer(): ReactElement {
       welcome,
       // Not from under a line being typed, a question, a key, a recording, or the welcome.
       tuck: () => {
-        if (draft === '' && secretRequest === null && question === null && !busy && !welcoming) tuck()
+        if (draft === '' && !attachments.hasAny && secretRequest === null && question === null && !busy && !welcoming)
+          tuck()
       },
     })
 
@@ -174,9 +184,11 @@ export function Composer(): ReactElement {
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    const text = draft.trim()
-    if (!text || busy) return
+    if (busy || attachments.reading > 0) return
+    const text = withAttachments(draft, attachments.files)
+    if (!text) return
     setDraft('')
+    attachments.clear()
     void ask(text)
   }
 
@@ -337,36 +349,58 @@ export function Composer(): ReactElement {
       <div
         ref={panel}
         inert={!open}
+        onDragOver={drop.onDragOver}
+        onDragLeave={drop.onDragLeave}
+        onDrop={drop.onDrop}
         className={`absolute inset-x-0 bottom-12 flex origin-bottom flex-col items-center gap-4 px-4 ${
           open ? 'pointer-events-auto' : ''
-        } ${menuOpen ? 'z-10' : ''}`}
+        } ${menuOpen ? 'z-10' : ''} ${drop.dropping ? 'outline-2 -outline-offset-2 outline-foreground outline-dashed' : ''}`}
       >
         {mode === 'orb' ? (
           <Orb phase={phase} label={hasVoice ? 'Hold to talk' : 'Type a request'} onPress={press} onRelease={release} />
         ) : (
           <form onSubmit={submit} className="relative w-80 max-w-full">
             {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
-            <input
-              ref={input}
-              name="prompt"
-              autoComplete="off"
-              spellCheck={false}
-              disabled={busy}
-              value={draft}
-              placeholder="Ask anything, or / for a skill"
-              role="combobox"
-              aria-expanded={menuOpen}
-              aria-controls={menuOpen ? 'slash-menu' : undefined}
-              aria-activedescendant={menuOpen ? `slash-option-${active}` : undefined}
-              aria-autocomplete="list"
-              onKeyDown={menuKey}
-              onPaste={pasteLinks}
-              onChange={(event) => {
-                setDraft(event.target.value)
-                setMenuIndex(0)
-              }}
-              className="w-full border border-border bg-background px-3 py-2 text-sm shadow-lg disabled:opacity-50"
+            <AttachmentChips
+              attachments={attachments}
+              className="mb-1.5 border border-border bg-background p-1.5 shadow-lg"
             />
+            <div className="flex items-center border border-border bg-background pr-1 shadow-lg">
+              <AttachButton disabled={busy} onFiles={attachments.attach} />
+              <input
+                ref={input}
+                name="prompt"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={busy}
+                value={draft}
+                placeholder="Ask anything, or / for a skill"
+                role="combobox"
+                aria-expanded={menuOpen}
+                aria-controls={menuOpen ? 'slash-menu' : undefined}
+                aria-activedescendant={menuOpen ? `slash-option-${active}` : undefined}
+                aria-autocomplete="list"
+                onKeyDown={menuKey}
+                onPaste={(event) => pasteLinks(event, attachments.attach)}
+                onChange={(event) => {
+                  setDraft(event.target.value)
+                  setMenuIndex(0)
+                }}
+                className="min-w-0 flex-1 bg-transparent py-2 pr-2 pl-1 text-sm outline-none disabled:opacity-50"
+              />
+              {attachments.files.length > 0 && (
+                <button
+                  type="submit"
+                  aria-label="Send"
+                  disabled={busy || attachments.reading > 0}
+                  className="flex h-6 w-6 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-30"
+                >
+                  <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+                    <path d="M5 9V1.5M1.5 5 5 1.5 8.5 5" />
+                  </svg>
+                </button>
+              )}
+            </div>
           </form>
         )}
 

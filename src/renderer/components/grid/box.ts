@@ -8,6 +8,7 @@
 // The extensions are explicit because Node's test runner resolves these imports at run time.
 import { THINKING, type AgentEvent, type AgentOrigin } from '../../../shared/agent/agent.ts'
 import type { Place } from '../../../shared/agent/asking'
+import { shownQuestion } from '../../../shared/agent/attachments.ts'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript.ts'
 import type { LoopStatus } from '../../../shared/loops/loops'
 import { answered, failed, heard, over, sent, without, type LiveExchange } from '../composer/live.ts'
@@ -34,7 +35,7 @@ export function boxHeard(list: LiveExchange[], event: AgentEvent, place: Place):
         ask: event.ask ?? event.runId,
         runId: event.runId,
         workspaceId: event.workspaceId,
-        question: event.request ?? '',
+        question: shownQuestion(event.request ?? ''),
         answer: null,
         citations: [],
         steps: [],

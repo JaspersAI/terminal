@@ -102,11 +102,39 @@ function flat(text: string): string {
   return text.replace(/[\s\u00a0]+/g, ' ').trim()
 }
 
+export interface ClipboardSource {
+  files?: ArrayLike<File>
+  items?: ArrayLike<{ kind: string; getAsFile?: () => File | null }>
+}
+
+/** Files on the clipboard when a paste carries one or more files rather than text alone. */
+export function clipboardFiles(clipboardData: ClipboardSource | null | undefined): File[] {
+  if (!clipboardData) return []
+  const direct = Array.from(clipboardData.files ?? [])
+  if (direct.length > 0) return direct
+  const out: File[] = []
+  for (const item of Array.from(clipboardData.items ?? [])) {
+    if (item.kind !== 'file') continue
+    const file = item.getAsFile?.()
+    if (file) out.push(file)
+  }
+  return out
+}
+
 /**
- * A request field's paste: rich text with links goes in as `pastedText`, where the selection is, as
- * typing would put it, so the field's own change and undo see it. Anything else is left to the field.
+ * A request field's paste: pasted files are handed to `onFiles`; rich text with links goes in as
+ * `pastedText`, where the selection is, as typing would put it, so the field's own change and undo
+ * see it. Anything else is left to the field.
  */
-export function pasteLinks(event: ClipboardEvent<HTMLInputElement>): void {
+export function pasteLinks(event: ClipboardEvent<HTMLInputElement>, onFiles?: (files: File[]) => void): void {
+  if (onFiles) {
+    const files = clipboardFiles(event.clipboardData)
+    if (files.length > 0) {
+      event.preventDefault()
+      onFiles(files)
+      return
+    }
+  }
   const html = event.clipboardData.getData('text/html')
   if (!html) return
   const text = pastedText(new DOMParser().parseFromString(html, 'text/html').body)

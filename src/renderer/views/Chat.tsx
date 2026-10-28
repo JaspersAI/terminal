@@ -9,6 +9,8 @@ import {
 } from 'react'
 import { usePublish } from '@jaspers-ai/sdk'
 import { askedIn } from '../../shared/agent/asking'
+import { withAttachments } from '../../shared/agent/attachments'
+import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from '../components/composer/Attachments'
 import { useEarlier, useNoticeTimer } from '../components/composer/conversation'
 import { pasteLinks } from '../components/composer/paste'
 import { QuestionField } from '../components/composer/QuestionField'
@@ -49,6 +51,8 @@ export function Chat({ panel }: ViewProps): ReactElement {
   const request = useRequest()
   const { busy, working, shown, earlier, ask, stop } = request
   const [draft, setDraft] = useState('')
+  const attachments = useAttachments()
+  const drop = useFileDrop(attachments.attach)
   const [menuIndex, setMenuIndex] = useState(0)
   // The draft the skills menu was closed on with Escape; typing opens it again.
   const [menuClosedOn, setMenuClosedOn] = useState<string | null>(null)
@@ -74,9 +78,11 @@ export function Chat({ panel }: ViewProps): ReactElement {
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    const text = draft.trim()
-    if (!text || busy) return
+    if (busy || attachments.reading > 0) return
+    const text = withAttachments(draft, attachments.files)
+    if (!text) return
     setDraft('')
+    attachments.clear()
     void ask(text)
   }
 
@@ -111,7 +117,13 @@ export function Chat({ panel }: ViewProps): ReactElement {
   }, [secretRequest, question])
 
   return (
-    <div id="docked-chat" className="flex h-full flex-col">
+    <div
+      id="docked-chat"
+      onDragOver={drop.onDragOver}
+      onDragLeave={drop.onDragLeave}
+      onDrop={drop.onDrop}
+      className={`flex h-full flex-col ${drop.dropping ? 'outline-2 -outline-offset-2 outline-foreground outline-dashed' : ''}`}
+    >
       <Transcript earlier={earlier} onEarlier={more} live={shown} onStop={stop} className="min-h-0 flex-1 px-3 py-3" />
       {notice && (
         <div className="shrink-0 border-t border-border px-3 py-2">
@@ -126,27 +138,43 @@ export function Chat({ panel }: ViewProps): ReactElement {
       )}
       <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
         {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
-        <input
-          ref={input}
-          name="prompt"
-          autoComplete="off"
-          spellCheck={false}
-          disabled={busy}
-          value={draft}
-          placeholder="Ask anything, or / for a skill"
-          role="combobox"
-          aria-expanded={menuOpen}
-          aria-controls={menuOpen ? 'slash-menu' : undefined}
-          aria-activedescendant={menuOpen ? `slash-option-${active}` : undefined}
-          aria-autocomplete="list"
-          onKeyDown={menuKey}
-          onPaste={pasteLinks}
-          onChange={(event) => {
-            setDraft(event.target.value)
-            setMenuIndex(0)
-          }}
-          className="w-full border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-foreground disabled:opacity-50"
-        />
+        <AttachmentChips attachments={attachments} className="mb-1.5" />
+        <div className="flex items-center border border-border bg-background pr-1 focus-within:border-foreground">
+          <AttachButton disabled={busy} onFiles={attachments.attach} />
+          <input
+            ref={input}
+            name="prompt"
+            autoComplete="off"
+            spellCheck={false}
+            disabled={busy}
+            value={draft}
+            placeholder="Ask anything, or / for a skill"
+            role="combobox"
+            aria-expanded={menuOpen}
+            aria-controls={menuOpen ? 'slash-menu' : undefined}
+            aria-activedescendant={menuOpen ? `slash-option-${active}` : undefined}
+            aria-autocomplete="list"
+            onKeyDown={menuKey}
+            onPaste={(event) => pasteLinks(event, attachments.attach)}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              setMenuIndex(0)
+            }}
+            className="min-w-0 flex-1 bg-transparent py-1.5 pr-2 pl-1 text-sm outline-none disabled:opacity-50"
+          />
+          {attachments.files.length > 0 && (
+            <button
+              type="submit"
+              aria-label="Send"
+              disabled={busy || attachments.reading > 0}
+              className="flex h-6 w-6 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-30"
+            >
+              <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+                <path d="M5 9V1.5M1.5 5 5 1.5 8.5 5" />
+              </svg>
+            </button>
+          )}
+        </div>
       </form>
       <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
         <button

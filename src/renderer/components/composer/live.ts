@@ -10,6 +10,7 @@
 
 // The extension is explicit because Node's test runner resolves this import at run time.
 import { addStep, plain, stepped, THINKING, thought, type AgentEvent } from '../../../shared/agent/agent.ts'
+import { shownQuestion } from '../../../shared/agent/attachments.ts'
 import type { Citation } from '../../../shared/agent/citations'
 
 export interface LiveExchange {
@@ -59,7 +60,7 @@ export function sent(list: LiveExchange[], ask: string, workspaceId: string, que
       ask,
       runId: null,
       workspaceId,
-      question,
+      question: shownQuestion(question),
       answer: null,
       citations: [],
       steps: [],
