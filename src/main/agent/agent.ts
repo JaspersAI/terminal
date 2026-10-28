@@ -233,6 +233,7 @@ async function loop({
         if (spent) outOfRounds?.()
         return text
       }
+      const earlierTurns = history.slice()
       history.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw })
       const isHandoff = (name: string): boolean => available.find((tool) => tool.name === name)?.handoff === true
       const allHandoff = reply.toolCalls.every((call) => isHandoff(call.name))
@@ -244,7 +245,7 @@ async function loop({
       // Kept before the calls are run: one of them may take as long as a build.
       keep?.()
       // All results from one round go back together, in one turn, with the state they left behind.
-      const results = await runCalls(reply.toolCalls, context, available, log, entry)
+      const results = await runCalls(reply.toolCalls, context, available, log, entry, earlierTurns)
       // What the user added while this round was in flight joins the thread after its results. The
       // state rides on the last turn of the round, so it is said once. A run stopped under its calls
       // takes nothing: what was added then is left for the run after it.

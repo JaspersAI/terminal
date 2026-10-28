@@ -1,10 +1,11 @@
 import { ACTIVATE_SKILL, READ_SKILL_FILE } from '@jaspers-ai/sdk/skills'
 import { untilAborted } from '../../../shared/abort'
+import { restoreInput } from '../../../shared/agent/aside'
 import { capOutput } from '../../../shared/agent/history'
 import { cap } from '../../../shared/agent/prompt'
 import { batches, callLine } from '../../../shared/agent/rounds'
 import { messageOf } from '../../../shared/rpc'
-import type { ToolCall, ToolResult } from '../../llm/llm'
+import type { ToolCall, ToolResult, Turn } from '../../llm/llm'
 import type { Tool, ToolContext } from '../tools/types'
 import { noteToolEnd, noteToolStart } from './record'
 import { emit, type Live } from './runs'
@@ -22,11 +23,12 @@ export async function runCalls(
   tools: Tool[],
   log: (line: string) => void,
   entry: Live,
+  history: Turn[] = [],
 ): Promise<ToolResult[]> {
   const readsOnly = (call: ToolCall): boolean => tools.find((t) => t.name === call.name)?.readsOnly === true
   const results: ToolResult[] = []
   for (const batch of batches(calls, readsOnly)) {
-    results.push(...(await Promise.all(batch.map((call) => execute(call, context, tools, log, entry)))))
+    results.push(...(await Promise.all(batch.map((call) => execute(call, context, tools, log, entry, history)))))
   }
   return results
 }
@@ -38,6 +40,7 @@ async function execute(
   tools: Tool[],
   log: (line: string) => void,
   entry: Live,
+  history: Turn[],
 ): Promise<ToolResult> {
   const signal = entry.controller.signal
   // A run stopped under its calls still answers every one of them, since a call with no result is
@@ -61,8 +64,10 @@ async function execute(
   try {
     const tool = tools.find((t) => t.name === call.name)
     if (!tool) throw new Error(`Unknown tool "${call.name}".`)
+    const input = restoreInput(call.input, history)
+    call.input = input
     // The wait ends when the run does, whether or not the tool itself knows how to be stopped.
-    const answer = await untilAborted(tool.run(call.input, context), signal)
+    const answer = await untilAborted(tool.run(input, context), signal)
     // A tool that caps or formats its own answer (or brings back a stored one whole) sets `whole`.
     const output = tool.whole ? answer : capOutput(answer)
     // A skill's instructions and files are long and already on disk; the log keeps their start.

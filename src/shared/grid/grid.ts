@@ -748,6 +748,22 @@ export function clearPluginPanelErrors(grid: Grid, plugin: string): Grid {
   return { ...grid, panels }
 }
 
+/** Distinct `<viewId>: <error>` lines currently held by panels of `pluginId` across all workspaces and windows. */
+export function activeViewErrors(grids: Record<string, Record<number, Grid>>, pluginId: string): string[] {
+  const prefix = `${pluginId}/`
+  const seen = new Set<string>()
+  for (const windows of Object.values(grids)) {
+    for (const grid of Object.values(windows)) {
+      for (const panel of grid.panels) {
+        if (panel.error && panel.content.kind === 'view' && panel.content.view.startsWith(prefix)) {
+          seen.add(`${panel.content.view}: ${panel.error}`)
+        }
+      }
+    }
+  }
+  return [...seen]
+}
+
 /** The view panels a panel write or refresh affects: the panel itself for a view, or the views inside it for a frame. */
 export function watchedViewPanels(grid: Grid, panelId: string): Panel[] {
   const panel = panelOf(grid, panelId)

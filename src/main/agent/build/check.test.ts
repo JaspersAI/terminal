@@ -50,6 +50,13 @@ test('a plugin is described in one line: ready with what it offers, an error wit
     'rates: ready (build 1), sources rates/latest, views rates/table, host ready',
   )
   assert.equal(
+    pluginLine(
+      info({ views: ['rates/table'], host: 'ready', errors: ['rates/table: children is not defined'] }),
+      'rates',
+    ),
+    'rates: ready (build 1), sources rates/latest, views rates/table, host ready, error: rates/table: children is not defined',
+  )
+  assert.equal(
     pluginLine(info({ status: 'error', errors: ['plugin.tsx:3:1 Unexpected token', 'another'], version: 0 }), 'rates'),
     'rates: error: plugin.tsx:3:1 Unexpected token',
   )
