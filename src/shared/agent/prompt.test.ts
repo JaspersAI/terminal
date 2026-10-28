@@ -604,7 +604,8 @@ test('a loop is told to look on Jaspers Hub before it builds a plugin, and to ke
 test('a loop whose conversation is folded is told it has one, folded behind its bar; one that shows it, as a conversation', () => {
   const quiet = loopRules(false)
   assert.match(quiet, /This work has a conversation of its own with the user, kept whole and sent to you whole/)
-  assert.match(quiet, /keeps it folded behind a small status in its bar/)
+  assert.match(quiet, /keeps it folded behind a small status in its bar, and opened it shows that conversation/)
+  assert.doesNotMatch(quiet, /shows the latest request/)
   assert.doesNotMatch(quiet, /Your reply is the conversation in your work's tile/)
   assert.match(LOOP_RULES, /Your reply is the conversation in your work's tile/)
   // Everything else is the same.
