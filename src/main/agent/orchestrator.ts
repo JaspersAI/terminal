@@ -8,6 +8,7 @@ import { signsIn } from '../../shared/llm/providers'
 import type { Turn } from '../../shared/llm/llm'
 import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { withoutSecretPrompts } from '../actions'
+import { recordRun } from '../data/store'
 import { getGrids } from '../grid/grid'
 import { loopsOf } from '../loops/loops'
 import { getProviderConfig } from '../secrets'
@@ -272,7 +273,9 @@ export function registerAgentIpc(): void {
     }
     return stop(id)
   })
-  ipcMain.handle('agent:parse-file', (_event, name: unknown, bytes: unknown) => parseAttachment(name, bytes))
+  ipcMain.handle('agent:parse-file', (_event, name: unknown, bytes: unknown) =>
+    parseAttachment(name, bytes, { recordRun }),
+  )
   // A window that opened partway through a run, or reloaded, asks what is in flight.
   ipcMain.handle('agent:running', () => running())
   ipcMain.handle('agent:history', (_event, limit: unknown, before: unknown, loop: unknown) => {

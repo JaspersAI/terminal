@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { test } from 'node:test'
 import zlib from 'node:zlib'
-import { parseAttachment } from './attachments.ts'
+import { openStore } from '../../store/db.ts'
+import { parseAttachment, readAttachment } from './attachments.ts'
 
 /** Builds a minimal valid ZIP buffer from path -> content entries (stored, method 0). */
 function makeZip(entries: Record<string, string | Buffer>): Buffer {
@@ -203,4 +207,64 @@ test('bounds extreme XLSX column coordinates and isolates PDF stream dictionarie
   )
   const parsedPdf = await parseAttachment('fonts.pdf', pdf)
   assert.ok(parsedPdf.text.includes('ABKeep'), parsedPdf.text)
+})
+
+test('large documents return a compact manifest in the turn while keeping every chunk searchable and readable via readAttachment', async () => {
+  const sections: string[] = []
+  for (let i = 1; i <= 40; i++) {
+    sections.push(
+      `# Section ${i}: Topic ${i}\n` +
+        (i === 27
+          ? 'The Series B preferred warrant carries a strike price of $14.75 and expires in November 2029.\n'.repeat(40)
+          : `Standard operating commentary for section ${i} covering general administrative expenses.\n`.repeat(45)),
+    )
+  }
+  const full = sections.join('\n\n')
+  assert.ok(full.length > 120_000, `expected > 120k chars, got ${full.length}`)
+
+  const attached = await parseAttachment('s1-prospectus.md', Buffer.from(full, 'utf8'))
+  assert.ok(attached.id, 'expected an attachment id')
+  assert.equal(attached.totalChars, full.trim().length)
+  assert.ok((attached.chunkCount ?? 0) > 30)
+  // The turn payload is a compact manifest + preview, not the whole 130k-character document.
+  assert.ok(attached.text.length < 6_000, `manifest too large: ${attached.text.length}`)
+  assert.ok(attached.text.includes('read_attachment'), attached.text)
+
+  // Searching across all chunks finds Section 27 well past the old 100k-character cap.
+  const searchResult = await readAttachment({ file: attached.id!, query: 'Series B preferred warrant $14.75' })
+  assert.ok(searchResult.includes('Section 27'), searchResult)
+  assert.ok(searchResult.includes('$14.75'), searchResult)
+
+  // Reading by chunk or offset reaches the very end of the document.
+  const lastChunk = await readAttachment({ file: 's1-prospectus.md', chunk: (attached.chunkCount ?? 1) - 1 })
+  assert.ok(lastChunk.includes('Section 40'), lastChunk)
+})
+
+test('tabular attachments index their rows into SQLite run_rows for SQL aggregation and FTS5 search', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jaspers-attach-store-'))
+  const store = openStore(path.join(dir, 'jaspers.db'))
+  try {
+    const sink = {
+      recordRun: (run: Parameters<typeof store.record>[0]) => store.record(run),
+      query: (req: Parameters<typeof store.query>[0]) => store.query(req),
+    }
+    const lines = ['ticker,sector,shares']
+    for (let i = 1; i <= 120; i++) {
+      lines.push(`${i % 2 === 0 ? 'AAPL' : 'FLWS'},Tech,${i * 10}`)
+    }
+    const attached = await parseAttachment('positions.csv', Buffer.from(lines.join('\n'), 'utf8'), sink)
+    assert.ok(typeof attached.runId === 'number' && attached.runId > 0)
+    assert.ok(attached.text.includes(`run_id=${attached.runId}`), attached.text)
+
+    const agg = store.query({
+      sql: `SELECT json_extract(data, '$.ticker') ticker, COUNT(*) n, SUM(json_extract(data, '$.shares')) total FROM run_rows WHERE run_id = ${attached.runId} GROUP BY 1 ORDER BY 1`,
+    })
+    assert.deepEqual(agg.rows, [
+      ['AAPL', 60, 36600],
+      ['FLWS', 60, 36000],
+    ])
+  } finally {
+    store.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

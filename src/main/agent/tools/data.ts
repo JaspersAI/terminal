@@ -9,6 +9,7 @@ import { allSources, getSource, type RegisteredSource } from '../../plugins/regi
 import { runSource } from '../../data/sources'
 import { getState } from '../../state'
 import { query } from '../../data/store'
+import { readAttachment } from '../attachments'
 import type { Tool } from './types'
 import { optional, asPathString, asOffset } from './input'
 
@@ -41,6 +42,48 @@ export function storeTools(): Tool[] {
       async run(input) {
         const result = await query({ sql: asPathString(input.sql), limit: optional(input.limit, asOffset) })
         return JSON.stringify(result)
+      },
+    },
+    {
+      name: 'read_attachment',
+      readsOnly: true,
+      description:
+        'Search or read a file the user attached in the conversation, by its attachment id (like a1) or file name from <attached_file>. Pass query to search across all chunks of the file by BM25 relevance, or pass chunk (0-based) or offset (character index) to read a section sequentially.',
+      parameters: {
+        type: 'object',
+        properties: {
+          file: {
+            type: 'string',
+            description: 'The attachment id (like a1) or file name (like report.pdf) from <attached_file>.',
+          },
+          query: {
+            type: 'string',
+            description:
+              'Search terms or phrase to find the most relevant chunks across the whole document. Leave out to read sequentially by chunk or offset.',
+          },
+          chunk: {
+            type: 'integer',
+            minimum: 0,
+            description: '0-based chunk number to read from, as the manifest or a previous call gave it.',
+          },
+          offset: {
+            type: 'integer',
+            minimum: 0,
+            description: 'Character offset to read a 20,000-character slice from.',
+          },
+        },
+        required: ['file'],
+      },
+      async run(input) {
+        return readAttachment(
+          {
+            file: asPathString(input.file),
+            query: typeof input.query === 'string' ? input.query : undefined,
+            chunk: optional(input.chunk, asOffset),
+            offset: optional(input.offset, asOffset),
+          },
+          { query },
+        )
       },
     },
   ]
