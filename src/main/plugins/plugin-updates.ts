@@ -25,6 +25,7 @@ const notified = new Set<string>()
 
 /** Checks every installed plugin's source for a newer version, recording what is waiting and alerting once per version. */
 export async function checkPluginUpdates(deps: PluginUpdateDeps, told: Set<string> = notified): Promise<void> {
+  const updates: { id: string; version: string; available: string }[] = []
   for (const entry of deps.installed()) {
     const { id, version, source } = entry
     let raw: string | null = null
@@ -42,8 +43,17 @@ export async function checkPluginUpdates(deps: PluginUpdateDeps, told: Set<strin
       const key = `${id}@${available}`
       if (!told.has(key)) {
         told.add(key)
-        deps.notice(`Plugin ${id} ${available} is available (installed: ${version}). Update it in Settings > Plugins.`)
+        updates.push({ id, version, available })
       }
     }
+  }
+  if (updates.length === 1) {
+    const [only] = updates
+    deps.notice(
+      `Plugin ${only!.id} ${only!.available} is available (installed: ${only!.version}). Update it in Settings > Plugins.`,
+    )
+  } else if (updates.length > 1) {
+    const list = updates.map((u) => `${u.id} ${u.available}`).join(', ')
+    deps.notice(`Plugin updates are available: ${list}. Update them in Settings > Plugins.`)
   }
 }

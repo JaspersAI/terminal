@@ -39,10 +39,7 @@ test('installed Hub and GitHub plugins with newer versions record the update and
   })
   await checkPluginUpdates(deps, told)
   assert.deepEqual(available, { sec: '1.1.0', fmp: '1.3.0' })
-  assert.deepEqual(notices, [
-    'Plugin sec 1.1.0 is available (installed: 1.0.0). Update it in Settings > Plugins.',
-    'Plugin fmp 1.3.0 is available (installed: 1.2.0). Update it in Settings > Plugins.',
-  ])
+  assert.deepEqual(notices, ['Plugin updates are available: sec 1.1.0, fmp 1.3.0. Update them in Settings > Plugins.'])
 
   // A repeat check finding the same versions does not send duplicate notices.
   notices.length = 0
@@ -78,5 +75,5 @@ test('a lookup that fails for one plugin leaves its state alone and does not sto
   })
   await checkPluginUpdates(deps, new Set())
   assert.deepEqual(available, { sec: '1.0.1' })
-  assert.equal(notices.length, 1)
+  assert.deepEqual(notices, ['Plugin sec 1.0.1 is available (installed: 1.0.0). Update it in Settings > Plugins.'])
 })
