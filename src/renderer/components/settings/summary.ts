@@ -1,3 +1,4 @@
+import { unsetRequiredSecret } from '../../../shared/plugins/plugins.ts'
 import type { ConnectionInfo, PluginInfo, SkillInfo } from '../../../shared/state'
 import { everyText, shortLocal, taskStatus, type Task, type TaskStatus } from '../../../shared/tasks/tasks.ts'
 
@@ -19,7 +20,7 @@ export function pluginLine(
   // A host that exited leaves the build standing and says why in errors.
   if (plugin.status === 'error' || plugin.errors.length > 0) return say('Error', true)
   if (has('error')) return say('Connection error', true)
-  if (has('needs-secret')) return say('Needs a key', true)
+  if (has('needs-secret') || unsetRequiredSecret(plugin.secrets) !== undefined) return say('Needs a key', true)
   if (has('needs-auth')) return say('Needs authorization', true)
   if (has('needs-sign-in')) return say('Needs sign-in', true)
   if (plugin.status === 'building') return say('Building', false)

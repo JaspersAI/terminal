@@ -77,6 +77,19 @@ test('a plugin row names what needs the user, in red', () => {
     status: 'Needs a key',
     alert: true,
   })
+  assert.deepEqual(pluginLine(plugin({ secrets: [{ key: 'apikey', label: 'FMP API key', set: false }] }), []), {
+    version: '1.0.0',
+    status: 'Needs a key',
+    alert: true,
+  })
+  assert.deepEqual(
+    pluginLine(plugin({ secrets: [{ key: 'apikey', label: 'FMP API key', set: false, optional: true }] }), []),
+    {
+      version: '1.0.0',
+      status: 'Ready',
+      alert: false,
+    },
+  )
   assert.deepEqual(pluginLine(plugin(), [connection('needs-auth')]), {
     version: '1.0.0',
     status: 'Needs authorization',
