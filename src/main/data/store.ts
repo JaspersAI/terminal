@@ -296,11 +296,24 @@ export async function query(request: QueryRequest): Promise<QueryResult> {
     // Nothing can interrupt a statement inside SQLite, so a query that ran past its time leaves a
     // process that is still working. It goes, and the next call starts a fresh one.
     if (isTimeout(error)) {
-      stop()
+      killStore(current)
       throw new Error('The query took too long. Narrow it, or add a LIMIT.')
     }
     throw new Error(message(error))
   }
+}
+
+/**
+ * Kills a store process that is wedged in a timed-out synchronous SQLite statement and clears the
+ * restart cooldown so the next call can fork a fresh process at once.
+ */
+function killStore(target: Live): void {
+  if (live === target) {
+    live = null
+    startedAt = 0
+  }
+  target.rpc.close('the store stopped')
+  target.child.kill()
 }
 
 /** The sources the store holds runs of, as far as this session knows. */

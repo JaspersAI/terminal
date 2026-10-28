@@ -22,6 +22,9 @@ import {
 export class StoreVersionError extends Error {}
 
 const VERSION = 8
+/** How many runs of the same `(source, args_hash)` or `source` are kept, so short refresh intervals do not grow without bound. */
+const RUNS_PER_CALL_MAX = 20
+const RUNS_PER_SOURCE_MAX = 100
 
 /**
  * What the model cost, one row per run of the orchestrator. Here rather than in the state tree,
@@ -148,6 +151,17 @@ function toEight(db: DatabaseSync): void {
   }
 }
 
+const RUN_INDEXES = `
+create trigger if not exists runs_docs_delete before delete on runs when old.text is not null begin
+  insert into docs(docs, rowid, text) values('delete', old.id, old.text);
+end;
+create index if not exists runs_args_symbol on runs(source, coalesce(json_extract(args, '$.symbol'), json_extract(args, '$.ticker')), fetched_at desc);
+create index if not exists run_rows_symbol on run_rows(json_extract(data, '$.symbol'), run_id, json_extract(data, '$.date'));
+create index if not exists run_rows_ticker on run_rows(json_extract(data, '$.ticker'), run_id, json_extract(data, '$.date'));
+create index if not exists run_rows_coalesce_sym on run_rows(coalesce(json_extract(data, '$.symbol'), json_extract(data, '$.ticker')), run_id, json_extract(data, '$.date'));
+create index if not exists run_rows_date on run_rows(json_extract(data, '$.date'), run_id);
+`
+
 /**
  * The shape of the file. `runs` is the call, `run_rows` is what came back (one row per row, so it
  * can be filtered and joined), and `docs` is a full text index over the text a run answered with,
@@ -175,6 +189,7 @@ create table run_rows (
 create virtual table docs using fts5(text, content='runs', content_rowid='id');
 create index runs_source_at on runs(source, fetched_at desc);
 create index runs_lookup on runs(source, args_hash, fetched_at desc);
+${RUN_INDEXES}
 ${USAGE}
 ${WATCHED}
 ${NOTIFICATIONS}
@@ -270,6 +285,7 @@ export function openStore(file: string): Store {
   restrict(file)
   db.exec('pragma foreign_keys = on')
   migrate(db)
+  prepareRuns(db)
 
   const reader = new DatabaseSync(file, { readOnly: true })
   const insertRun = db.prepare(
@@ -279,6 +295,15 @@ export function openStore(file: string): Store {
   // External content: `docs` indexes `runs.text` and stores no second copy, so a count over it
   // would count `runs`. Anything that wants the number of documents counts the text itself.
   const insertDoc = db.prepare('insert into docs (rowid, text) values (?, ?)')
+  const replaceDatasetRuns = db.prepare(
+    'delete from runs where source = ? and args_hash = ? and row_count > 0 and id != ?',
+  )
+  const trimCallRuns = db.prepare(
+    `delete from runs where source = ? and args_hash = ? and id not in (select id from runs where source = ? and args_hash = ? order by fetched_at desc, id desc limit ${RUNS_PER_CALL_MAX})`,
+  )
+  const trimSourceRuns = db.prepare(
+    `delete from runs where source = ? and id not in (select id from runs where source = ? order by fetched_at desc, id desc limit ${RUNS_PER_SOURCE_MAX})`,
+  )
   const insertUsage = db.prepare(
     'insert into usage (day, at, origin, provider, model, input, output, rounds) values (?, ?, ?, ?, ?, ?, ?, ?)',
   )
@@ -333,6 +358,12 @@ export function openStore(file: string): Store {
         for (const [idx, row] of rows.entries()) insertRow.run(id, idx, JSON.stringify(row))
         // Only text worth searching goes in the index; an empty answer would be a row of nothing.
         if (run.text) insertDoc.run(id, run.text)
+        // A fresh dataset run for the same call supersedes earlier dataset rows for that call; a
+        // failed or prose-only run keeps the last dataset intact. History per call and per source
+        // stays bounded so short-interval refreshes cannot pile up rows without bound.
+        if (rows.length > 0 && !run.error) replaceDatasetRuns.run(run.source, run.argsHash, id)
+        trimCallRuns.run(run.source, run.argsHash, run.source, run.argsHash)
+        trimSourceRuns.run(run.source, run.source)
         db.exec('commit')
         return id
       } catch (error) {
@@ -530,6 +561,39 @@ function migrate(db: DatabaseSync): void {
     if (found < 8) toEight(db)
   }
   db.exec(`pragma user_version = ${VERSION}`)
+}
+
+/**
+ * Ensures an existing store has the `runs`/`run_rows` expression indexes, FTS5 delete trigger, and
+ * bounded run history without changing `user_version`.
+ */
+function prepareRuns(db: DatabaseSync): void {
+  db.exec(RUN_INDEXES)
+  db.exec(`
+    delete from runs
+    where row_count > 0
+      and id not in (
+        select id from (
+          select id, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
+          from runs
+          where row_count > 0
+        ) where rn = 1
+      );
+    delete from runs
+    where id in (
+      select id from (
+        select id, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
+        from runs
+      ) where rn > ${RUNS_PER_CALL_MAX}
+    );
+    delete from runs
+    where id in (
+      select id from (
+        select id, row_number() over (partition by source order by fetched_at desc, id desc) as rn
+        from runs
+      ) where rn > ${RUNS_PER_SOURCE_MAX}
+    );
+  `)
 }
 
 /** What is written beside an observation, so two runs can be told apart without reading both. */
