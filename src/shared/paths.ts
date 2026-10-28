@@ -7,7 +7,7 @@
 import type { Grid, Panel } from './grid/grid.ts'
 import { loopName } from './loops/loops.ts'
 import { skillListing } from './skills/skills.ts'
-import type { AppState } from './state'
+import type { AppState, ConnectionInfo } from './state'
 
 export type StorePath =
   | { kind: 'workspace'; workspaceId?: string }
@@ -18,6 +18,8 @@ export type StorePath =
   | { kind: 'views' }
   | { kind: 'sources' }
   | { kind: 'connections' }
+  /** One connection's entry in the listing, by its <plugin>/<name> id or its plugin's id when the plugin has one. */
+  | { kind: 'connection'; connectionId: string }
   | { kind: 'plugins' }
   | { kind: 'skills' }
   | {
@@ -31,6 +33,19 @@ export type StorePath =
 /** The slices that are the same everywhere, so a workspace prefix on one means nothing. */
 const REGISTRIES = ['views', 'sources', 'connections', 'plugins', 'skills'] as const
 type Registry = (typeof REGISTRIES)[number]
+
+/** One connection in `connections` and `connections/<id>`: its state and tool names, without the tool schemas. */
+export interface ConnectionSummary {
+  id: string
+  plugin: string
+  transport: ConnectionInfo['transport']
+  status: ConnectionInfo['status']
+  error: string | null
+  tools: string[]
+  internal: boolean
+  missing: string[]
+  instructions: string | null
+}
 
 /** One panel in the `panels` listing: enough to pick one, not its contents. */
 export interface PanelSummary {
@@ -49,7 +64,7 @@ export interface PanelSummary {
 }
 
 const SHAPES =
-  'workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, panels/<id>/error, and any of those under workspaces/<workspace id>/'
+  'workspace, panels, tasks, views, sources, connections, connections/<id>, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, panels/<id>/error, and any of those under workspaces/<workspace id>/'
 
 /** Parse a store path, preserving any workspace prefix; throw if its shape is unsupported. */
 export function parsePath(raw: string): StorePath {
@@ -60,6 +75,11 @@ export function parsePath(raw: string): StorePath {
   const workspaceId = prefixed ? segments[1]! : undefined
   const [head, panelId, field, ...rest] = prefixed ? segments.slice(2) : segments
   const at = workspaceId ? { workspaceId } : {}
+  if (head === 'connections') {
+    if (workspaceId || rest.length > 0) reject(raw)
+    if (panelId === undefined) return { kind: 'connections' }
+    return { kind: 'connection', connectionId: field === undefined ? panelId : `${panelId}/${field}` }
+  }
   const registry = REGISTRIES.find((r) => r === head)
   if (registry) {
     // What is installed is the same everywhere, so a workspace prefix on it means nothing.
@@ -81,6 +101,10 @@ export function parsePath(raw: string): StorePath {
 export function readPath(state: AppState, workspaceId: string, path: StorePath): unknown {
   // Every skill, whether it is on, and who may load it: the list, not the registry's record.
   if (path.kind === 'skills') return skillListing(state)
+  if (path.kind === 'connections') {
+    return Object.fromEntries(Object.entries(state.connections).map(([id, c]) => [id, connectionSummary(c)]))
+  }
+  if (path.kind === 'connection') return connectionSummary(connectionIn(state.connections, path.connectionId))
   if (isRegistry(path)) return state[path.kind]
   if (path.kind === 'workspace') {
     const workspace = state.workspaces.find((w) => w.id === (path.workspaceId ?? workspaceId))
@@ -142,6 +166,7 @@ export function textPart(
 /** The path as it was written, so an error or a subscription key reads back the way it came in. */
 export function formatPath(path: StorePath): string {
   if (isRegistry(path)) return path.kind
+  if (path.kind === 'connection') return `connections/${path.connectionId}`
   const prefix = path.workspaceId ? `workspaces/${path.workspaceId}/` : ''
   if (path.kind === 'workspace') return `${prefix}workspace`
   if (path.kind === 'panels') return `${prefix}panels`
@@ -152,6 +177,33 @@ export function formatPath(path: StorePath): string {
 
 function isRegistry(path: StorePath): path is { kind: Registry } {
   return REGISTRIES.some((r) => r === path.kind)
+}
+
+/** A connection by its <plugin>/<name> id, or by its plugin's id when that plugin declares one connection. */
+function connectionIn(connections: Record<string, ConnectionInfo>, id: string): ConnectionInfo {
+  const direct = connections[id]
+  if (direct) return direct
+  if (!id.includes('/')) {
+    const byPlugin = Object.values(connections).filter((c) => c.plugin === id || c.id.startsWith(`${id}/`))
+    if (byPlugin.length === 1) return byPlugin[0]!
+  }
+  const ids = Object.keys(connections).join(', ')
+  throw new Error(`No connection ${id}. ${ids ? `Connections are ${ids}.` : 'No connections are installed.'}`)
+}
+
+/** Build the same summary for the connections listing and a single connection entry, without tool schemas. */
+function connectionSummary(c: ConnectionInfo): ConnectionSummary {
+  return {
+    id: c.id,
+    plugin: c.plugin,
+    transport: c.transport,
+    status: c.status,
+    error: c.error,
+    tools: c.internal ? [] : c.tools.map((t) => t.name),
+    internal: c.internal,
+    missing: c.missing,
+    instructions: c.internal ? null : c.instructions,
+  }
 }
 
 /**

@@ -174,7 +174,7 @@ export function registerBuiltins(): void {
 const MCP_SOURCE: SourceDef = {
   kind: 'source',
   description:
-    'Call one tool on one connection, for what no plugin does. connection is <plugin>/<name>, as listed under Connections with what each tool takes; get connections shows the tools and their schemas.',
+    "Call one tool on one connection, for what no plugin does. connection is <plugin>/<name>, as listed under Connections with what each tool takes; describe_source gives a tool's whole schema.",
   input: z
     .object({
       connection: z.string(),

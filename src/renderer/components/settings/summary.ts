@@ -8,7 +8,7 @@ import { everyText, shortLocal, taskStatus, type Task, type TaskStatus } from '.
 /** The second line of a plugin's row: where it came from, and the one thing most worth knowing now. */
 export function pluginLine(
   plugin: PluginInfo,
-  connections: ConnectionInfo[],
+  connections: Pick<ConnectionInfo, 'status'>[],
 ): { version: string; status: string; alert: boolean } {
   const version = plugin.dir === 'built-in' ? 'built-in' : (plugin.install?.version ?? 'local')
   const has = (status: ConnectionInfo['status']): boolean => connections.some((c) => c.status === status)
