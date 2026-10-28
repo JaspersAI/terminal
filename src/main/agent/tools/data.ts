@@ -77,7 +77,7 @@ export function storeTools(): Tool[] {
       async run(input) {
         return readAttachment(
           {
-            file: asPathString(input.file),
+            file: typeof input.file === 'string' ? input.file : '',
             query: typeof input.query === 'string' ? input.query : undefined,
             chunk: optional(input.chunk, asOffset),
             offset: optional(input.offset, asOffset),
