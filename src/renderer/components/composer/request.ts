@@ -15,7 +15,7 @@ import {
   workingOn,
   type LiveExchange,
 } from './live'
-import type { Phase } from './phase'
+import { canHoldSpace, type Phase } from './phase'
 import { Recorder } from './recorder'
 
 /**
@@ -156,6 +156,14 @@ export function useRequest() {
   // run it is, and a scheduled task's is the scheduler's business, its reply in the chat when done.
   useEffect(() => window.app.agent.onEvent((event) => change((list) => heard(list, event))), [change])
 
+  useEffect(
+    () => () => {
+      pressed.current = false
+      recorder.cancel()
+    },
+    [recorder],
+  )
+
   /**
    * Asks main to stop a run: the one named, or the newest still working on this workspace. The run
    * resolves with nothing and its exchange gives way to what the log kept of it.
@@ -188,3 +196,61 @@ export function useRequest() {
 }
 
 export type ComposerRequest = ReturnType<typeof useRequest>
+
+/**
+ * Space bar is the keyboard version of the orb, in whichever of the floating composer or the docked
+ * chat is on screen in orb mode. Handlers live in a ref so the listeners always call the current
+ * render's closures, and cleanup releases any held press when leaving orb mode or unmounting.
+ */
+export function useHoldSpace(enabled: boolean, press: () => void, release: () => void): void {
+  const handlers = useRef({ press, release })
+  handlers.current = { press, release }
+  useEffect(() => {
+    if (!enabled) return
+    const down = (event: KeyboardEvent): void => {
+      if (
+        !canHoldSpace({
+          code: event.code,
+          repeat: event.repeat,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          altKey: event.altKey,
+          inControl: inControl(event),
+          modalOpen: modalOpen() || document.querySelector('[role=menu]') !== null,
+        })
+      ) {
+        return
+      }
+      event.preventDefault()
+      handlers.current.press()
+    }
+    const up = (event: KeyboardEvent): void => {
+      if (event.code !== 'Space') return
+      if (!inControl(event)) event.preventDefault()
+      handlers.current.release() // no-op unless a press started the recording
+    }
+    const blur = (): void => handlers.current.release()
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', blur)
+      handlers.current.release()
+    }
+  }, [enabled])
+}
+
+/** True while settings or another modal dialog is up over the home screen. */
+export function modalOpen(): boolean {
+  return document.querySelector('[aria-modal=true]') !== null
+}
+
+/** True when the key belongs to a focused control other than the orb: a text field, a menu button. */
+function inControl(event: KeyboardEvent): boolean {
+  return (
+    event.target instanceof HTMLElement &&
+    event.target.matches('input, textarea, select, button:not(#talk):not(#composer-peek), [contenteditable]')
+  )
+}

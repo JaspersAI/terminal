@@ -12,9 +12,12 @@ import { askedIn } from '../../shared/agent/asking'
 import { withAttachments } from '../../shared/agent/attachments'
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from '../components/composer/Attachments'
 import { useEarlier, useNoticeTimer } from '../components/composer/conversation'
+import { useComposerMode } from '../components/composer/dock'
+import { Orb } from '../components/composer/Orb'
 import { pasteLinks } from '../components/composer/paste'
+import { statusText } from '../components/composer/phase'
 import { QuestionField } from '../components/composer/QuestionField'
-import { useRequest } from '../components/composer/request'
+import { useHoldSpace, useRequest } from '../components/composer/request'
 import { SecretField } from '../components/composer/SecretField'
 import { completeSlash, slashMatches } from '../components/composer/slash'
 import { SlashMenu } from '../components/composer/SlashMenu'
@@ -33,8 +36,9 @@ import type { ViewProps } from './index'
 // assistant's questions appear here too, above the command line: with the overlay away this is the
 // only place they could, and a run waiting on one would otherwise wait on nothing.
 //
-// Voice stays with the overlay. Holding the orb or the space bar is what starts a recording, and
-// neither reads as a gesture inside an element whose command line has the keyboard.
+// Voice and text modes (`useComposerMode`) work here just as in the floating overlay: holding the
+// orb or the space bar in orb mode records and transcribes, and the status bar at the bottom
+// switches between `Talk instead` and `Type instead` alongside `Undock`.
 
 export function Chat({ panel }: ViewProps): ReactElement {
   const workspaceId = panel.workspaceId
@@ -43,23 +47,28 @@ export function Chat({ panel }: ViewProps): ReactElement {
   const elementId = useAppState(
     (s) => s.grids[workspaceId]?.[windowNumber]?.panels.find((p) => p.id === panel.id)?.elementId ?? null,
   )
+  const hasVoice = useAppState((s) => s.voice !== null)
   const secretRequest = useAppState((s) => askedIn(s.secretRequests))
   const question = useAppState((s) => askedIn(s.questions))
   const skills = useAppState((s) => s.skills)
   const disabledSkills = useAppState((s) => s.disabledSkills)
   const notices = useAppState((s) => s.notices)
+  const [mode, setMode] = useComposerMode()
   const request = useRequest()
-  const { busy, working, shown, earlier, ask, stop } = request
+  const { phase, error, busy, working, shown, earlier, ask, release, stop } = request
   const [draft, setDraft] = useState('')
   const attachments = useAttachments()
-  const drop = useFileDrop(attachments.attach)
+  const drop = useFileDrop((files) => {
+    setMode('text')
+    attachments.attach(files)
+  })
   const [menuIndex, setMenuIndex] = useState(0)
   // The draft the skills menu was closed on with Escape; typing opens it again.
   const [menuClosedOn, setMenuClosedOn] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const matches = useMemo(
-    () => (busy ? [] : slashMatches(draft, { skills, disabledSkills })),
-    [busy, draft, skills, disabledSkills],
+    () => (mode === 'text' && !busy ? slashMatches(draft, { skills, disabledSkills }) : []),
+    [mode, busy, draft, skills, disabledSkills],
   )
   const menuOpen = matches.length > 0 && menuClosedOn !== draft
   const active = Math.min(menuIndex, Math.max(0, matches.length - 1))
@@ -75,6 +84,21 @@ export function Chat({ panel }: ViewProps): ReactElement {
   // Nothing here fades a notice, so its wait runs and main drops it, as it does over the composer.
   useNoticeTimer(notice?.id ?? null)
   usePublish(panel, { exchanges: earlier.length, busy: working })
+
+  useEffect(() => {
+    if (welcome !== null) setMode('text')
+  }, [welcome, setMode])
+
+  function press(): void {
+    if (busy) return
+    if (!hasVoice) {
+      setMode('text')
+      return
+    }
+    request.press()
+  }
+
+  useHoldSpace(mode === 'orb' && secretRequest === null && question === null, press, release)
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
@@ -111,10 +135,12 @@ export function Chat({ panel }: ViewProps): ReactElement {
     }
   }
 
-  // The key field takes the keyboard while it is up; the command line waits its turn.
+  // The key field takes the keyboard while it is up; in text mode the command line waits its turn.
   useEffect(() => {
-    if (secretRequest === null && question === null) input.current?.focus()
-  }, [secretRequest, question])
+    if (mode === 'text' && secretRequest === null && question === null) input.current?.focus()
+  }, [mode, secretRequest, question])
+
+  const status = statusText({ mode, hasVoice, phase, error })
 
   return (
     <div
@@ -136,53 +162,98 @@ export function Chat({ panel }: ViewProps): ReactElement {
       ) : (
         question !== null && <QuestionField key={question.id} question={question} />
       )}
-      <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
-        {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
-        <AttachmentChips attachments={attachments} className="mb-1.5" />
-        <div className="flex items-center border border-border bg-background pr-1 focus-within:border-foreground">
-          <AttachButton disabled={busy} onFiles={attachments.attach} />
-          <input
-            ref={input}
-            name="prompt"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={busy}
-            value={draft}
-            placeholder="Ask anything, or / for a skill"
-            role="combobox"
-            aria-expanded={menuOpen}
-            aria-controls={menuOpen ? 'slash-menu' : undefined}
-            aria-activedescendant={menuOpen ? `slash-option-${active}` : undefined}
-            aria-autocomplete="list"
-            onKeyDown={menuKey}
-            onPaste={(event) => pasteLinks(event, attachments.attach)}
-            onChange={(event) => {
-              setDraft(event.target.value)
-              setMenuIndex(0)
-            }}
-            className="min-w-0 flex-1 bg-transparent py-1.5 pr-2 pl-1 text-sm outline-none disabled:opacity-50"
-          />
-          {attachments.files.length > 0 && (
-            <button
-              type="submit"
-              aria-label="Send"
-              disabled={busy || attachments.reading > 0}
-              className="flex h-6 w-6 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-30"
-            >
-              <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
-                <path d="M5 9V1.5M1.5 5 5 1.5 8.5 5" />
-              </svg>
-            </button>
-          )}
+      {mode === 'orb' ? (
+        <div className="flex shrink-0 justify-center border-t border-border py-3">
+          <Orb phase={phase} label={hasVoice ? 'Hold to talk' : 'Type a request'} onPress={press} onRelease={release} />
         </div>
-      </form>
-      <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
+      ) : (
+        <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
+          {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
+          <AttachmentChips attachments={attachments} className="mb-1.5" />
+          <div className="flex items-center border border-border bg-background pr-1 focus-within:border-foreground">
+            <AttachButton disabled={busy} onFiles={attachments.attach} />
+            <input
+              ref={input}
+              name="prompt"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={busy}
+              value={draft}
+              placeholder="Ask anything, or / for a skill"
+              role="combobox"
+              aria-expanded={menuOpen}
+              aria-controls={menuOpen ? 'slash-menu' : undefined}
+              aria-activedescendant={menuOpen ? `slash-option-${active}` : undefined}
+              aria-autocomplete="list"
+              onKeyDown={menuKey}
+              onPaste={(event) => pasteLinks(event, attachments.attach)}
+              onChange={(event) => {
+                setDraft(event.target.value)
+                setMenuIndex(0)
+              }}
+              className="min-w-0 flex-1 bg-transparent py-1.5 pr-2 pl-1 text-sm outline-none disabled:opacity-50"
+            />
+            {attachments.files.length > 0 && (
+              <button
+                type="submit"
+                aria-label="Send"
+                disabled={busy || attachments.reading > 0}
+                className="flex h-6 w-6 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-30"
+              >
+                <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+                  <path d="M5 9V1.5M1.5 5 5 1.5 8.5 5" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </form>
+      )}
+      <p
+        id="agent-status"
+        className={`flex shrink-0 flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 border-t border-border px-3 py-1 text-xs ${
+          error ? 'text-destructive' : 'text-muted-foreground'
+        }`}
+      >
+        {status && (
+          <>
+            <span>{status}</span>
+            <span className="text-muted-foreground">·</span>
+          </>
+        )}
+        {!hasVoice ? (
+          <span className="text-muted-foreground">Add a voice provider to talk</span>
+        ) : mode === 'orb' ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={(event) => {
+              event.currentTarget.blur()
+              setMode('text')
+            }}
+            className="text-muted-foreground underline hover:text-foreground disabled:opacity-50"
+          >
+            Type instead
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={(event) => {
+              event.currentTarget.blur()
+              setMode('orb')
+            }}
+            className="text-muted-foreground underline hover:text-foreground disabled:opacity-50"
+          >
+            Talk instead
+          </button>
+        )}
+        <span className="text-muted-foreground">·</span>
         <button
           type="button"
           id="docked-chat-undock"
-          disabled={elementId === null}
+          disabled={elementId === null || busy}
           onClick={() => elementId !== null && send({ type: 'element.remove', workspaceId, elementId })}
-          className="underline hover:text-foreground disabled:opacity-50"
+          className="text-muted-foreground underline hover:text-foreground disabled:opacity-50"
         >
           Undock
         </button>

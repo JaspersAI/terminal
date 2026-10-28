@@ -15,13 +15,13 @@ import { errorMessage } from '../../lib/errors'
 import { useAppState } from '../../lib/state'
 import { Answer } from './Answer'
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from './Attachments'
-import { dockChat } from './dock'
+import { dockChat, useComposerMode } from './dock'
 import { hears } from './hears'
 import { Orb } from './Orb'
 import { pasteLinks } from './paste'
 import { Peek } from './Peek'
-import { PHASE_TEXT } from './phase'
-import { useRequest } from './request'
+import { statusText } from './phase'
+import { modalOpen, useHoldSpace, useRequest } from './request'
 import { useConversation } from './conversation'
 import { useReveal } from './reveal'
 import { QuestionField } from './QuestionField'
@@ -29,9 +29,6 @@ import { SecretField } from './SecretField'
 import { completeSlash, slashMatches } from './slash'
 import { SlashMenu } from './SlashMenu'
 import { Spring } from './spring'
-
-/** The orb, whether or not there is a voice provider to hold it for, or the text field. */
-type Mode = 'orb' | 'text'
 
 /** How far below its resting place the panel parks once it has dropped out of frame, in px. */
 const CLEARANCE = 56
@@ -66,8 +63,7 @@ const TUNING = {
  *
  * Dock puts the same conversation on the grid instead, as a `core/chat` element that stays where it
  * is put (`dock.ts`, `views/Chat`); `Home` then leaves this overlay out of the window, and the
- * element's Undock brings it back. Voice belongs to this overlay: holding the orb or the space bar is
- * what starts a recording, and neither is a gesture a docked element can own.
+ * element's Undock brings it back, keeping the chosen input mode (`orb` or `text`) across both.
  */
 export function Composer(): ReactElement {
   const hasVoice = useAppState((s) => s.voice !== null)
@@ -75,7 +71,7 @@ export function Composer(): ReactElement {
   const secretRequest = useAppState((s) => askedIn(s.secretRequests))
   // The assistant waiting to be told something, in the place a key is asked for.
   const question = useAppState((s) => askedIn(s.questions))
-  const [mode, setMode] = useState<Mode>('orb')
+  const [mode, setMode] = useComposerMode()
   // Why the last dock did not happen, shown on the status line in place of the hint.
   const [dockProblem, setDockProblem] = useState<string | null>(null)
   const request = useRequest()
@@ -217,32 +213,7 @@ export function Composer(): ReactElement {
     }
   }
 
-  // Space bar is the keyboard version of the orb. Handlers live in a ref so the listeners,
-  // registered once per mode, always call the current render's closures.
-  const handlers = useRef({ press, release })
-  handlers.current = { press, release }
-  useEffect(() => {
-    if (mode !== 'orb') return
-    const down = (event: KeyboardEvent): void => {
-      if (event.code !== 'Space' || event.repeat || inControl(event) || modalOpen()) return
-      event.preventDefault()
-      handlers.current.press()
-    }
-    const up = (event: KeyboardEvent): void => {
-      if (event.code !== 'Space') return
-      if (!inControl(event)) event.preventDefault()
-      handlers.current.release() // no-op unless a press started the recording
-    }
-    const blur = (): void => handlers.current.release()
-    window.addEventListener('keydown', down)
-    window.addEventListener('keyup', up)
-    window.addEventListener('blur', blur)
-    return () => {
-      window.removeEventListener('keydown', down)
-      window.removeEventListener('keyup', up)
-      window.removeEventListener('blur', blur)
-    }
-  }, [mode])
+  useHoldSpace(mode === 'orb' && secretRequest === null && question === null, press, release)
 
   // Whether the pointer is on the composer, measured from its box on every move rather than from
   // enter and leave on the panel. The panel moves, and a box sliding past a pointer that is holding
@@ -328,17 +299,12 @@ export function Composer(): ReactElement {
     else if (!open) input.current?.blur()
   }, [mode, open, secretRequest, question])
 
-  const hint =
-    mode === 'orb' ? (hasVoice ? 'Hold the orb or the space bar' : 'Click the orb or press space to type') : ''
-  // An error lands under its question when there is one; one from before a question (the microphone,
-  // a recording too short) has only this line. A run's steps are in the chat, so thinking says nothing
-  // here, unless its box was dismissed from over it and the conversation is not up to show it: the
-  // run goes on with nothing on screen saying so, so this line is then all there is to say it, and it
-  // carries Stop.
-  const shownError = shown.length === 0 ? error : null
+  // An error from before a question (the microphone, a recording too short) has only this line. A
+  // run's steps are in the chat, so thinking says nothing here, unless its box was dismissed from
+  // over it and the conversation is not up to show it: the run goes on with nothing on screen saying
+  // so, so this line is then all there is to say it, and it carries Stop.
   const unseen = working && !watching && !browsing
-  const status =
-    shownError ?? dockProblem ?? (phase === 'idle' ? hint : phase === 'thinking' && !unseen ? '' : PHASE_TEXT[phase])
+  const status = statusText({ mode, hasVoice, phase, error, dockProblem, unseen })
 
   return (
     <div
@@ -406,7 +372,7 @@ export function Composer(): ReactElement {
 
         <p
           id="agent-status"
-          className={`text-center text-xs ${shownError || dockProblem ? 'text-destructive' : 'text-muted-foreground'}`}
+          className={`text-center text-xs ${error || dockProblem ? 'text-destructive' : 'text-muted-foreground'}`}
         >
           {status}
           {status && <span className="text-muted-foreground"> · </span>}
@@ -416,7 +382,10 @@ export function Composer(): ReactElement {
             <button
               type="button"
               disabled={busy}
-              onClick={() => setMode('text')}
+              onClick={(event) => {
+                event.currentTarget.blur()
+                setMode('text')
+              }}
               className="text-muted-foreground underline hover:text-foreground"
             >
               Type instead
@@ -425,7 +394,10 @@ export function Composer(): ReactElement {
             <button
               type="button"
               disabled={busy}
-              onClick={() => setMode('orb')}
+              onClick={(event) => {
+                event.currentTarget.blur()
+                setMode('orb')
+              }}
               className="text-muted-foreground underline hover:text-foreground"
             >
               Talk instead
@@ -525,17 +497,4 @@ function within(element: HTMLElement | null, event: PointerEvent): boolean {
 /** Keeps a spring's overshoot from pushing a derived value past the ends of its range. */
 function clamp(value: number): number {
   return Math.min(1, Math.max(0, value))
-}
-
-/** True while settings is up over the home screen, which takes the keys and the pointer from the composer. */
-function modalOpen(): boolean {
-  return document.querySelector('[aria-modal=true]') !== null
-}
-
-/** True when the key belongs to a focused control other than the orb: a text field, a menu button. */
-function inControl(event: KeyboardEvent): boolean {
-  return (
-    event.target instanceof HTMLElement &&
-    event.target.matches('input, textarea, select, button:not(#talk):not(#composer-peek), [contenteditable]')
-  )
 }

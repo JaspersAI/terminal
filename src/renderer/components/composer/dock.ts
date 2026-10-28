@@ -1,6 +1,8 @@
+import { useSyncExternalStore } from 'react'
 import type { Placement } from '../../../shared/grid/grid'
 import { CHAT_VIEW, chatElement, EMPTY_GRID } from '../../../shared/grid/grid'
 import { dispatch, useAppState } from '../../lib/state'
+import { getComposerMode, setComposerMode, subscribeComposerMode, type Mode } from './phase'
 
 // Docking the chat. The composer floating at the bottom of a window and the `core/chat` element on
 // that window's grid are the same conversation in two places: docking places the element, undocking
@@ -28,4 +30,10 @@ export function dockChat(workspaceId: string, window: number): Promise<void> {
 /** Whether this window's grid holds the docked chat, which is what keeps the overlay away in it. */
 export function useDockedChat(workspaceId: string, window: number): boolean {
   return useAppState((s) => chatElement(s.grids[workspaceId]?.[window] ?? EMPTY_GRID) !== null)
+}
+
+/** Central's input mode (`'orb'` or `'text'`), shared between the floating composer and the docked chat. */
+export function useComposerMode(): [Mode, (next: Mode) => void] {
+  const mode = useSyncExternalStore(subscribeComposerMode, getComposerMode)
+  return [mode, setComposerMode]
 }

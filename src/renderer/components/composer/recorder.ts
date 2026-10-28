@@ -51,4 +51,16 @@ export class Recorder {
       recorder.stop()
     })
   }
+
+  /** Stops an active recording and releases the microphone without waiting for the audio. */
+  cancel(): void {
+    const recorder = this.recorder
+    if (!recorder) return
+    this.recorder = null
+    recorder.onstop = () => {
+      for (const track of recorder.stream.getTracks()) track.stop()
+    }
+    for (const track of recorder.stream.getTracks()) track.stop()
+    if (recorder.state !== 'inactive') recorder.stop()
+  }
 }
