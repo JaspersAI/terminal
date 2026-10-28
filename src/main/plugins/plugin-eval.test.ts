@@ -226,6 +226,7 @@ test('a valid view using React and SDK hooks passes evaluation, while calling a 
         const [count, dispatch] = useReducer((c: number) => c + 1, 0)
         const ref = useRef<HTMLDivElement | null>(null)
         const id = useId()
+        const appInfo = useData('app') as { version?: string; packaged?: boolean } | undefined
         const state = useData(\`workspaces/\${panel.workspaceId}/panels/\${panel.id}/state\`) as { symbol?: string } | undefined
         const { data, loading, error, refetch } = useData('valid-view/quotes', { symbol })
         const rows = useMemo(() => (data ?? []).filter((r) => String(r.symbol ?? '').includes(filter)), [data, filter])
@@ -241,7 +242,7 @@ test('a valid view using React and SDK hooks passes evaluation, while calling a 
         usePublish(panel, { symbol: state?.symbol ?? symbol, count: rows.length })
         usePublishText(panel, rows.length > 0 ? ' Quotes' : null)
         const dark = matchMedia('(prefers-color-scheme: dark)').matches
-        if (loading && !data) return <p>Loading {currentPanel.id}…</p>
+        if (loading && !data) return <p>Loading {currentPanel.id} ({appInfo?.version})…</p>
         if (error) return <p>{error}</p>
         return (
           <ThemeCtx.Provider value={dark ? 'dark' : 'light'}>

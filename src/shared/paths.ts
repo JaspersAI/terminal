@@ -10,6 +10,7 @@ import { skillListing } from './skills/skills.ts'
 import type { AppState } from './state'
 
 export type StorePath =
+  | { kind: 'app' }
   | { kind: 'workspace'; workspaceId?: string }
   | { kind: 'panels'; workspaceId?: string }
   /** One panel's entry in the listing, by its id or its element's. */
@@ -49,7 +50,7 @@ export interface PanelSummary {
 }
 
 const SHAPES =
-  'workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, panels/<id>/error, and any of those under workspaces/<workspace id>/'
+  'app, workspace, panels, tasks, views, sources, connections, plugins, skills, panels/<id>, panels/<id>/state, panels/<id>/output with a key path after either, panels/<id>/summary, panels/<id>/text, panels/<id>/refreshedAt, panels/<id>/error, and any of those under workspaces/<workspace id>/'
 
 /** Parse a store path, preserving any workspace prefix; throw if its shape is unsupported. */
 export function parsePath(raw: string): StorePath {
@@ -60,6 +61,10 @@ export function parsePath(raw: string): StorePath {
   const workspaceId = prefixed ? segments[1]! : undefined
   const [head, panelId, field, ...rest] = prefixed ? segments.slice(2) : segments
   const at = workspaceId ? { workspaceId } : {}
+  if (head === 'app') {
+    if (panelId !== undefined || workspaceId) reject(raw)
+    return { kind: 'app' }
+  }
   const registry = REGISTRIES.find((r) => r === head)
   if (registry) {
     // What is installed is the same everywhere, so a workspace prefix on it means nothing.
@@ -79,6 +84,12 @@ export function parsePath(raw: string): StorePath {
 
 /** What a path names in the tree. A key that is not there reads as undefined; an unknown panel throws. */
 export function readPath(state: AppState, workspaceId: string, path: StorePath): unknown {
+  if (path.kind === 'app') {
+    return {
+      version: state.updates.version,
+      packaged: state.updates.packaged ?? (state.updates.supported || state.background.canOpenAtLogin),
+    }
+  }
   // Every skill, whether it is on, and who may load it: the list, not the registry's record.
   if (path.kind === 'skills') return skillListing(state)
   if (isRegistry(path)) return state[path.kind]
@@ -141,6 +152,7 @@ export function textPart(
 
 /** The path as it was written, so an error or a subscription key reads back the way it came in. */
 export function formatPath(path: StorePath): string {
+  if (path.kind === 'app') return 'app'
   if (isRegistry(path)) return path.kind
   const prefix = path.workspaceId ? `workspaces/${path.workspaceId}/` : ''
   if (path.kind === 'workspace') return `${prefix}workspace`

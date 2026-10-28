@@ -250,6 +250,17 @@ test('the listings are the panels of the workspace and everything installed', ()
   ])
 })
 
+test('the app path reads the version and whether the app is packaged', () => {
+  assert.deepEqual(parsePath('app'), { kind: 'app' })
+  assert.equal(formatPath(parsePath('app')), 'app')
+  assert.deepEqual(read('app'), { version: '0.1.0', packaged: false })
+  const packaged = fixture()
+  packaged.updates = { ...packaged.updates, version: '0.12.0', packaged: true, supported: true }
+  assert.deepEqual(readPath(packaged, WS, parsePath('app')), { version: '0.12.0', packaged: true })
+  assert.throws(() => parsePath('app/version'), /Cannot read "app\/version"/)
+  assert.throws(() => parsePath(`workspaces/${WS}/app`), /Cannot read/)
+})
+
 test('workspace is the workspace a path resolves against, or the one its prefix names', () => {
   const state = fixture()
   state.workspaces.push({ id: 'ws-2', name: 'Research' })

@@ -1,6 +1,6 @@
-import type { RunResult } from './datasets'
-import type { Bridge, PanelRef, RunOptions } from './bridge'
-import type { BridgeMethod, BridgeNotification, BridgeReply, BridgeRequest } from './protocol'
+import type { RunResult } from './datasets.ts'
+import type { Bridge, PanelRef, RunOptions } from './bridge.ts'
+import type { BridgeMethod, BridgeNotification, BridgeReply, BridgeRequest } from './protocol.ts'
 
 // The bridge a plugin view gets inside its iframe. Every call is a message to the page that framed
 // it, which runs it against the same host bridge a built-in view uses, so the hooks above this
@@ -50,22 +50,28 @@ export function createIframeBridge(): Bridge {
 
     // The id the listener is filed under arrives in a reply, and the first value in the
     // notification right after it, so the listener is in place by the time that one lands.
+    // A path an older app does not know settles as undefined rather than an unhandled rejection.
     subscribe(path: string, listener: (value: unknown) => void) {
       let subId: number | null = null
       let live = true
-      void call('store.subscribe', { path }).then((id) => {
-        if (!live) {
-          void call('store.unsubscribe', { subId: id })
-          return
-        }
-        subId = id as number
-        listeners.set(subId, listener)
-      })
+      void call('store.subscribe', { path }).then(
+        (id) => {
+          if (!live) {
+            void call('store.unsubscribe', { subId: id }).catch(() => {})
+            return
+          }
+          subId = id as number
+          listeners.set(subId, listener)
+        },
+        () => {
+          if (live) listener(undefined)
+        },
+      )
       return () => {
         live = false
         if (subId === null) return
         listeners.delete(subId)
-        void call('store.unsubscribe', { subId })
+        void call('store.unsubscribe', { subId }).catch(() => {})
         subId = null
       }
     },

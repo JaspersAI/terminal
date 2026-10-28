@@ -903,6 +903,7 @@ const sdkForBackend = {
       return ctx.sourceResult
     }
     if (typeof target === 'string') {
+      if (target === 'app') return { version: '0.1.0', packaged: false }
       if (target.endsWith('/state')) return ctx.state
       const stateIdx = target.indexOf('/state/')
       if (stateIdx !== -1) {

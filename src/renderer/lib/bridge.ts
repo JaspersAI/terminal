@@ -11,11 +11,17 @@ import { dispatch, get, subscribe } from './state'
 
 export const hostBridge: Bridge = {
   async get(path) {
-    return read(parsePath(path))
+    return readPathOrUndefined(path)
   },
 
   subscribe(path, listener) {
-    const parsed = parsePath(path)
+    let parsed: StorePath
+    try {
+      parsed = parsePath(path)
+    } catch {
+      listener(undefined)
+      return () => {}
+    }
     let last = read(parsed)
     listener(last)
     return subscribe(() => {
@@ -89,6 +95,14 @@ async function unwrap<T>(call: Promise<T>): Promise<T> {
  * by a moment when an element closes, so a path that no longer resolves reads as undefined here
  * rather than throwing at whoever is listening.
  */
+function readPathOrUndefined(path: string): unknown {
+  try {
+    return read(parsePath(path))
+  } catch {
+    return undefined
+  }
+}
+
 function read(path: StorePath): unknown {
   try {
     return readPath(get(), get().currentWorkspaceId, path)
