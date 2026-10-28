@@ -104,11 +104,6 @@ export function boxActivity(list: readonly LiveExchange[]): Activity | null {
   return { state: newest.error !== null ? 'failed' : 'done', step: null }
 }
 
-/** Whether two of them say the same: the bar is drawn again only when what it says changes. */
-export function sameActivity(a: Activity | null, b: Activity | null): boolean {
-  return a === b || (a !== null && b !== null && a.state === b.state && a.step === b.step)
-}
-
 /** A tile as its box follows it: whether a view is in it yet, and whether the bar says its work is at it. */
 export interface TileState {
   empty: boolean
