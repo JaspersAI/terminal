@@ -11,10 +11,12 @@ import {
   type ReactElement,
 } from 'react'
 import { askedIn, type Place } from '../../../shared/agent/asking'
+import { withAttachments } from '../../../shared/agent/attachments'
 import type { Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
 import { errorMessage } from '../../lib/errors'
 import { get, subscribe as subscribeState, useAppState } from '../../lib/state'
+import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from '../composer/Attachments'
 import { over, type LiveExchange } from '../composer/live'
 import { pasteLinks } from '../composer/paste'
 import { QuestionField } from '../composer/QuestionField'
@@ -139,6 +141,8 @@ export function LoopBox({
   onSkip,
   zoom = 1,
 }: Props): ReactElement {
+  const attachments = useAttachments()
+  const drop = useFileDrop(attachments.attach)
   // This tile, as the place a run shows and asks: its workspace, and its element there.
   const place = useMemo(() => ({ workspaceId, on: elementId }), [workspaceId, elementId])
   const tileBox = useTileBox(place)
@@ -155,7 +159,7 @@ export function LoopBox({
   const working = live.some((one) => one.working)
   const asked = question?.id ?? (secret ? `${secret.plugin}/${secret.key}` : (need?.name ?? null))
   // The square at the line's end stops while a run works and nothing is typed, and sends otherwise.
-  const stopping = working && draft === ''
+  const stopping = working && draft === '' && attachments.files.length === 0
   const shouldRead = shouldReadTileBox(tileBox)
 
   // What was said before: read on mount with no finished row up, and when opened with unread exchanges.
@@ -201,8 +205,10 @@ export function LoopBox({
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    const text = draft.trim()
+    if (attachments.reading > 0) return
+    const text = withAttachments(draft, attachments.files)
     if (!text) return
+    attachments.clear()
     const ask = crypto.randomUUID()
     updateTileBox(place, (b) => tileBoxSent(b, place, ask, text))
     // A request that began is ended by its run's events. What comes back here settles one that never did.
@@ -248,11 +254,14 @@ export function LoopBox({
         if (!box.current?.contains(event.relatedTarget as Node | null)) setFocused(false)
       }}
       onKeyDown={keyDown}
+      onDragOver={drop.onDragOver}
+      onDragLeave={drop.onDragLeave}
+      onDrop={drop.onDrop}
       // The command line is first in the box, at the top of the tile. Open in a tile with no view yet,
       // what it shows fills the tile under it.
       className={`m-1 flex flex-col border border-border bg-background outline-none select-text focus-within:border-foreground ${
         fills && open ? 'min-h-0 flex-1' : 'max-h-1/2 shrink-0'
-      }`}
+      } ${drop.dropping ? 'outline-2 -outline-offset-2 outline-foreground outline-dashed' : ''}`}
     >
       {secret !== null ? (
         <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} />
@@ -261,44 +270,50 @@ export function LoopBox({
       ) : need !== null ? (
         <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} />
       ) : (
-        <form id={`loop-form-${elementId}`} onSubmit={submit} className="flex shrink-0 items-center gap-1 p-0.5">
-          <input
-            id={`loop-input-${elementId}`}
-            name="loop-prompt"
-            aria-label={`Message ${label}`}
-            autoComplete="off"
-            value={draft}
-            placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
-            onChange={(event) =>
-              updateTileBox(place, (b) => (b.draft === event.target.value ? b : { ...b, draft: event.target.value }))
-            }
-            onPaste={pasteLinks}
-            className="min-w-0 flex-1 bg-transparent px-1.5 py-1 text-xs outline-none"
-          />
-          <button
-            type={stopping ? 'button' : 'submit'}
-            aria-label={stopping ? 'Stop' : 'Send'}
-            data-loop-stop={stopping ? '' : undefined}
-            disabled={!stopping && draft.trim() === ''}
-            onClick={
-              stopping
-                ? (event) => {
-                    event.preventDefault()
-                    stopNewest()
-                  }
-                : undefined
-            }
-            style={zoom !== 1 ? { width: `${1.5 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
-            className="flex h-6 w-6 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-30"
-          >
-            {stopping ? (
-              <span aria-hidden className="h-2 w-2 bg-current" />
-            ) : (
-              <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
-                <path d="M5 9V1.5M1.5 5 5 1.5 8.5 5" />
-              </svg>
-            )}
-          </button>
+        <form id={`loop-form-${elementId}`} onSubmit={submit} className="flex shrink-0 flex-col p-0.5">
+          <div className="flex items-center gap-1">
+            <AttachButton compact onFiles={attachments.attach} />
+            <input
+              id={`loop-input-${elementId}`}
+              name="loop-prompt"
+              aria-label={`Message ${label}`}
+              autoComplete="off"
+              value={draft}
+              placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
+              onChange={(event) =>
+                updateTileBox(place, (b) => (b.draft === event.target.value ? b : { ...b, draft: event.target.value }))
+              }
+              onPaste={(event) => pasteLinks(event, attachments.attach)}
+              className="min-w-0 flex-1 bg-transparent px-1 py-1 text-xs outline-none"
+            />
+            <button
+              type={stopping ? 'button' : 'submit'}
+              aria-label={stopping ? 'Stop' : 'Send'}
+              data-loop-stop={stopping ? '' : undefined}
+              disabled={
+                !stopping && ((draft.trim() === '' && attachments.files.length === 0) || attachments.reading > 0)
+              }
+              onClick={
+                stopping
+                  ? (event) => {
+                      event.preventDefault()
+                      stopNewest()
+                    }
+                  : undefined
+              }
+              style={zoom !== 1 ? { width: `${1.5 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
+              className="flex h-6 w-6 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-30"
+            >
+              {stopping ? (
+                <span aria-hidden className="h-2 w-2 bg-current" />
+              ) : (
+                <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+                  <path d="M5 9V1.5M1.5 5 5 1.5 8.5 5" />
+                </svg>
+              )}
+            </button>
+          </div>
+          <AttachmentChips attachments={attachments} className="px-1 pt-0.5 pb-0.5" />
         </form>
       )}
       {open && (live.length > 0 || earlier.length > 0) && (

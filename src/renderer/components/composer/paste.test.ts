@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { pastedText, type PasteNode } from './paste.ts'
+import { clipboardFiles, pastedText, type PasteNode } from './paste.ts'
 
 const t = (text: string): PasteNode => ({ nodeType: 3, nodeName: '#text', textContent: text, childNodes: [] })
 
@@ -51,4 +51,17 @@ test('an address among kept links stays the address; brackets and parentheses ca
     a('https://en.example.org/wiki/Foo_(bar)', 'a [draft]'),
   )
   assert.equal(pastedText(body), 'https://example.com and [a \\[draft\\]](https://en.example.org/wiki/Foo_%28bar%29)')
+})
+
+test('clipboardFiles extracts pasted files from clipboardData.files or file items and returns empty for plain text', () => {
+  const file = new File(['a,b\n1,2'], 'data.csv', { type: 'text/csv' })
+  assert.deepEqual(clipboardFiles({ files: [file] }), [file])
+  assert.deepEqual(
+    clipboardFiles({
+      files: [],
+      items: [{ kind: 'string' }, { kind: 'file', getAsFile: () => file }],
+    }),
+    [file],
+  )
+  assert.deepEqual(clipboardFiles({ files: [], items: [{ kind: 'string' }] }), [])
 })

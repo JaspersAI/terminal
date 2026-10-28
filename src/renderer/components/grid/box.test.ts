@@ -343,3 +343,11 @@ test('boxesSeeded seeds in-flight tile runs and boxesKept drops only tiles remov
   assert.equal(tileBoxOf(kept, { workspaceId: 'w1', on: 'e1' }).live[0]?.question, 'in w1')
   assert.equal(tileBoxOf(kept, { workspaceId: 'w2', on: 'e1' }), IDLE_BOX)
 })
+
+test('a tile box summarizes attached_file blocks in sent and heard questions', () => {
+  const prompt = 'Analyze\n\n<attached_file name="sheet.xlsx">\nA\tB\n</attached_file>'
+  const sentRows = boxSent([], 'a1', 'w1', prompt)
+  assert.equal(sentRows[0]!.question, 'Analyze\n[Attached: sheet.xlsx]')
+  const heardRows = boxHeard([], start('run1', 'e1', { request: prompt }), HERE)
+  assert.equal(heardRows[0]!.question, 'Analyze\n[Attached: sheet.xlsx]')
+})

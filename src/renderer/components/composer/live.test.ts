@@ -307,3 +307,8 @@ test('trailOf keeps the active step or thought visible while working and folds c
     active: null,
   })
 })
+
+test('a sent request with attached_file blocks shows the concise attachment summary in its live question', () => {
+  const list = sent([], 'a1', 'w1', 'Summarize this.\n\n<attached_file name="report.pdf">\nFull text\n</attached_file>')
+  assert.equal(list[0]?.question, 'Summarize this.\n[Attached: report.pdf]')
+})
