@@ -57,7 +57,9 @@ export async function checkForUpdates(): Promise<void> {
 export function installUpdate(): void {
   if (getState().updates.status !== 'ready') throw new Error('No update is ready to install.')
   flush()
-  autoUpdater.quitAndInstall(true, true)
+  // Deferred so a `state:dispatch` IPC call from a window finishes before Squirrel.Mac's
+  // `quitAndInstall` synchronously closes and destroys the calling window.
+  setImmediate(() => autoUpdater.quitAndInstall(true, true))
 }
 
 const squirrelErrors = new WeakSet<Error>()

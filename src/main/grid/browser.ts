@@ -242,8 +242,10 @@ function createNativeView(events: BrowserViewEvents): ManagedBrowserView {
       }
     },
     destroy: () => {
-      raw.setVisible(false)
-      if (!webContents.isDestroyed()) webContents.close()
+      if (!webContents.isDestroyed()) {
+        raw.setVisible(false)
+        webContents.close()
+      }
     },
   }
 
@@ -266,16 +268,16 @@ function wrapWindow(number: number, win: BrowserWindow): ManagedWindow {
     },
     attach: (view) => {
       const raw = nativeViews.get(view)
-      if (!raw || win.isDestroyed()) return
+      if (!raw || win.isDestroyed() || raw.webContents.isDestroyed()) return
       if (!win.contentView.children.includes(raw)) win.contentView.addChildView(raw)
     },
     detach: (view) => {
       const raw = nativeViews.get(view)
-      if (!raw || win.isDestroyed()) return
+      if (!raw || win.isDestroyed() || raw.webContents.isDestroyed()) return
       if (win.contentView.children.includes(raw)) win.contentView.removeChildView(raw)
     },
     sendState: (snapshot) => {
-      if (!win.isDestroyed()) win.webContents.send('browser:state', snapshot)
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('browser:state', snapshot)
     },
   }
 }

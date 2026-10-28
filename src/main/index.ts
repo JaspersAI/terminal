@@ -191,7 +191,8 @@ app.whenReady().then(async () => {
   installMenu({
     openSettings: () => {
       showAll()
-      BrowserWindow.getFocusedWindow()?.webContents.send('menu:settings')
+      const win = BrowserWindow.getFocusedWindow()
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('menu:settings')
     },
     // With more windows open than screens, the ones left over stay open and a notice says which.
     useAllScreens: () => allScreensWithNotice(),

@@ -120,7 +120,7 @@ function readOpenAtLogin(): boolean {
 
 /** The menu: open the window, what the tasks are doing, a restart once an update is ready, quit. Rebuilt only when those lines change. */
 function refreshMenu(deps: BackgroundDeps): void {
-  if (!tray) return
+  if (!tray || tray.isDestroyed()) return
   const { tasks, updates } = getState()
   const running = tasks.filter((t) => t.running).length
   const pending = tasks.filter(isPending).length

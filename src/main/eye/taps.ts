@@ -59,6 +59,7 @@ export function recordNote(sender: WebContents, raw: unknown): void {
 }
 
 function windowOf(contents: WebContents): { window?: number } {
+  if (contents.isDestroyed()) return {}
   const number = windowNumberOf(contents)
   return number === null ? {} : { window: number }
 }
@@ -80,7 +81,8 @@ function watch(win: BrowserWindow): void {
   // A window is numbered once it is in the window list, just after it is made; kept, since a closed
   // window has left the list by the time it says so.
   let known: number | null = null
-  const number = (): number | null => (known ??= win.isDestroyed() ? null : windowNumberOf(win.webContents))
+  const number = (): number | null =>
+    (known ??= win.isDestroyed() || win.webContents.isDestroyed() ? null : windowNumberOf(win.webContents))
   queueMicrotask(() => void number())
   const say = (
     kind: 'focus' | 'blur' | 'window' | 'zoom' | 'unresponsive' | 'crash',
@@ -89,16 +91,23 @@ function watch(win: BrowserWindow): void {
     const n = number()
     if (n !== null) record({ kind, window: n, ...more })
   }
-  win.on('focus', () => say('focus'))
-  win.on('blur', () => say('blur'))
-  win.on('show', () => say('window', { name: 'shown' }))
-  win.on('hide', () => say('window', { name: 'hidden' }))
-  win.on('minimize', () => say('window', { name: 'minimized' }))
-  win.on('restore', () => say('window', { name: 'restored' }))
-  win.on('unresponsive', () => say('unresponsive'))
-  win.webContents.on('zoom-changed', (_event, direction) =>
-    say('zoom', { name: direction === 'in' ? 'in' : 'out', data: { factor: win.webContents.getZoomFactor() } }),
-  )
+  const sayAlive = (
+    kind: 'focus' | 'blur' | 'window' | 'zoom' | 'unresponsive',
+    more: Record<string, unknown> = {},
+  ): void => {
+    if (!win.isDestroyed()) say(kind, more)
+  }
+  win.on('focus', () => sayAlive('focus'))
+  win.on('blur', () => sayAlive('blur'))
+  win.on('show', () => sayAlive('window', { name: 'shown' }))
+  win.on('hide', () => sayAlive('window', { name: 'hidden' }))
+  win.on('minimize', () => sayAlive('window', { name: 'minimized' }))
+  win.on('restore', () => sayAlive('window', { name: 'restored' }))
+  win.on('unresponsive', () => sayAlive('unresponsive'))
+  win.webContents.on('zoom-changed', (_event, direction) => {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed())
+      say('zoom', { name: direction === 'in' ? 'in' : 'out', data: { factor: win.webContents.getZoomFactor() } })
+  })
   let settling: NodeJS.Timeout | null = null
   const moved = (): void => {
     if (settling) clearTimeout(settling)

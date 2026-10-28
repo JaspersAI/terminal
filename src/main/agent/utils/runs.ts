@@ -41,7 +41,7 @@ export function emit(event: AgentEvent): void {
   if (live.has(event.runId)) trails.set(event.runId, stepped(trails.get(event.runId) ?? [], event))
   noteRun(event)
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('agent:event', event)
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('agent:event', event)
   }
 }
 
