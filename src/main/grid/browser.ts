@@ -7,6 +7,7 @@ import {
   type WebContents,
   type WebPreferences,
 } from 'electron'
+import { zoomKey } from '../../shared/app/eye-events'
 import {
   BROWSER_PARTITION,
   browserRequestHeaders,
@@ -16,7 +17,7 @@ import {
   isBrowserUrl,
   type BrowserBounds,
 } from '../../shared/grid/browser'
-import { PANEL_TEXT_MAX, panelOf } from '../../shared/grid/grid'
+import { PANEL_TEXT_MAX, panelOf, stepZoom, tileZoom } from '../../shared/grid/grid'
 import { publishChecked, publishTextChecked, setPanelStateChecked } from '../actions'
 import { getState, subscribe } from '../state'
 import {
@@ -27,7 +28,7 @@ import {
   type ManagedBrowserView,
   type ManagedWindow,
 } from './browser-manager'
-import { findElement, focus } from './grid'
+import { changeZoom, findElement, focus } from './grid'
 import { windowNumberOf, windowOf } from './windows'
 
 // Electron's native `WebContentsView` backing for `core/browser` panels. Each tab runs in the
@@ -269,6 +270,18 @@ function createNativeView(
     inFlightUrlsByWebContentsId.delete(webContents.id)
     events.onClose?.()
   })
+  webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const dir = zoomKey({
+      key: input.key,
+      metaKey: input.meta,
+      ctrlKey: input.control,
+      altKey: input.alt,
+    })
+    if (!dir) return
+    event.preventDefault()
+    events.onZoom?.(dir)
+  })
 
   const managed: ManagedBrowserView = {
     loadURL: (url) => (webContents.isDestroyed() ? Promise.resolve() : webContents.loadURL(url)),
@@ -325,6 +338,10 @@ function createNativeView(
           .catch(() => undefined)
       }
       void webContents.executeJavaScript(THEATER_SCRIPT(theater), false).catch(() => undefined)
+    },
+    setZoomFactor: (zoom) => {
+      if (webContents.isDestroyed() || Math.abs(webContents.getZoomFactor() - zoom) < 0.001) return
+      webContents.setZoomFactor(zoom)
     },
     readPageText: async () => {
       if (webContents.isDestroyed()) return null
@@ -392,6 +409,14 @@ function manager(): BrowserManager {
     },
     focusElement: (workspaceId, elementId) => {
       focus(workspaceId, elementId)
+    },
+    zoomElement: (workspaceId, elementId, direction) => {
+      try {
+        const { grid } = findElement(workspaceId, elementId)
+        changeZoom(workspaceId, elementId, stepZoom(tileZoom(grid, elementId), direction))
+      } catch {
+        // Element was removed concurrently.
+      }
     },
     publishPanel: (workspaceId, panelId, snapshot) => {
       try {

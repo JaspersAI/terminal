@@ -2,6 +2,7 @@ import { Component, useEffect, useRef, useState, type ComponentType, type ReactE
 import { createRoot } from 'react-dom/client'
 import { BridgeProvider, PanelProvider, type Bridge, type PanelRef } from '@jaspers-ai/sdk'
 import { createIframeBridge, WorkingProvider } from '@jaspers-ai/sdk/host'
+import { clampZoom, ZOOM_DEFAULT } from '../shared/grid/grid'
 import { watchDocumentUse } from '../renderer/lib/eye'
 
 // What runs in the iframe: the query says which view of which panel this frame is, the plugin's own
@@ -23,8 +24,20 @@ export async function boot(): Promise<void> {
   // What goes wrong or is clicked, typed, or zoomed in the view is told to the page around it, which records it on the panel and tells Eye while it records.
   window.addEventListener('error', (event) => onUncaught(event.error ?? event.message))
   window.addEventListener('unhandledrejection', (event) => onUncaught(event.reason))
-  watchDocumentUse((params) => window.parent.postMessage({ method: 'view.eye', params }, '*'))
+  watchDocumentUse(
+    (params) => window.parent.postMessage({ method: 'view.eye', params }, '*'),
+    () => true,
+    (dir) => {
+      window.parent.postMessage({ method: 'view.zoom', params: { name: dir } }, '*')
+    },
+  )
   const query = new URLSearchParams(location.search)
+  applyDocumentZoom(Number(query.get('zoom')))
+  window.addEventListener('message', (event: MessageEvent) => {
+    if (event.source !== window.parent) return
+    const data = event.data as { method?: unknown; params?: { zoom?: unknown } } | null
+    if (data?.method === 'zoom') applyDocumentZoom(data.params?.zoom)
+  })
   const view = query.get('view') ?? ''
   const panel: PanelRef = { id: query.get('panel') ?? '', workspaceId: query.get('workspace') ?? '' }
   const initialWorking = query.get('working') === '1'
@@ -176,4 +189,12 @@ function tell(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error)
   const stack = error instanceof Error ? (error.stack ?? null) : null
   window.parent.postMessage({ method: 'view.error', params: { message, stack } }, '*')
+}
+
+function applyDocumentZoom(raw: unknown): void {
+  const zoom = clampZoom(raw)
+  document.documentElement.style.zoom = zoom === ZOOM_DEFAULT ? '' : String(zoom)
+  if (document.body) {
+    document.body.style.fontSize = zoom === ZOOM_DEFAULT ? '' : `${Math.round(14 * zoom * 100) / 100}px`
+  }
 }

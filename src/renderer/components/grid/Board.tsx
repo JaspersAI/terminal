@@ -19,6 +19,8 @@ interface Props {
   working?: boolean
   /** The elements not drawn yet: views whose plugins are waiting on the user, which the tile's box asks for. */
   waiting: ReadonlySet<string>
+  zoom: number
+  onZoomGesture?: (direction: 'in' | 'out' | 'reset') => void
 }
 
 /**
@@ -46,6 +48,8 @@ export function Board({
   focused,
   working = false,
   waiting,
+  zoom,
+  onZoomGesture,
 }: Props): ReactElement | null {
   const views = useAppState((s) => s.views)
   const inside = useMemo(() => layoutOf(grid, frame.id), [grid, frame.id])
@@ -97,6 +101,8 @@ export function Board({
               panel={panel}
               focused={focused && here}
               working={working}
+              zoom={zoom}
+              onZoomGesture={onZoomGesture}
             />
             {element.mode !== 'maximized' &&
               insideEdges(element.rect, cut).map((edge) => (

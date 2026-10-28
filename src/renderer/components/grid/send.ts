@@ -1,4 +1,4 @@
-import type { GridElement } from '../../../shared/grid/grid'
+import { clampZoom, stepZoom, type GridElement } from '../../../shared/grid/grid'
 import type { Action } from '../../../shared/state'
 import { dispatch } from '../../lib/state'
 
@@ -19,4 +19,16 @@ export function toggleMaximized(workspaceId: string, element: GridElement): void
 export function toggleMinimized(workspaceId: string, element: GridElement): void {
   const mode = element.mode === 'minimized' ? (element.restoreMode ?? 'tiled') : 'minimized'
   send({ type: 'element.setMode', workspaceId, elementId: element.id, mode })
+}
+
+/** Steps a tile's zoom in, out, or back to 100%, and returns the new zoom factor. */
+export function stepTileZoom(
+  workspaceId: string,
+  elementId: string,
+  direction: 'in' | 'out' | 'reset',
+  currentZoom: number,
+): number {
+  const next = clampZoom(stepZoom(currentZoom, direction))
+  send({ type: 'element.setZoom', workspaceId, elementId, zoom: next })
+  return next
 }

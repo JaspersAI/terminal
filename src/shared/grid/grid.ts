@@ -31,6 +31,11 @@ export const SIZE_MAX: GridSize = { cols: 100, rows: 100 }
 /** No element is smaller than 2 × 2 cells. */
 export const MIN_CELLS = 2
 
+export const ZOOM_DEFAULT = 1
+export const ZOOM_MIN = 0.5
+export const ZOOM_MAX = 2
+export const ZOOM_STEPS = [0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2] as const
+
 /** A rectangle of cells, 0-based from the top left. */
 export interface Rect {
   x: number
@@ -74,6 +79,8 @@ export interface GridElement {
   /** Set while maximized or minimized: where it goes back to, and as what. */
   restoreRect?: Rect
   restoreMode?: 'tiled' | 'floating'
+  /** How much the tile's content is scaled, from 0.5 to 2; absent when 1. */
+  zoom?: number
 }
 
 /**
@@ -532,6 +539,7 @@ export function moveAcross(
     z: topZ(shown) + 1,
     mode: 'tiled',
     ...(current.loop === undefined ? {} : { loop: current.loop }),
+    ...(current.zoom === undefined ? {} : { zoom: current.zoom }),
   }
   const inside = layoutOf(source, id)
   const landed = withLayout(target, undefined, {
@@ -653,6 +661,55 @@ export function focusElement(grid: Grid, id: string): { grid: Grid } {
   if (grid.focus[0] === id && !raise) return { grid }
   const elements = raise ? grid.elements.map((e) => (e.id === id ? { ...e, z: top + 1 } : e)) : grid.elements
   return { grid: { ...grid, elements, focus: toFront(grid.focus, id) } }
+}
+
+/** Clamps a zoom factor to [0.5, 2] rounded to two decimal places, or 1 when not a finite number. */
+export function clampZoom(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return ZOOM_DEFAULT
+  return Math.round(clamp(value, ZOOM_MIN, ZOOM_MAX) * 100) / 100
+}
+
+/** An element's zoom factor, 1 when unset. */
+export function elementZoom(element: Pick<GridElement, 'zoom'> | null | undefined): number {
+  return element?.zoom === undefined ? ZOOM_DEFAULT : clampZoom(element.zoom)
+}
+
+/** The zoom factor of the tile that holds an element or panel id on `grid`, 1 when unset or absent. */
+export function tileZoom(grid: Grid, id: string): number {
+  const panel = grid.panels.find((p) => p.id === id || p.elementId === id)
+  const element = grid.elements.find((e) => e.id === (panel?.elementId ?? id))
+  if (!element) return ZOOM_DEFAULT
+  if (element.parent !== undefined) {
+    const frame = grid.elements.find((e) => e.id === element.parent)
+    if (frame) return elementZoom(frame)
+  }
+  return elementZoom(element)
+}
+
+/** Next standard zoom stop in, out, or reset to 1. */
+export function stepZoom(current: number, direction: 'in' | 'out' | 'reset'): number {
+  if (direction === 'reset') return ZOOM_DEFAULT
+  const now = clampZoom(current)
+  if (direction === 'in') return ZOOM_STEPS.find((step) => step > now + 0.001) ?? ZOOM_MAX
+  return [...ZOOM_STEPS].reverse().find((step) => step < now - 0.001) ?? ZOOM_MIN
+}
+
+/** A zoom factor as a percentage label, like "80%" or "125%". */
+export function zoomPercent(zoom: number): string {
+  return `${Math.round(clampZoom(zoom) * 100)}%`
+}
+
+/** Sets an element's zoom factor, omitting `zoom` when reset to 1. */
+export function setZoom(grid: Grid, id: string, zoom: number): { grid: Grid; element: GridElement } {
+  const current = find(grid.elements, id)
+  const nextZoom = clampZoom(zoom)
+  const normalizedCurrent = current.zoom === undefined ? ZOOM_DEFAULT : current.zoom
+  if (normalizedCurrent === nextZoom && (nextZoom === ZOOM_DEFAULT ? current.zoom === undefined : true)) {
+    return { grid, element: current }
+  }
+  const { zoom: _was, ...rest } = current
+  const element: GridElement = nextZoom === ZOOM_DEFAULT ? rest : { ...rest, zoom: nextZoom }
+  return { grid: withElement(grid, element), element }
 }
 
 // Panels. The model sees element ids, the views their own panel ids, so both name the same panel.

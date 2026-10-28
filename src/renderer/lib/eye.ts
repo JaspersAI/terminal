@@ -48,7 +48,11 @@ export function watchUse(): void {
  * Watches a document (the main window's or a plugin view iframe's) for clicks, field typing counts,
  * and wheel/keyboard zoom gestures, handing each `Note` to `emit` when `enabled()` is true.
  */
-export function watchDocumentUse(emit: (note: Note) => void, enabled: () => boolean = () => true): void {
+export function watchDocumentUse(
+  emit: (note: Note) => void,
+  enabled: () => boolean = () => true,
+  onZoomKey?: (dir: ZoomNoteName) => void,
+): void {
   let lastRightClickAt = -Infinity
 
   const sendClick = (event: MouseEvent, button: number): void => {
@@ -153,14 +157,25 @@ export function watchDocumentUse(emit: (note: Note) => void, enabled: () => bool
   document.addEventListener(
     'keydown',
     (event) => {
-      if (!enabled()) return
       const dir = zoomKey(event)
       if (!dir) return
+      if (onZoomKey) {
+        event.preventDefault()
+        onZoomKey(dir)
+        return
+      }
+      if (!enabled()) return
       const context = event.target instanceof Element ? viewContextOf(event.target) : {}
       emit({ kind: 'zoom', name: dir, factor: window.devicePixelRatio, ...context })
     },
     { capture: true },
   )
+}
+
+/** Records a loop zoom change with the resulting zoom factor while recording is on. */
+export function noteZoom(name: ZoomNoteName, factor: number, target: Element | null): void {
+  if (!recording()) return
+  send({ kind: 'zoom', name, factor, ...(target ? viewContextOf(target) : {}) })
 }
 
 function recording(): boolean {

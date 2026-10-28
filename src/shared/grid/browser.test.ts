@@ -25,7 +25,7 @@ import {
   scaleBounds,
   shouldShowBrowser,
 } from './browser.ts'
-import { EMPTY_GRID, layoutOf, placeFramed, placeView, setMode, setRect, withLayout } from './grid.ts'
+import { EMPTY_GRID, layoutOf, placeFramed, placeView, setMode, setRect, setZoom, withLayout } from './grid.ts'
 
 test('normalizeBrowserUrl accepts http(s), adds https to bare hosts, and refuses other schemes or credentials', () => {
   assert.equal(normalizeBrowserUrl(''), '')
@@ -284,6 +284,11 @@ test('browserStanding resolves a panel inside a loop frame, its focus, and when 
   assert.equal(firstStanding.frame?.id, first.frame.id)
   assert.equal(firstStanding.visibleInGrid, true)
   assert.equal(firstStanding.focused, false)
+  assert.equal(firstStanding.zoom, 1)
+
+  const zoomedWindow = setZoom(layoutOf(second.grid), first.frame.id, 1.25).grid
+  const withZoomed = withLayout(second.grid, undefined, zoomedWindow)
+  assert.equal(browserStanding({ 1: withZoomed }, first.panel.id)?.zoom, 1.25)
 
   const secondStanding = browserStanding({ 1: second.grid }, second.panel.id)
   assert.ok(secondStanding)

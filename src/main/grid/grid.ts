@@ -6,8 +6,10 @@ import {
   gridMap,
   layoutOf,
   moveAcross,
+  panelOf,
   resizeGrid,
   setMode,
+  setZoom,
   withLayout,
   type ElementMode,
   type Grid,
@@ -159,6 +161,16 @@ export function changeMode(
     )
   }
   return changeGridOf(workspaceId, id, (grid) => setMode(grid, id, mode))
+}
+
+/**
+ * Changes a tile's zoom factor. An id inside a frame zooms the frame's tile, so every view in the
+ * tile scales together.
+ */
+export function changeZoom(workspaceId: string, id: string, zoom: number): { grid: Grid; element: GridElement } {
+  const { grid } = findElement(workspaceId, id)
+  const target = frameAround(grid, id) ?? panelOf(grid, id).elementId
+  return changeGridOf(workspaceId, target, (layout) => setZoom(layout, target, zoom))
 }
 
 /** One change to one layout of a window's grid: the window's own, or the one inside `frame`. */

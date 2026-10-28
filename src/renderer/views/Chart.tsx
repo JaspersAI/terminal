@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, type ReactElement } from 'react'
 import { usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
 import { usePanelWorking } from '@jaspers-ai/sdk/host'
+import { tileZoom, ZOOM_DEFAULT } from '../../shared/grid/grid'
+import { useAppState } from '../lib/state'
 import { echarts, type EChart, type EChartsOption } from './echarts'
 import type { ViewProps } from './index'
 import { cellText, isYearColumn, shownRows } from './cells'
@@ -58,6 +60,13 @@ export function Chart({ panel }: ViewProps): ReactElement {
   const found = shownRows(raw, working)
   // The chart's colors are written into its option, so a change of scheme builds it again.
   const scheme = useColorScheme()
+  const scale = useAppState((s) => {
+    const grids = s.grids[panel.workspaceId] ?? {}
+    for (const grid of Object.values(grids)) {
+      if (grid.panels.some((p) => p.id === panel.id)) return tileZoom(grid, panel.id)
+    }
+    return ZOOM_DEFAULT
+  })
   const shape = CHART_KINDS.includes(kind) ? kind : 'line'
   const xAs = FORMATS.includes(xFormat) ? xFormat : 'auto'
   const yAs = FORMATS.includes(yFormat) ? yFormat : 'auto'
@@ -122,9 +131,21 @@ export function Chart({ panel }: ViewProps): ReactElement {
   const option = useMemo(
     () =>
       ready
-        ? buildOption({ shape, labels, rows: found.rows, yColumns, stack, log, zoom, yFormat: yAs, scheme, onHover })
+        ? buildOption({
+            shape,
+            labels,
+            rows: found.rows,
+            yColumns,
+            stack,
+            log,
+            zoom,
+            yFormat: yAs,
+            scheme,
+            scale,
+            onHover,
+          })
         : null,
-    [ready, shape, labels, found.rows, yColumns, stack, log, zoom, yAs, scheme, onHover],
+    [ready, shape, labels, found.rows, yColumns, stack, log, zoom, yAs, scheme, scale, onHover],
   )
 
   usePublish(panel, { kind: shape, x: xColumn, y: yColumns, points: found.rows.length, error: raw.error ?? rawShort })
@@ -316,6 +337,7 @@ interface Build {
   zoom: boolean
   yFormat: Format
   scheme: Scheme
+  scale: number
   onHover?: (index: number, head: string) => void
 }
 
@@ -329,12 +351,13 @@ function buildOption({
   zoom,
   yFormat,
   scheme,
+  scale,
   onHover,
 }: Build): EChartsOption {
   const paint = ink()
   const palette = seriesColors(scheme)
   const many = yColumns.length > 1 || shape === 'pie'
-  const axisText = { color: paint.muted, fontSize: 10 }
+  const axisText = { color: paint.muted, fontSize: Math.round(10 * scale) }
   const axisLine = { lineStyle: { color: paint.line } }
   const value = (row: Record<string, unknown>, column: string): number | null => numberOf(row[column])
 
@@ -368,7 +391,11 @@ function buildOption({
       padding: [6, 8],
       // The family by name: the tooltip's font is written as one `font:` shorthand, which cannot hold
       // `inherit`, and a shorthand that is not valid takes the size down with it.
-      textStyle: { color: paint.text, fontSize: 11, fontFamily: getComputedStyle(document.body).fontFamily },
+      textStyle: {
+        color: paint.text,
+        fontSize: Math.round(11 * scale),
+        fontFamily: getComputedStyle(document.body).fontFamily,
+      },
       // Inside the chart, since the element around it clips whatever crosses its edge.
       confine: true,
       formatter: (raw: unknown) => {
@@ -415,7 +442,7 @@ function buildOption({
           radius: ['45%', '72%'],
           // A 2px gap in the surface colour between slices, which is what separates them.
           itemStyle: { borderColor: paint.surface, borderWidth: 2 },
-          label: { color: paint.muted, fontSize: 10 },
+          label: { color: paint.muted, fontSize: Math.round(10 * scale) },
           data: rows.map((row, index) => ({
             name: labels[index] || String(index + 1),
             value: value(row, column) ?? 0,

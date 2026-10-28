@@ -1,3 +1,5 @@
+import { clampZoom, ZOOM_DEFAULT } from '../../shared/grid/grid.ts'
+
 // The app's theme under the names a server's page reads. The MCP Apps extension fixes a list of CSS
 // variables a host may hand a page, so one page looks at home in every host; this is the app's own
 // (`src/host-runtime/theme.css`) written under those. A name the app has no value for is left out,
@@ -41,4 +43,31 @@ export function hostStyles(read: (name: string) => string): Record<string, strin
     if (value !== '') styles[name] = value
   }
   return styles
+}
+
+/** Inline styles that scale a sandboxed MCP App iframe by the tile's zoom factor. */
+export function appFrameStyle(zoom: number): {
+  width?: string
+  height?: string
+  transform?: string
+  transformOrigin?: string
+} {
+  const z = clampZoom(zoom)
+  if (z === ZOOM_DEFAULT) return {}
+  const pct = Math.round((100 / z) * 1000) / 1000
+  return {
+    width: `${pct}%`,
+    height: `${pct}%`,
+    transform: `scale(${z})`,
+    transformOrigin: '0 0',
+  }
+}
+
+/** Container dimensions reported to an MCP App page, scaled to the unzoomed layout space inside the frame. */
+export function appContainerDimensions(width: number, height: number, zoom: number): { width: number; height: number } {
+  const z = clampZoom(zoom)
+  return {
+    width: Math.round(width / z),
+    height: Math.round(height / z),
+  }
 }

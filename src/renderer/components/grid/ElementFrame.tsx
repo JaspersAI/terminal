@@ -4,12 +4,19 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from 'react'
+import { zoomKey } from '../../../shared/app/eye-events'
 import {
   CHAT_VIEW,
+  elementZoom,
   layoutOf,
+  ZOOM_DEFAULT,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  zoomPercent,
   type DragHandle,
   type Grid,
   type GridElement,
@@ -17,15 +24,16 @@ import {
   type Rect,
 } from '../../../shared/grid/grid'
 import { waitingViews } from '../../../shared/plugins/needs'
+import { noteZoom } from '../../lib/eye'
 import { useAppState } from '../../lib/state'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
 import { loopName, showsChat } from '../../../shared/loops/loops'
-import { barLabel, BORN, boxOpens, sameActivity, type Activity, type TileState } from './box'
+import { barLabel, BORN, boxOpens, canZoomLoop, sameActivity, type Activity, type TileState } from './box'
 import { LoopBox } from './LoopBox'
 import { LoopMenu } from './LoopMenu'
 import { Held } from './Held'
-import { send, toggleMaximized, toggleMinimized } from './send'
+import { send, stepTileZoom, toggleMaximized, toggleMinimized } from './send'
 import { useLoopStatus } from './status'
 
 interface Props {
@@ -109,6 +117,22 @@ export function ElementFrame({
   const [menu, setMenu] = useState(false)
   const more = useRef<HTMLButtonElement>(null)
   const closeMenu = useCallback(() => setMenu(false), [])
+  // Whether this loop is actively selected and focused in the window, and whether its zoom popover is open.
+  const tileRef = useRef<HTMLElement>(null)
+  const zoomPopoverRef = useRef<HTMLDivElement>(null)
+  const zoomTriggerRef = useRef<HTMLButtonElement>(null)
+  const [selected, setSelected] = useState(focused)
+  const [zoomPopover, setZoomPopover] = useState(false)
+  const prevFocused = useRef(focused)
+  useEffect(() => {
+    if (!focused) {
+      setSelected(false)
+      setZoomPopover(false)
+    } else if (!prevFocused.current) {
+      setSelected(true)
+    }
+    prevFocused.current = focused
+  }, [focused])
   // Only a deep research loop shows its conversation; any other is its command line and its views.
   const chat = loop !== undefined && showsChat(loop)
   // Its box is folded under its line until the label in the bar opens it, or a run begins with no view
@@ -149,6 +173,17 @@ export function ElementFrame({
   const empty = frame && !grid.elements.some((e) => e.parent === element.id && !undrawn.has(e.id))
   const label = frame ? (loop ? `${called}, ${loop.desc}` : '') : title
   const minimized = element.mode === 'minimized'
+  const zoom = elementZoom(element)
+  const prevZoom = useRef(zoom)
+  useEffect(() => {
+    if (prevZoom.current === zoom) return
+    prevZoom.current = zoom
+    if (loop && focused && !minimized && !covered) {
+      setSelected(true)
+      setMenu(false)
+      setZoomPopover(true)
+    }
+  }, [zoom, loop, focused, minimized, covered])
   // What the work is doing. A tile whose box asks for what a view waits on is asking, whatever its runs are doing.
   const doing = useLoopStatus(workspaceId, element.loop)
   const status = need ? 'asking' : doing
@@ -166,39 +201,127 @@ export function ElementFrame({
   // A minimized tile is as tall as its bar, so its menu cannot be drawn inside it: it hangs below.
   const hangs = minimized && menu
 
+  const applyZoomStep = useCallback(
+    (direction: 'in' | 'out' | 'reset'): void => {
+      if (!loop) return
+      const next = stepTileZoom(workspaceId, element.id, direction, zoom)
+      setMenu(false)
+      setZoomPopover(true)
+      noteZoom(direction, next, tileRef.current)
+    },
+    [loop, workspaceId, element.id, zoom],
+  )
+
+  useEffect(() => {
+    if (!loop) return
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target as Node | null
+      const inside = Boolean(tileRef.current?.contains(target))
+      setSelected(inside)
+      if (!inside) {
+        setZoomPopover(false)
+      } else if (
+        zoomPopover &&
+        !zoomPopoverRef.current?.contains(target) &&
+        !zoomTriggerRef.current?.contains(target)
+      ) {
+        setZoomPopover(false)
+      }
+    }
+    const onFocusIn = (event: FocusEvent): void => {
+      const target = event.target as Node | null
+      if (!target || target === document.body || target === document.documentElement) return
+      setSelected(Boolean(tileRef.current?.contains(target)))
+    }
+    const onWindowBlur = (): void => {
+      if (tileRef.current?.contains(document.activeElement)) setSelected(true)
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('focusin', onFocusIn, true)
+    window.addEventListener('blur', onWindowBlur)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('focusin', onFocusIn, true)
+      window.removeEventListener('blur', onWindowBlur)
+    }
+  }, [loop, zoomPopover])
+
   // Cmd or Ctrl and K puts the caret in the focused element's box: its line, or what it is asking.
+  // Cmd or Ctrl and +/=/-/_/0 zooms the selected, focused loop and shows its zoom amount control popover.
   useEffect(() => {
     if (!focused) return
     const down = (event: KeyboardEvent): void => {
-      if (event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey)) return
+      if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault()
+        setSelected(true)
+        document.querySelector<HTMLInputElement>(`#loop-box-${element.id} input`)?.focus()
+        return
+      }
+      if (event.key === 'Escape' && zoomPopover) {
+        event.preventDefault()
+        event.stopPropagation()
+        setZoomPopover(false)
+        return
+      }
+      const dir = zoomKey(event)
+      if (!dir) return
+      const active = document.activeElement
+      const outsideFocused =
+        active instanceof Element &&
+        active !== document.body &&
+        active !== document.documentElement &&
+        !tileRef.current?.contains(active)
+      if (
+        !canZoomLoop({
+          hasLoop: loop !== undefined,
+          focused,
+          selected,
+          minimized,
+          covered,
+          modalOpen: document.querySelector('[aria-modal="true"]') !== null,
+          outsideFocused,
+        })
+      ) {
+        return
+      }
       event.preventDefault()
-      document.querySelector<HTMLInputElement>(`#loop-box-${element.id} input`)?.focus()
+      event.stopPropagation()
+      applyZoomStep(dir)
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [focused, element.id])
+  }, [focused, selected, minimized, covered, loop, element.id, zoomPopover, applyZoomStep])
 
   return (
     <section
+      ref={tileRef}
       id={`element-${element.id}`}
+      data-tile-id={element.id}
+      data-zoom={zoom}
+      data-loop-zoom={loop && !minimized ? zoom : undefined}
       aria-label={label}
       data-mode={element.mode}
+      tabIndex={-1}
       onPointerDown={() => {
+        setSelected(true)
         if (!focused) send({ type: 'element.focus', workspaceId, elementId: element.id })
       }}
-      style={{
-        gridColumn: `${x + 1} / span ${w}`,
-        gridRow: `${y + 1} / span ${h}`,
-        // A minimized tile's menu hangs under its bar, over whatever is there: the tile goes on top while it is open.
-        zIndex: hangs
-          ? HANGING
-          : element.mode === 'floating' || (minimized && element.restoreMode === 'floating')
-            ? element.z + 1
-            : focused
-              ? 1
-              : undefined,
-      }}
-      className={`relative isolate flex min-h-0 min-w-0 flex-col ${hangs ? 'overflow-visible' : 'overflow-hidden'} bg-background ring-1 select-none ${
+      style={
+        {
+          gridColumn: `${x + 1} / span ${w}`,
+          gridRow: `${y + 1} / span ${h}`,
+          // A minimized tile's menu hangs under its bar, over whatever is there: the tile goes on top while it is open.
+          zIndex: hangs
+            ? HANGING
+            : element.mode === 'floating' || (minimized && element.restoreMode === 'floating')
+              ? element.z + 1
+              : focused
+                ? 1
+                : undefined,
+          ...(loop && !minimized ? { '--loop-zoom': String(zoom) } : {}),
+        } as CSSProperties
+      }
+      className={`relative isolate flex min-h-0 min-w-0 flex-col outline-none ${hangs ? 'overflow-visible' : 'overflow-hidden'} bg-background ring-1 select-none ${
         focused ? 'ring-primary' : 'ring-foreground/25'
       } ${element.mode === 'floating' ? 'shadow-lg' : ''} ${covered ? 'invisible' : ''} ${away ? 'opacity-40' : ''} ${
         // As tall as its bar, at the top of the row it keeps.
@@ -213,7 +336,7 @@ export function ElementFrame({
           if (minimized) toggleMinimized(workspaceId, element)
           else toggleMaximized(workspaceId, element)
         }}
-        className={`flex h-6 shrink-0 items-center border-b ${
+        className={`flex min-h-6 shrink-0 items-center border-b ${minimized ? 'h-6' : ''} ${
           central ? 'border-central bg-central text-central-foreground' : 'border-border bg-muted'
         } ${canGrab(element.mode, 'move') ? 'cursor-grab' : ''}`}
       >
@@ -267,6 +390,25 @@ export function ElementFrame({
             </svg>
           </button>
         )}
+        {loop && zoom !== ZOOM_DEFAULT && (
+          <button
+            ref={zoomTriggerRef}
+            type="button"
+            id={`tile-zoom-${element.id}`}
+            data-tile-zoom
+            aria-label={`Zoom ${zoomPercent(zoom)}. Open zoom controls.`}
+            aria-expanded={zoomPopover}
+            title={`Zoom ${zoomPercent(zoom)}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => {
+              setMenu(false)
+              setZoomPopover((open) => !open)
+            }}
+            className="relative z-20 flex h-6 shrink-0 cursor-default items-center px-1.5 text-xs tabular-nums text-muted-foreground hover:text-foreground"
+          >
+            {zoomPercent(zoom)}
+          </button>
+        )}
         {loop && (
           <button
             type="button"
@@ -289,7 +431,10 @@ export function ElementFrame({
             aria-label={`More for ${label}`}
             aria-expanded={menu}
             onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => setMenu((open) => !open)}
+            onClick={() => {
+              setZoomPopover(false)
+              setMenu((open) => !open)
+            }}
             // Above the corner that resizes, so a press on it always opens the menu.
             className="relative z-20 flex h-6 w-6 shrink-0 cursor-default items-center justify-center text-muted-foreground hover:text-foreground"
           >
@@ -323,6 +468,54 @@ export function ElementFrame({
           </svg>
         </button>
       </header>
+      {loop && zoomPopover && !minimized && (
+        <div
+          ref={zoomPopoverRef}
+          id={`loop-zoom-popover-${element.id}`}
+          data-zoom-popover
+          role="dialog"
+          aria-label={`Zoom controls for ${called}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          className="absolute top-7 right-2 z-30 flex items-center gap-1.5 border border-border bg-background px-2 py-1 text-xs shadow-lg select-none"
+        >
+          <span data-zoom-amount className="min-w-10 text-center font-mono font-medium tabular-nums text-foreground">
+            {zoomPercent(zoom)}
+          </span>
+          <button
+            type="button"
+            data-zoom-out
+            aria-label="Zoom out"
+            title="Zoom out (Ctrl+-)"
+            disabled={zoom <= ZOOM_MIN}
+            onClick={() => applyZoomStep('out')}
+            className="flex h-6 w-6 items-center justify-center border border-border text-foreground hover:bg-muted disabled:opacity-30"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            data-zoom-in
+            aria-label="Zoom in"
+            title="Zoom in (Ctrl++)"
+            disabled={zoom >= ZOOM_MAX}
+            onClick={() => applyZoomStep('in')}
+            className="flex h-6 w-6 items-center justify-center border border-border text-foreground hover:bg-muted disabled:opacity-30"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            data-zoom-reset
+            aria-label="Reset zoom"
+            title="Reset zoom (Ctrl+0)"
+            disabled={zoom === ZOOM_DEFAULT}
+            onClick={() => applyZoomStep('reset')}
+            className="border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+          >
+            Reset
+          </button>
+        </div>
+      )}
       {loop && menu && (
         <LoopMenu
           workspaceId={workspaceId}
@@ -351,6 +544,7 @@ export function ElementFrame({
             expanded={expanded}
             onExpand={setExpanded}
             onActivity={showActivity}
+            zoom={zoom}
           />
         )}
         {/* With no view yet, and the box above folded, where the views will go. */}
@@ -366,9 +560,24 @@ export function ElementFrame({
             focused={focused}
             working={working}
             waiting={undrawn}
+            zoom={zoom}
+            onZoomGesture={
+              focused && selected && !minimized && !covered
+                ? (dir) => {
+                    applyZoomStep(dir)
+                  }
+                : undefined
+            }
           />
         ) : (
-          <Held workspaceId={workspaceId} elementId={element.id} panel={panel} focused={focused} working={working} />
+          <Held
+            workspaceId={workspaceId}
+            elementId={element.id}
+            panel={panel}
+            focused={focused}
+            working={working}
+            zoom={zoom}
+          />
         )}
       </div>
       {frameEdges(element.mode).map((handle) => (

@@ -15,6 +15,7 @@ import {
   removeElement,
   setMode,
   setPanelState,
+  setZoom,
   withLayout,
   type Grid,
 } from '../../shared/grid/grid.ts'
@@ -36,6 +37,7 @@ interface FakeView extends ManagedBrowserView {
   bounds: BrowserBounds | null
   visible: boolean
   theater: boolean
+  zoomFactor: number
   destroyed: boolean
   reloads: number
   pageText: string | null
@@ -64,6 +66,7 @@ function createHarness() {
   ])
   const sent: { window: number; snapshot: BrowserSnapshot }[] = []
   const focused: { workspaceId: string; elementId: string }[] = []
+  const zoomed: { workspaceId: string; elementId: string; direction: 'in' | 'out' | 'reset' }[] = []
 
   const makeWindow = (n: number): ManagedWindow => ({
     number: n,
@@ -102,6 +105,7 @@ function createHarness() {
         bounds: null,
         visible: false,
         theater: false,
+        zoomFactor: 1,
         destroyed: false,
         reloads: 0,
         pageText: 'Bloomberg Live TV stream',
@@ -147,6 +151,9 @@ function createHarness() {
         setTheaterMode(theater) {
           view.theater = theater
         },
+        setZoomFactor(zoom) {
+          view.zoomFactor = zoom
+        },
         readPageText: async () => view.pageText,
         destroy() {
           view.destroyed = true
@@ -165,6 +172,9 @@ function createHarness() {
     focusElement: (workspaceId, elementId) => {
       focused.push({ workspaceId, elementId })
     },
+    zoomElement: (workspaceId, elementId, direction) => {
+      zoomed.push({ workspaceId, elementId, direction })
+    },
   })
 
   const updateGrid = (workspaceId: string, nextGrid: Grid): void => {
@@ -179,6 +189,7 @@ function createHarness() {
     viewports,
     sent,
     focused,
+    zoomed,
     getState: () => state,
     setState: (next: BrowserManagerState) => {
       state = next
@@ -539,4 +550,35 @@ test('synchronizes WebContents User-Agent for Google auth hosts and uses CDP ove
   assert.equal(sync.inFlightUrl(), undefined)
   assert.equal(currentUa, cleanUa)
   assert.deepEqual(cdpOverrides, [''])
+})
+
+test('applies tile zoom factor to WebContentsView while keeping bounds unscaled, and forwards browser zoom gestures', async () => {
+  const { manager, placed, views, zoomed, getState, updateGrid } = createHarness()
+  await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  const view = views[0]!
+  assert.equal(view.zoomFactor, 1)
+  assert.deepEqual(view.bounds, { x: 16, y: 60, width: 680, height: 420 })
+
+  const zoomedWindow = setZoom(layoutOf(getState().grids['ws-1']![1]!), placed.frame.id, 0.8).grid
+  updateGrid('ws-1', withLayout(getState().grids['ws-1']![1]!, undefined, zoomedWindow))
+  manager.sweep()
+  assert.equal(view.zoomFactor, 0.8)
+  assert.deepEqual(view.bounds, { x: 16, y: 60, width: 680, height: 420 })
+
+  // If Chromium resets per-origin zoom as a page finishes loading, onDidStopLoading restores the tile's zoom.
+  view.zoomFactor = 1
+  view.events.onDidStopLoading()
+  assert.equal(view.zoomFactor, 0.8)
+
+  view.events.onZoom?.('out')
+  assert.deepEqual(zoomed, [{ workspaceId: 'ws-1', elementId: placed.frame.id, direction: 'out' }])
+
+  // Focusing another loop prevents unfocused browser views from zooming.
+  const second = placeFramed(getState().grids['ws-1']![1]!, {
+    content: { kind: 'view', view: 'core/table' },
+    loop: 'f2',
+  })
+  updateGrid('ws-1', second.grid)
+  view.events.onZoom?.('in')
+  assert.equal(zoomed.length, 1)
 })

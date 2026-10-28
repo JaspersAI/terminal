@@ -84,6 +84,7 @@ import {
   changeInside,
   changeMode,
   changeWindow,
+  changeZoom,
   findElement,
   focus,
   getGrid,
@@ -164,6 +165,9 @@ const HANDLERS: Record<Action['type'], Handler> = {
         `No room to bring ${work ? loopName(work.id) : elementId} back: free some cells on the grid, then restore it again.`,
       )
     }
+  },
+  'element.setZoom': (raw) => {
+    changeZoom(asString(raw.workspaceId), asString(raw.elementId), asFiniteNumber(raw.zoom))
   },
   'element.setRect': (raw) => {
     const elementId = asString(raw.elementId)
@@ -1169,6 +1173,11 @@ function asWholeNumber(value: unknown): number {
   const n = typeof value === 'string' ? Number(value) : value
   if (typeof n === 'number' && Number.isInteger(n)) return n
   throw new Error('columns and rows are whole numbers.')
+}
+
+function asFiniteNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  throw new Error('Malformed number.')
 }
 
 /** A window number from the renderer or the model; none means the main window. */

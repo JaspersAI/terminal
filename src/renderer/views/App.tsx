@@ -19,7 +19,7 @@ import { useData, usePanelState, usePublish, usePublishText, type PanelRef } fro
 import { usePanelWorking } from '@jaspers-ai/sdk/host'
 import { mapToolResult } from '../../shared/data/datasets'
 import { stableStringify } from '../../shared/data/hash'
-import { layoutOf, type Grid, type GridElement } from '../../shared/grid/grid'
+import { layoutOf, tileZoom, ZOOM_DEFAULT, type Grid, type GridElement } from '../../shared/grid/grid'
 import { APP_SANDBOX, contextText, type AppOpened } from '../../shared/plugins/apps'
 import type { ConnectionTool } from '../../shared/state'
 import { send } from '../components/grid/send'
@@ -27,7 +27,7 @@ import { BUTTON } from '../components/settings/Row'
 import { useColorScheme } from '../lib/color-scheme'
 import { errorMessage } from '../lib/errors'
 import { dispatch, get, useAppState } from '../lib/state'
-import { hostStyles } from './app-context'
+import { appContainerDimensions, appFrameStyle, hostStyles } from './app-context'
 import { pageTeller } from './app-tell'
 import type { ViewProps } from './index'
 
@@ -180,8 +180,9 @@ function Frame({ panel, page, onShown }: FrameProps): ReactElement {
   const elementId = useAppState((s) => standing(s.grids[panel.workspaceId], panel.id)?.element.id ?? '')
   const maximized = useAppState((s) => standing(s.grids[panel.workspaceId], panel.id)?.element.mode === 'maximized')
   const focused = useAppState((s) => standing(s.grids[panel.workspaceId], panel.id)?.focused === true)
-  const now = useRef({ scheme, maximized, version })
-  now.current = { scheme, maximized, version }
+  const zoom = useAppState((s) => standing(s.grids[panel.workspaceId], panel.id)?.zoom ?? ZOOM_DEFAULT)
+  const now = useRef({ scheme, maximized, version, zoom })
+  now.current = { scheme, maximized, version, zoom }
 
   // A layout effect for its cleanup, which runs while the frame is still in the document: the last
   // moment it can be moved rather than lost.
@@ -190,6 +191,7 @@ function Frame({ panel, page, onShown }: FrameProps): ReactElement {
     iframe.title = page.tool.name
     iframe.setAttribute('sandbox', APP_SANDBOX)
     iframe.className = FRAME_CLASS
+    applyFrameZoom(iframe, now.current.zoom)
     holder.current?.append(iframe)
     const target = iframe.contentWindow
     if (!target) {
@@ -304,11 +306,13 @@ function Frame({ panel, page, onShown }: FrameProps): ReactElement {
     // Mounted once: the parent keys this component on the page answer it was opened with.
   }, [])
 
-  // The theme and the mode can change under a page that is up.
+  // The theme, the mode, and the tile's zoom can change under a page that is up.
   useEffect(() => {
     const iframe = frame.current
-    if (iframe && told.current) told.current.setHostContext(hostContext(iframe, page.tool, now.current))
-  }, [scheme, maximized, page.tool])
+    if (!iframe) return
+    applyFrameZoom(iframe, zoom)
+    if (told.current) told.current.setHostContext(hostContext(iframe, page.tool, now.current))
+  }, [scheme, maximized, zoom, page.tool])
 
   // A press inside the frame never reaches this page. The window losing focus to the frame is the
   // only sign of one, and it is what focuses the element then.
@@ -358,11 +362,19 @@ function shownAs(result: CallToolResult): Shown {
   }
 }
 
+function applyFrameZoom(iframe: HTMLIFrameElement, zoom: number): void {
+  const scaled = appFrameStyle(zoom)
+  iframe.style.width = scaled.width ?? ''
+  iframe.style.height = scaled.height ?? ''
+  iframe.style.transform = scaled.transform ?? ''
+  iframe.style.transformOrigin = scaled.transformOrigin ?? ''
+}
+
 /** What the page is told about where it is: the app's theme and faces, its mode, and the size it is drawn at. */
 function hostContext(
   iframe: HTMLIFrameElement,
   tool: ConnectionTool,
-  now: { scheme: 'light' | 'dark'; maximized: boolean; version: string },
+  now: { scheme: 'light' | 'dark'; maximized: boolean; version: string; zoom: number },
 ): McpUiHostContext {
   const box = iframe.getBoundingClientRect()
   const root = getComputedStyle(document.documentElement)
@@ -374,7 +386,7 @@ function hostContext(
     styles: { variables: hostStyles((name) => root.getPropertyValue(name)) as McpUiStyles },
     displayMode: now.maximized ? 'fullscreen' : 'inline',
     availableDisplayModes: ['inline', 'fullscreen'],
-    containerDimensions: { width: Math.round(box.width), height: Math.round(box.height) },
+    containerDimensions: appContainerDimensions(box.width, box.height, now.zoom),
     locale: navigator.language,
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     userAgent: `jaspers-terminal/${now.version}`,
@@ -389,14 +401,18 @@ function hostContext(
 function standing(
   grids: Record<number, Grid> | undefined,
   panelId: string,
-): { element: GridElement; focused: boolean } | null {
+): { element: GridElement; focused: boolean; zoom: number } | null {
   for (const grid of Object.values(grids ?? {})) {
     const panel = grid.panels.find((one) => one.id === panelId)
     const element = panel && grid.elements.find((one) => one.id === panel.elementId)
     if (!element) continue
     const first = (frame?: string): string | undefined => layoutOf(grid, frame).focus[0]
     const tile = element.parent
-    return { element, focused: first(tile) === element.id && (tile === undefined || first() === tile) }
+    return {
+      element,
+      focused: first(tile) === element.id && (tile === undefined || first() === tile),
+      zoom: tileZoom(grid, element.id),
+    }
   }
   return null
 }

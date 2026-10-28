@@ -12,6 +12,7 @@ import type { Asking } from '../agent/asking.ts'
 import { typedWords } from '../agent/typed.ts'
 import {
   CHAT_VIEW,
+  clampZoom,
   EMPTY_GRID,
   extent,
   layoutOf,
@@ -19,6 +20,7 @@ import {
   resolvePlacement,
   restored,
   setMode,
+  ZOOM_DEFAULT,
   type Grid,
   type GridElement,
   type GridSize,
@@ -307,9 +309,12 @@ function readRecord(raw: unknown, taken: readonly Loop[]): Loop | null {
  * their name tags a tile `flurb`. The same object when there is nothing to move.
  */
 export function retagged(element: GridElement): GridElement {
-  const { flurb, ...rest } = element as GridElement & { flurb?: unknown }
-  if (flurb === undefined) return element
-  return typeof flurb === 'string' && rest.loop === undefined ? { ...rest, loop: flurb } : rest
+  const { flurb, zoom: rawZoom, ...rest } = element as GridElement & { flurb?: unknown }
+  const nextZoom = rawZoom === undefined ? undefined : clampZoom(rawZoom)
+  const keptZoom = nextZoom === undefined || nextZoom === ZOOM_DEFAULT ? undefined : nextZoom
+  if (flurb === undefined && rawZoom === keptZoom) return element
+  const tagged = typeof flurb === 'string' && rest.loop === undefined ? { ...rest, loop: flurb } : rest
+  return keptZoom === undefined ? tagged : { ...tagged, zoom: keptZoom }
 }
 
 function isChange(value: unknown): value is LoopChange {

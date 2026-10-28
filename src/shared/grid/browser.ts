@@ -2,7 +2,7 @@
 // visibility, and model summaries. Main enforces these on every IPC call and `WebContentsView`
 // navigation; the renderer uses them to measure and sync the tile's viewport. No Node or DOM imports.
 
-import { layoutOf, type Grid, type GridElement } from './grid.ts'
+import { elementZoom, layoutOf, type Grid, type GridElement } from './grid.ts'
 
 export const BROWSER_VIEW = 'core/browser'
 export const BROWSER_PARTITION = 'persist:browser'
@@ -62,6 +62,7 @@ export interface BrowserStanding {
   frame: GridElement | null
   visibleInGrid: boolean
   focused: boolean
+  zoom: number
 }
 
 const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
@@ -313,6 +314,7 @@ export function browserStanding(grids: Record<number, Grid> | undefined, panelId
       frame,
       visibleInGrid: windowVisible && frameVisible,
       focused,
+      zoom: elementZoom(topElement),
     }
   }
   return null
