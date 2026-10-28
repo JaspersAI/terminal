@@ -1,20 +1,54 @@
 import { Parser } from 'htmlparser2'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import yauzl from 'yauzl'
-import type { AttachedFile } from '../../shared/agent/attachments.ts'
+import {
+  chunkDocument,
+  coerceCellValue,
+  deduplicateHeaders,
+  formatAttachmentTurnBody,
+  parseDelimitedTable,
+  searchAttachmentChunks,
+  type AttachedFile,
+  type AttachmentChunk,
+  type AttachmentSheet,
+} from '../../shared/agent/attachments.ts'
+import type { QueryRequest, QueryResult, RunRecord } from '../../shared/data/store.ts'
 import { htmlToText } from '../../shared/agent/web/page.ts'
 
-// Parsing a file the user attached to a conversation: plain text, Markdown, CSV/TSV, JSON, XML,
-// HTML, PDF, XLSX, and DOCX, turned into text the model can read. Everything runs locally in main
-// with byte, archive-entry, decompression, and character bounds, and no new dependencies.
+// Parsing and locally indexing a file the user attached to a conversation: plain text, Markdown,
+// CSV/TSV, JSON, XML, HTML, PDF, XLSX, and DOCX. Small files go inline; larger documents are split
+// into chunks indexed in memory and in SQLite (`runs`, `run_rows`, and FTS5 `docs`), and tabular
+// files (CSV, TSV, XLSX) also store their rows in `run_rows` so `query` can run SQL over them.
 
 export const ATTACHMENT_LIMITS = {
   maxBytes: 20 * 1024 * 1024,
   maxUnpackedBytes: 40 * 1024 * 1024,
   maxEntries: 2000,
-  maxChars: 100_000,
+  maxTextChars: 10_000_000,
+  maxTableRows: 50_000,
+  sliceChars: 20_000,
+  chunkReadChars: 12_000,
 } as const
+
+export interface AttachmentStoreSink {
+  recordRun(run: RunRecord): Promise<number | null> | number | null
+  query?(request: QueryRequest): Promise<QueryResult> | QueryResult
+}
+
+interface IndexedAttachment {
+  id: string
+  name: string
+  fullText: string
+  chunks: AttachmentChunk[]
+  sheets: AttachmentSheet[]
+  runId: number | null
+}
+
+const MAX_CACHED_ATTACHMENTS = 50
+const cachedById = new Map<string, IndexedAttachment>()
+let attachmentSeq = 0
 
 const HTML_EXTS = new Set(['.html', '.htm', '.xhtml'])
 const BINARY_EXTS = new Set([
@@ -44,7 +78,11 @@ const BINARY_EXTS = new Set([
   '.otf',
 ])
 
-export async function parseAttachment(rawName: unknown, rawBytes: unknown): Promise<AttachedFile> {
+export async function parseAttachment(
+  rawName: unknown,
+  rawBytes: unknown,
+  store?: AttachmentStoreSink,
+): Promise<AttachedFile> {
   if (typeof rawName !== 'string' || !rawName.trim()) throw new Error('A file name is required.')
   const name = path.basename(rawName.trim().replace(/\\/g, '/')).slice(0, 200) || 'attachment'
   const buffer = toBuffer(rawBytes)
@@ -57,14 +95,27 @@ export async function parseAttachment(rawName: unknown, rawBytes: unknown): Prom
   }
 
   let text: string
+  let sheets: AttachmentSheet[] = []
+  let tableRows: Record<string, unknown>[] = []
+
   if (ext === '.pdf' || isPdfBuffer(buffer)) {
     text = parsePdf(name, buffer)
   } else if (ext === '.xlsx') {
-    text = await parseXlsx(name, buffer)
+    const parsed = await parseXlsx(name, buffer)
+    text = parsed.text
+    sheets = parsed.sheets
+    tableRows = parsed.rows
   } else if (ext === '.docx') {
     text = await parseDocx(name, buffer)
   } else if (HTML_EXTS.has(ext)) {
     text = htmlToText(decodeUtfText(name, buffer))
+  } else if (ext === '.csv' || ext === '.tsv') {
+    text = decodeUtfText(name, buffer).replace(/\r\n?/g, '\n').trim()
+    const table = parseDelimitedTable(text, ext === '.tsv' ? '\t' : ',', name, ATTACHMENT_LIMITS.maxTableRows)
+    if (table.rows.length > 0) {
+      sheets = [table.sheet]
+      tableRows = table.rows
+    }
   } else {
     text = decodeUtfText(name, buffer)
     if (ext === '' && /^\s*<(!doctype|html)\b/i.test(text.slice(0, 256))) {
@@ -74,7 +125,174 @@ export async function parseAttachment(rawName: unknown, rawBytes: unknown): Prom
 
   const normalized = text.replace(/\r\n?/g, '\n').trim()
   if (!normalized) throw new Error(`${name} has no readable text.`)
-  return { name, text: capText(normalized) }
+  const fullText =
+    normalized.length <= ATTACHMENT_LIMITS.maxTextChars
+      ? normalized
+      : normalized.slice(0, ATTACHMENT_LIMITS.maxTextChars)
+
+  const id = `a${++attachmentSeq}`
+  const chunks = chunkDocument(fullText)
+  const rowsToStore: Record<string, unknown>[] =
+    tableRows.length > 0
+      ? tableRows
+      : chunks.map((c) => ({ chunk: c.index, heading: c.heading, from: c.from, to: c.to, text: c.text }))
+  const args = JSON.stringify({ id, name })
+  const argsHash = createHash('sha256').update(fullText).digest('hex')
+  const runRecord: RunRecord = {
+    source: 'attachment',
+    args,
+    argsHash,
+    workspace: null,
+    fetchedAt: Date.now(),
+    rows: rowsToStore,
+    meta: { id, name, sheets, chunkCount: chunks.length, totalChars: fullText.length },
+    text: fullText,
+    error: null,
+  }
+  const runId = store ? await store.recordRun(runRecord) : null
+
+  const entry: IndexedAttachment = { id, name, fullText, chunks, sheets, runId }
+  rememberAttachment(entry)
+
+  const body = formatAttachmentTurnBody({ id, name, fullText, chunks, sheets, runId })
+  return {
+    id,
+    name,
+    text: body,
+    totalChars: fullText.length,
+    chunkCount: chunks.length,
+    ...(runId != null ? { runId } : {}),
+    ...(sheets.length > 0 ? { sheets } : {}),
+  }
+}
+
+function rememberAttachment(entry: IndexedAttachment): void {
+  if (cachedById.size >= MAX_CACHED_ATTACHMENTS) {
+    const oldest = cachedById.keys().next().value
+    if (oldest !== undefined) cachedById.delete(oldest)
+  }
+  cachedById.set(entry.id, entry)
+}
+
+/**
+ * Searches an attached file's chunks by BM25 (`query`) or reads it sequentially by `chunk` or
+ * character `offset`. Falls back to loading the attachment from SQLite (`runs`) if not in memory.
+ */
+export async function readAttachment(
+  input: { file: string; query?: string; chunk?: number; offset?: number },
+  store?: Pick<AttachmentStoreSink, 'query'>,
+): Promise<string> {
+  const target = input.file.trim()
+  if (!target) throw new Error('Say which attached file to read, by its id (like a1) or file name.')
+  const entry = await findAttachment(target, store)
+  if (!entry) {
+    const known = [...cachedById.values()].map((one) => `${one.id} (${one.name})`).join(', ') || 'none'
+    throw new Error(`No attached file matching "${target}". Attached in this session: ${known}.`)
+  }
+
+  const search = input.query?.trim() ?? ''
+  if (search) {
+    const hits = searchAttachmentChunks(entry.chunks, search, 6)
+    if (hits.length === 0) {
+      return `No chunks in ${entry.id} (${entry.name}, ${entry.chunks.length} chunks) matched ${JSON.stringify(search)}. Try broader terms, or read sequentially with chunk: 0.`
+    }
+    const header = `${entry.id} (${entry.name}) — top ${hits.length} of ${entry.chunks.length} chunks matching ${JSON.stringify(search)}:`
+    const blocks = hits.map(({ chunk }) => formatChunkBlock(chunk, entry.chunks.length))
+    return [header, ...blocks].join('\n\n')
+  }
+
+  if (input.offset !== undefined && input.chunk === undefined) {
+    const from = Math.max(0, Math.min(Math.floor(input.offset), entry.fullText.length))
+    const to = Math.min(entry.fullText.length, from + ATTACHMENT_LIMITS.sliceChars)
+    const next = to < entry.fullText.length ? to : null
+    const head =
+      next === null
+        ? `${entry.id} (${entry.name}) — characters ${from}–${to} of ${entry.fullText.length.toLocaleString('en-US')} (end of file)`
+        : `${entry.id} (${entry.name}) — characters ${from}–${to} of ${entry.fullText.length.toLocaleString('en-US')} (call again with offset: ${next} for more)`
+    return `${head}\n\n${entry.fullText.slice(from, to)}`
+  }
+
+  const startChunk = Math.max(0, Math.min(Math.floor(input.chunk ?? 0), Math.max(0, entry.chunks.length - 1)))
+  const picked: AttachmentChunk[] = []
+  let chars = 0
+  for (let i = startChunk; i < entry.chunks.length; i++) {
+    const c = entry.chunks[i]!
+    if (picked.length > 0 && chars + c.text.length > ATTACHMENT_LIMITS.chunkReadChars) break
+    picked.push(c)
+    chars += c.text.length
+  }
+  const lastChunk = picked[picked.length - 1]?.index ?? startChunk
+  const nextChunk = lastChunk + 1 < entry.chunks.length ? lastChunk + 1 : null
+  const head =
+    nextChunk === null
+      ? `${entry.id} (${entry.name}) — chunks ${startChunk}–${lastChunk} of ${entry.chunks.length} (end of file)`
+      : `${entry.id} (${entry.name}) — chunks ${startChunk}–${lastChunk} of ${entry.chunks.length} (call again with chunk: ${nextChunk} for more)`
+  return [head, ...picked.map((c) => formatChunkBlock(c, entry.chunks.length))].join('\n\n')
+}
+
+function formatChunkBlock(chunk: AttachmentChunk, total: number): string {
+  const title = chunk.heading ? ` · ${chunk.heading}` : ''
+  return `--- Chunk ${chunk.index}/${total - 1} (chars ${chunk.from}–${chunk.to}${title}) ---\n${chunk.text}`
+}
+
+async function findAttachment(
+  target: string,
+  store?: Pick<AttachmentStoreSink, 'query'>,
+): Promise<IndexedAttachment | null> {
+  const direct = cachedById.get(target)
+  if (direct) return direct
+  const lower = target.toLowerCase()
+  const all = [...cachedById.values()]
+  for (let i = all.length - 1; i >= 0; i--) {
+    const one = all[i]!
+    if (one.id.toLowerCase() === lower || one.name.toLowerCase() === lower) return one
+  }
+  if (!store?.query) return null
+  try {
+    const res = await store.query({
+      sql: "SELECT id, args, meta, text FROM runs WHERE source = 'attachment' AND text IS NOT NULL ORDER BY id DESC LIMIT 50",
+      limit: 50,
+    })
+    for (const row of res.rows) {
+      const [runIdRaw, argsRaw, metaRaw, textRaw] = row
+      if (typeof textRaw !== 'string' || !textRaw) continue
+      const parsedArgs = safeJson(argsRaw)
+      const parsedMeta = safeJson(metaRaw)
+      const id =
+        (typeof parsedArgs?.id === 'string' && parsedArgs.id) ||
+        (typeof parsedMeta?.id === 'string' && parsedMeta.id) ||
+        `r${String(runIdRaw)}`
+      const name =
+        (typeof parsedArgs?.name === 'string' && parsedArgs.name) ||
+        (typeof parsedMeta?.name === 'string' && parsedMeta.name) ||
+        'attachment'
+      if (id.toLowerCase() === lower || name.toLowerCase() === lower || String(runIdRaw) === target) {
+        const entry: IndexedAttachment = {
+          id,
+          name,
+          fullText: textRaw,
+          chunks: chunkDocument(textRaw),
+          sheets: Array.isArray(parsedMeta?.sheets) ? (parsedMeta.sheets as AttachmentSheet[]) : [],
+          runId: typeof runIdRaw === 'number' ? runIdRaw : null,
+        }
+        rememberAttachment(entry)
+        return entry
+      }
+    }
+  } catch {
+    // Store not running or unreachable.
+  }
+  return null
+}
+
+function safeJson(raw: unknown): Record<string, unknown> | null {
+  if (typeof raw !== 'string') return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
 }
 
 function toBuffer(raw: unknown): Buffer {
@@ -101,12 +319,6 @@ function decodeUtfText(name: string, buffer: Buffer): string {
     throw new Error(`${name} is a binary file and cannot be read as text.`)
   }
   return new TextDecoder('utf-8', { fatal: false }).decode(buffer)
-}
-
-function capText(text: string): string {
-  if (text.length <= ATTACHMENT_LIMITS.maxChars) return text
-  const cut = text.length - ATTACHMENT_LIMITS.maxChars
-  return `${text.slice(0, ATTACHMENT_LIMITS.maxChars)}\n… [${cut.toLocaleString('en-US')} more characters cut]`
 }
 
 /** Reads designated entries from an in-memory ZIP archive with entry count and unpacked byte limits. */
@@ -243,7 +455,10 @@ async function parseDocx(name: string, buffer: Buffer): Promise<string> {
   return lines.join('\n')
 }
 
-async function parseXlsx(name: string, buffer: Buffer): Promise<string> {
+async function parseXlsx(
+  name: string,
+  buffer: Buffer,
+): Promise<{ text: string; sheets: AttachmentSheet[]; rows: Record<string, unknown>[] }> {
   const entries = await readZipEntries(
     name,
     buffer,
@@ -254,18 +469,37 @@ async function parseXlsx(name: string, buffer: Buffer): Promise<string> {
       /^xl\/worksheets\/[^/]+\.xml$/i.test(p),
   )
   const sharedStrings = parseSharedStrings(entries.get('xl/sharedStrings.xml') ?? '')
-  const sheets = resolveSheets(entries)
-  if (sheets.length === 0) throw new Error(`${name} is not a valid Excel (.xlsx) workbook.`)
+  const resolved = resolveSheets(entries)
+  if (resolved.length === 0) throw new Error(`${name} is not a valid Excel (.xlsx) workbook.`)
 
   const sections: string[] = []
-  for (const sheet of sheets) {
-    const rows = parseWorksheet(sheet.xml, sharedStrings)
-    if (rows.length === 0) continue
-    sections.push(
-      sheets.length > 1 || sheet.name ? `### ${sheet.name || 'Sheet'}\n${rows.join('\n')}` : rows.join('\n'),
-    )
+  const sheetMeta: AttachmentSheet[] = []
+  const allRows: Record<string, unknown>[] = []
+
+  for (const sheet of resolved) {
+    const matrix = parseWorksheetMatrix(sheet.xml, sharedStrings)
+    if (matrix.length === 0) continue
+    const sheetTitle = sheet.name || 'Sheet'
+    const textRows = matrix.map((r) => r.join('\t'))
+    sections.push(resolved.length > 1 || sheet.name ? `### ${sheetTitle}\n${textRows.join('\n')}` : textRows.join('\n'))
+
+    const headers = deduplicateHeaders(matrix[0]!.map((col, idx) => col.trim() || `col_${idx + 1}`))
+    let sheetRowCount = 0
+    for (let r = 1; r < matrix.length; r++) {
+      const cells = matrix[r]!
+      if (cells.every((c) => c.trim() === '')) continue
+      sheetRowCount += 1
+      if (allRows.length < ATTACHMENT_LIMITS.maxTableRows) {
+        const obj: Record<string, unknown> = resolved.length > 1 ? { _sheet: sheetTitle } : {}
+        for (let c = 0; c < headers.length; c++) {
+          obj[headers[c]!] = coerceCellValue(cells[c] ?? '')
+        }
+        allRows.push(obj)
+      }
+    }
+    sheetMeta.push({ name: sheetTitle, columns: headers, rowCount: sheetRowCount })
   }
-  return sections.join('\n\n')
+  return { text: sections.join('\n\n'), sheets: sheetMeta, rows: allRows }
 }
 
 function parseSharedStrings(xml: string): string[] {
@@ -369,8 +603,8 @@ function resolveSheets(entries: Map<string, string>): { name: string; xml: strin
 const MAX_SHEET_COLS = 256
 const MAX_COL_GAP = 32
 
-function parseWorksheet(xml: string, sharedStrings: readonly string[]): string[] {
-  const rows: string[] = []
+function parseWorksheetMatrix(xml: string, sharedStrings: readonly string[]): string[][] {
+  const rows: string[][] = []
   let totalChars = 0
   let rowCells: string[] = []
   let colIndex = 0
@@ -384,7 +618,7 @@ function parseWorksheet(xml: string, sharedStrings: readonly string[]): string[]
   const parser = new Parser(
     {
       onopentag(rawTag, attrs) {
-        if (totalChars > ATTACHMENT_LIMITS.maxChars * 2) return
+        if (totalChars > ATTACHMENT_LIMITS.maxTextChars) return
         const tag = localName(rawTag)
         if (tag === 'row') {
           rowCells = []
@@ -408,12 +642,12 @@ function parseWorksheet(xml: string, sharedStrings: readonly string[]): string[]
         }
       },
       ontext(data) {
-        if (totalChars > ATTACHMENT_LIMITS.maxChars * 2) return
+        if (totalChars > ATTACHMENT_LIMITS.maxTextChars) return
         if (inV) cellValue += data
         else if (inIs && inT) inlineText += data
       },
       onclosetag(rawTag) {
-        if (totalChars > ATTACHMENT_LIMITS.maxChars * 2) return
+        if (totalChars > ATTACHMENT_LIMITS.maxTextChars) return
         const tag = localName(rawTag)
         if (tag === 'v') {
           inV = false
@@ -439,9 +673,8 @@ function parseWorksheet(xml: string, sharedStrings: readonly string[]): string[]
         } else if (tag === 'row') {
           while (rowCells.length > 0 && rowCells[rowCells.length - 1] === '') rowCells.pop()
           if (rowCells.some((c) => c !== '')) {
-            const line = rowCells.join('\t')
-            rows.push(line)
-            totalChars += line.length + 1
+            rows.push(rowCells)
+            totalChars += rowCells.reduce((sum, c) => sum + c.length + 1, 0)
           }
         }
       },

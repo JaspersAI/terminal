@@ -97,6 +97,23 @@ export function record(run: RunRecord): void {
     .catch((error: unknown) => console.warn(`[store] record ${run.source}: ${message(error)}`))
 }
 
+/**
+ * Files one run when the store is running and resolves with its `runs.id`, or `null` when the
+ * store is not up. Used for attached files so their `run_id` can be named in the turn manifest.
+ */
+export async function recordRun(run: RunRecord): Promise<number | null> {
+  const current = live
+  if (!current) return null
+  try {
+    await current.ready
+    const id = await current.rpc.request('record', run, timeout(RECORD_TIMEOUT_MS))
+    return typeof id === 'number' ? id : null
+  } catch (error) {
+    console.warn(`[store] recordRun ${run.source}: ${message(error)}`)
+    return null
+  }
+}
+
 /** Files what one run of the model cost. Best effort, like recording a run: never holds the loop up. */
 export function recordUsage(usage: Record<string, unknown>): void {
   const current = live
