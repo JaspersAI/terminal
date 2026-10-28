@@ -1,15 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import {
-  ABOUT_MAX,
-  BODY_MAX,
-  checkMemory,
-  codingMemoryIndex,
-  isMemoryScope,
-  memoryFile,
-  memoryIndex,
-  parseMemory,
-} from './memory.ts'
+import { ABOUT_MAX, BODY_MAX, checkMemory, codingMemoryIndex, memoryFile, memoryIndex, parseMemory } from './memory.ts'
 
 const mem = (name: string, about: string, at: number) => ({ name, about, body: 'b', at })
 
@@ -73,11 +64,4 @@ test('the coding memory index lists plugin build lessons newest first without bo
   const capped = codingMemoryIndex(many)
   assert.match(capped, /… and 40 more\./)
   assert.doesNotMatch(capped, /get memories/)
-})
-
-test('a memory scope is either general or coding', () => {
-  assert.equal(isMemoryScope('general'), true)
-  assert.equal(isMemoryScope('coding'), true)
-  assert.equal(isMemoryScope('other'), false)
-  assert.equal(isMemoryScope(null), false)
 })

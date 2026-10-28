@@ -84,7 +84,6 @@ function fixture(): AppState {
     notices: [],
     unread: 0,
     memories: [],
-    codingMemories: [],
     tasks: [],
     background: { openAtLogin: false, canOpenAtLogin: false },
     updates: { version: '0.1.0', supported: false, status: 'idle', available: null, error: null },
