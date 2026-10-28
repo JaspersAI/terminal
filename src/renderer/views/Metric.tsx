@@ -1,7 +1,8 @@
 import type { ReactElement } from 'react'
 import { usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
+import { usePanelWorking } from '@jaspers-ai/sdk/host'
 import type { ViewProps } from './index'
-import { cellText, shownText } from './cells'
+import { cellText, shownRows, shownText } from './cells'
 import { useRows } from './data'
 
 // One number, large. What a small element is for, and what a watch will point at: the first row of
@@ -16,14 +17,15 @@ export function Metric({ panel }: ViewProps): ReactElement {
   const [unit] = usePanelState<string | null>(panel, 'unit', null)
   const [deltaColumn] = usePanelState<string | null>(panel, 'delta', null)
 
-  const found = useRows({ source, args, sql })
+  const raw = useRows({ source, args, sql })
+  const found = shownRows(raw, usePanelWorking())
   const row = found.rows[0]
   const key = column ?? found.columns[0] ?? null
   const value = row && key ? row[key] : undefined
   const delta = row && deltaColumn ? row[deltaColumn] : undefined
   const shown = cellText(value)
 
-  usePublish(panel, { value: value ?? null, label: label ?? key, delta: delta ?? null, error: found.error })
+  usePublish(panel, { value: value ?? null, label: label ?? key, delta: delta ?? null, error: raw.error })
   usePublishText(panel, shown ? `${label ?? key ?? 'value'}: ${shown}${unit ?? ''}` : null)
 
   if (found.error) return <Centered tone="bad">{found.error}</Centered>

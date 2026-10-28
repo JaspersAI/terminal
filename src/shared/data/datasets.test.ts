@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { beginSourceRun, failSourceRun } from '../../../packages/sdk/src/hooks.ts'
+import { beginSourceRun, failSourceRun, shownSourceData } from '../../../packages/sdk/src/hooks.ts'
 import { asTable, extractRows, mapToolResult } from './datasets.ts'
 
 test('an array of objects is the rows, with nothing around them', () => {
@@ -175,4 +175,28 @@ test('a failed refresh for the same source and arguments keeps loaded data or te
     ...idle,
     error: error.message,
   })
+})
+
+test('while a loop agent is working, a failed source run hides its error and stays loading until the agent finishes', () => {
+  const idle = { data: undefined, loading: false, error: null, datasetId: null, meta: {} }
+  const failed = failSourceRun(
+    beginSourceRun(idle, false),
+    new Error('MCP error -32602: Invalid arguments for tool screen_companies'),
+  )
+
+  assert.deepEqual(shownSourceData(failed, true), {
+    ...idle,
+    loading: true,
+    error: null,
+  })
+  assert.deepEqual(shownSourceData(failed, false), failed)
+
+  const loaded = {
+    data: [{ ticker: 'NUVL', market_cap: 9_810_000_000 }],
+    loading: false,
+    error: null,
+    datasetId: 'ds_1',
+    meta: { count: 1 },
+  }
+  assert.equal(shownSourceData(loaded, true), loaded)
 })

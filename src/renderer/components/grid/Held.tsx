@@ -7,10 +7,11 @@ interface Props {
   elementId: string
   panel: Panel | undefined
   focused: boolean
+  working?: boolean
 }
 
 /** What an element holds, filling the room it is given: the view in its panel, and nothing else. */
-export function Held({ workspaceId, elementId, panel, focused }: Props): ReactElement {
+export function Held({ workspaceId, elementId, panel, focused, working = false }: Props): ReactElement {
   return (
     <div className="relative min-h-0 flex-1">
       {panel?.content.kind === 'view' && (
@@ -27,6 +28,7 @@ export function Held({ workspaceId, elementId, panel, focused }: Props): ReactEl
             elementId={elementId}
             view={panel.content.view}
             focused={focused}
+            working={working}
           />
         </div>
       )}

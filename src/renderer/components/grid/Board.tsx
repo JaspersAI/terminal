@@ -15,6 +15,8 @@ interface Props {
   frame: GridElement
   /** True while the frame is its window's focused element. */
   focused: boolean
+  /** True while the loop's agent is working on the tile. */
+  working?: boolean
   /** The elements not drawn yet: views whose plugins are waiting on the user, which the tile's box asks for. */
   waiting: ReadonlySet<string>
 }
@@ -36,7 +38,15 @@ interface Props {
  * against the view beside it, and asks main for it on release. The sides it shares with the tile are
  * the tile's to resize. With no bar, it is not moved by hand.
  */
-export function Board({ workspaceId, windowNumber, grid, frame, focused, waiting }: Props): ReactElement | null {
+export function Board({
+  workspaceId,
+  windowNumber,
+  grid,
+  frame,
+  focused,
+  working = false,
+  waiting,
+}: Props): ReactElement | null {
   const views = useAppState((s) => s.views)
   const inside = useMemo(() => layoutOf(grid, frame.id), [grid, frame.id])
   const layer = useRef<HTMLDivElement>(null)
@@ -81,7 +91,13 @@ export function Board({ workspaceId, windowNumber, grid, frame, focused, waiting
               element.mode === 'floating' ? 'shadow-lg' : ''
             } ${maximized && element.mode !== 'maximized' ? 'invisible' : ''}`}
           >
-            <Held workspaceId={workspaceId} elementId={element.id} panel={panel} focused={focused && here} />
+            <Held
+              workspaceId={workspaceId}
+              elementId={element.id}
+              panel={panel}
+              focused={focused && here}
+              working={working}
+            />
             {element.mode !== 'maximized' &&
               insideEdges(element.rect, cut).map((edge) => (
                 <div

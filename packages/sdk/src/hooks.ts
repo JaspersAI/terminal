@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { stableStringify } from './stable.ts'
-import { useBridge, usePanel, type PanelRef } from './bridge.ts'
+import { useBridge, usePanel, usePanelWorking, type PanelRef } from './bridge.ts'
 
 // What a view is written against. State lives in the panel, not in the component: the orchestrator
 // can set it, and the change comes back down the same subscription as the view's own writes, so
@@ -115,6 +115,24 @@ export function failSourceRun(
   return { ...IDLE, error: err instanceof Error ? err.message : String(err) }
 }
 
+/**
+ * What a view sees of a source run: while the loop's agent is still iterating on the tile, a
+ * failed run with nothing loaded yet reads as still loading rather than showing an intermediate
+ * error before the agent finishes setting the panel's state. Once the agent's run ends, any
+ * remaining error is shown.
+ */
+export function shownSourceData(
+  result: Omit<SourceData, 'refetch'>,
+  working: boolean = false,
+): Omit<SourceData, 'refetch'> {
+  if (!working || result.error === null) return result
+  return {
+    ...result,
+    loading: result.data === undefined && result.text === undefined,
+    error: null,
+  }
+}
+
 /** Whatever a store path holds, kept up to date. Undefined until the first value arrives. */
 export function useData(path: string): unknown
 /** A source run, again whenever `args` change by value, and again, fresh, when the view's panel is refreshed. An empty source is idle, for a view still waiting for its state. */
@@ -130,6 +148,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   const [result, setResult] = useState<Omit<SourceData, 'refetch'>>(IDLE)
   const [nonce, setNonce] = useState(0)
   const panel = usePanel()
+  const working = usePanelWorking()
   /** Set before a nonce bump that means fetch again: the run it causes skips main's cache. */
   const fresh = useRef(false)
   const failed = useRef(false)
@@ -230,7 +249,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
     },
     [],
   )
-  return isSource ? { ...result, refetch } : value
+  return isSource ? { ...shownSourceData(result, working), refetch } : value
 }
 
 /** Views write `panel={{ id, workspaceId }}` inline, so the object itself changes every render. */

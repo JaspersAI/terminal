@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BridgeProvider, PanelProvider, type Bridge, type PanelRef } from '@jaspers-ai/sdk'
-import { createIframeBridge } from '@jaspers-ai/sdk/host'
+import { createIframeBridge, WorkingProvider } from '@jaspers-ai/sdk/host'
 import { watchDocumentUse } from '../renderer/lib/eye'
 
 // What runs in the iframe: the query says which view of which panel this frame is, the plugin's own
@@ -27,6 +27,7 @@ export async function boot(): Promise<void> {
   const query = new URLSearchParams(location.search)
   const view = query.get('view') ?? ''
   const panel: PanelRef = { id: query.get('panel') ?? '', workspaceId: query.get('workspace') ?? '' }
+  const initialWorking = query.get('working') === '1'
   const root = document.getElementById('root')
   if (!root) return
   try {
@@ -42,6 +43,7 @@ export async function boot(): Promise<void> {
             bridge={bridge}
             panel={panel}
             View={component}
+            initialWorking={initialWorking}
             onMountFail={(listener) => {
               failMounted = listener
             }}
@@ -59,16 +61,30 @@ function MountedView({
   bridge,
   panel,
   View,
+  initialWorking,
   onMountFail,
 }: {
   bridge: Bridge
   panel: PanelRef
   View: ComponentType<{ panel: PanelRef }>
+  initialWorking: boolean
   onMountFail: (listener: ((error: unknown) => void) | null) => void
 }): ReactElement {
   const [attempt, setAttempt] = useState(0)
   const [uncaught, setUncaught] = useState<string | null>(null)
+  const [working, setWorking] = useState(initialWorking)
   const failed = useRef(false)
+  useEffect(() => {
+    function onMessage(event: MessageEvent): void {
+      if (event.source !== window.parent) return
+      const message = event.data as { method?: unknown; params?: { working?: unknown } } | null
+      if (message?.method === 'working' && typeof message.params?.working === 'boolean') {
+        setWorking(message.params.working)
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
   useEffect(() => {
     onMountFail((error) => {
       failed.current = true
@@ -108,20 +124,23 @@ function MountedView({
     return () => offs.forEach((off) => off())
   }, [bridge, panel.workspaceId, panel.id])
   return (
-    <ViewBoundary
-      attempt={attempt}
-      uncaught={uncaught}
-      onCaught={() => {
-        failed.current = true
-      }}
-    >
-      <View key={attempt} panel={panel} />
-    </ViewBoundary>
+    <WorkingProvider value={working}>
+      <ViewBoundary
+        attempt={attempt}
+        uncaught={uncaught}
+        working={working}
+        onCaught={() => {
+          failed.current = true
+        }}
+      >
+        <View key={attempt} panel={panel} />
+      </ViewBoundary>
+    </WorkingProvider>
   )
 }
 
 class ViewBoundary extends Component<
-  { attempt: number; uncaught: string | null; onCaught: () => void; children: ReactNode },
+  { attempt: number; uncaught: string | null; working: boolean; onCaught: () => void; children: ReactNode },
   { error: string | null }
 > {
   override state: { error: string | null } = { error: null }
@@ -138,6 +157,7 @@ class ViewBoundary extends Component<
   override componentDidUpdate(prevProps: {
     attempt: number
     uncaught: string | null
+    working: boolean
     onCaught: () => void
     children: ReactNode
   }): void {
@@ -148,7 +168,7 @@ class ViewBoundary extends Component<
 
   override render(): ReactNode {
     const shown = this.state.error ?? this.props.uncaught
-    return shown === null ? this.props.children : shown
+    return shown === null ? this.props.children : this.props.working ? null : shown
   }
 }
 

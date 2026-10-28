@@ -3,3 +3,4 @@
 
 export * from './protocol'
 export { createIframeBridge } from './iframe-bridge'
+export { WorkingProvider, usePanelWorking } from './bridge'

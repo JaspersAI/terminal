@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { cellText, isNumeric, isYearColumn, shownText, sqlAfterFailure, type Rows } from './cells.ts'
+import { cellText, isNumeric, isYearColumn, shownRows, shownText, sqlAfterFailure, type Rows } from './cells.ts'
 
 test('a cell is written grouped, unless its column says otherwise', () => {
   assert.equal(cellText(1234567), '1,234,567')
@@ -89,4 +89,26 @@ test('sqlAfterFailure keeps loaded rows on a failed refresh of the same SQL quer
     text: null,
     truncated: false,
   })
+})
+
+test('shownRows hides a query error and stays loading while the loop agent is working, and surfaces it once idle', () => {
+  const empty: Rows = { rows: [], columns: [], loading: true, error: null, text: null, truncated: false }
+  const failed = sqlAfterFailure(empty, 'no such column: sector', false)
+
+  assert.deepEqual(shownRows(failed, true), {
+    ...empty,
+    loading: true,
+    error: null,
+  })
+  assert.deepEqual(shownRows(failed, false), failed)
+
+  const loaded: Rows = {
+    rows: [{ ticker: 'NUVL' }],
+    columns: ['ticker'],
+    loading: false,
+    error: null,
+    text: null,
+    truncated: false,
+  }
+  assert.equal(shownRows(loaded, true), loaded)
 })

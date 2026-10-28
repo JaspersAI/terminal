@@ -137,7 +137,7 @@ export function LoopBox({
       window.app.agent.onEvent((event) =>
         change((list) => {
           const next = boxHeard(list, event, place)
-          return event.kind === 'start' && next.length > list.length ? boxFresh(next, inView.current) : next
+          return event.kind === 'start' && next !== list ? boxFresh(next, inView.current) : next
         }),
       ),
     [place, change],

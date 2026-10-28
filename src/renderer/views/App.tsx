@@ -16,6 +16,7 @@ import {
 } from '@modelcontextprotocol/ext-apps/app-bridge'
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { useData, usePanelState, usePublish, usePublishText, type PanelRef } from '@jaspers-ai/sdk'
+import { usePanelWorking } from '@jaspers-ai/sdk/host'
 import { mapToolResult } from '../../shared/data/datasets'
 import { stableStringify } from '../../shared/data/hash'
 import { layoutOf, type Grid, type GridElement } from '../../shared/grid/grid'
@@ -69,6 +70,7 @@ export function App({ panel }: ViewProps): ReactElement {
   const [connection] = usePanelState<string>(panel, 'connection', '')
   const [tool] = usePanelState<string>(panel, 'tool', '')
   const [args] = usePanelState<Record<string, unknown>>(panel, 'args', {})
+  const working = usePanelWorking()
   const refreshedAt = useData(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`)
   // A page cannot be read while its connection is down; it is asked for again when it comes up.
   const ready = useAppState((s) => s.connections[connection]?.status === 'ready')
@@ -113,7 +115,8 @@ export function App({ panel }: ViewProps): ReactElement {
 
   if (opened.kind === 'page') return <Frame key={opened.n} panel={panel} page={opened} onShown={setShown} />
   if (opened.kind === 'waiting') return <Message>Set connection and tool to the tool whose view this shows.</Message>
-  if (opened.kind === 'failed') return <Message tone="bad">{opened.error}</Message>
+  if (opened.kind === 'failed')
+    return working ? <Message>Loading…</Message> : <Message tone="bad">{opened.error}</Message>
   if (opened.kind === 'loading') return <Message>Loading…</Message>
 
   const allow = (): void => {

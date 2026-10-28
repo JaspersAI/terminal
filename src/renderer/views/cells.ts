@@ -65,3 +65,18 @@ export function sqlAfterFailure(previous: Rows, message: string, keepPrevious: b
   }
   return { ...EMPTY_ROWS, error: message }
 }
+
+/**
+ * What a generic view sees of a SQL query while its loop's agent is still iterating on the tile:
+ * a failed query with no rows yet reads as still loading rather than showing an intermediate
+ * error before the agent finishes setting the panel's state. Once the agent's run ends, any
+ * remaining error is shown.
+ */
+export function shownRows(rows: Rows, working: boolean = false): Rows {
+  if (!working || rows.error === null) return rows
+  return {
+    ...rows,
+    loading: rows.rows.length === 0 && rows.text === null,
+    error: null,
+  }
+}

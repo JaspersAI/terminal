@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, type ReactElement } from 'react'
 import { usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
+import { usePanelWorking } from '@jaspers-ai/sdk/host'
 import { echarts, type EChart, type EChartsOption } from './echarts'
 import type { ViewProps } from './index'
-import { cellText, isYearColumn } from './cells'
+import { cellText, isYearColumn, shownRows } from './cells'
 import { useRows } from './data'
 import { useColorScheme } from '../lib/color-scheme'
 import { noteChart } from '../lib/eye'
@@ -52,7 +53,9 @@ export function Chart({ panel }: ViewProps): ReactElement {
   const [xFormat] = usePanelState<Format>(panel, 'xFormat', 'auto')
   const [yFormat] = usePanelState<Format>(panel, 'yFormat', 'auto')
 
-  const found = useRows({ source, args, sql })
+  const raw = useRows({ source, args, sql })
+  const working = usePanelWorking()
+  const found = shownRows(raw, working)
   // The chart's colors are written into its option, so a change of scheme builds it again.
   const scheme = useColorScheme()
   const shape = CHART_KINDS.includes(kind) ? kind : 'line'
@@ -74,8 +77,9 @@ export function Chart({ panel }: ViewProps): ReactElement {
     const grouped = !isYearColumn(found.rows, xColumn)
     return found.rows.map((row) => label(row[xColumn], xAs, grouped))
   }, [found.rows, xColumn, xAs])
-  const short = found.loading ? null : missingColumns(shape, yColumns, found.columns)
-  const ready = found.rows.length > 0 && yColumns.length > 0 && !short
+  const rawShort = raw.loading ? null : missingColumns(shape, yColumns, found.columns)
+  const short = working ? null : rawShort
+  const ready = found.rows.length > 0 && yColumns.length > 0 && !rawShort
 
   const hover = useRef<{
     indices: Set<number>
@@ -123,7 +127,7 @@ export function Chart({ panel }: ViewProps): ReactElement {
     [ready, shape, labels, found.rows, yColumns, stack, log, zoom, yAs, scheme, onHover],
   )
 
-  usePublish(panel, { kind: shape, x: xColumn, y: yColumns, points: found.rows.length, error: found.error ?? short })
+  usePublish(panel, { kind: shape, x: xColumn, y: yColumns, points: found.rows.length, error: raw.error ?? rawShort })
   usePublishText(panel, ready ? asText(title, xColumn, labels, found.rows, yColumns) : found.text)
 
   const message = chartMessage({
