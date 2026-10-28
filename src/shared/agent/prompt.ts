@@ -189,11 +189,12 @@ function skillLine(skill: SkillInfo): string {
  */
 export function describeCatalog(state: AppState): string {
   const skills = usableSkills(state, 'model')
+  const externalPlugins = Object.fromEntries(Object.entries(state.plugins).filter(([, one]) => one.dir !== 'built-in'))
   return [
     describeViews(state.views),
     ...describeSources(state.sources, state.connections, state.plugins),
     ...describeConnections(state.connections, state.sources),
-    ...describePlugins(state.plugins),
+    ...describePlugins(externalPlugins),
     ...(skills.length === 0 ? [] : ['Skills:', ...skills.map(skillLine)]),
   ].join('\n')
 }
@@ -250,7 +251,7 @@ export function describeOtherWork(state: AppState, workspaceId: string, loopId: 
 
 /** The plugins a loop's agent is not told of, in one line that says how to be. Nothing when there are none. */
 export function describeOthers(state: AppState, plugins: readonly string[]): string[] {
-  const others = Object.values(state.plugins).filter((one) => !plugins.includes(one.id))
+  const others = Object.values(state.plugins).filter((one) => one.dir !== 'built-in' && !plugins.includes(one.id))
   if (others.length === 0) return []
   const count = (n: number, what: string): string[] => (n === 0 ? [] : [`${n} ${what}${n === 1 ? '' : 's'}`])
   const brings = (one: PluginInfo): string => {
@@ -276,7 +277,10 @@ export function describePlugin(state: AppState, id: string): string {
   const told = toldOf(state, [id], [])
   const own = <T extends { plugin: string | null }>(all: Record<string, T>): Record<string, T> =>
     Object.fromEntries(Object.entries(all).filter(([, one]) => one.plugin === id))
-  const views = own(told.views)
+  const declaredViews = new Set(told.plugins[id]?.views ?? [])
+  const views = Object.fromEntries(
+    Object.entries(told.views).filter(([viewId, one]) => one.plugin === id || declaredViews.has(viewId)),
+  )
   return [
     ...(Object.keys(views).length > 0 ? [describeViews(views)] : []),
     ...describeSources(own(told.sources), told.connections, told.plugins),

@@ -1,3 +1,4 @@
+import { needsOnlyBuiltInView } from '../../shared/agent/setup'
 import { handedBy } from '../../shared/agent/typed'
 import { asksForLoop, loopName, named, NO, notStarted, START, startQuestion, type Loop } from '../../shared/loops/loops'
 import { askUserFor, asWindow, closeLoop, createLoop, deleteLoop, reopenLoop, roomForLoop } from '../actions'
@@ -134,12 +135,14 @@ function createLoopTool(context: ToolContext): Tool {
       // A tile with no room is refused here, before the work is set up or the user asked to start it.
       roomForLoop(workspaceId, window, placement)
       const { plugins, skills } = await setUpLoop(desc, brief, ran)
+      const builtInOnly = needsOnlyBuiltInView(desc, brief, ran.asked, plugins, skills)
       // No work goes on the grid unasked: the user is shown what it is and which plugins, and only
-      // Start starts it, unless their request already asked to start a loop or they already answered
-      // a question in this run. A task's run is not asked, since nobody is at it and its instructions
-      // are the user's own words, written when they scheduled it. A refusal is a failed call, so the
-      // round goes back to the model to read rather than ending the run as a handoff would.
-      if (ran.task === undefined && !asksForLoop(ran.asked, answeredIn(ran.runId))) {
+      // Start starts it, unless only a built-in view is needed, their request already asked to start a
+      // loop, or they already answered a question in this run. A task's run is not asked, since nobody
+      // is at it and its instructions are the user's own words, written when they scheduled it. A
+      // refusal is a failed call, so the round goes back to the model to read rather than ending the
+      // run as a handoff would.
+      if (ran.task === undefined && !asksForLoop(ran.asked, answeredIn(ran.runId), builtInOnly)) {
         const asked = await askUserFor(
           startQuestion(desc, plugins),
           [START, NO],

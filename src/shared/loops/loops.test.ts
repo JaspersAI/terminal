@@ -656,6 +656,9 @@ test('a request that already asks to start a new loop, or a run the user already
     assert.equal(asksForLoop(prompt), true, prompt)
   }
   assert.equal(asksForLoop('show options prices for flws', true), true)
+  // Built-in view work does not ask to confirm starting a loop.
+  assert.equal(asksForLoop('open a Bloomberg TV feed on the right side', false, true), true)
+  assert.equal(asksForLoop('show options prices for flws', false, false), false)
   for (const prompt of [
     undefined,
     '',

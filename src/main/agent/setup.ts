@@ -1,5 +1,7 @@
 import { describeCatalog } from '../../shared/agent/prompt'
 import {
+  needsPluginSetup,
+  selectablePlugins,
   SETUP_DEFINITION,
   SETUP_EFFORT,
   SETUP_TIMEOUT_MS,
@@ -23,7 +25,13 @@ import { configured } from './utils/settings'
 
 export async function setUpLoop(desc: string, brief: string, context: ToolContext): Promise<SetUp> {
   const state = toPublic(getState())
+  const plugins = selectablePlugins(state.plugins)
+  const skills = usableSkills(state, 'model').map((one) => one.id)
   const log = (line: string): void => console.log(`[agent] setup ${line}`)
+  if (!needsPluginSetup(desc, brief, context.asked, plugins, skills)) {
+    log('plugins none; skills none (built-in view or no external catalog)')
+    return { plugins: [], skills: [] }
+  }
   const controller = new AbortController()
   const stopped = (): void => controller.abort(context.signal?.reason)
   if (context.signal?.aborted) stopped()
@@ -47,11 +55,7 @@ export async function setUpLoop(desc: string, brief: string, context: ToolContex
     })
     const call = reply.toolCalls.find((one) => one.name === SETUP_TOOL)
     if (!call) throw new Error(`Setting up the work chose nothing${reply.text ? `: ${reply.text}` : '.'}`)
-    const chosen = setUpOf(
-      call.input,
-      Object.keys(state.plugins),
-      usableSkills(state, 'model').map((one) => one.id),
-    )
+    const chosen = setUpOf(call.input, plugins, skills)
     log(`plugins ${chosen.plugins.join(', ') || 'none'}; skills ${chosen.skills.join(', ') || 'none'}`)
     return chosen
   } finally {

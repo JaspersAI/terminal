@@ -671,8 +671,8 @@ const START_LOOP_CLAUSE =
 const NEGATED_LOOP_CLAUSE =
   /\b(?:don'?t|do\s+not|doesn'?t|did\s+not|didn'?t|never|no|not|without|instead\s+of|rather\s+than|whether(?:\s+to)?|should\s+(?:i|we|you))\b/i
 
-export function asksForLoop(asked: string | undefined, answered = false): boolean {
-  if (answered) return true
+export function asksForLoop(asked: string | undefined, answered = false, builtInOnly = false): boolean {
+  if (answered || builtInOnly) return true
   if (!asked) return false
   const text = typedWords(asked).trim()
   if (!text) return false

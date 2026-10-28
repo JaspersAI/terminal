@@ -968,6 +968,21 @@ test('a loop\u2019s agent is told of its own plugins and the built-ins in full, 
   )
   // Told of everything, nothing is left to name.
   assert.deepEqual(describeOthers(state, ['tradingview', 'news', 'jaspers']), [])
+  // A built-in plugin entry (dir === 'built-in') whose view is already in the built-ins is not listed as an untold plugin or in setup's plugin list.
+  const browserView: ViewInfo = { ...NOTE, id: 'core/browser', plugin: null, title: 'Browser' }
+  const withBrowser = tree(
+    EMPTY_GRID,
+    { 'core/browser': browserView, 'tradingview/chart': TV },
+    {},
+    {},
+    {
+      browser: { ...plugin('browser', { views: ['core/browser'] }), dir: 'built-in' },
+      tradingview: plugin('tradingview', { views: ['tradingview/chart'] }),
+    },
+  )
+  assert.deepEqual(describeOthers(withBrowser, ['tradingview']), [])
+  assert.doesNotMatch(describeCatalog(withBrowser), /- browser: ready/)
+  assert.match(describePlugin(withBrowser, 'browser'), /- core\/browser: Browser\./)
   // What it is told of is a copy: the tree it was made from is as it was.
   assert.equal(Object.keys(state.views).length, 3)
   assert.equal(Object.keys(toldOf(state, [], []).views).join(), 'core/note')
