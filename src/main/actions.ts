@@ -19,6 +19,7 @@ import {
   setPanelState,
   setRect,
   sizeProblem,
+  summarizePanel,
   watchedViewPanels,
   writeCells,
   swapElements,
@@ -948,7 +949,7 @@ export function publishChecked(workspaceId: string, panelId: string, output: Rec
     const result = def.output.safeParse(output)
     if (!result.success) throw new Error(`Invalid output for ${def.id}: ${issues(result.error)}`)
   }
-  const summary = def?.summarize?.(panel.state, output) ?? null
+  const summary = summarizePanel(def?.summarize, panel.state, output)
   const room = researchRoomOf({ content: panel.content, state: panel.state, output })
   const roomText = room
     ? (researchLiveText(

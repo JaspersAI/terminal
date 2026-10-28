@@ -40,6 +40,7 @@ import {
   viewErrorMessage,
   publishOutput,
   publishText,
+  summarizePanel,
   rangeName,
   refreshPanel,
   placeFrame,
@@ -470,6 +471,24 @@ test('the map names a view panel by its summary, or by the view when it has none
   assert.equal(gridMap(grid).split('\n')[0], 'e1 [0,0 8×6] A1:H6 view core/note: "core/note"  ← focused')
   const published = publishOutput(grid, 'p1', { text: 'First line\nsecond' }, 'First line').grid
   assert.equal(gridMap(published).split('\n')[0], 'e1 [0,0 8×6] A1:H6 view core/note: "First line"  ← focused')
+})
+
+test('summarizePanel returns the summary string or null when a view summarize callback throws on partial loading output', () => {
+  const summarize = (_state: unknown, output: unknown): string => {
+    const out = output as { name?: string; analysts: { name: string; status: string }[] }
+    const busy = out.analysts.filter((a) => a.status !== 'idle').map((a) => a.name)
+    return `${out.name ?? 'Room'} · ${busy.join(', ') || 'idle'}`
+  }
+  assert.equal(summarizePanel(undefined, {}, { room: 'r1' }), null)
+  assert.equal(summarizePanel(summarize, { room: 'r1' }, { room: 'r1' }), null)
+  assert.equal(
+    summarizePanel(
+      summarize,
+      { room: 'r1' },
+      { room: 'r1', name: 'AAPL', analysts: [{ name: 'Risk', status: 'working' }] },
+    ),
+    'AAPL · Risk',
+  )
 })
 
 test('a view error is recorded on its panel, shown on the map, and cleared when the view recovers or its plugin rebuilds', () => {
