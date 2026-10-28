@@ -423,11 +423,11 @@ export function useOneScreen(): { closed: number[]; moved: string[] } {
   const { moved } = gatherIntoMain(getState().currentWorkspaceId)
   const closed = [...getState().windows]
   for (const n of closed) {
-    const win = windows.get(n)
-    if (win && !win.isDestroyed()) win.close()
+    windowOf(n)?.close()
   }
-  const made = !windowOf(MAIN_WINDOW)
-  const main = windowOf(MAIN_WINDOW) ?? createWindow(MAIN_WINDOW, true)
+  const existing = windowOf(MAIN_WINDOW)
+  const made = !existing
+  const main = existing ?? createWindow(MAIN_WINDOW, true)
   const displays = allDisplays()
   const on = displays.find((d) => d.id === displayOf(main)) ?? displays[0]
   if (on) fill(MAIN_WINDOW, on.area, !made)
