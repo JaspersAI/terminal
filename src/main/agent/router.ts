@@ -1,6 +1,7 @@
-import { needsOnlyBuiltInView } from '../../shared/agent/setup'
+import { needsOnlyBuiltInView, selectablePlugins } from '../../shared/agent/setup'
 import { handedBy } from '../../shared/agent/typed'
 import { asksForLoop, loopName, named, NO, notStarted, START, startQuestion, type Loop } from '../../shared/loops/loops'
+import { usableSkills } from '../../shared/skills/skills'
 import { askUserFor, asWindow, closeLoop, createLoop, deleteLoop, reopenLoop, roomForLoop } from '../actions'
 import { gridSizeOf } from '../grid/grid'
 import { getState, toPublic } from '../state'
@@ -135,7 +136,17 @@ function createLoopTool(context: ToolContext): Tool {
       // A tile with no room is refused here, before the work is set up or the user asked to start it.
       roomForLoop(workspaceId, window, placement)
       const { plugins, skills } = await setUpLoop(desc, brief, ran)
-      const builtInOnly = needsOnlyBuiltInView(desc, brief, ran.asked, plugins, skills)
+      const state = toPublic(getState())
+      const builtInOnly =
+        plugins.length === 0 &&
+        skills.length === 0 &&
+        needsOnlyBuiltInView(
+          desc,
+          brief,
+          ran.asked,
+          selectablePlugins(state.plugins),
+          usableSkills(state, 'model').map((one) => one.id),
+        )
       // No work goes on the grid unasked: the user is shown what it is and which plugins, and only
       // Start starts it, unless only a built-in view is needed, their request already asked to start a
       // loop, or they already answered a question in this run. A task's run is not asked, since nobody

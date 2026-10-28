@@ -71,7 +71,12 @@ test('work that only needs a built-in view or has no external plugins or skills 
   assert.equal(needsPluginSetup('AAPL price chart', 'Chart AAPL daily prices.', 'chart AAPL', [], []), false)
   assert.equal(needsOnlyBuiltInView('AAPL price chart', 'Chart AAPL daily prices.', 'chart AAPL', [], []), false)
   assert.equal(
-    needsOnlyBuiltInView('Revenue chart', 'Place a core/chart view of the rows.', 'chart the rows', [], []),
+    needsOnlyBuiltInView('AAPL price chart', 'Plot AAPL daily prices in core/chart.', 'chart AAPL', [], []),
+    false,
+  )
+  assert.equal(needsOnlyBuiltInView('MCP app', 'Place core/app on the grid.', 'open app view', plugins, skills), false)
+  assert.equal(
+    needsOnlyBuiltInView('Revenue chart', 'Place a core/chart view with SQL over the store.', 'chart the rows', [], []),
     true,
   )
 

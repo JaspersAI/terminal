@@ -65,7 +65,7 @@ export function selectablePlugins(plugins: Record<string, { dir: string }>): str
     .map(([id]) => id)
 }
 
-const STANDALONE_BUILTIN_VIEW = /\bcore\/(?:browser|inbox|tasks|plugins|app)\b/i
+const STANDALONE_BUILTIN_VIEW = /\bcore\/(?:browser|inbox|tasks|plugins)\b/i
 const DATA_BUILTIN_VIEW = /\bcore\/(?:table|chart|metric)\b/i
 const NON_CORE_QUALIFIED =
   /\b(?!core\/|panels\/|and\/or\b|yes\/no\b|on\/off\b|true\/false\b)[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*\b/i
@@ -112,11 +112,10 @@ export function needsOnlyBuiltInView(
   // Otherwise, any mention of an installed external plugin in the loop's work leaves selection to setUpLoop.
   if (mentionsAnyId(strippedWork, plugins)) return false
 
-  // A built-in data view (core/table, core/chart, core/metric) reading from the local SQLite store without fetching,
-  // or after setup has already determined that no external plugins are needed.
+  // A built-in data view (core/table, core/chart, core/metric) reading from the local SQLite store without fetching.
   if (
     DATA_BUILTIN_VIEW.test(workText) &&
-    (STORE_DATA_SOURCE.test(workText) || plugins.length === 0) &&
+    STORE_DATA_SOURCE.test(workText) &&
     !/\b(?:fetch|run_source|state\.source)\b/i.test(strippedWork)
   ) {
     return true
