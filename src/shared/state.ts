@@ -346,6 +346,8 @@ export type Action =
   | { type: 'loop.close'; workspaceId: string; loop: string }
   /** Reopens a closed loop, in the window given or the one it was closed in. */
   | { type: 'loop.reopen'; workspaceId: string; loop: string; window?: number }
+  /** Moves a loop into another workspace, or a new workspace when `targetWorkspaceId` is omitted, with its views and conversation. */
+  | { type: 'loop.move'; workspaceId: string; loop: string; targetWorkspaceId?: string; window?: number }
   | { type: 'element.setMode'; workspaceId: string; elementId: string; mode: ElementMode }
   | { type: 'element.setRect'; workspaceId: string; elementId: string; rect: Rect }
   | { type: 'element.swap'; workspaceId: string; elementId: string; otherId: string }

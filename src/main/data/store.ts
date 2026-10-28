@@ -182,6 +182,16 @@ export function forgetChat(chat: string): void {
     .catch((error: unknown) => console.warn(`[store] forget ${chat}: ${message(error)}`))
 }
 
+/** Moves a chat's kept thread and log to a new chat key. Best effort, as keeping them is. */
+export function moveChat(from: string, to: string): void {
+  if (from === to) return
+  const current = live
+  if (!current) return
+  void current.ready
+    .then(() => current.rpc.request('chat.move', { from, to }, timeout(RECORD_TIMEOUT_MS)))
+    .catch((error: unknown) => console.warn(`[store] move ${from}: ${message(error)}`))
+}
+
 /** What was kept for a chat, or null when there is nothing or the store is not up. */
 export async function loadThread(chat: string): Promise<{ at: number; model: string; turns: string } | null> {
   try {

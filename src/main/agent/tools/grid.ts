@@ -20,8 +20,8 @@ import {
   type Size,
 } from '../../../shared/grid/grid'
 import { MAIN_WINDOW, windowNumbers, WINDOWS_MAX } from '../../../shared/grid/windows'
-import { elementTarget, frameOf, isTile, notPlaced, refreshTarget } from '../../../shared/loops/loops'
-import { asWindow, placeChecked, refreshChecked, removeChecked, settlePanel } from '../../actions'
+import { elementTarget, frameOf, isTile, loopName, notPlaced, refreshTarget } from '../../../shared/loops/loops'
+import { asWindow, moveLoop, placeChecked, refreshChecked, removeChecked, settlePanel } from '../../actions'
 import { loopsOf, notOwnFrame, ownTile } from '../../loops/loops'
 import {
   changeGrid,
@@ -198,21 +198,49 @@ export function gridTools(context?: ToolContext): Tool[] {
       name: 'move_element',
       description: inside
         ? 'Move an element to new cells; pass its current w and h to keep its size. A tiled element needs the cells free, and the error names what is in the way. A floating one may overlap. A maximized one is restored there.'
-        : "Move an element to new cells; pass its current w and h to keep its size. With window, move it into another open window instead: rect there is optional, and it keeps its size where that fits. A piece of work's tile takes the views inside it along; a view inside one stays in its tile. A tiled element needs the cells free, and the error names what is in the way. A floating one may overlap. A maximized one is restored there; a minimized one stays minimized on its 1-row bar (and is restored when moved into another window).",
+        : 'Move an element to new cells; pass its current w and h to keep its size. With window, move it into another open window instead: rect there is optional, and it keeps its size where that fits. With workspace, move a piece of work\'s tile (with the views inside it and its conversation) into another workspace by name or id, or pass "new" (or a new workspace name) to create a workspace and move it there. A piece of work\'s tile takes the views inside it along; a view inside one stays in its tile. A tiled element needs the cells free, and the error names what is in the way. A floating one may overlap. A maximized one is restored there; a minimized one stays minimized on its 1-row bar (and is restored when moved into another window or workspace).',
       parameters: {
         type: 'object',
         properties: {
           elementId: ELEMENT_ID,
           rect: MOVE_RECT,
-          ...(inside ? {} : { window: { ...WINDOW, description: 'Another open window to move it into.' } }),
+          ...(inside
+            ? {}
+            : {
+                window: { ...WINDOW, description: 'Another open window to move it into.' },
+                workspace: {
+                  type: 'string',
+                  description:
+                    'Another workspace (by name or id) to move this loop into, or "new" (or a new workspace name) to move it into a new workspace.',
+                },
+              }),
         },
         required: inside ? ['elementId', 'rect'] : ['elementId'],
       },
       async run(input, context) {
         const { workspaceId } = context
+        const gridSize = gridSizeOf(workspaceId)
+        const targetWorkspace = inside ? undefined : optional(input.workspace, asWorkspaceInput)
+        if (targetWorkspace !== undefined) {
+          const moved = moveLoop(workspaceId, asElementId(input.elementId, input.panelId, input.id), targetWorkspace, {
+            window: optional(input.window, asWindow),
+            rect: optional(input.rect, (raw) => asRect(raw, gridSize)),
+            runId: context.runId,
+          })
+          return JSON.stringify({
+            elementId: moved.element.id,
+            loop: loopName(moved.loop.id),
+            workspaceId: moved.workspace.id,
+            workspace: moved.workspace.name,
+            ...(moved.created ? { createdWorkspace: true } : {}),
+            window: moved.window,
+            from: moved.fromWindow,
+            rect: moved.element.rect,
+            resolved: moved.resolved,
+          })
+        }
         const id = resolveElementId(workspaceId, input.elementId, input.panelId, input.id)
         ownTile(context, id)
-        const gridSize = gridSizeOf(workspaceId)
         const window = optional(input.window, asWindow)
         if (window !== undefined) {
           const { element, resolved, from } = moveElementAcross(workspaceId, id, window, {
@@ -221,7 +249,7 @@ export function gridTools(context?: ToolContext): Tool[] {
           return JSON.stringify({ elementId: element.id, window, from, rect: element.rect, resolved })
         }
         if (input.rect === undefined || input.rect === null)
-          throw new Error('Give rect for new cells, or window for another window.')
+          throw new Error('Give rect for new cells, window for another window, or workspace for another workspace.')
         const { element } = changeGridOf(workspaceId, id, (grid) =>
           setRect(grid, id, asRect(input.rect, grid.size), true),
         )
@@ -448,6 +476,12 @@ function asElementId(...values: unknown[]): string {
     if (id) return id
   }
   throw new Error('elementId must be an element id from the grid, like e3.')
+}
+
+function asWorkspaceInput(value: unknown): string {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (text) return text
+  throw new Error('workspace must be a workspace name, id, or "new".')
 }
 
 /** Resolves an element, panel, or loop identifier to an element id on the workspace's grids. */

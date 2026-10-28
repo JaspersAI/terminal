@@ -19,9 +19,9 @@ import { isOverflow } from '../../../shared/llm/limits'
 import type { Turn } from '../../../shared/llm/llm'
 import { stripSkillContent } from '../../../shared/skills/skills'
 import { citationsFor } from '../../data/citations'
-import { fileExchange, forgetChat, readExchanges } from '../../data/store'
+import { fileExchange, forgetChat, moveChat, readExchanges } from '../../data/store'
 import { getProviderConfig } from '../../secrets'
-import { dropThread, forgetThread, threadFile } from '../thread-file'
+import { dropThread, forgetThread, moveKeptThread, threadFile } from '../thread-file'
 import { createThreads, threadKey, type ThreadModel } from '../threads'
 import type { Tool, ToolContext } from '../tools/types'
 import { knownSecrets } from './settings'
@@ -88,6 +88,18 @@ export function forget(chat: string): void {
   }
   dropThread(chat)
   forgetChat(chat)
+}
+
+/**
+ * Moves a loop's conversation (its in-memory thread, startup cache, and SQLite thread and exchanges)
+ * to its chat key in another workspace.
+ */
+export function moveConversation(from: string, to: string): void {
+  if (from === to) return
+  forgotten.delete(to)
+  moveKeptThread(from, to)
+  threadFor.move(from, to)
+  moveChat(from, to)
 }
 
 /** How many times each thread has been started over, which is how a run tells its conversation is gone. */

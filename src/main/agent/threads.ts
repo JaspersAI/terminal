@@ -25,14 +25,19 @@ export interface ThreadStore {
   save(chat: string, key: string, turns: Turn[]): void
 }
 
+export interface Threads {
+  (chat: string, model: ThreadModel): Turn[]
+  move(from: string, to: string): void
+}
+
 /** The model a thread goes on with, which decides whether its assistant turns replay as they are. */
 export function threadKey(model: ThreadModel): string {
   return [model.provider.id, model.baseUrl, model.model].join('\n')
 }
 
-export function createThreads(store?: ThreadStore): (chat: string, model: ThreadModel) => Turn[] {
+export function createThreads(store?: ThreadStore): Threads {
   const threads = new Map<string, { key: string; turns: Turn[] }>()
-  return (chat, model) => {
+  const read = ((chat: string, model: ThreadModel) => {
     const key = threadKey(model)
     const thread = threads.get(chat) ?? { key, turns: [] as Turn[], ...store?.load(chat) }
     threads.set(chat, thread)
@@ -42,5 +47,14 @@ export function createThreads(store?: ThreadStore): (chat: string, model: Thread
       thread.key = key
     }
     return thread.turns
+  }) as Threads
+  read.move = (from: string, to: string): void => {
+    if (from === to) return
+    const existing = threads.get(from) ?? store?.load(from) ?? null
+    threads.delete(from)
+    if (!existing) return
+    threads.set(to, existing)
+    if (existing.turns.length > 0) store?.save(to, existing.key, existing.turns)
   }
+  return read
 }

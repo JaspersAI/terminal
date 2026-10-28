@@ -35,16 +35,18 @@ import {
 import { askedIn, samePlace, type Place } from '../shared/agent/asking'
 import {
   LOOP_ID,
+  elementTarget,
   frameOf,
   isTile,
   loopName,
+  named,
   NO_LOOPS,
   withLoopFor,
   withLoopAsked,
   type Loop,
   type LoopSpec,
 } from '../shared/loops/loops'
-import { closedLoop, reopened, withoutLoop } from '../shared/loops/closed'
+import { closedLoop, movedLoop, reopened, resolveWorkspaceTarget, withoutLoop } from '../shared/loops/closed'
 import { readBudget } from '../shared/agent/budget'
 import { isTheme } from '../shared/app/theme'
 import { EYE_CONSENT, readEye, readFeedbackText } from '../shared/app/eye'
@@ -107,6 +109,7 @@ import { setOpenAtLogin } from './app/background'
 import { checkForUpdates, installUpdate } from './app/updates'
 import { removeSkill, setSkillEnabled } from './skills/skills'
 import { cancelTask, runTaskNow, scheduleTask, setTaskEnabled } from './tasks/tasks'
+import { noteMovedLoop } from './agent/loop'
 
 // Every way the tree changes, by name. `dispatch` is the renderer's door: what comes over IPC is
 // not trusted, so each handler checks the shape of its arguments before calling the mutation.
@@ -147,6 +150,14 @@ const HANDLERS: Record<Action['type'], Handler> = {
     const loop = asString(raw.loop)
     if (!LOOP_ID.test(loop)) throw new Error('loop.reopen names a loop by its id.')
     reopenLoop(asString(raw.workspaceId), loop, raw.window === undefined ? undefined : asWindow(raw.window))
+  },
+  'loop.move': (raw) => {
+    const loop = asString(raw.loop)
+    if (!LOOP_ID.test(loop)) throw new Error('loop.move names a loop by its id.')
+    const targetWorkspaceId = raw.targetWorkspaceId === undefined ? undefined : asString(raw.targetWorkspaceId)
+    moveLoop(asString(raw.workspaceId), loop, targetWorkspaceId, {
+      window: raw.window === undefined ? undefined : asWindow(raw.window),
+    })
   },
   'element.setMode': (raw) => {
     const workspaceId = asString(raw.workspaceId)
@@ -917,6 +928,118 @@ export function deleteLoop(workspaceId: string, loopId: string): void {
     return
   }
   update((state) => withLoops(state, workspaceId, withoutLoop(state.loops[workspaceId] ?? NO_LOOPS, loopId)))
+}
+
+/** Tracks the workspace created for `workspace: "new"` within a single orchestrator run so multiple loops moved to `"new"` land together. */
+const createdWorkspaceByRun = new Map<string, string>()
+
+/**
+ * Moves an open loop (addressed by its loop name/id or by any element/panel id in its tile) to
+ * another workspace or to a newly created workspace, carrying its frame, its views and their panel
+ * state/output/text, its loop record, and its conversation thread and exchanges.
+ */
+export function moveLoop(
+  workspaceId: string,
+  target: string,
+  targetWorkspace?: string,
+  options: { window?: number; rect?: Rect; runId?: string } = {},
+): {
+  workspace: Workspace
+  created: boolean
+  loop: Loop
+  element: GridElement
+  window: number
+  fromWindow: number
+  resolved: Resolved
+} {
+  const sourceGrids = getGrids(workspaceId)
+  const sourceLoops = loopsOf(workspaceId)
+  const byLoop = named(sourceLoops.list, target)
+  let loopId: string
+  if (byLoop) {
+    loopId = byLoop.id
+  } else {
+    const elementId = elementTarget(sourceGrids, sourceLoops.list, target)
+    const { grid } = findElement(workspaceId, elementId)
+    const panel = panelOf(grid, elementId)
+    const element = grid.elements.find((e) => e.id === panel.elementId)
+    if (!element?.loop) {
+      throw new Error("The chat is this workspace's own conversation and stays here; move a piece of work instead.")
+    }
+    loopId = element.loop
+  }
+
+  const found = frameOf(sourceGrids, loopId)
+  if (!found) throw new Error(`${loopName(loopId)} is not open.`)
+
+  const state = getState()
+  const where = options.window ?? (isOpenWindow(state.windows, found.window) ? found.window : MAIN_WINDOW)
+  getGrid(workspaceId, where)
+
+  const resolvedTarget =
+    targetWorkspace === undefined ? { kind: 'new' as const } : resolveWorkspaceTarget(state.workspaces, targetWorkspace)
+
+  let workspace: Workspace
+  let created = false
+  if (resolvedTarget.kind === 'existing') {
+    if (resolvedTarget.workspace.id === workspaceId) {
+      throw new Error(`${loopName(loopId)} is already in workspace ${JSON.stringify(resolvedTarget.workspace.name)}.`)
+    }
+    workspace = resolvedTarget.workspace
+  } else {
+    const cachedId =
+      resolvedTarget.name === undefined && options.runId ? createdWorkspaceByRun.get(options.runId) : undefined
+    const cached = cachedId ? state.workspaces.find((w) => w.id === cachedId) : undefined
+    if (cached && cached.id !== workspaceId) {
+      workspace = cached
+    } else {
+      const customName = resolvedTarget.name?.trim()
+      if (customName !== undefined && (!customName || customName.length > WORKSPACE_NAME_MAX)) {
+        throw new Error(`Workspace names are 1 to ${WORKSPACE_NAME_MAX} characters.`)
+      }
+      workspace = customName ? { id: randomUUID(), name: customName } : newWorkspace(state.workspaces)
+      created = true
+      if (resolvedTarget.name === undefined && options.runId) {
+        createdWorkspaceByRun.set(options.runId, workspace.id)
+      }
+    }
+  }
+
+  const initialTargetGrids = created
+    ? withWindows({}, state.windows)
+    : (state.grids[workspace.id] ?? withWindows({}, state.windows))
+  const initialTargetLoops = created ? NO_LOOPS : (state.loops[workspace.id] ?? NO_LOOPS)
+  const moved = movedLoop(sourceGrids, sourceLoops, initialTargetGrids, initialTargetLoops, loopId, where, options.rect)
+
+  noteMovedLoop(workspaceId, loopId, workspace.id, moved.loop.id)
+
+  update((current) => ({
+    ...current,
+    workspaces: created ? [...current.workspaces, workspace] : current.workspaces,
+    grids: {
+      ...current.grids,
+      [workspaceId]: moved.sourceGrids,
+      [workspace.id]: moved.targetGrids,
+    },
+    loops: {
+      ...current.loops,
+      [workspaceId]: moved.sourceLoops,
+      [workspace.id]: moved.targetLoops,
+    },
+  }))
+
+  dismissSecretRequest({ workspaceId, on: found.element.id })
+  syncPluginViewErrors()
+
+  return {
+    workspace,
+    created,
+    loop: moved.loop,
+    element: moved.frame,
+    window: where,
+    fromWindow: moved.fromWindow,
+    resolved: moved.resolved,
+  }
 }
 
 /**

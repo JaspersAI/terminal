@@ -48,3 +48,12 @@ export function forgetThread(chat: string, key: string): void {
 export function dropThread(chat: string): void {
   kept.delete(chat)
 }
+
+/** Moves a startup-cached thread to a new chat key when a loop moves across workspaces. */
+export function moveKeptThread(from: string, to: string): void {
+  if (from === to) return
+  const entry = kept.get(from)
+  if (!entry) return
+  kept.delete(from)
+  kept.set(to, entry)
+}

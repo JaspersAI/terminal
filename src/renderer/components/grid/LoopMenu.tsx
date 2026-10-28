@@ -30,12 +30,13 @@ interface Props {
  */
 export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose }: Props): ReactElement | null {
   // The slices the rule reads, each as the tree holds it, so the menu is rebuilt only when one changes.
+  const workspaces = useAppState((s) => s.workspaces)
   const loops = useAppState((s) => s.loops[workspaceId])
   const plugins = useAppState((s) => s.plugins)
   const connections = useAppState((s) => s.connections)
   const menu = useMemo(
-    () => menuOf({ loops: { [workspaceId]: loops ?? [] }, plugins, connections }, workspaceId, loop.id),
-    [workspaceId, loop.id, loops, plugins, connections],
+    () => menuOf({ workspaces, loops: { [workspaceId]: loops ?? [] }, plugins, connections }, workspaceId, loop.id),
+    [workspaceId, loop.id, workspaces, loops, plugins, connections],
   )
   const [timeline, setTimeline] = useState<Exchange[]>([])
   /** The oldest exchange read, while there may be more before it. */
@@ -136,6 +137,25 @@ export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose 
           className={item}
         >
           Close this loop
+        </button>
+        {(menu.workspaces ?? []).map((w) => (
+          <button
+            key={w.id}
+            type="button"
+            data-move-workspace={w.id}
+            onClick={() => send({ type: 'loop.move', workspaceId, loop: loop.id, targetWorkspaceId: w.id })}
+            className={`${item} truncate`}
+          >
+            Move to {w.name}
+          </button>
+        ))}
+        <button
+          type="button"
+          data-move-new-workspace
+          onClick={() => send({ type: 'loop.move', workspaceId, loop: loop.id })}
+          className={item}
+        >
+          Move to new workspace
         </button>
         {confirming ? (
           <div data-confirm className="px-2 py-1">

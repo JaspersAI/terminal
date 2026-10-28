@@ -11,7 +11,7 @@ import { NEW_THREAD, turnText, userRequest, type Added } from './request'
 import { loopTools } from './tools'
 import { loopPrompt, loopStateNow, taskPreface } from './utils/prompt'
 import { stopChat } from './utils/runs'
-import { exchanges, forget } from './utils/thread'
+import { exchanges, forget, moveConversation } from './utils/thread'
 import { createTurns } from './utils/turns'
 
 // A loop's requests: a message sent in its frame's box, answered by its own agent. It is the same
@@ -132,6 +132,26 @@ export function loopHistory(loop: string, limit: number, before?: number): Promi
   return exchanges(loopChat(workspaceId, loop), limit, before)
 }
 
+const movedChats = new Set<string>()
+
+/**
+ * Moves a loop's conversation to its new workspace chat key and notes it so `watchLoops` does not
+ * forget the old chat key when the loop leaves the source workspace.
+ */
+export function noteMovedLoop(
+  fromWorkspaceId: string,
+  fromLoopId: string,
+  toWorkspaceId: string,
+  toLoopId: string,
+): void {
+  const fromChat = loopChat(fromWorkspaceId, fromLoopId)
+  const toChat = loopChat(toWorkspaceId, toLoopId)
+  movedChats.add(fromChat)
+  turns.clear(fromChat)
+  stopChat(fromChat)
+  moveConversation(fromChat, toChat)
+}
+
 /**
  * A loop that closes stops what it was doing: what waited its turn, and its run. One that is gone,
  * deleted or with its workspace, is forgotten as well: its thread and its log. A closed loop keeps
@@ -143,8 +163,9 @@ export function loopHistory(loop: string, limit: number, before?: number): Promi
 export function watchLoops(): void {
   subscribe((next, prev) => {
     if (next.loops === prev.loops) return
-    const stopped = shut(prev.loops, next.loops)
-    const forgotten = gone(prev.loops, next.loops)
+    const stopped = shut(prev.loops, next.loops).filter((chat) => !movedChats.has(chat))
+    const forgotten = gone(prev.loops, next.loops).filter((chat) => !movedChats.has(chat))
+    movedChats.clear()
     if (stopped.length === 0 && forgotten.length === 0) return
     queueMicrotask(() => {
       for (const chat of new Set([...stopped, ...forgotten])) {
