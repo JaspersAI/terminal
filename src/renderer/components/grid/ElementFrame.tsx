@@ -364,10 +364,11 @@ export function ElementFrame({
             grid={grid}
             frame={element}
             focused={focused}
+            working={working}
             waiting={undrawn}
           />
         ) : (
-          <Held workspaceId={workspaceId} elementId={element.id} panel={panel} focused={focused} />
+          <Held workspaceId={workspaceId} elementId={element.id} panel={panel} focused={focused} working={working} />
         )}
       </div>
       {frameEdges(element.mode).map((handle) => (

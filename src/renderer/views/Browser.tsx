@@ -9,6 +9,7 @@ import {
   type ReactElement,
 } from 'react'
 import { useData, usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
+import { usePanelWorking } from '@jaspers-ai/sdk/host'
 import {
   DEFAULT_BROWSER_URL,
   isVideoPageUrl,
@@ -61,6 +62,7 @@ const NAV_BUTTON =
 
 export function Browser({ panel }: ViewProps): ReactElement {
   const [stateUrl] = usePanelState<string>(panel, 'url', DEFAULT_BROWSER_URL)
+  const working = usePanelWorking()
   const refreshedAt = useData(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`)
   const updateAvailable = useAppState((s) => (s.updates.status === 'ready' ? s.updates.available : null))
 
@@ -215,7 +217,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
     runAction('load', target)
   }
 
-  const shownError = inputError ?? snapshot.error
+  const shownError = inputError ?? (working ? null : snapshot.error)
   const canOpenExternal = activeAddress.startsWith('https://')
 
   return (

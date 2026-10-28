@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, type ReactElement } from 'react'
 import { BridgeProvider, PanelProvider } from '@jaspers-ai/sdk'
-import type { BridgeRequest } from '@jaspers-ai/sdk/host'
+import { WorkingProvider, type BridgeRequest } from '@jaspers-ai/sdk/host'
 import { viewErrorMessage } from '../../../shared/grid/grid'
 import { liveKeyOf } from '../../../shared/plugins/live'
 import { viewSandbox } from '../../../shared/plugins/plugins'
@@ -19,6 +19,7 @@ interface Props {
   /** A registry id, like core/note. */
   view: string
   focused: boolean
+  working?: boolean
 }
 
 /**
@@ -33,7 +34,14 @@ interface Props {
  * still being built as the app starts, or is gone. One whose plugin is waiting on the user is not
  * mounted at all: its tile asks for what the plugin needs, in its box (`ElementFrame`).
  */
-export function ViewHost({ workspaceId, panelId, elementId, view, focused }: Props): ReactElement | null {
+export function ViewHost({
+  workspaceId,
+  panelId,
+  elementId,
+  view,
+  focused,
+  working = false,
+}: Props): ReactElement | null {
   const panel = useMemo(() => ({ id: panelId, workspaceId }), [panelId, workspaceId])
   const views = useAppState((s) => s.views)
   const plugins = useAppState((s) => s.plugins)
@@ -55,6 +63,7 @@ export function ViewHost({ workspaceId, panelId, elementId, view, focused }: Pro
         microphone={plugins[plugin]?.capabilities.includes('microphone') ?? false}
         title={views[view]?.title ?? view}
         focused={focused}
+        working={working}
       />
     )
   }
@@ -63,7 +72,9 @@ export function ViewHost({ workspaceId, panelId, elementId, view, focused }: Pro
   return (
     <BridgeProvider value={hostBridge}>
       <PanelProvider value={panel}>
-        <View panel={panel} />
+        <WorkingProvider value={working}>
+          <View panel={panel} />
+        </WorkingProvider>
       </PanelProvider>
     </BridgeProvider>
   )
@@ -81,6 +92,7 @@ interface FrameProps {
   microphone: boolean
   title: string
   focused: boolean
+  working: boolean
 }
 
 /**
@@ -99,8 +111,12 @@ function PluginView({
   microphone,
   title,
   focused,
+  working,
 }: FrameProps): ReactElement {
   const frame = useRef<HTMLIFrameElement>(null)
+  const initialWorking = useRef(working)
+  const workingNow = useRef(working)
+  workingNow.current = working
 
   useEffect(() => {
     const iframe = frame.current
@@ -178,6 +194,7 @@ function PluginView({
         return
       }
       post({ id, result: subId })
+      post({ method: 'working', params: { working: workingNow.current } })
       replied = true
       for (const value of held) post({ method: 'store.changed', params: { subId, value } })
     }
@@ -246,6 +263,10 @@ function PluginView({
     frame.current?.contentWindow?.postMessage({ method: 'focus', params: { focused } }, '*')
   }, [focused])
 
+  useEffect(() => {
+    frame.current?.contentWindow?.postMessage({ method: 'working', params: { working } }, '*')
+  }, [working])
+
   // A press inside the frame never reaches this page. The window losing focus to the frame is the
   // only sign of one, and it is what focuses the element then.
   useEffect(() => {
@@ -262,7 +283,7 @@ function PluginView({
       ref={frame}
       title={title}
       sandbox={sandbox}
-      src={`jaspers-plugin://${plugin}/index.html?view=${encodeURIComponent(name)}&panel=${panelId}&workspace=${workspaceId}&v=${version}`}
+      src={`jaspers-plugin://${plugin}/index.html?view=${encodeURIComponent(name)}&panel=${panelId}&workspace=${workspaceId}&v=${version}&working=${initialWorking.current ? '1' : '0'}`}
       className="absolute inset-0 h-full w-full border-0 bg-background"
     />
   )

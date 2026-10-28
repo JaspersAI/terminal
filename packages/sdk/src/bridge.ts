@@ -73,3 +73,12 @@ export const PanelProvider = PanelContext.Provider
 export function usePanel(): PanelRef | null {
   return useContext(PanelContext)
 }
+
+const WorkingContext = createContext(false)
+
+export const WorkingProvider = WorkingContext.Provider
+
+/** Whether the loop that owns the view's tile currently has a run at work. */
+export function usePanelWorking(): boolean {
+  return useContext(WorkingContext)
+}

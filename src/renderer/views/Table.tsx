@@ -1,7 +1,8 @@
 import { useMemo, useState, type ReactElement } from 'react'
 import { usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
+import { usePanelWorking } from '@jaspers-ai/sdk/host'
 import type { ViewProps } from './index'
-import { cellText, isNumeric, isYearColumn, shownText } from './cells'
+import { cellText, isNumeric, isYearColumn, shownRows, shownText } from './cells'
 import { pickColumns, useRows } from './data'
 
 // A table over any source, or over the store. This is the view that means a server does not need a
@@ -18,7 +19,8 @@ export function Table({ panel }: ViewProps): ReactElement {
   const [title] = usePanelState<string | null>(panel, 'title', null)
   const [sort, setSort] = useState<{ column: string; descending: boolean } | null>(null)
 
-  const found = useRows({ source, args, sql })
+  const raw = useRows({ source, args, sql })
+  const found = shownRows(raw, usePanelWorking())
   const columns = pickColumns(found.columns, wanted)
   const rows = useMemo(() => sorted(found.rows, columns, sort), [found.rows, columns, sort])
   const years = useMemo(() => yearColumns(found.rows, columns), [found.rows, columns])
@@ -27,7 +29,7 @@ export function Table({ panel }: ViewProps): ReactElement {
     rowCount: found.rows.length,
     columns,
     source: source ?? (sql ? 'store' : null),
-    error: found.error,
+    error: raw.error,
   })
   usePublishText(panel, rows.length > 0 ? asText(title, columns, rows, years) : found.text)
 
