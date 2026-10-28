@@ -6,8 +6,9 @@
 // are the same rows, so the same conversation draws them.
 
 // The extensions are explicit because Node's test runner resolves these imports at run time.
-import { THINKING, type AgentEvent } from '../../../shared/agent/agent.ts'
+import { THINKING, type AgentEvent, type AgentOrigin } from '../../../shared/agent/agent.ts'
 import type { Place } from '../../../shared/agent/asking'
+import { rejoin, type Exchange } from '../../../shared/agent/transcript.ts'
 import type { LoopStatus } from '../../../shared/loops/loops'
 import { answered, failed, heard, over, sent, without, type LiveExchange } from '../composer/live.ts'
 
@@ -171,4 +172,167 @@ export function canZoomLoop(state: {
     !state.modalOpen &&
     !state.outsideFocused
   )
+}
+
+/** What a window keeps of a tile's box across workspace switches while the tile is on a grid. */
+export interface TileBox {
+  expanded: boolean
+  seen: TileState
+  draft: string
+  live: LiveExchange[]
+  earlier: Exchange[]
+  /** Whether `earlier` has been read since the last exchange that left `live` or ended while folded. */
+  read: boolean
+  /** Whether the log may have exchanges ahead of `earlier`. */
+  more: boolean
+}
+
+export const IDLE_BOX: TileBox = {
+  expanded: false,
+  seen: BORN,
+  draft: '',
+  live: [],
+  earlier: [],
+  read: false,
+  more: true,
+}
+
+export function placeKey(place: Place): string {
+  return `${place.workspaceId}/${place.on}`
+}
+
+function placeOfKey(key: string): Place {
+  const at = key.lastIndexOf('/')
+  return { workspaceId: key.slice(0, at), on: key.slice(at + 1) }
+}
+
+export function tileBoxOf(boxes: ReadonlyMap<string, TileBox>, place: Place): TileBox {
+  return boxes.get(placeKey(place)) ?? IDLE_BOX
+}
+
+export function withTileBox(
+  boxes: ReadonlyMap<string, TileBox>,
+  place: Place,
+  to: (box: TileBox) => TileBox,
+): ReadonlyMap<string, TileBox> {
+  const current = tileBoxOf(boxes, place)
+  const next = to(current)
+  return next === current ? boxes : new Map(boxes).set(placeKey(place), next)
+}
+
+/**
+ * Whether the tile's box should read the end of its log now: on mount when no finished row is in
+ * `live`, and whenever the box is open with unread exchanges in the log. While folded with a
+ * finished row in `live`, the row stays so the bar says `Done` or `Failed` until the box is opened.
+ */
+export function shouldReadTileBox(box: TileBox): boolean {
+  return !box.read && (box.expanded || over(box.live).size === 0)
+}
+
+export function tileBoxHeard(box: TileBox, place: Place, event: AgentEvent): TileBox {
+  const next = boxHeard(box.live, event, place)
+  if (next === box.live) return box
+  if (event.kind === 'start') {
+    const dropped = !box.expanded && over(box.live).size > 0
+    return { ...box, live: boxFresh(next, box.expanded), ...(dropped ? { read: false } : {}) }
+  }
+  const unread = event.kind === 'stopped' || ((event.kind === 'done' || event.kind === 'failed') && !box.expanded)
+  return { ...box, live: next, ...(unread ? { read: false } : {}) }
+}
+
+export function boxesHeard(boxes: ReadonlyMap<string, TileBox>, event: AgentEvent): ReadonlyMap<string, TileBox> {
+  if (event.kind === 'start') {
+    if (event.on === undefined) return boxes
+    const place = { workspaceId: event.workspaceId, on: event.on }
+    return withTileBox(boxes, place, (box) => tileBoxHeard(box, place, event))
+  }
+  for (const [key, box] of boxes) {
+    const next = tileBoxHeard(box, placeOfKey(key), event)
+    if (next !== box) return new Map(boxes).set(key, next)
+  }
+  return boxes
+}
+
+export interface RunningTile {
+  runId: string
+  origin: AgentOrigin
+  ask?: string
+  workspaceId?: string
+  loop?: string
+  on?: string
+  request?: string
+}
+
+export function boxesSeeded(
+  boxes: ReadonlyMap<string, TileBox>,
+  runs: readonly RunningTile[],
+  ended: ReadonlySet<string>,
+): ReadonlyMap<string, TileBox> {
+  let next = boxes
+  for (const run of runs) {
+    const { workspaceId } = run
+    if (workspaceId === undefined || run.on === undefined || ended.has(run.runId)) continue
+    next = boxesHeard(next, { kind: 'start', label: '', ...run, workspaceId })
+  }
+  return next
+}
+
+export function boxesKept(
+  boxes: ReadonlyMap<string, TileBox>,
+  grids: Record<string, Record<number, { elements: readonly { id: string }[] }>>,
+): ReadonlyMap<string, TileBox> {
+  let next: Map<string, TileBox> | null = null
+  for (const [key] of boxes) {
+    const place = placeOfKey(key)
+    const workspace = grids[place.workspaceId]
+    const onGrid =
+      workspace !== undefined && Object.values(workspace).some((grid) => grid.elements.some((e) => e.id === place.on))
+    if (!onGrid) {
+      next ??= new Map(boxes)
+      next.delete(key)
+    }
+  }
+  return next ?? boxes
+}
+
+export function tileBoxSent(box: TileBox, place: Place, ask: string, question: string): TileBox {
+  const dropped = !box.expanded && over(box.live).size > 0
+  const live = boxSent(boxFresh(box.live, box.expanded), ask, place.workspaceId, question)
+  return { ...box, draft: '', live, ...(dropped ? { read: false } : {}) }
+}
+
+export function tileBoxSettled(box: TileBox, ask: string, reply: string, error: string | null): TileBox {
+  const live = boxSettled(box.live, ask, reply, error)
+  if (live === box.live) return box
+  const unread = error === null && (!reply || !box.expanded)
+  return { ...box, live, ...(unread ? { read: false } : {}) }
+}
+
+export function tileBoxExpanded(box: TileBox, expanded: boolean): TileBox {
+  if (box.expanded === expanded) return box
+  const unread = over(box.live).size > 0
+  return { ...box, expanded, ...(unread ? { read: false } : {}) }
+}
+
+export function tileBoxSeen(box: TileBox, now: TileState): TileBox {
+  if (box.seen.empty === now.empty && box.seen.working === now.working) return box
+  const opens = boxOpens(box.seen, now)
+  const next = { ...box, seen: now }
+  return opens === null ? next : tileBoxExpanded(next, opens)
+}
+
+export function tileBoxRead(box: TileBox, page: Exchange[], done: ReadonlySet<string>, pageSize: number): TileBox {
+  return {
+    ...box,
+    earlier: rejoin(box.earlier, page),
+    live: without(box.live, done),
+    read: true,
+    more: page.length >= pageSize,
+  }
+}
+
+export function tileBoxOlder(box: TileBox, head: number, page: Exchange[], pageSize: number): TileBox {
+  const more = page.length >= pageSize
+  const earlier = page.length > 0 && box.earlier[0]?.id === head ? [...page, ...box.earlier] : box.earlier
+  return earlier === box.earlier && more === box.more ? box : { ...box, earlier, more }
 }

@@ -5,25 +5,80 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
 } from 'react'
-import { askedIn } from '../../../shared/agent/asking'
-import type { Exchange } from '../../../shared/agent/transcript'
+import { askedIn, type Place } from '../../../shared/agent/asking'
 import type { Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
 import { errorMessage } from '../../lib/errors'
-import { useAppState } from '../../lib/state'
-import { over, without, type LiveExchange } from '../composer/live'
+import { get, subscribe as subscribeState, useAppState } from '../../lib/state'
+import { over, type LiveExchange } from '../composer/live'
 import { pasteLinks } from '../composer/paste'
 import { QuestionField } from '../composer/QuestionField'
 import { PAGE } from '../composer/request'
 import { SecretField } from '../composer/SecretField'
 import { Transcript } from '../composer/Transcript'
-import { boxActivity, boxFresh, boxHeard, boxSent, boxSettled, type Activity } from './box'
+import {
+  boxesHeard,
+  boxesKept,
+  boxesSeeded,
+  shouldReadTileBox,
+  tileBoxExpanded,
+  tileBoxOf,
+  tileBoxOlder,
+  tileBoxRead,
+  tileBoxSent,
+  tileBoxSettled,
+  withTileBox,
+  type TileBox,
+} from './box'
 import { Need } from './Need'
-import { Progress } from './Progress'
+
+let boxes: ReadonlyMap<string, TileBox> = new Map()
+const listeners = new Set<() => void>()
+/** The runs heard to end since this window began listening, which an older answer to "what is running" must not bring back. */
+const ended = new Set<string>()
+let hearing = false
+
+function putBoxes(next: ReadonlyMap<string, TileBox>): void {
+  if (next === boxes) return
+  boxes = next
+  for (const each of listeners) each()
+}
+
+function hear(): void {
+  if (hearing) return
+  hearing = true
+  window.app.agent.onEvent((event) => {
+    if (event.kind === 'done' || event.kind === 'failed' || event.kind === 'stopped') ended.add(event.runId)
+    putBoxes(boxesHeard(boxes, event))
+  })
+  void window.app.agent.running().then((runs) => {
+    putBoxes(boxesSeeded(boxes, runs, ended))
+    ended.clear()
+  })
+  subscribeState(() => putBoxes(boxesKept(boxes, get().grids)))
+}
+
+function subscribeBoxes(listener: () => void): () => void {
+  hear()
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
+/** What this window keeps of a tile's box across workspace switches while the tile stays on a grid. */
+export function useTileBox(place: Place): TileBox {
+  return useSyncExternalStore(subscribeBoxes, () => tileBoxOf(boxes, place))
+}
+
+/** Updates one tile's box in this window. */
+export function updateTileBox(place: Place, to: (box: TileBox) => TileBox): void {
+  hear()
+  putBoxes(withTileBox(boxes, place, to))
+}
 
 interface Props {
   workspaceId: string
@@ -33,7 +88,7 @@ interface Props {
   label: string
   /** What the user calls the loop: loop_3. */
   called: string
-  /** Whether the conversation is shown under the line: only a deep research loop's is. */
+  /** True for a deep research loop, whose field invites follow-up questions rather than view commands. */
   chat: boolean
   /** True while another element is maximized over the tile: nothing in the box can be read then. */
   covered: boolean
@@ -43,12 +98,6 @@ interface Props {
   need: WaitingView | null
   /** Sets that ask aside, which shows the view as it is. */
   onSkip: () => void
-  /** Whether the box is open under its line. Folded by default: the label in the loop's bar opens it, or a run begun with no view in the tile yet. */
-  expanded: boolean
-  /** Opens or folds it. */
-  onExpand: (expanded: boolean) => void
-  /** Told how its requests stand, for the label in the loop's bar, whenever that changes. */
-  onActivity: (activity: Activity | null) => void
   zoom?: number
 }
 
@@ -61,11 +110,10 @@ interface Props {
  * them down, never over them, and takes at most half the tile; in a tile with no view yet it fills the
  * tile.
  *
- * What it shows open depends on the loop. Only a deep research loop, whose answer is its
- * conversation, shows the conversation: what was sent, what the run is doing, and the reply, below
- * what was said before, which it reads from the loop's log a page at a time. Any other loop never shows
- * its conversation, which is kept all the same: open, its box shows the request at work, the steps its
- * run takes, and how the last one ended (`Progress`). A new request takes the place of what was over.
+ * Open, the box shows the loop's conversation (`Transcript`): what was sent, what each run did, and
+ * the reply, below what was said before, which it reads from the loop's log a page at a time. Its
+ * state (`TileBox`) stays in the window across workspace switches so an open conversation neither
+ * collapses nor disappears when switching away and back.
  *
  * It follows the runs on its tile by what main says of them (`box.ts`), not by having sent them, so a
  * run shows here in whichever window holds the tile, after the page is drawn again, and when the
@@ -77,9 +125,6 @@ interface Props {
  * type into at a time, and the keyboard goes with it if the box had it. What a view in the tile is
  * waiting on, a key its plugin declares or a sign-in, is asked for the same way (`Need`), behind what
  * a run asks, and Escape sets it aside as its cross does.
- *
- * The log is read only while no row of its own is up, and opening a conversation lets the rows that
- * are over go first, so an exchange is drawn from one or the other and never both.
  */
 export function LoopBox({
   workspaceId,
@@ -92,117 +137,60 @@ export function LoopBox({
   fills,
   need,
   onSkip,
-  expanded,
-  onExpand,
-  onActivity,
   zoom = 1,
 }: Props): ReactElement {
-  const [draft, setDraft] = useState('')
-  const [live, setLive] = useState<LiveExchange[]>([])
-  // The rows as they stand, for what happens between draws: an event landing, a reply coming back.
-  const now = useRef<LiveExchange[]>(live)
-  const [earlier, setEarlier] = useState<Exchange[]>([])
-  const [focused, setFocused] = useState(false)
   // This tile, as the place a run shows and asks: its workspace, and its element there.
   const place = useMemo(() => ({ workspaceId, on: elementId }), [workspaceId, elementId])
+  const tileBox = useTileBox(place)
+  const { expanded: open, draft, live, earlier, more } = tileBox
+  // The rows as they stand, for what happens between draws: stopping a request, reading the log.
+  const now = useRef<LiveExchange[]>(live)
+  now.current = live
+  const [focused, setFocused] = useState(false)
   const question = useAppState((s) => askedIn(s.questions, place))
   const secret = useAppState((s) => askedIn(s.secretRequests, place))
   const box = useRef<HTMLDivElement>(null)
-  // Whether the log has exchanges ahead of the ones read, and whether a page of them is on its way.
-  const ahead = useRef({ any: true, reading: false })
+  const readingOlder = useRef(false)
 
   const working = live.some((one) => one.working)
   const asked = question?.id ?? (secret ? `${secret.plugin}/${secret.key}` : (need?.name ?? null))
-  const open = expanded
-  const idle = live.length === 0
-  // Whether a conversation in view is drawn from the rows: it keeps the ones that are over. Set once a
-  // draw is committed, since the event listener reads it between draws.
-  const inView = useRef(false)
-  useLayoutEffect(() => {
-    inView.current = chat && open
-  }, [chat, open])
   // The square at the line's end stops while a run works and nothing is typed, and sends otherwise.
   const stopping = working && draft === ''
+  const shouldRead = shouldReadTileBox(tileBox)
 
-  const change = useCallback((to: (list: LiveExchange[]) => LiveExchange[]): void => {
-    now.current = to(now.current)
-    setLive(now.current)
-  }, [])
-
-  // How the requests stand, for the label in the bar.
-  const activity = useMemo(() => boxActivity(live), [live])
-  useEffect(() => onActivity(activity), [activity, onActivity])
-
-  // What main says of the runs on this tile. One begun elsewhere joins as a request sent here does.
-  useEffect(
-    () =>
-      window.app.agent.onEvent((event) =>
-        change((list) => {
-          const next = boxHeard(list, event, place)
-          return event.kind === 'start' && next !== list ? boxFresh(next, inView.current) : next
-        }),
-      ),
-    [place, change],
-  )
-
-  // The runs already in flight on this tile: the window opened partway through one.
+  // What was said before: read on mount with no finished row up, and when opened with unread exchanges.
   useEffect(() => {
+    if (!shouldRead) return
     let current = true
-    void window.app.agent.running().then((runs) => {
-      if (!current) return
-      for (const run of runs) {
-        const { workspaceId: runsOn } = run
-        // Only a tile's run says where it is; `boxHeard` takes the ones that are here.
-        if (runsOn !== undefined) {
-          change((list) => boxHeard(list, { kind: 'start', label: '', ...run, workspaceId: runsOn }, place))
-        }
-      }
-    })
-    return () => {
-      current = false
-    }
-  }, [place, change])
-
-  // What was said before, read while a conversation is shown and open with no row of its own up.
-  useEffect(() => {
-    if (!chat || !open || !idle) return
-    let current = true
-    ahead.current = { any: true, reading: false }
+    const done = over(now.current)
+    readingOlder.current = false
     window.app.agent.history(PAGE, undefined, loop.id).then(
       (page) => {
         if (!current) return
-        setEarlier(page)
-        if (page.length < PAGE) ahead.current.any = false
+        updateTileBox(place, (b) => tileBoxRead(b, page, done, PAGE))
       },
       () => undefined,
     )
     return () => {
       current = false
     }
-  }, [chat, open, idle, loop.id])
-
-  // Opened, a conversation is drawn from the log, which has what is over.
-  useEffect(() => {
-    if (chat && open) change((list) => (list.some((one) => one.working) ? list : without(list, over(list))))
-  }, [chat, open, change])
+  }, [shouldRead, place, loop.id])
 
   /** The page ahead of what is drawn, asked for as the reader nears its top. */
   const older = useCallback(() => {
     const head = earlier[0]?.id
-    if (head === undefined || !ahead.current.any || ahead.current.reading) return
-    ahead.current.reading = true
+    if (head === undefined || !more || readingOlder.current) return
+    readingOlder.current = true
     window.app.agent.history(PAGE, head, loop.id).then(
       (page) => {
-        ahead.current.reading = false
-        if (page.length < PAGE) ahead.current.any = false
-        // Onto the list it was read for, and no other: the log may have been read again since.
-        if (page.length > 0) setEarlier((had) => (had[0]?.id === head ? [...page, ...had] : had))
+        readingOlder.current = false
+        updateTileBox(place, (b) => tileBoxOlder(b, head, page, PAGE))
       },
       () => {
-        ahead.current.reading = false
+        readingOlder.current = false
       },
     )
-  }, [earlier, loop.id])
+  }, [earlier, more, place, loop.id])
 
   // The keyboard stays in the box when a question takes the line's place, and when the line comes
   // back: the draw that swapped them took the field it was in.
@@ -215,13 +203,12 @@ export function LoopBox({
     event.preventDefault()
     const text = draft.trim()
     if (!text) return
-    setDraft('')
     const ask = crypto.randomUUID()
-    change((list) => boxSent(boxFresh(list, chat && open), ask, workspaceId, text))
+    updateTileBox(place, (b) => tileBoxSent(b, place, ask, text))
     // A request that began is ended by its run's events. What comes back here settles one that never did.
     window.app.agent.run(text, ask, elementId).then(
-      (reply) => change((list) => boxSettled(list, ask, reply, null)),
-      (err: unknown) => change((list) => boxSettled(list, ask, '', errorMessage(err))),
+      (reply) => updateTileBox(place, (b) => tileBoxSettled(b, ask, reply, null)),
+      (err: unknown) => updateTileBox(place, (b) => tileBoxSettled(b, ask, '', errorMessage(err))),
     )
   }
 
@@ -244,7 +231,7 @@ export function LoopBox({
     event.stopPropagation()
     if (need !== null) return onSkip()
     if (stopNewest()) return
-    if (open) return onExpand(false)
+    if (open) return updateTileBox(place, (b) => tileBoxExpanded(b, false))
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   }
 
@@ -282,7 +269,9 @@ export function LoopBox({
             autoComplete="off"
             value={draft}
             placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) =>
+              updateTileBox(place, (b) => (b.draft === event.target.value ? b : { ...b, draft: event.target.value }))
+            }
             onPaste={pasteLinks}
             className="min-w-0 flex-1 bg-transparent px-1.5 py-1 text-xs outline-none"
           />
@@ -312,7 +301,7 @@ export function LoopBox({
           </button>
         </form>
       )}
-      {chat && open && (live.length > 0 || earlier.length > 0) && (
+      {open && (live.length > 0 || earlier.length > 0) && (
         <Transcript
           named={false}
           earlier={earlier}
@@ -322,7 +311,6 @@ export function LoopBox({
           className="min-h-0 flex-1 border-t border-border px-2 py-1.5"
         />
       )}
-      {!chat && open && live.length > 0 && <Progress live={live} onStop={stop} />}
     </div>
   )
 }
