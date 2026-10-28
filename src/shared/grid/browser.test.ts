@@ -7,12 +7,17 @@ import {
   BROWSER_PLUGIN_TITLE,
   BROWSER_VIEW,
   browserClientHintHeader,
+  browserRequestHeaders,
   browserStanding,
   browserSummary,
   browserUserAgent,
+  browserUserAgentForUrl,
   clipBounds,
   DEFAULT_BROWSER_URL,
+  googleAuthUserAgent,
+  isBlankBrowserPopupUrl,
   isBrowserUrl,
+  isGoogleAuthUrl,
   isVideoPageUrl,
   normalizeBounds,
   normalizeBrowserUrl,
@@ -104,6 +109,109 @@ test('isVideoPageUrl detects Bloomberg TV/Live and YouTube pages for default the
       '136.0.7103.49',
     ),
     '"Not.A/Brand";v="99.0.0.0", "Google Chrome";v="136.0.7103.49", "Chromium";v="136.0.7103.49"',
+  )
+})
+
+test('Google sign-in hosts present a Firefox identity without client hints while other hosts keep cleaned Chrome headers', () => {
+  const rawUa =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) jaspers-terminal/0.11.1 Chrome/136.0.0.0 Electron/44.3.0 Safari/537.36'
+  const cleanChromeUa =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36'
+  const macFirefoxUa = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0'
+
+  assert.equal(isGoogleAuthUrl('https://accounts.google.com/v3/signin/identifier'), true)
+  assert.equal(isGoogleAuthUrl('https://ACCOUNTS.GOOGLE.COM/o/oauth2/v2/auth'), true)
+  assert.equal(isGoogleAuthUrl('https://accounts.youtube.com/ServiceLogin'), true)
+  assert.equal(isGoogleAuthUrl('https://mail.google.com/mail/u/0/'), false)
+  assert.equal(isGoogleAuthUrl('https://myaccount.google.com/'), false)
+  assert.equal(isGoogleAuthUrl('https://accounts.google.com.evil.test/'), false)
+  assert.equal(isGoogleAuthUrl('not a url'), false)
+
+  assert.equal(googleAuthUserAgent('darwin'), macFirefoxUa)
+  assert.equal(
+    googleAuthUserAgent('win32'),
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0',
+  )
+  assert.equal(googleAuthUserAgent('linux'), 'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0')
+
+  assert.equal(browserUserAgentForUrl('https://accounts.google.com/signin', rawUa, 'darwin'), macFirefoxUa)
+  assert.equal(browserUserAgentForUrl('https://www.linkedin.com/login', rawUa, 'darwin'), cleanChromeUa)
+
+  assert.equal(isBlankBrowserPopupUrl(''), true)
+  assert.equal(isBlankBrowserPopupUrl('about:blank'), true)
+  assert.equal(isBlankBrowserPopupUrl('about:blank#oauth'), true)
+  assert.equal(isBlankBrowserPopupUrl('https://accounts.google.com/'), false)
+  assert.equal(isBlankBrowserPopupUrl('javascript:alert(1)'), false)
+
+  // Direct request to accounts.google.com rewrites User-Agent to Firefox and strips all sec-ch-ua* headers.
+  assert.deepEqual(
+    browserRequestHeaders(
+      {
+        'user-agent': rawUa,
+        'Sec-CH-UA': '"Not.A/Brand";v="99", "Electron";v="44", "Chromium";v="136"',
+        'sec-ch-ua-mobile': '?0',
+        'Sec-CH-UA-Platform': '"macOS"',
+        'sec-ch-ua-full-version-list': '"Electron";v="44.3.0", "Chromium";v="136.0.7103.49"',
+        Accept: 'text/html',
+      },
+      {
+        url: 'https://accounts.google.com/v3/signin/identifier',
+        resourceType: 'mainFrame',
+        baseUserAgent: rawUa,
+        chromeVersion: '136.0.7103.49',
+        platform: 'darwin',
+      },
+    ),
+    {
+      'user-agent': macFirefoxUa,
+      Accept: 'text/html',
+    },
+  )
+
+  // Cross-host subresource loaded from an accounts.google.com page keeps Firefox UA and strips client hints.
+  assert.deepEqual(
+    browserRequestHeaders(
+      {
+        'User-Agent': macFirefoxUa,
+        'sec-ch-ua': '"Not.A/Brand";v="99", "Electron";v="44", "Chromium";v="136"',
+        'sec-ch-ua-platform': '"macOS"',
+      },
+      {
+        url: 'https://www.gstatic.com/_/mss/boq-identity/_/js/k=boq.js',
+        referrer: 'https://accounts.google.com/',
+        resourceType: 'script',
+        baseUserAgent: rawUa,
+        chromeVersion: '136.0.7103.49',
+        platform: 'darwin',
+      },
+    ),
+    {
+      'User-Agent': macFirefoxUa,
+    },
+  )
+
+  // A main-frame redirect leaving accounts.google.com for myaccount.google.com restores the cleaned Chrome UA and hints.
+  assert.deepEqual(
+    browserRequestHeaders(
+      {
+        'User-Agent': macFirefoxUa,
+        'sec-ch-ua': '"Not.A/Brand";v="99", "Electron";v="44", "Chromium";v="136"',
+        'sec-ch-ua-full-version-list': '"Electron";v="44.3.0", "Chromium";v="136.0.7103.49"',
+      },
+      {
+        url: 'https://myaccount.google.com/?pli=1',
+        referrer: 'https://accounts.google.com/',
+        resourceType: 'mainFrame',
+        baseUserAgent: rawUa,
+        chromeVersion: '136.0.7103.49',
+        platform: 'darwin',
+      },
+    ),
+    {
+      'User-Agent': cleanChromeUa,
+      'sec-ch-ua': '"Not.A/Brand";v="99", "Google Chrome";v="136", "Chromium";v="136"',
+      'sec-ch-ua-full-version-list': '"Google Chrome";v="136.0.7103.49", "Chromium";v="136.0.7103.49"',
+    },
   )
 })
 
