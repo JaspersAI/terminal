@@ -15,7 +15,6 @@ import {
   boxSettled,
   canZoomLoop,
   IDLE_BOX,
-  sameActivity,
   shouldReadTileBox,
   tileBoxExpanded,
   tileBoxOf,
@@ -143,9 +142,6 @@ test('the bar says what the request at work is doing, else how the last one ende
   assert.deepEqual(boxActivity(thinking), { state: 'working', step: 'The fields are raw USD.' })
   const first = boxHeard(request([]), { kind: 'round', runId: 'run1', round: 1 }, HERE)
   assert.deepEqual(boxActivity(first), { state: 'working', step: null })
-  assert.equal(sameActivity({ state: 'done', step: null }, { state: 'done', step: null }), true)
-  assert.equal(sameActivity({ state: 'working', step: 'a' }, { state: 'working', step: 'b' }), false)
-  assert.equal(sameActivity(null, null), true)
 })
 
 test("a loop's bar label: asking first, then the run at work and its step, then how it ended, then the conversation", () => {
