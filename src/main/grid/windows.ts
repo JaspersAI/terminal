@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, screen, shell, type Rectangle, type WebCon
 import path from 'node:path'
 import type { DragMove, DragOver } from '../../shared/grid/drag'
 import {
+  anyWindowInFront,
   isOpenWindow,
   lowestFreeWindow,
   MAIN_WINDOW,
@@ -85,7 +86,8 @@ export function createWindow(n: number, show: boolean, at?: { x: number; y: numb
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (event) => {
-    if (event.url !== win.webContents.getURL()) event.preventDefault()
+    if (!win.isDestroyed() && !win.webContents.isDestroyed() && event.url !== win.webContents.getURL())
+      event.preventDefault()
   })
 
   // Dev: Vite dev server with HMR. Prod: built renderer. The query says which window the page is.
@@ -133,13 +135,16 @@ function showWhenRendered(win: BrowserWindow): void {
   })
   win.once('closed', () => clearTimeout(timer))
   win.webContents.ipc.on('window:rendered', (event) => {
-    if (event.senderFrame === win.webContents.mainFrame) show()
+    if (!win.isDestroyed() && !win.webContents.isDestroyed() && event.senderFrame === win.webContents.mainFrame) show()
   })
 }
 
 function hide(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
   if (win.isFullScreen()) {
-    win.once('leave-full-screen', () => win.hide())
+    win.once('leave-full-screen', () => {
+      if (!win.isDestroyed()) win.hide()
+    })
     win.setFullScreen(false)
   } else {
     win.hide()
@@ -159,7 +164,7 @@ export function openWindow(n?: number): number {
     if (open.length + 1 >= WINDOWS_MAX) throw new Error(`${WINDOWS_MAX} windows are open; close one first.`)
   }
   const number = n ?? lowestFreeWindow(open)
-  const at = cascadeFrom(windows.get(focused) ?? windows.get(MAIN_WINDOW))
+  const at = cascadeFrom(windowOf(focused) ?? windowOf(MAIN_WINDOW))
   update((state) => {
     const next = [...state.windows, number].sort((a, b) => a - b)
     return {
@@ -191,18 +196,17 @@ export function openAllStored(show: boolean): void {
 
 /** Shows and focuses every window, making the main one again if something destroyed it. */
 export function showAll(): void {
-  if (!windows.has(MAIN_WINDOW)) createWindow(MAIN_WINDOW, true)
-  for (const win of windows.values()) {
+  if (!windowOf(MAIN_WINDOW)) createWindow(MAIN_WINDOW, true)
+  for (const { win } of openWindows()) {
     if (win.isMinimized()) win.restore()
     win.show()
   }
-  windows.get(MAIN_WINDOW)?.focus()
+  windowOf(MAIN_WINDOW)?.focus()
 }
 
 /** Whether any window is visible and focused, where a notice is seen in the app itself. */
 export function anyInFront(): boolean {
-  for (const win of windows.values()) if (win.isVisible() && win.isFocused()) return true
-  return false
+  return anyWindowInFront(windows.values())
 }
 
 export function focusedWindow(): number {
@@ -230,7 +234,9 @@ export function windowSize(n: number): string | null {
 
 /** Which window a page belongs to, or null for a page that is none of ours. */
 export function windowNumberOf(contents: WebContents): number | null {
-  for (const [n, win] of windows) if (!win.isDestroyed() && win.webContents === contents) return n
+  if (contents.isDestroyed()) return null
+  for (const [n, win] of windows)
+    if (!win.isDestroyed() && !win.webContents.isDestroyed() && win.webContents === contents) return n
   return null
 }
 
@@ -257,7 +263,7 @@ export function registerDragIpc(): void {
 
   const tell = (n: number, channel: string, payload?: unknown): void => {
     const win = windows.get(n)
-    if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(channel, payload)
   }
 
   ipcMain.on('drag:move', (event, raw: unknown) => {
@@ -366,7 +372,7 @@ export function useAllScreens(): { windows: number[]; displays: number; surplus:
   const open = windowsOn()
   const placements = spreadWindows(displays, open)
   const surplus = surplusWindows(placements, open)
-  const opening = placements.map((p) => p.window).filter((n) => n !== MAIN_WINDOW && !windows.has(n))
+  const opening = placements.map((p) => p.window).filter((n) => n !== MAIN_WINDOW && !windowOf(n))
   // One change for every window being opened, so the renderer hears one update and every workspace
   // has a grid for each of them before their pages load.
   if (opening.length > 0) {
@@ -382,7 +388,7 @@ export function useAllScreens(): { windows: number[]; displays: number; surplus:
   for (const { window, area } of placements) {
     // A window made here shows once its page has rendered, as every new window does; filling it only
     // places it.
-    const made = !windows.has(window)
+    const made = !windowOf(window)
     if (made) createWindow(window, true, { x: area.x, y: area.y })
     fill(window, area, !made)
   }
@@ -420,12 +426,12 @@ export function useOneScreen(): { closed: number[]; moved: string[] } {
     const win = windows.get(n)
     if (win && !win.isDestroyed()) win.close()
   }
-  const made = !windows.has(MAIN_WINDOW)
-  const main = windows.get(MAIN_WINDOW) ?? createWindow(MAIN_WINDOW, true)
+  const made = !windowOf(MAIN_WINDOW)
+  const main = windowOf(MAIN_WINDOW) ?? createWindow(MAIN_WINDOW, true)
   const displays = allDisplays()
   const on = displays.find((d) => d.id === displayOf(main)) ?? displays[0]
   if (on) fill(MAIN_WINDOW, on.area, !made)
-  main.focus()
+  if (!main.isDestroyed()) main.focus()
   return { closed, moved }
 }
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_GRID } from './grid.ts'
 import {
+  anyWindowInFront,
   checkWindows,
   isOpenWindow,
   lowestFreeWindow,
@@ -10,6 +11,7 @@ import {
   windowNumbers,
   WINDOWS_MAX,
   withWindows,
+  type FrontWindow,
 } from './windows.ts'
 
 test('the lowest free number from 2, whatever order the open ones come in', () => {
@@ -56,4 +58,35 @@ test('the window under a screen point, the focused one first, never the source',
   assert.equal(windowAt({ x: 750, y: 150 }, bounds, 1, 3), 3)
   assert.equal(windowAt({ x: 750, y: 150 }, bounds, 1, 1), 2)
   assert.equal(windowAt({ x: 2000, y: 150 }, bounds, 1, 1), null)
+})
+
+test('destroyed windows in the map are skipped without calling isVisible or isFocused', () => {
+  const destroyed: FrontWindow = {
+    isDestroyed: () => true,
+    isVisible: () => {
+      throw new TypeError('Object has been destroyed')
+    },
+    isFocused: () => {
+      throw new TypeError('Object has been destroyed')
+    },
+  }
+  const hidden: FrontWindow = {
+    isDestroyed: () => false,
+    isVisible: () => false,
+    isFocused: () => true,
+  }
+  const unfocused: FrontWindow = {
+    isDestroyed: () => false,
+    isVisible: () => true,
+    isFocused: () => false,
+  }
+  const front: FrontWindow = {
+    isDestroyed: () => false,
+    isVisible: () => true,
+    isFocused: () => true,
+  }
+
+  assert.equal(anyWindowInFront([destroyed]), false)
+  assert.equal(anyWindowInFront([destroyed, hidden, unfocused]), false)
+  assert.equal(anyWindowInFront([destroyed, hidden, front]), true)
 })
