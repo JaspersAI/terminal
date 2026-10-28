@@ -20,6 +20,7 @@ import {
   type ToolApp,
 } from '../../shared/plugins/apps'
 import {
+  connectOptions,
   isStaleHttpSession,
   offeredTools,
   offersTool,
@@ -31,6 +32,7 @@ import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { getConnection, missingOf, secretValues, setInfo, statusFor } from './connections'
 import { oauthProvider } from './oauth'
 import { refreshOnce } from './oauth-refresh'
+import { guardStdioTransport } from './stdio'
 import { accountAddress, asAccount, callAsAccount, signedIn } from '../jaspers/jaspers'
 import { RefusedError, SignedOutError } from '../jaspers/session'
 import { getState } from '../state'
@@ -60,6 +62,8 @@ interface Live {
 }
 
 const clients = new Map<string, Live>()
+/** A client whose connect + tools/list handshake is still under way, so disconnect and closeAll can stop it. */
+const opening = new Map<string, Client>()
 /** Each attempt at a connection gets a number, so a slow one cannot publish over a newer one. */
 const attempts = new Map<string, number>()
 /** An attempt already under way, so concurrent callers join one handshake instead of aborting each other's. */
@@ -155,8 +159,10 @@ async function connectOne(id: string, retry = 0): Promise<void> {
   })
   try {
     const transport = build(id, resolved.connection, dir, values, viaJaspers)
-    await client.connect(transport)
+    opening.set(id, client)
+    await client.connect(transport, connectOptions(resolved.connection))
     const listed = await listAll(client)
+    if (opening.get(id) === client) opening.delete(id)
     if (attempts.get(id) !== attempt) {
       await client.close()
       return
@@ -173,6 +179,7 @@ async function connectOne(id: string, retry = 0): Promise<void> {
       instructions: client.getInstructions()?.trim() || null,
     })
   } catch (err) {
+    if (opening.get(id) === client) opening.delete(id)
     await client.close().catch(() => undefined)
     if (attempts.get(id) !== attempt) return
     const message = redact(messageOf(err), values)
@@ -274,6 +281,11 @@ function cancelRetry(id: string): void {
 
 export async function disconnect(id: string): Promise<void> {
   cancelRetry(id)
+  const pending = opening.get(id)
+  if (pending) {
+    opening.delete(id)
+    await pending.close().catch(() => undefined)
+  }
   const live = clients.get(id)
   if (!live) return
   clients.delete(id)
@@ -282,13 +294,11 @@ export async function disconnect(id: string): Promise<void> {
 
 /**
  * A connection nobody holds any more: whatever is connected, and whatever is still connecting.
- * `disconnect` alone cannot do the second half. On a first connect there is nothing in `clients` yet,
- * so it returns having done nothing, and the connect already in flight goes on to publish a client
- * for an id that has been dropped: a stdio child left running with the plugin's resolved secrets in
- * its environment, and a client `call` finds while `getConnection` no longer can, which is where the
- * `offersTool` allowlist is checked. Bumping the attempt is what stops it, at the check it makes
- * before it publishes. The bump is not inside `disconnect` because `connect` awaits `disconnect`
- * after taking its own attempt number: bumping there would make every connect supersede itself.
+ * `disconnect` closes a client already in `clients` or in its handshake (`opening`); a connect still
+ * in OAuth discovery before a client is built has neither yet, and bumping the attempt stops it at
+ * the check it makes before it builds one. The bump is not inside `disconnect` because `connect`
+ * awaits `disconnect` after taking its own attempt number: bumping there would make every connect
+ * supersede itself.
  */
 export async function forget(id: string): Promise<void> {
   connecting.delete(id)
@@ -300,6 +310,10 @@ export async function forget(id: string): Promise<void> {
 export function closeAll(): void {
   connecting.clear()
   for (const id of retries.keys()) cancelRetry(id)
+  for (const [id, pending] of opening) {
+    opening.delete(id)
+    void pending.close().catch(() => undefined)
+  }
   for (const [id, live] of clients) {
     clients.delete(id)
     void live.client.close().catch(() => undefined)
@@ -541,7 +555,7 @@ function build(
       const text = redact(chunk.toString().trimEnd(), values)
       if (text) console.log(`[mcp ${id}] ${text}`)
     })
-    return transport
+    return guardStdioTransport(transport)
   }
   // A server that signs its users in through Jaspers is sent to as the account, with no flow of
   // the connection's own; one that signs them in itself gets the connection's OAuth.

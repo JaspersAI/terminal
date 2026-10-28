@@ -179,6 +179,18 @@ export function offeredTools<T extends { name: string }>(
   }
 }
 
+/**
+ * How long a stdio server's first handshake may take: `uv` or `npx` can spend several minutes on
+ * the first start downloading Python or packages (`torch`, `transformers`, `edgartools`) and
+ * unpacking them on Windows before the server itself starts and answers `initialize`.
+ */
+export const STDIO_CONNECT_TIMEOUT_MS = 10 * 60_000
+
+/** Request options for `client.connect`: stdio servers get the first-start window; http keeps the SDK default. */
+export function connectOptions(connection: Connection): { timeout: number } | undefined {
+  return connection.command ? { timeout: STDIO_CONNECT_TIMEOUT_MS } : undefined
+}
+
 /** Whether a call may reach this tool: every tool while the connection names none, otherwise only those. */
 export function offersTool(connection: Connection, tool: string): boolean {
   return !connection.tools || connection.tools.includes(tool)

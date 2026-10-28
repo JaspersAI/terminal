@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   checkConnection,
+  connectOptions,
   connectionUrls,
   isStaleHttpSession,
   offeredTools,
@@ -9,6 +10,7 @@ import {
   resolveSecrets,
   secretProgress,
   secretRefs,
+  STDIO_CONNECT_TIMEOUT_MS,
   withConnectionUrl,
 } from './connections.ts'
 import type { ConnectionInfo } from '../state.ts'
@@ -352,4 +354,16 @@ test('isStaleHttpSession detects expired or broken Streamable HTTP sessions whil
   assert.equal(isStaleHttpSession(new Error('Unknown ticker symbol'), http), false)
   assert.equal(isStaleHttpSession(httpError(404, 'Session not found'), stdio), false)
   assert.equal(isStaleHttpSession(new TypeError('fetch failed'), stdio), false)
+})
+
+test('a stdio connection gets a ten-minute connect timeout for first-start package installs, while http keeps the default', () => {
+  const stdio = checkConnection(
+    { kind: 'connection', command: ['uv', 'run', '--script', 'edgar/server.py'] },
+    'agents/research',
+  )
+  const http = checkConnection(HTTP, 'jaspers/sec')
+
+  assert.equal(STDIO_CONNECT_TIMEOUT_MS, 10 * 60_000)
+  assert.deepEqual(connectOptions(stdio), { timeout: STDIO_CONNECT_TIMEOUT_MS })
+  assert.equal(connectOptions(http), undefined)
 })
