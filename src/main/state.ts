@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import type { Grid } from '../shared/grid/grid'
+import { isWindowAlive } from '../shared/grid/windows'
 import type { Loops } from '../shared/loops/loops'
 import type {
   Memory,
@@ -214,5 +215,7 @@ export function toPublic(state: MainState): AppState {
 /** Every window gets the whole tree after every change, whoever made it. */
 function publish(next: MainState): void {
   const state = toPublic(next)
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('state:changed', state)
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (isWindowAlive(win)) win.webContents.send('state:changed', state)
+  }
 }

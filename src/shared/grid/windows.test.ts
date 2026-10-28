@@ -4,6 +4,7 @@ import { EMPTY_GRID } from './grid.ts'
 import {
   checkWindows,
   isOpenWindow,
+  isWindowAlive,
   lowestFreeWindow,
   MAIN_WINDOW,
   windowAt,
@@ -56,4 +57,12 @@ test('the window under a screen point, the focused one first, never the source',
   assert.equal(windowAt({ x: 750, y: 150 }, bounds, 1, 3), 3)
   assert.equal(windowAt({ x: 750, y: 150 }, bounds, 1, 1), 2)
   assert.equal(windowAt({ x: 2000, y: 150 }, bounds, 1, 1), null)
+})
+
+test('a window is alive only when neither it nor its webContents is destroyed', () => {
+  assert.equal(isWindowAlive(undefined), false)
+  assert.equal(isWindowAlive(null), false)
+  assert.equal(isWindowAlive({ isDestroyed: () => false, webContents: { isDestroyed: () => false } }), true)
+  assert.equal(isWindowAlive({ isDestroyed: () => true, webContents: { isDestroyed: () => false } }), false)
+  assert.equal(isWindowAlive({ isDestroyed: () => false, webContents: { isDestroyed: () => true } }), false)
 })

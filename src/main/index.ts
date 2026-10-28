@@ -40,6 +40,7 @@ import { registerSchemes, registerViewHost } from './plugins/viewhost'
 import { registerVoiceIpc } from './llm/voice'
 import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
 import { anyInFront, isHttps, openAllStored, registerDragIpc, showAll, watchDisplays } from './grid/windows'
+import { isWindowAlive } from '../shared/grid/windows'
 import { installMenu } from './app/menu'
 import { accountPageAddress, checkSignIn, onSignInChange, refreshTerms } from './jaspers/jaspers'
 
@@ -191,7 +192,8 @@ app.whenReady().then(async () => {
   installMenu({
     openSettings: () => {
       showAll()
-      BrowserWindow.getFocusedWindow()?.webContents.send('menu:settings')
+      const focused = BrowserWindow.getFocusedWindow()
+      if (isWindowAlive(focused)) focused!.webContents.send('menu:settings')
     },
     // With more windows open than screens, the ones left over stay open and a notice says which.
     useAllScreens: () => allScreensWithNotice(),

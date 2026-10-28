@@ -159,7 +159,8 @@ async function chooseFile(win: BrowserWindow | null): Promise<string | null> {
     properties: ['openFile'],
     filters: [{ name: 'Plugin archives', extensions: ['zip', 'gz', 'tgz'] }],
   }
-  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+  const result =
+    win && !win.isDestroyed() ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
   return result.canceled ? null : (result.filePaths[0] ?? null)
 }
 

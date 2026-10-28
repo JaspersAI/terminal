@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import { stepped, STOPPED, type AgentEvent, type AgentOrigin } from '../../../shared/agent/agent'
 import { mask } from '../../../shared/agent/transcript'
 import type { Place } from '../../../shared/agent/asking'
+import { isWindowAlive } from '../../../shared/grid/windows'
 import { clearAnswered } from './questions'
 import { noteRequest, noteRun } from './record'
 import { knownSecrets } from './settings'
@@ -41,7 +42,7 @@ export function emit(event: AgentEvent): void {
   if (live.has(event.runId)) trails.set(event.runId, stepped(trails.get(event.runId) ?? [], event))
   noteRun(event)
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('agent:event', event)
+    if (isWindowAlive(window)) window.webContents.send('agent:event', event)
   }
 }
 

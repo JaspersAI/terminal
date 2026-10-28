@@ -18,6 +18,7 @@ import {
 } from './browser-manager'
 import { findElement, focus } from './grid'
 import { windowNumberOf, windowOf } from './windows'
+import { isWindowAlive } from '../../shared/grid/windows'
 
 // Electron's native `WebContentsView` backing for `core/browser` panels. Each tab runs in the
 // persistent `persist:browser` session partition with sandboxed, context-isolated preferences and a
@@ -275,7 +276,7 @@ function wrapWindow(number: number, win: BrowserWindow): ManagedWindow {
       if (win.contentView.children.includes(raw)) win.contentView.removeChildView(raw)
     },
     sendState: (snapshot) => {
-      if (!win.isDestroyed()) win.webContents.send('browser:state', snapshot)
+      if (isWindowAlive(win)) win.webContents.send('browser:state', snapshot)
     },
   }
 }

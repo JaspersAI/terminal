@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { DragMove, DragOver } from '../../shared/grid/drag'
 import {
   isOpenWindow,
+  isWindowAlive,
   lowestFreeWindow,
   MAIN_WINDOW,
   windowAt,
@@ -138,8 +139,11 @@ function showWhenRendered(win: BrowserWindow): void {
 }
 
 function hide(win: BrowserWindow): void {
+  if (!isWindowAlive(win)) return
   if (win.isFullScreen()) {
-    win.once('leave-full-screen', () => win.hide())
+    win.once('leave-full-screen', () => {
+      if (isWindowAlive(win)) win.hide()
+    })
     win.setFullScreen(false)
   } else {
     win.hide()
@@ -191,17 +195,20 @@ export function openAllStored(show: boolean): void {
 
 /** Shows and focuses every window, making the main one again if something destroyed it. */
 export function showAll(): void {
-  if (!windows.has(MAIN_WINDOW)) createWindow(MAIN_WINDOW, true)
+  const existingMain = windows.get(MAIN_WINDOW)
+  if (!isWindowAlive(existingMain)) createWindow(MAIN_WINDOW, true)
   for (const win of windows.values()) {
+    if (!isWindowAlive(win)) continue
     if (win.isMinimized()) win.restore()
     win.show()
   }
-  windows.get(MAIN_WINDOW)?.focus()
+  const main = windows.get(MAIN_WINDOW)
+  if (isWindowAlive(main)) main!.focus()
 }
 
 /** Whether any window is visible and focused, where a notice is seen in the app itself. */
 export function anyInFront(): boolean {
-  for (const win of windows.values()) if (win.isVisible() && win.isFocused()) return true
+  for (const win of windows.values()) if (isWindowAlive(win) && win.isVisible() && win.isFocused()) return true
   return false
 }
 
@@ -212,25 +219,25 @@ export function focusedWindow(): number {
 /** Every open window with its number. Eye names a frame by the window it is of; the numbers are the tree's. */
 export function openWindows(): { number: number; win: BrowserWindow }[] {
   const open: { number: number; win: BrowserWindow }[] = []
-  for (const [n, win] of windows) if (!win.isDestroyed()) open.push({ number: n, win })
+  for (const [n, win] of windows) if (isWindowAlive(win)) open.push({ number: n, win })
   return open
 }
 
 /** One open window by its number, or undefined when it is not open. */
 export function windowOf(n: number): BrowserWindow | undefined {
   const win = windows.get(n)
-  return win && !win.isDestroyed() ? win : undefined
+  return isWindowAlive(win) ? win : undefined
 }
 
 /** A window's content size as "1400×1000", for the prompt; null when it is not open. */
 export function windowSize(n: number): string | null {
   const win = windows.get(n)
-  return win && !win.isDestroyed() ? win.getContentSize().join('×') : null
+  return isWindowAlive(win) ? win!.getContentSize().join('×') : null
 }
 
 /** Which window a page belongs to, or null for a page that is none of ours. */
 export function windowNumberOf(contents: WebContents): number | null {
-  for (const [n, win] of windows) if (!win.isDestroyed() && win.webContents === contents) return n
+  for (const [n, win] of windows) if (isWindowAlive(win) && win.webContents === contents) return n
   return null
 }
 
@@ -238,7 +245,7 @@ export function windowNumberOf(contents: WebContents): number | null {
 function contentBounds(): WindowBounds[] {
   const all: WindowBounds[] = []
   for (const [n, win] of windows) {
-    if (win.isDestroyed() || !win.isVisible()) continue
+    if (!isWindowAlive(win) || !win.isVisible()) continue
     const { x, y, width, height } = win.getContentBounds()
     all.push({ window: n, x, y, width, height })
   }
@@ -257,7 +264,7 @@ export function registerDragIpc(): void {
 
   const tell = (n: number, channel: string, payload?: unknown): void => {
     const win = windows.get(n)
-    if (win && !win.isDestroyed()) win.webContents.send(channel, payload)
+    if (isWindowAlive(win)) win!.webContents.send(channel, payload)
   }
 
   ipcMain.on('drag:move', (event, raw: unknown) => {
@@ -420,12 +427,13 @@ export function useOneScreen(): { closed: number[]; moved: string[] } {
     const win = windows.get(n)
     if (win && !win.isDestroyed()) win.close()
   }
-  const made = !windows.has(MAIN_WINDOW)
-  const main = windows.get(MAIN_WINDOW) ?? createWindow(MAIN_WINDOW, true)
+  const existingMain = windows.get(MAIN_WINDOW)
+  const made = !isWindowAlive(existingMain)
+  const main = made ? createWindow(MAIN_WINDOW, true) : existingMain!
   const displays = allDisplays()
   const on = displays.find((d) => d.id === displayOf(main)) ?? displays[0]
   if (on) fill(MAIN_WINDOW, on.area, !made)
-  main.focus()
+  if (isWindowAlive(main)) main.focus()
   return { closed, moved }
 }
 

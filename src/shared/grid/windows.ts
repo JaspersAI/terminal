@@ -64,6 +64,18 @@ export interface WindowBounds {
   height: number
 }
 
+export interface AliveWindow {
+  isDestroyed?: () => boolean
+  webContents?: { isDestroyed?: () => boolean } | null
+}
+
+/** True when a BrowserWindow and its webContents are still alive and safe to call or message. */
+export function isWindowAlive(win: AliveWindow | null | undefined): boolean {
+  if (!win || win.isDestroyed?.()) return false
+  if (win.webContents && win.webContents.isDestroyed?.()) return false
+  return true
+}
+
 /**
  * The window under a screen point during a drag: never the source (a point over it is a local
  * drag), the focused window first when windows overlap, and null over none.

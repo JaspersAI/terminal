@@ -260,6 +260,7 @@ async function captureWindow(
   at: number,
   always = false,
 ): Promise<{ name: string; bytes: number } | null> {
+  if (contents.isDestroyed()) return null
   const shot = await contents.capturePage()
   // A window hidden to the menu bar has nothing on screen to capture on some platforms.
   if (shot.isEmpty()) return null

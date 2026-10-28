@@ -1,5 +1,6 @@
 import { BrowserWindow, nativeTheme } from 'electron'
 import { WINDOW_BACKGROUND } from '../../shared/app/theme'
+import { isWindowAlive } from '../../shared/grid/windows'
 import { getState, subscribe } from '../state'
 
 // The setting in Settings > Appearance, carried everywhere by nativeTheme at once: it decides
@@ -19,6 +20,8 @@ export function startTheme(): void {
   })
   // The system's own switch lands here too, while the setting follows it.
   nativeTheme.on('updated', () => {
-    for (const win of BrowserWindow.getAllWindows()) win.setBackgroundColor(windowBackground())
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (isWindowAlive(win)) win.setBackgroundColor(windowBackground())
+    }
   })
 }
