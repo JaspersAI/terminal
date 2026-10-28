@@ -333,7 +333,7 @@ export async function compact(): Promise<StoreStats> {
   return (await current.rpc.request('compact', undefined, timeout(QUERY_TIMEOUT_MS))) as StoreStats
 }
 
-/** Closes the file and stops the process. Called on quit, and on a query that outstayed its welcome. */
+/** Closes the file and stops the process. Called on quit. */
 export function stop(): void {
   const current = live
   if (!current) return
