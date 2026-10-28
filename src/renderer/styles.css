@@ -107,3 +107,36 @@
     @apply bg-background text-foreground antialiased;
   }
 }
+
+/* Per-loop text size zoom: scales every text utility and inherited font size inside a zoomed loop
+   while leaving the zoom control popover at standard interface size. */
+[data-loop-zoom] {
+  --text-xs: calc(0.75rem * var(--loop-zoom, 1));
+  --text-sm: calc(0.875rem * var(--loop-zoom, 1));
+  --text-base: calc(1rem * var(--loop-zoom, 1));
+  --text-lg: calc(1.125rem * var(--loop-zoom, 1));
+  --text-xl: calc(1.25rem * var(--loop-zoom, 1));
+  --text-2xl: calc(1.5rem * var(--loop-zoom, 1));
+  --text-3xl: calc(1.875rem * var(--loop-zoom, 1));
+  --text-prose: calc(17px * var(--loop-zoom, 1));
+  font-size: calc(14px * var(--loop-zoom, 1));
+}
+
+[data-loop-zoom] .text-\[10px\] {
+  font-size: calc(10px * var(--loop-zoom, 1));
+}
+
+[data-loop-zoom] .text-\[11px\] {
+  font-size: calc(11px * var(--loop-zoom, 1));
+}
+
+[data-loop-zoom] .text-\[13px\] {
+  font-size: calc(13px * var(--loop-zoom, 1));
+}
+
+[data-loop-zoom] [data-zoom-popover] {
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  font-size: 12px;
+}

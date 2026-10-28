@@ -49,6 +49,7 @@ interface Props {
   onExpand: (expanded: boolean) => void
   /** Told how its requests stand, for the label in the loop's bar, whenever that changes. */
   onActivity: (activity: Activity | null) => void
+  zoom?: number
 }
 
 /**
@@ -94,6 +95,7 @@ export function LoopBox({
   expanded,
   onExpand,
   onActivity,
+  zoom = 1,
 }: Props): ReactElement {
   const [draft, setDraft] = useState('')
   const [live, setLive] = useState<LiveExchange[]>([])
@@ -297,6 +299,7 @@ export function LoopBox({
                   }
                 : undefined
             }
+            style={zoom !== 1 ? { width: `${1.5 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
             className="flex h-6 w-6 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-30"
           >
             {stopping ? (

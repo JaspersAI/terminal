@@ -151,3 +151,24 @@ export function barLabel(status: LoopStatus, activity: Activity | null, chat: bo
   if (activity?.state === 'done') return { kind: 'done', text: 'Done' }
   return chat ? { kind: 'conversation', text: 'Conversation' } : null
 }
+
+/** Whether a loop tile should answer keyboard zoom shortcuts right now. */
+export function canZoomLoop(state: {
+  hasLoop: boolean
+  focused: boolean
+  selected: boolean
+  minimized: boolean
+  covered: boolean
+  modalOpen: boolean
+  outsideFocused: boolean
+}): boolean {
+  return (
+    state.hasLoop &&
+    state.focused &&
+    state.selected &&
+    !state.minimized &&
+    !state.covered &&
+    !state.modalOpen &&
+    !state.outsideFocused
+  )
+}

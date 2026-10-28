@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { hostStyles } from './app-context.ts'
+import { appContainerDimensions, appFrameStyle, hostStyles } from './app-context.ts'
 
 /** The app's own variables, as a page's host would read them off the document. */
 const THEME: Record<string, string> = {
@@ -50,4 +50,16 @@ test('a name the app has no color for is left out, so the page keeps its own', (
   assert.equal('--color-text-primary' in styles, false)
   assert.equal('--color-background-warning' in styles, false)
   assert.equal('--font-sans' in styles, false)
+})
+
+test('MCP App frames scale with transform and inverse dimensions when zoomed, and stay bare at 100%', () => {
+  assert.deepEqual(appFrameStyle(1), {})
+  assert.deepEqual(appFrameStyle(0.8), {
+    width: '125%',
+    height: '125%',
+    transform: 'scale(0.8)',
+    transformOrigin: '0 0',
+  })
+  assert.deepEqual(appContainerDimensions(400, 300, 1), { width: 400, height: 300 })
+  assert.deepEqual(appContainerDimensions(400, 300, 0.8), { width: 500, height: 375 })
 })

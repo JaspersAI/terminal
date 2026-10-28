@@ -190,6 +190,16 @@ test('a reopened loop keeps its name, and takes new ids when one of its own was 
   const closedErrored = closedWithout(both, errored, withoutFrame(errored, 'e1'), 60)
   const reopenedClean = reopened(withoutFrame(errored, 'e1'), closedErrored, 'f1', 1, 70)
   assert.equal(reopenedClean.grids[1]!.panels.find((p) => p.elementId === 'e2')?.error, undefined)
+  // A zoomed tile keeps its zoom when closed and reopened.
+  const zoomed = workspace()
+  zoomed[1] = {
+    ...zoomed[1]!,
+    elements: zoomed[1]!.elements.map((e) => (e.id === 'e1' ? { ...e, zoom: 1.25 } : e)),
+  }
+  const closedZoomed = closedWithout(both, zoomed, withoutFrame(zoomed, 'e1'), 80)
+  const reopenedZoomed = reopened(withoutFrame(zoomed, 'e1'), closedZoomed, 'f1', 1, 90)
+  assert.equal(reopenedZoomed.frame.zoom, 1.25)
+  assert.equal(reopenedZoomed.grids[1]!.elements.find((e) => e.id === 'e1')?.zoom, 1.25)
 })
 
 test('the loop log lists every loop, open and closed, the one changed last first, each change newest first', () => {

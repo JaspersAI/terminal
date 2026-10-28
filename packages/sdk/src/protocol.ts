@@ -32,9 +32,10 @@ export interface BridgeReply {
   error?: { message: string }
 }
 
-/** host → iframe, unasked: a value the view is subscribed to, its size, whether it is focused, or whether its loop is working. */
+/** host → iframe, unasked: a value the view is subscribed to, its size, whether it is focused, whether its loop is working, or its tile's zoom. */
 export type BridgeNotification =
   | { method: 'store.changed'; params: { subId: number; value: unknown } }
   | { method: 'resize'; params: { width: number; height: number } }
   | { method: 'focus'; params: { focused: boolean } }
   | { method: 'working'; params: { working: boolean } }
+  | { method: 'zoom'; params: { zoom: number } }

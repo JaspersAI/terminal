@@ -347,6 +347,7 @@ export type Action =
   /** Reopens a closed loop, in the window given or the one it was closed in. */
   | { type: 'loop.reopen'; workspaceId: string; loop: string; window?: number }
   | { type: 'element.setMode'; workspaceId: string; elementId: string; mode: ElementMode }
+  | { type: 'element.setZoom'; workspaceId: string; elementId: string; zoom: number }
   | { type: 'element.setRect'; workspaceId: string; elementId: string; rect: Rect }
   | { type: 'element.swap'; workspaceId: string; elementId: string; otherId: string }
   /** Moves an element into another window of the workspace, at the cells given or the nearest free ones. */

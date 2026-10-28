@@ -20,6 +20,8 @@ interface Props {
   view: string
   focused: boolean
   working?: boolean
+  zoom: number
+  onZoomGesture?: (direction: 'in' | 'out' | 'reset') => void
 }
 
 /**
@@ -41,6 +43,8 @@ export function ViewHost({
   view,
   focused,
   working = false,
+  zoom,
+  onZoomGesture,
 }: Props): ReactElement | null {
   const panel = useMemo(() => ({ id: panelId, workspaceId }), [panelId, workspaceId])
   const views = useAppState((s) => s.views)
@@ -64,6 +68,8 @@ export function ViewHost({
         title={views[view]?.title ?? view}
         focused={focused}
         working={working}
+        zoom={zoom}
+        onZoomGesture={onZoomGesture}
       />
     )
   }
@@ -93,6 +99,8 @@ interface FrameProps {
   title: string
   focused: boolean
   working: boolean
+  zoom: number
+  onZoomGesture?: (direction: 'in' | 'out' | 'reset') => void
 }
 
 /**
@@ -112,11 +120,18 @@ function PluginView({
   title,
   focused,
   working,
+  zoom,
+  onZoomGesture,
 }: FrameProps): ReactElement {
   const frame = useRef<HTMLIFrameElement>(null)
   const initialWorking = useRef(working)
   const workingNow = useRef(working)
   workingNow.current = working
+  const initialZoom = useRef(zoom)
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
+  const zoomGestureRef = useRef(onZoomGesture)
+  zoomGestureRef.current = onZoomGesture
 
   useEffect(() => {
     const iframe = frame.current
@@ -140,12 +155,20 @@ function PluginView({
         noteError('view', told.params, { view: `${plugin}/${name}`, plugin })
         return
       }
+      if (told?.method === 'view.zoom' && typeof told.params === 'object' && told.params !== null) {
+        const dir = (told.params as { name?: unknown }).name
+        if (dir === 'in' || dir === 'out' || dir === 'reset') {
+          zoomGestureRef.current?.(dir)
+        }
+        return
+      }
       if (told?.method === 'view.eye' && typeof told.params === 'object' && told.params !== null) {
         const raw = told.params as Record<string, unknown>
         const box = iframe?.getBoundingClientRect()
+        const scale = zoomRef.current
         const translated =
           raw['kind'] === 'click' && typeof raw['x'] === 'number' && typeof raw['y'] === 'number' && box
-            ? { ...raw, x: raw['x'] + box.left, y: raw['y'] + box.top }
+            ? { ...raw, x: raw['x'] * scale + box.left, y: raw['y'] * scale + box.top }
             : raw
         noteFromView(translated, { view: `${plugin}/${name}`, plugin, panel: panelId })
         return
@@ -245,7 +268,8 @@ function PluginView({
     // A frame cannot measure the element it fills, so the size it is drawn at is sent to it.
     const observer = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect
-      if (box) post({ method: 'resize', params: { width: box.width, height: box.height } })
+      const scale = zoomRef.current
+      if (box) post({ method: 'resize', params: { width: box.width / scale, height: box.height / scale } })
     })
     observer.observe(iframe)
     return () => {
@@ -267,6 +291,10 @@ function PluginView({
     frame.current?.contentWindow?.postMessage({ method: 'working', params: { working } }, '*')
   }, [working])
 
+  useEffect(() => {
+    frame.current?.contentWindow?.postMessage({ method: 'zoom', params: { zoom } }, '*')
+  }, [zoom])
+
   // A press inside the frame never reaches this page. The window losing focus to the frame is the
   // only sign of one, and it is what focuses the element then.
   useEffect(() => {
@@ -283,7 +311,7 @@ function PluginView({
       ref={frame}
       title={title}
       sandbox={sandbox}
-      src={`jaspers-plugin://${plugin}/index.html?view=${encodeURIComponent(name)}&panel=${panelId}&workspace=${workspaceId}&v=${version}&working=${initialWorking.current ? '1' : '0'}`}
+      src={`jaspers-plugin://${plugin}/index.html?view=${encodeURIComponent(name)}&panel=${panelId}&workspace=${workspaceId}&v=${version}&working=${initialWorking.current ? '1' : '0'}&zoom=${initialZoom.current}`}
       className="absolute inset-0 h-full w-full border-0 bg-background"
     />
   )

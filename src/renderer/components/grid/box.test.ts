@@ -10,6 +10,7 @@ import {
   boxOpens,
   boxSent,
   boxSettled,
+  canZoomLoop,
   sameActivity,
   WAITING,
 } from './box.ts'
@@ -176,4 +177,24 @@ test('the box opens itself as a run begins in a tile with no view yet, and folds
   assert.equal(boxOpens(shown, shown), null)
   assert.equal(boxOpens({ empty: false, working: false }, shown), null)
   assert.equal(boxOpens(BORN, BORN), null)
+})
+
+test('a loop zooms on keyboard shortcuts only when it is selected, focused, visible, and no outside control has focus', () => {
+  const ready = {
+    hasLoop: true,
+    focused: true,
+    selected: true,
+    minimized: false,
+    covered: false,
+    modalOpen: false,
+    outsideFocused: false,
+  }
+  assert.equal(canZoomLoop(ready), true)
+  assert.equal(canZoomLoop({ ...ready, hasLoop: false }), false)
+  assert.equal(canZoomLoop({ ...ready, focused: false }), false)
+  assert.equal(canZoomLoop({ ...ready, selected: false }), false)
+  assert.equal(canZoomLoop({ ...ready, minimized: true }), false)
+  assert.equal(canZoomLoop({ ...ready, covered: true }), false)
+  assert.equal(canZoomLoop({ ...ready, modalOpen: true }), false)
+  assert.equal(canZoomLoop({ ...ready, outsideFocused: true }), false)
 })

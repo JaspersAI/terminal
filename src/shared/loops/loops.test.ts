@@ -714,3 +714,12 @@ test('refreshTarget trims element and panel ids, prefers direct grid targets ove
   assert.equal(elementTarget(grids, loops, 'loop_3'), 'loop_3')
   assert.equal(elementTarget(grids, loops, ' e99 '), 'e99')
 })
+
+test('retagged normalizes stored element zoom and omits default 1', () => {
+  const base: GridElement = { id: 'e1', panelId: 'p1', rect: { x: 0, y: 0, w: 4, h: 4 }, z: 1, mode: 'tiled' }
+  assert.equal(retagged(base), base)
+  assert.equal(retagged({ ...base, zoom: 0.8 }).zoom, 0.8)
+  assert.equal(retagged({ ...base, zoom: 5 }).zoom, 2)
+  assert.equal('zoom' in retagged({ ...base, zoom: 1 }), false)
+  assert.equal('zoom' in retagged({ ...base, zoom: NaN }), false)
+})

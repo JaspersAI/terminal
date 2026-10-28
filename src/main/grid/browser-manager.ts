@@ -34,6 +34,7 @@ export interface BrowserViewEvents {
   onFocus(): void
   onOpenWindow?(url: string, createView?: (events: BrowserViewEvents) => ManagedBrowserView): ManagedBrowserView | null
   onClose?(): void
+  onZoom?(direction: 'in' | 'out' | 'reset'): void
 }
 
 export interface ManagedBrowserView {
@@ -49,6 +50,7 @@ export interface ManagedBrowserView {
   setBounds(bounds: BrowserBounds): void
   setVisible(visible: boolean): void
   setTheaterMode?(theater: boolean, url: string): void
+  setZoomFactor?(zoom: number): void
   readPageText(): Promise<string | null>
   destroy(): void
 }
@@ -73,6 +75,7 @@ export interface BrowserManagerDeps {
   createView(events: BrowserViewEvents): ManagedBrowserView
   setPanelUrl(workspaceId: string, panelId: string, url: string): void
   focusElement(workspaceId: string, elementId: string): void
+  zoomElement?(workspaceId: string, elementId: string, direction: 'in' | 'out' | 'reset'): void
   publishPanel?(workspaceId: string, panelId: string, snapshot: BrowserSnapshot): void
 }
 
@@ -260,6 +263,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       detachFromWindow(entry)
       return
     }
+    active.view.setZoomFactor?.(standing.zoom)
     if (
       entry.attachedView !== null &&
       entry.attachedWindow !== null &&
@@ -322,6 +326,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (liveTitle) tab.title = liveTitle
         if (isVideoPageUrl(tab.url)) tab.theater = true
         tab.view.setTheaterMode?.(tab.theater, tab.url)
+        positionEntry(entry, deps.getState())
         pushSnapshot(entry)
         const loadId = tab.loadSeq
         void tab.view
@@ -364,6 +369,13 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (!tab || tab.destroyed || entry.destroyed) return
         const standing = browserStanding(deps.getState().grids[entry.workspaceId], entry.panelId)
         if (standing && !standing.focused) deps.focusElement(entry.workspaceId, standing.element.id)
+      },
+      onZoom(direction) {
+        if (!tab || tab.destroyed || entry.destroyed) return
+        const standing = browserStanding(deps.getState().grids[entry.workspaceId], entry.panelId)
+        if (standing && standing.focused && standing.visibleInGrid) {
+          deps.zoomElement?.(entry.workspaceId, (standing.frame ?? standing.element).id, direction)
+        }
       },
       onOpenWindow(url, createChildView) {
         if (entry.destroyed) return null

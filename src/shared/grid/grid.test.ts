@@ -63,6 +63,16 @@ import {
   frameAround,
   layoutOf,
   withLayout,
+  ZOOM_DEFAULT,
+  ZOOM_MIN,
+  ZOOM_MAX,
+  ZOOM_STEPS,
+  clampZoom,
+  elementZoom,
+  tileZoom,
+  stepZoom,
+  zoomPercent,
+  setZoom,
 } from './grid.ts'
 
 const r = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h })
@@ -1368,4 +1378,59 @@ test('a panel placed in a frame of its own is inside it, taking the whole of it,
       ['e3', 'e2', r(0, 0, 16, 12)],
     ],
   )
+})
+
+test('a tile zooms in, out, and resets between 50% and 200%, omitting default 1 on the element', () => {
+  assert.equal(ZOOM_DEFAULT, 1)
+  assert.equal(ZOOM_MIN, 0.5)
+  assert.equal(ZOOM_MAX, 2)
+  assert.deepEqual(ZOOM_STEPS, [0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2])
+  assert.equal(clampZoom(1), 1)
+  assert.equal(clampZoom(0.1), 0.5)
+  assert.equal(clampZoom(5), 2)
+  assert.equal(clampZoom(0.834), 0.83)
+  assert.equal(clampZoom(NaN), 1)
+
+  assert.equal(stepZoom(1, 'out'), 0.9)
+  assert.equal(stepZoom(0.9, 'out'), 0.8)
+  assert.equal(stepZoom(0.5, 'out'), 0.5)
+  assert.equal(stepZoom(1, 'in'), 1.1)
+  assert.equal(stepZoom(1.1, 'in'), 1.25)
+  assert.equal(stepZoom(2, 'in'), 2)
+  assert.equal(stepZoom(1.25, 'reset'), 1)
+  assert.equal(zoomPercent(0.8), '80%')
+  assert.equal(zoomPercent(1.25), '125%')
+
+  const base = framed()
+  assert.equal(elementZoom(base.elements[0]), 1)
+  assert.equal(tileZoom(base, 'e3'), 1)
+  assert.equal(tileZoom(base, 'p4'), 1)
+
+  const zoomed = setZoom(layoutOf(base), 'e1', 0.8)
+  assert.equal(zoomed.element.zoom, 0.8)
+  assert.equal(elementZoom(zoomed.element), 0.8)
+  const whole = withLayout(base, undefined, zoomed.grid)
+  assert.equal(tileZoom(whole, 'e1'), 0.8)
+  assert.equal(tileZoom(whole, 'e3'), 0.8)
+  assert.equal(tileZoom(whole, 'p4'), 0.8)
+  // Setting the same zoom again returns the same grid reference.
+  assert.equal(setZoom(zoomed.grid, 'e1', 0.8).grid, zoomed.grid)
+
+  // Zoom persists across setMode, setRect, arrange, and moveAcross.
+  const maxed = setMode(zoomed.grid, 'e1', 'maximized')
+  assert.equal(maxed.element.zoom, 0.8)
+  const restoredGrid = setMode(maxed.grid, 'e1', 'tiled')
+  assert.equal(restoredGrid.element.zoom, 0.8)
+  const resizedGrid = setRect(restoredGrid.grid, 'e1', r(0, 0, 8, 8))
+  assert.equal(resizedGrid.element.zoom, 0.8)
+  const arranged = arrange(resizedGrid.grid, '1+1')
+  assert.equal(arranged.grid.elements.find((e) => e.id === 'e1')?.zoom, 0.8)
+  const moved = moveAcross(withLayout(base, undefined, zoomed.grid), EMPTY_GRID, 'e1')
+  assert.equal(moved.element.zoom, 0.8)
+  assert.equal(moved.target.elements.find((e) => e.id === 'e1')?.zoom, 0.8)
+
+  // Resetting to 1 removes the zoom property from the element.
+  const reset = setZoom(zoomed.grid, 'e1', 1)
+  assert.equal('zoom' in reset.element, false)
+  assert.equal(elementZoom(reset.element), 1)
 })
