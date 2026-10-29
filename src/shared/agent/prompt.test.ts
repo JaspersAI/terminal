@@ -27,6 +27,7 @@ import {
   describeRound,
   describeTiles,
   describeWork,
+  LOOP_PLACEMENT,
   LOOP_RULES,
   loopRules,
   gridPrimer,
@@ -1107,6 +1108,21 @@ test('the rules instruct the assistant to launch the Browser view when the user 
     assert.match(rules, /Bloomberg/i)
     assert.match(rules, /core\/browser/)
   }
+})
+
+test('the rules forbid unsolicited chart views on watchlist or table requests, fanning out one chart per symbol, and leaving extra views when narrowing to one', () => {
+  assert.match(ROUTER_RULES, /never unrequested charts alongside a watchlist or table/i)
+  assert.match(ROUTER_RULES, /indicators belong as columns/i)
+  assert.match(ROUTER_RULES, /never one chart per symbol unless they asked for separate charts/i)
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /never add unsolicited chart views alongside a watchlist, screen, or table/i)
+    assert.match(rules, /numeric columns inside the watchlist or table/i)
+    assert.match(rules, /place one chart view.*rather than a separate chart tile per symbol/i)
+    assert.match(rules, /replace or close the extra views in your tile so only the view they asked for remains/i)
+  }
+  assert.match(LOOP_PLACEMENT, /do not add chart views alongside a watchlist or table/i)
+  assert.match(LOOP_PLACEMENT, /do not place a separate chart per symbol when one chart/i)
+  assert.match(LOOP_PLACEMENT, /pass replace to place_view or call remove_element on the extra views/i)
 })
 
 test('a task preface lists allowed commands for run_shell only while Pro mode is on', () => {

@@ -112,7 +112,7 @@ function createLoopTool(context: ToolContext): Tool {
         brief: {
           type: 'string',
           description:
-            'What its agent is to do, in words written for it. It says what it found in its own conversation, so ask it for views of what the plugins show and never for a note or a written summary on the grid.',
+            'What its agent is to do, in words written for it. It says what it found in its own conversation, so ask it only for the views the user asked for — never for unrequested chart views alongside a watchlist or table (where indicators belong as numeric columns), never for one chart per symbol unless the user asked for separate charts, and never for a note or a written summary on the grid.',
         },
         message: MESSAGE,
         // The tile holds every view the work shows, so it starts at half a window.
