@@ -13,6 +13,8 @@ export interface PanelRef {
 }
 
 export interface Bridge {
+  /** Whatever a store path holds right now, when the bridge already has it, or undefined. */
+  peek?(path: string): unknown
   /** One read of a store path, like `workspaces/<id>/panels/p3/state/text`. */
   get(path: string): Promise<unknown>
   /** Calls `listener` at once with the value there now, and again after every change. Returns an unsubscribe. */

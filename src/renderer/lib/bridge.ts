@@ -10,6 +10,10 @@ import { dispatch, get, subscribe } from './state'
 // write came from. A plugin view in an iframe will reach this same object through a relay.
 
 export const hostBridge: Bridge = {
+  peek(path) {
+    return read(parsePath(path))
+  },
+
   async get(path) {
     return read(parsePath(path))
   },

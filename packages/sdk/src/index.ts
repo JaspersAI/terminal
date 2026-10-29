@@ -9,7 +9,7 @@ export {
   type Bridge,
   type PanelRef,
   type RunOptions,
-} from './bridge'
+} from './bridge.ts'
 export {
   defineConnection,
   definePlugin,
@@ -40,7 +40,7 @@ export {
   type Web,
   type WebPage,
   type WebResult,
-} from './define'
+} from './define.ts'
 export {
   ACTIVATE_SKILL,
   READ_SKILL_FILE,
@@ -55,7 +55,7 @@ export {
   type SkillEntry,
   type SkillFilePart,
   type Skills,
-} from './skills'
+} from './skills.ts'
 export {
   useData,
   useDictation,
@@ -65,7 +65,7 @@ export {
   type Dictation,
   type DictationState,
   type SourceData,
-} from './hooks'
-export type { Dataset, RunResult } from './datasets'
-export type { QueryResult } from './query'
-export type { Citation, Completion, ToolCall, ToolDefinition, ToolResult, Turn } from './llm'
+} from './hooks.ts'
+export type { Dataset, RunResult } from './datasets.ts'
+export type { QueryResult } from './query.ts'
+export type { Citation, Completion, ToolCall, ToolDefinition, ToolResult, Turn } from './llm.ts'

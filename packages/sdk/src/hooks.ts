@@ -18,12 +18,15 @@ export function usePanelState<T>(panel: PanelRef, key: string, init: T): [T, (ne
   const bridge = useBridge()
   const ref = usePanelRef(panel)
   const path = `workspaces/${ref.workspaceId}/panels/${ref.id}/state/${key}`
-  const [value, setValue] = useState<T | undefined>(undefined)
+  const [snapshot, setSnapshot] = useState<{ path: string; value: T | undefined }>(() => ({
+    path,
+    value: bridge.peek?.(path) as T | undefined,
+  }))
   const initial = useRef(init)
   useEffect(() => {
     let first = true
     return bridge.subscribe(path, (next) => {
-      setValue(next as T | undefined)
+      setSnapshot({ path, value: next as T | undefined })
       // Only the first read decides whether the key was there, so only it may write the default in.
       if (first) {
         first = false
@@ -32,7 +35,9 @@ export function usePanelState<T>(panel: PanelRef, key: string, init: T): [T, (ne
     })
   }, [bridge, ref, path, key])
   const set = useMemo(() => (next: T) => void bridge.setState(ref, [key], next), [bridge, ref, key])
-  return [value ?? init, set]
+  const fromState = snapshot.path === path ? snapshot.value : undefined
+  const current = fromState !== undefined ? fromState : (bridge.peek?.(path) as T | undefined)
+  return [current === undefined ? init : current, set]
 }
 
 /** What the view is showing, for the orchestrator to read. Quiet while it keeps saying the same thing. */
@@ -144,7 +149,10 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   const isSource = rest.length > 0
   const args = rest[0]
   const key = stableStringify(args)
-  const [value, setValue] = useState<unknown>(undefined)
+  const [snapshot, setSnapshot] = useState<{ target: string; value: unknown }>(() => ({
+    target,
+    value: isSource ? undefined : bridge.peek?.(target),
+  }))
   const [result, setResult] = useState<Omit<SourceData, 'refetch'>>(IDLE)
   const [nonce, setNonce] = useState(0)
   const panel = usePanel()
@@ -156,7 +164,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
 
   useEffect(() => {
     if (isSource) return
-    return bridge.subscribe(target, setValue)
+    return bridge.subscribe(target, (next) => setSnapshot({ target, value: next }))
   }, [bridge, isSource, target])
 
   // `args` is read through `key`, its value: a view writes the object inline, so it is new every render.
@@ -249,7 +257,12 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
     },
     [],
   )
-  return isSource ? { ...shownSourceData(result, working), refetch } : value
+  const fromSnapshot = snapshot.target === target ? snapshot.value : undefined
+  return isSource
+    ? { ...shownSourceData(result, working), refetch }
+    : fromSnapshot !== undefined
+      ? fromSnapshot
+      : bridge.peek?.(target)
 }
 
 /** Views write `panel={{ id, workspaceId }}` inline, so the object itself changes every render. */
