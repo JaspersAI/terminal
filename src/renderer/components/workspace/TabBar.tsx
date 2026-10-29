@@ -11,9 +11,8 @@ interface Props {
 
 /**
  * Excel-style horizontal tab bar running from left to right, with a plus button after the rightmost
- * tab to open a new tab. The active tab's title can be edited in place; when more than one tab is open,
- * each tab offers a button to detach it into a second "Terminal (copy)" window and a cross to close it
- * (which archives any open rooms on that tab into global room memory).
+ * tab to open a new tab. Active and inactive tabs share the exact same font weight, padding, and
+ * sizing span so switching tabs never shifts the layout.
  */
 export function TabBar({ workspaces, currentId }: Props): ReactElement {
   const [confirmingClose, setConfirmingClose] = useState<string | null>(null)
@@ -42,16 +41,18 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
             onClick={() => {
               if (!active && !confirming) run(() => dispatch({ type: 'tab.select', id: tab.id }))
             }}
-            className={`group flex h-full shrink-0 items-center gap-1 border-r border-border px-2.5 text-xs transition-colors ${
+            className={`group flex h-full shrink-0 items-center gap-1 border-r border-border px-2.5 text-xs font-medium transition-colors ${
               active
-                ? 'bg-background font-medium text-foreground'
+                ? 'bg-background text-foreground shadow-[inset_0_-2px_0_0_var(--color-primary)]'
                 : 'cursor-pointer bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'
             }`}
           >
             {active ? (
               <WorkspaceTitle key={tab.id} workspace={tab} />
             ) : (
-              <span className="max-w-40 truncate px-1 py-0.5 text-sm">{tab.name}</span>
+              <span className="inline-block max-w-40 min-w-12 truncate whitespace-pre px-1.5 py-0.5 text-sm font-medium">
+                {tab.name}
+              </span>
             )}
             {workspaces.length > 1 &&
               (confirming ? (
