@@ -4,6 +4,7 @@ import type { AgentEvent } from '../../../shared/agent/agent.ts'
 import {
   answered,
   awayOn,
+  createRequestStore,
   dismissed,
   failed,
   heard,
@@ -15,6 +16,7 @@ import {
   workingOn,
   type LiveExchange,
 } from './live.ts'
+import { statusLine } from './phase.ts'
 
 const start = (runId: string, ask?: string): AgentEvent => ({
   kind: 'start',
@@ -311,4 +313,252 @@ test('trailOf keeps the active step or thought visible while working and folds c
 test('a sent request with attached_file blocks shows the concise attachment summary in its live question', () => {
   const list = sent([], 'a1', 'w1', 'Summarize this.\n\n<attached_file name="report.pdf">\nFull text\n</attached_file>')
   assert.equal(list[0]?.question, 'Summarize this.\n[Attached: report.pdf]')
+})
+
+test('asking starts the run and shows the transcribed or typed question at once without waiting on a slow or failing history read', async () => {
+  let rejectHistory!: (err: Error) => void
+  const firstHistory = new Promise<{ id: number; question: string; answer: string }[]>((_, reject) => {
+    rejectHistory = reject
+  })
+  let nextHistory: Promise<{ id: number; question: string; answer: string }[]> = firstHistory
+  const runs: { text: string; ask: string; resolve: (reply: string) => void }[] = []
+  let seq = 0
+  const store = createRequestStore({
+    currentWorkspaceId: () => 'w1',
+    newAsk: () => `ask-${++seq}`,
+    history: () => nextHistory,
+    run: (text, ask) =>
+      new Promise<string>((resolve) => {
+        runs.push({ text, ask, resolve })
+      }),
+    stop: () => undefined,
+  })
+
+  const firstDone = store.ask('first question')
+  assert.equal(runs.length, 1)
+  assert.deepEqual({ text: runs[0]?.text, ask: runs[0]?.ask }, { text: 'first question', ask: 'ask-1' })
+  assert.equal(store.getState().sequence, 1)
+  assert.deepEqual(
+    shownOn(store.getState().live, 'w1').map((one) => [one.ask, one.question, one.working]),
+    [['ask-1', 'first question', true]],
+  )
+
+  store.hear(start('run1', 'ask-1'))
+  runs[0]!.resolve('first answer')
+  await firstDone
+  assert.deepEqual(
+    shownOn(store.getState().live, 'w1').map((one) => [one.ask, one.answer, one.working]),
+    [['ask-1', 'first answer', false]],
+  )
+
+  // Even if the background history read rejects, the finished reply in live is not lost.
+  rejectHistory(new Error('store busy'))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    shownOn(store.getState().live, 'w1').map((one) => [one.ask, one.answer, one.working]),
+    [['ask-1', 'first answer', false]],
+  )
+
+  // Sending a second request while a subsequent history read fails still keeps ask-1's reply on screen.
+  nextHistory = Promise.reject(new Error('still busy'))
+  const secondDone = store.ask('second question')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    shownOn(store.getState().live, 'w1').map((one) => [one.ask, one.answer, one.working]),
+    [
+      ['ask-1', 'first answer', false],
+      ['ask-2', null, true],
+    ],
+  )
+  runs[1]!.resolve('second answer')
+  await secondDone
+
+  // Once a history read succeeds on the same workspace, the finished exchanges retire into earlier.
+  nextHistory = Promise.resolve([
+    { id: 1, question: 'first question', answer: 'first answer' },
+    { id: 2, question: 'second question', answer: 'second answer' },
+  ])
+  const thirdDone = store.ask('third question')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    store.getState().earlier.map((one) => [one.question, one.answer]),
+    [
+      ['first question', 'first answer'],
+      ['second question', 'second answer'],
+    ],
+  )
+  assert.deepEqual(
+    shownOn(store.getState().live, 'w1').map((one) => [one.ask, one.question, one.working]),
+    [['ask-3', 'third question', true]],
+  )
+  runs[2]!.resolve('third answer')
+  await thirdDone
+})
+
+test('tapping the voice orb latches recording on Listening — tap to send, and tapping again immediately switches to transcribing and sends the transcribed speech', async () => {
+  let active = false
+  let elapsedMs = 0
+  let resolveStop!: (recording: { audio: ArrayBuffer; mimeType: string; durationMs: number }) => void
+  let resolveTranscribe!: (text: string) => void
+  const runs: { text: string; ask: string; resolve: (reply: string) => void }[] = []
+  const sentTexts: string[] = []
+  let seq = 0
+
+  const store = createRequestStore({
+    currentWorkspaceId: () => 'w1',
+    newAsk: () => `ask-${++seq}`,
+    history: () => Promise.resolve([]),
+    run: (text, ask) =>
+      new Promise<string>((resolve) => {
+        runs.push({ text, ask, resolve })
+      }),
+    stop: () => undefined,
+    requestMicrophone: () => Promise.resolve(true),
+    recorder: {
+      get active() {
+        return active
+      },
+      get elapsedMs() {
+        return elapsedMs
+      },
+      async start() {
+        active = true
+      },
+      stop() {
+        active = false
+        return new Promise((resolve) => {
+          resolveStop = resolve
+        })
+      },
+    },
+    transcribe: () =>
+      new Promise<string>((resolve) => {
+        resolveTranscribe = resolve
+      }),
+    onSend: (text) => sentTexts.push(text),
+  })
+
+  // First tap: press and release before 400ms (even while microphone/recorder is opening).
+  store.press()
+  assert.equal(store.getState().voice, 'opening')
+  store.release()
+  assert.equal(store.getState().tapped, true)
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.getState().voice, 'recording')
+  assert.equal(store.getState().tapped, true)
+  assert.equal(
+    statusLine({
+      phase: 'recording',
+      tapped: store.getState().tapped,
+      error: store.getState().error,
+      dockProblem: null,
+      hint: 'Hold the orb or the space bar',
+      unseen: false,
+    }),
+    'Listening — tap to send',
+  )
+
+  // Second tap to send: immediately transitions out of 'Listening — tap to send' to 'Transcribing…'
+  // even before recorder.stop() resolves.
+  elapsedMs = 1200
+  store.press()
+  store.release()
+  assert.equal(store.getState().voice, 'transcribing')
+  assert.equal(store.getState().tapped, false)
+  assert.equal(
+    statusLine({
+      phase: 'transcribing',
+      tapped: store.getState().tapped,
+      error: store.getState().error,
+      dockProblem: null,
+      hint: 'Hold the orb or the space bar',
+      unseen: false,
+    }),
+    'Transcribing…',
+  )
+
+  resolveStop({ audio: new ArrayBuffer(8), mimeType: 'audio/webm', durationMs: 1200 })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.getState().voice, 'transcribing')
+
+  resolveTranscribe('Meta news today')
+  await new Promise((resolve) => setImmediate(resolve))
+
+  // As soon as transcription finishes, voice is idle and the transcribed question is in live/shown.
+  assert.equal(store.getState().voice, 'idle')
+  assert.deepEqual(sentTexts, ['Meta news today'])
+  assert.deepEqual(
+    shownOn(store.getState().live, 'w1').map((one) => [one.question, one.working]),
+    [['Meta news today', true]],
+  )
+
+  runs[0]!.resolve('Here is the latest on Meta.')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    shownOn(store.getState().live, 'w1').map((one) => [one.question, one.answer, one.working]),
+    [['Meta news today', 'Here is the latest on Meta.', false]],
+  )
+})
+
+test('holding the voice orb for at least 400ms sends on release without needing a second tap', async () => {
+  let active = false
+  let elapsedMs = 0
+  const runs: string[] = []
+
+  const store = createRequestStore({
+    currentWorkspaceId: () => 'w1',
+    newAsk: () => 'ask-hold',
+    history: () => Promise.resolve([]),
+    run: async (text) => {
+      runs.push(text)
+      return 'Done.'
+    },
+    stop: () => undefined,
+    requestMicrophone: () => Promise.resolve(true),
+    recorder: {
+      get active() {
+        return active
+      },
+      get elapsedMs() {
+        return elapsedMs
+      },
+      async start() {
+        active = true
+      },
+      async stop() {
+        active = false
+        return { audio: new ArrayBuffer(8), mimeType: 'audio/webm', durationMs: elapsedMs }
+      },
+    },
+    transcribe: async () => 'Held speech query',
+  })
+
+  store.press()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.getState().voice, 'recording')
+  assert.equal(store.getState().tapped, false)
+
+  elapsedMs = 650
+  store.release()
+  assert.equal(store.getState().voice, 'transcribing')
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(store.getState().voice, 'idle')
+  assert.deepEqual(runs, ['Held speech query'])
+  assert.equal(shownOn(store.getState().live, 'w1')[0]?.answer, 'Done.')
+})
+
+test('statusLine surfaces microphone and transcription errors even when live exchanges are on screen', () => {
+  assert.equal(
+    statusLine({
+      phase: 'thinking',
+      tapped: false,
+      error: 'Did not catch that. Try again.',
+      dockProblem: null,
+      hint: 'Hold the orb or the space bar',
+      unseen: false,
+    }),
+    'Did not catch that. Try again.',
+  )
 })

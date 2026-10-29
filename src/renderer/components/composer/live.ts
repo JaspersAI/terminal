@@ -12,6 +12,20 @@
 import { addStep, plain, stepped, THINKING, thought, type AgentEvent } from '../../../shared/agent/agent.ts'
 import { shownQuestion } from '../../../shared/agent/attachments.ts'
 import type { Citation } from '../../../shared/agent/citations'
+import { rejoin, type Exchange } from '../../../shared/agent/transcript.ts'
+import { errorMessage } from '../../lib/errors.ts'
+import type { Phase } from './phase.ts'
+import type { Recording } from './recorder.ts'
+
+/**
+ * How much of the chat is read at a time: its newest exchanges when it comes up, and as many again
+ * ahead of them each time the reader nears the top of what is there. The whole conversation is
+ * within reach, and what is drawn stays what was asked for.
+ */
+export const PAGE = 30
+
+/** The microphone's part of a request: nothing typed or said can be sent while it has the floor. */
+export type Voice = Exclude<Phase, 'thinking'>
 
 export interface LiveExchange {
   /** This window's own name for the request, given as it is sent. */
@@ -230,4 +244,263 @@ function change(
   if (at === -1) return list
   const next = to(list[at]!)
   return next === list[at] ? list : list.map((one, index) => (index === at ? next : one))
+}
+
+export interface VoiceRecorder {
+  readonly active: boolean
+  readonly elapsedMs: number
+  start: () => Promise<void>
+  stop: () => Promise<Recording>
+}
+
+export interface RequestState {
+  live: LiveExchange[]
+  earlier: Exchange[]
+  sequence: number
+  voice: Voice
+  tapped: boolean
+  error: string | null
+}
+
+export interface RequestDriver {
+  currentWorkspaceId: () => string
+  history: (limit: number) => Promise<Exchange[]>
+  run: (text: string, ask: string) => Promise<string>
+  stop: (runId: string | undefined, ask: string) => Promise<boolean> | void
+  requestMicrophone?: () => Promise<boolean>
+  recorder?: VoiceRecorder
+  transcribe?: (audio: ArrayBuffer, mimeType: string) => Promise<string>
+  newAsk?: () => string
+  onSend?: (text: string) => void
+  onHeard?: (text: string) => void
+  onReply?: (reply: string) => void
+}
+
+/**
+ * Owns microphone capture and the requests this window has sent to the global assistant, their
+ * streamed events, and the history read behind them. Shared across the floating composer and the
+ * docked chat view so docking or undocking keeps every in-flight exchange, finished reply, and Stop
+ * button on screen.
+ */
+export function createRequestStore(driver: RequestDriver) {
+  let state: RequestState = {
+    live: [],
+    earlier: [],
+    sequence: 0,
+    voice: 'idle',
+    tapped: false,
+    error: null,
+  }
+  let readSeq = 0
+  let voiceSeq = 0
+  let pressed = false
+  const listeners = new Set<() => void>()
+  const voiceSendListeners = new Set<(text: string) => void>()
+
+  function put(next: RequestState): void {
+    if (
+      next.live === state.live &&
+      next.earlier === state.earlier &&
+      next.sequence === state.sequence &&
+      next.voice === state.voice &&
+      next.tapped === state.tapped &&
+      next.error === state.error
+    )
+      return
+    state = next
+    for (const listener of listeners) listener()
+  }
+
+  function setLive(to: LiveExchange[] | ((list: LiveExchange[]) => LiveExchange[])): void {
+    const live = typeof to === 'function' ? to(state.live) : to
+    put({ ...state, live })
+  }
+
+  function setEarlier(to: Exchange[] | ((was: Exchange[]) => Exchange[])): void {
+    const earlier = typeof to === 'function' ? to(state.earlier) : to
+    put({ ...state, earlier })
+  }
+
+  /**
+   * Reads the end of the chat again and lets go of the exchanges here that were over when it was asked
+   * for, which it holds. `fresh` puts what was read in place of what was up; otherwise it goes under
+   * whatever the reader has gone back through. If the history read fails or a workspace switch or newer
+   * read superseded it, finished exchanges stay in `live` so replies are never dropped unseen.
+   */
+  async function reread(fresh: boolean, done = over(state.live)): Promise<void> {
+    const workspace = driver.currentWorkspaceId()
+    const seq = ++readSeq
+    const past = await driver.history(PAGE).catch(() => null)
+    if (past === null || seq !== readSeq || driver.currentWorkspaceId() !== workspace) return
+    put({
+      ...state,
+      earlier: fresh ? past : rejoin(state.earlier, past),
+      live: without(state.live, done),
+    })
+  }
+
+  /**
+   * Sends one request. It starts at once, beside whatever is working, and its exchange joins the end
+   * of the conversation; nothing here waits for it but its own reply.
+   */
+  async function ask(text: string): Promise<void> {
+    const done = over(state.live)
+    const name = (driver.newAsk ?? (() => crypto.randomUUID()))()
+    const workspace = driver.currentWorkspaceId()
+    put({
+      ...state,
+      voice: 'idle',
+      tapped: false,
+      error: null,
+      sequence: state.sequence + 1,
+      live: sent(state.live, name, workspace, text),
+    })
+    driver.onSend?.(text)
+    // The conversation this question continues, read in parallel without holding up the run. Its
+    // newest page only: the view goes to the new question, so whatever the reader had loaded above is let go.
+    void reread(true, done)
+    try {
+      const reply = await driver.run(text, name)
+      driver.onReply?.(reply)
+      setLive((list) => answered(list, name, reply))
+      // A stopped run says nothing and its exchange goes; the log has what it got done.
+      if (!reply) void reread(false)
+    } catch (err) {
+      // The exchange stays: the error is shown under the question, with the trail above it.
+      setLive((list) => failed(list, name, errorMessage(err)))
+    }
+  }
+
+  /** Runs one step of the microphone's part. If it throws, show the message and give the floor back. */
+  async function attempt(action: () => Promise<void>): Promise<void> {
+    try {
+      await action()
+    } catch (err) {
+      put({ ...state, voice: 'idle', tapped: false, error: errorMessage(err) })
+    }
+  }
+
+  async function finish(allowShort: boolean): Promise<void> {
+    if (!driver.recorder || !driver.transcribe) return
+    const recording = await driver.recorder.stop()
+    if (!allowShort && recording.durationMs < 400) {
+      throw new Error('Too short. Hold until it says Listening, speak, then release.')
+    }
+    put({ ...state, voice: 'transcribing', tapped: false })
+    const text = (await driver.transcribe(recording.audio, recording.mimeType)).trim()
+    if (!text) throw new Error('Did not catch that. Try again.')
+    driver.onHeard?.(text)
+    for (const listener of voiceSendListeners) listener(text)
+    // What was heard is sent like anything typed, and the microphone is free for the next in the same step.
+    void ask(text)
+  }
+
+  function press(): void {
+    // A second tap while recording immediately switches to transcribing and sends what was spoken.
+    if (state.voice === 'recording') {
+      pressed = false
+      if (driver.recorder?.active) {
+        put({ ...state, voice: 'transcribing', tapped: false, error: null })
+        void attempt(() => finish(true))
+      } else {
+        put({ ...state, voice: 'idle', tapped: false })
+      }
+      return
+    }
+    // A second tap while the microphone is still opening cancels the tap-to-talk attempt.
+    if (state.voice === 'opening') {
+      if (state.tapped) {
+        voiceSeq++
+        pressed = false
+        put({ ...state, voice: 'idle', tapped: false })
+      }
+      return
+    }
+    if (state.voice !== 'idle' || pressed) return
+    if (!driver.requestMicrophone || !driver.recorder || !driver.transcribe) return
+    const openId = ++voiceSeq
+    pressed = true
+    put({ ...state, voice: 'opening', tapped: false, error: null })
+    void attempt(async () => {
+      // The first press on macOS waits on the system permission prompt, so say what is happening.
+      try {
+        if (!(await driver.requestMicrophone!())) {
+          throw new Error('Microphone access is off. Allow it in System Settings, Privacy & Security, Microphone.')
+        }
+        if (openId !== voiceSeq || (!pressed && !state.tapped)) {
+          if (openId === voiceSeq) put({ ...state, voice: 'idle', tapped: false })
+          return
+        }
+        await driver.recorder!.start()
+      } catch (err) {
+        pressed = false
+        throw err
+      }
+      if (openId !== voiceSeq || (!pressed && !state.tapped)) {
+        await driver.recorder!.stop().catch(() => undefined)
+        if (openId === voiceSeq) put({ ...state, voice: 'idle', tapped: false })
+        return
+      }
+      put({ ...state, voice: 'recording' })
+    })
+  }
+
+  function release(cancel = false): void {
+    if (!pressed) return
+    pressed = false
+    if (cancel) {
+      if (driver.recorder?.active) {
+        if (driver.recorder.elapsedMs >= 400) {
+          put({ ...state, voice: 'transcribing', tapped: false, error: null })
+          void attempt(() => finish(false))
+        } else {
+          void driver.recorder.stop().catch(() => undefined)
+          put({ ...state, voice: 'idle', tapped: false })
+        }
+      } else {
+        voiceSeq++
+        put({ ...state, voice: 'idle', tapped: false })
+      }
+      return
+    }
+    // A quick tap (< 400ms, or released while the mic is opening) latches recording on until the next tap sends it.
+    if (!driver.recorder?.active || driver.recorder.elapsedMs < 400) {
+      put({ ...state, tapped: true })
+      return
+    }
+    put({ ...state, voice: 'transcribing', tapped: false, error: null })
+    void attempt(() => finish(false))
+  }
+
+  /**
+   * Asks main to stop a run: the one named, or the newest still working on this workspace. The run
+   * resolves with nothing and its exchange gives way to what the log kept of it.
+   */
+  function stop(askId?: string): void {
+    const workspace = driver.currentWorkspaceId()
+    const mine = state.live.filter((one) => one.working && one.workspaceId === workspace)
+    const target = askId === undefined ? mine[mine.length - 1] : state.live.find((one) => one.ask === askId)
+    if (target) void driver.stop(target.runId ?? undefined, target.ask)
+  }
+
+  return {
+    getState: () => state,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    onVoiceSend: (listener: (text: string) => void): (() => void) => {
+      voiceSendListeners.add(listener)
+      return () => voiceSendListeners.delete(listener)
+    },
+    hear: (event: AgentEvent) => setLive((list) => heard(list, event)),
+    dismiss: (workspaceId: string) => setLive((list) => dismissed(list, workspaceId)),
+    setLive,
+    setEarlier,
+    reread,
+    ask,
+    press,
+    release,
+    stop,
+  }
 }

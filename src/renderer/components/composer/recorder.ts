@@ -18,6 +18,10 @@ export class Recorder {
     return this.recorder !== null
   }
 
+  get elapsedMs(): number {
+    return this.recorder ? performance.now() - this.startedAt : 0
+  }
+
   async start(): Promise<void> {
     if (this.recorder) return
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
