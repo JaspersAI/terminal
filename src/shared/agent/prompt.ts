@@ -30,7 +30,7 @@ const ERROR_MAX = 200
 const TASK_DETAIL_MAX = 120
 
 const WORK =
-  'Rules: the plugins do the work the user asks for, not you. Hand each request to the plugin that does it: place its view with initial state, or set the state of the one already in your tile instead of opening a second, and call its other sources to drive it. When the user asks for Bloomberg, launch the core/browser view (https://www.bloomberg.com/live for Bloomberg Television\u2019s live stream, or https://www.bloomberg.com/) rather than fetching a page or building a plugin, and read panels/<id>/text when you need what the page shows. When you are about to call a source that a view renders, place the view instead of calling the source yourself. Look data up and answer in text yourself only when no plugin does what was asked. A research question goes to a research room when one is installed; never answer one from your own knowledge.'
+  'Rules: the plugins do the work the user asks for, not you. Hand each request to the plugin that does it: when that plugin has a view for the work (such as screener-mcp/screener for a screen or research/room for a research room), place that plugin\u2019s view from the start with initial state, or set the state of the one already in your tile instead of opening a second, and drive the work through its state rather than running its sources in the background first or placing a generic core/table, core/chart, or core/metric in its place. core/table, core/chart, and core/metric are for sources whose plugin has no view for them, or when the user asks for a chart or metric alongside. When the user asks for Bloomberg, launch the core/browser view (https://www.bloomberg.com/live for Bloomberg Television\u2019s live stream, or https://www.bloomberg.com/) rather than fetching a page or building a plugin, and read panels/<id>/text when you need what the page shows. When you are about to call a source that a view renders, place the view instead of calling the source yourself. Look data up and answer in text yourself only when no plugin does what was asked. A research question goes to a research room when one is installed; never answer one from your own knowledge.'
 // The user is looking at the tile while the agent works. A server's guide may tell a caller to wait on
 // a job for most of a minute at a time, and a view is drawn by making its call again with the
 // arguments it was given: one made with such a wait sits empty that long every time it draws.
@@ -56,7 +56,7 @@ const BUILD =
   "When no installed plugin does what the user asks and a plugin could (a data source, a view, something that makes a document, a connection to a service), first call find_plugin to search Jaspers Hub, the library of published plugins. When it finds one that does it, do not build: tell the user its id and title, and install it with install_plugin when they say so; build only when they would rather have one built. When Hub has none that does it, call build_plugin with the whole request: it asks the user before writing anything and takes a few minutes. Keep the same plugin id when continuing or retrying an unfinished build rather than inventing a new one, and when build_plugin says a plugin is waiting on the user's approval or was not approved, tell the user and do not call build_plugin again in the same run. It has the SDK's documentation, so never search the web for the Jaspers SDK yourself."
 
 const ROUTE =
-  "Rules: you route and oversee the workspace, and the work on the grid is done in pieces. First understand what the user wants. Answer in words yourself when words are the whole answer: summarizing, explaining, comparing, or answering a question about what is going on in the loops, what a loop or a research room has found, why one of its views or charts shows what it does, or how loops or tasks compare — inspect the loops with read_loop, read a view's full text or output with get (such as panels/<id>/text), and query the store with query, then answer the user yourself; and anything about the app itself, such as a status, a change to the layout, a task to schedule, a setting, a plugin, a key, a command to run, a skill to write or publish. You have no plugin source tools: anything that needs new data from a source, a lookup, research not already in the loops or store, or a view, anything long, anything the user will come back to is a piece of work. Start one with create_loop, with a line saying what it is and a brief that says what its agent is to do and what done looks like; the plugins and skills it needs are chosen for it from what is installed. It asks the user whether to start that work before anything is made, so do not ask that yourself. A request to change or continue work that already exists, which the state lists, goes to that work with update_loop, never to a second piece: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view of it to close, or a follow-up for its agent to run in its tile. Never send a question about what a loop shows or why it looks the way it does, or a request to summarize, explain, or compare what a loop or its views already show, to update_loop: update_loop hands the request to that loop to act on in its tile, which may change its views and leaves Central saying only that it was sent; read the loop with read_loop and its views with get (such as panels/<id>/text) or query, and answer the user yourself. When the request is unclear, or it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them; never settle that yourself when it could go either way. read_loop says what a piece of work is doing or has found, with what each view in its tile shows and its last exchanges; get reads any panel (including panels/<id>/text for a research room, browser, table, or chart transcript) or the workspace tasks in full; query reads the SQLite store of source runs. Each piece of work is a loop, called by its number, like loop_3: name it that way to the tools and in replies. close_loop when the user asks for work to be closed: it is kept, the user can bring it back from View loops in Settings, and reopen_loop brings a closed one back. delete_loop only when the user asks for that work to be deleted. You never put a view on the grid or change what one shows: a piece of work does that, inside its own tile. When no installed plugin does what was asked, start the work all the same, and its agent finds or builds what it needs. When the user asks for Bloomberg, start or update a loop to launch the Browser view. Never answer a research question or a market fact from your own knowledge when it is not in the loops, views, or store: that is work."
+  "Rules: you route and oversee the workspace, and the work on the grid is done in pieces. First understand what the user wants. Answer in words yourself when words are the whole answer: summarizing, explaining, comparing, or answering a question about what is going on in the loops, what a loop or a research room has found, why one of its views or charts shows what it does, or how loops or tasks compare — inspect the loops with read_loop, read a view's full text or output with get (such as panels/<id>/text), and query the store with query, then answer the user yourself; and anything about the app itself, such as a status, a change to the layout, a task to schedule, a setting, a plugin, a key, a command to run, a skill to write or publish. You have no plugin source tools: anything that needs new data from a source, a lookup, research not already in the loops or store, or a view, anything long, anything the user will come back to is a piece of work. Start one with create_loop, with a line saying what it is and a brief that says what its agent is to do and what done looks like (when an installed plugin has its own view for the request, such as screener-mcp/screener for a screen or research/room for a research room, ask its agent to place and drive that plugin's view from the start rather than a generic core/table); the plugins and skills it needs are chosen for it from what is installed. It asks the user whether to start that work before anything is made, so do not ask that yourself. A request to change or continue work that already exists, which the state lists, goes to that work with update_loop, never to a second piece: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view of it to close, or a follow-up for its agent to run in its tile. Never send a question about what a loop shows or why it looks the way it does, or a request to summarize, explain, or compare what a loop or its views already show, to update_loop: update_loop hands the request to that loop to act on in its tile, which may change its views and leaves Central saying only that it was sent; read the loop with read_loop and its views with get (such as panels/<id>/text) or query, and answer the user yourself. When the request is unclear, or it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them; never settle that yourself when it could go either way. read_loop says what a piece of work is doing or has found, with what each view in its tile shows and its last exchanges; get reads any panel (including panels/<id>/text for a research room, browser, table, or chart transcript) or the workspace tasks in full; query reads the SQLite store of source runs. Each piece of work is a loop, called by its number, like loop_3: name it that way to the tools and in replies. close_loop when the user asks for work to be closed: it is kept, the user can bring it back from View loops in Settings, and reopen_loop brings a closed one back. delete_loop only when the user asks for that work to be deleted. You never put a view on the grid or change what one shows: a piece of work does that, inside its own tile. When no installed plugin does what was asked, start the work all the same, and its agent finds or builds what it needs. When the user asks for Bloomberg, start or update a loop to launch the Browser view. Never answer a research question or a market fact from your own knowledge when it is not in the loops, views, or store: that is work."
 const ROUTER_REPLY =
   'Your text reply appears in Central (or in the chat box above the composer, which fades after a few seconds when undocked), so keep it clear and direct, at whatever length the answer needs without padding. When you only start or send work, that is the whole of your part, and the user is told what the tool answered.'
 // The app is the orchestrator's: keys, tasks, and plugins it handles itself, in words and calls of its own.
@@ -117,8 +117,11 @@ export function tilePrimer({ cols, rows }: GridSize): string {
  * plugin is built or a skill is written, and not otherwise, so it belongs before anything that
  * changes every round and can be cached with the fixed instructions in front of it.
  */
-export function describeInstalled(state: AppState): string {
-  return [describeViews(state.views), ...installedRest(state)].join('\n')
+export function describeInstalled(
+  state: AppState,
+  instructionsFor: (viewId: string) => string | undefined = () => undefined,
+): string {
+  return [describeViews(state.views, instructionsFor), ...installedRest(state)].join('\n')
 }
 
 /** What is installed beside the views: the sources, the connections, the plugins, the skills, and what is remembered. */
@@ -272,13 +275,17 @@ export function describeOthers(state: AppState, plugins: readonly string[]): str
  * connections, and its skills. The built-ins are in its prompt already, and a block the plugin has
  * nothing for is left out.
  */
-export function describePlugin(state: AppState, id: string): string {
+export function describePlugin(
+  state: AppState,
+  id: string,
+  instructionsFor: (viewId: string) => string | undefined = () => undefined,
+): string {
   const told = toldOf(state, [id], [])
   const own = <T extends { plugin: string | null }>(all: Record<string, T>): Record<string, T> =>
     Object.fromEntries(Object.entries(all).filter(([, one]) => one.plugin === id))
   const views = own(told.views)
   return [
-    ...(Object.keys(views).length > 0 ? [describeViews(views)] : []),
+    ...(Object.keys(views).length > 0 ? [describeViews(views, instructionsFor)] : []),
     ...describeSources(own(told.sources), told.connections, told.plugins),
     ...describeConnections(told.connections, told.sources),
     ...describePlugins(told.plugins),
@@ -287,8 +294,16 @@ export function describePlugin(state: AppState, id: string): string {
 }
 
 /** What is installed, as a loop's agent is told: its own plugins' and the built-ins in full, the rest by name. */
-export function describeInstalledFor(state: AppState, plugins: readonly string[], skills: readonly string[]): string {
-  return [describeInstalled(toldOf(state, plugins, skills)), ...describeOthers(state, plugins)].join('\n')
+export function describeInstalledFor(
+  state: AppState,
+  plugins: readonly string[],
+  skills: readonly string[],
+  instructionsFor: (viewId: string) => string | undefined = () => undefined,
+): string {
+  const told = toldOf(state, plugins, skills)
+  const pluginViewInstructions = (viewId: string): string | undefined =>
+    told.views[viewId]?.plugin !== null ? instructionsFor(viewId) : undefined
+  return [describeInstalled(told, pluginViewInstructions), ...describeOthers(state, plugins)].join('\n')
 }
 
 /** What is true this round: the focused element, what is running, the time, and this workspace's tasks. */
@@ -337,12 +352,21 @@ export function describeContext(
   return [describeInstalled(state), describeRound(state, workspaceId, instructionsFor, clock, window)].join('\n')
 }
 
-function describeViews(views: Record<string, ViewInfo>): string {
+function describeViews(
+  views: Record<string, ViewInfo>,
+  instructionsFor: (viewId: string) => string | undefined = () => undefined,
+): string {
   const list = placeable(views)
   if (list.length === 0) return 'No views are installed.'
   return [
     'Installed views (place_view { view, state }):',
-    ...list.map((v) => `${viewLine(v)} state: ${stateShape(v.stateSchema)}`),
+    ...list.flatMap((v) => {
+      const instructions = instructionsFor(v.id)
+      return [
+        `${viewLine(v)} state: ${stateShape(v.stateSchema)}`,
+        ...(instructions ? [`  Instructions: ${instructions}`] : []),
+      ]
+    }),
   ].join('\n')
 }
 

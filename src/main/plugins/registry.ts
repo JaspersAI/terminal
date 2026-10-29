@@ -247,7 +247,7 @@ const TABLE: ViewDef = {
     source: z.string().nullable(),
     error: z.string().nullable(),
   }),
-  instructions: `A table of rows from any source, or from the store. ${DATA_INSTRUCTIONS} state.columns names which columns to show and in what order; null shows them all. The whole table is the panel's text, so read it with get panels/<id>/text rather than running the source again. Use this rather than a plugin's own view when the plugin has none, and rather than calling a source yourself when the user wants to see the rows.`,
+  instructions: `A table of rows from any source, or from the store. ${DATA_INSTRUCTIONS} state.columns names which columns to show and in what order; null shows them all. The whole table is the panel's text, so read it with get panels/<id>/text rather than running the source again. Use this only when a plugin has no view of its own for the data (never in place of a plugin's own view such as screener-mcp/screener), and rather than calling a source yourself when the user wants to see the rows.`,
   summarize: (state, output) => {
     const { rowCount, columns } = (output ?? {}) as { rowCount?: number; columns?: string[] }
     const what =

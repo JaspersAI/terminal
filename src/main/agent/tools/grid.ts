@@ -131,7 +131,7 @@ export function gridTools(context?: ToolContext): Tool[] {
   const tools: Tool[] = [
     {
       name: 'place_view',
-      description: `Put an installed view ${where}: the views are listed in the prompt, with the state each takes. Say what and roughly where; the grid manager picks the cells and never moves other elements to make room. Returns the element id, panel id, the rect it got, and resolved: exact, moved (same size, somewhere else), or shrunk. Fails with grid_full when not even 2×2 fits: make room as the grid rules say.`,
+      description: `Put an installed view ${where}: the views are listed in the prompt, with the state each takes. When a plugin has its own view for the request (such as screener-mcp/screener), place that plugin's view from the start rather than core/table. Say what and roughly where; the grid manager picks the cells and never moves other elements to make room. Returns the element id, panel id, the rect it got, and resolved: exact, moved (same size, somewhere else), or shrunk. Fails with grid_full when not even 2×2 fits: make room as the grid rules say.`,
       parameters: {
         type: 'object',
         properties: {

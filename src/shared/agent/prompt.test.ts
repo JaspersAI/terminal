@@ -1123,3 +1123,52 @@ test('a task preface lists allowed commands for run_shell only while Pro mode is
   assert.equal(proModeOff, withoutCommands)
   assert.doesNotMatch(proModeOff, /<command>|run_shell/)
 })
+
+test("a loop's agent is told the instructions of its own plugins' views from the start, and to place a plugin's own view rather than core/table", () => {
+  const table: ViewInfo = {
+    id: 'core/table',
+    plugin: null,
+    title: 'Table',
+    renders: [],
+    stateSchema: { type: 'object', properties: { source: { type: ['string', 'null'] } } },
+  }
+  const screener: ViewInfo = {
+    id: 'screener-mcp/screener',
+    plugin: 'screener-mcp',
+    title: 'Screener',
+    renders: ['screener-mcp/screen'],
+    stateSchema: { type: 'object', properties: { filters: { type: 'array', items: { type: 'object' } } } },
+  }
+  const state = tree(
+    EMPTY_GRID,
+    { 'core/table': table, 'screener-mcp/screener': screener },
+    {},
+    {},
+    { 'screener-mcp': plugin('screener-mcp', { views: ['screener-mcp/screener'] }) },
+  )
+  const lookup = (id: string): string | undefined =>
+    id === 'screener-mcp/screener'
+      ? 'This element is the whole screen: drive it by its state only.'
+      : id === 'core/table'
+        ? 'A generic table.'
+        : undefined
+  const told = describeInstalledFor(state, ['screener-mcp'], [], lookup)
+  assert.match(
+    told,
+    /- screener-mcp\/screener: Screener\. Renders screener-mcp\/screen\. state: \{ filters\?: object\[\] \}\n  Instructions: This element is the whole screen: drive it by its state only\./,
+  )
+  // Built-in views stay one line in the installed block; only the work's own plugins' views carry their instructions up front.
+  assert.doesNotMatch(told, /Instructions: A generic table\./)
+
+  const fromUsePlugin = describePlugin(state, 'screener-mcp', lookup)
+  assert.match(
+    fromUsePlugin,
+    /- screener-mcp\/screener: Screener\. Renders screener-mcp\/screen\. state: \{ filters\?: object\[\] \}\n  Instructions: This element is the whole screen: drive it by its state only\./,
+  )
+
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /screener-mcp\/screener/)
+    assert.match(rules, /core\/table/)
+  }
+  assert.match(ROUTER_RULES, /screener-mcp\/screener/)
+})

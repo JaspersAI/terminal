@@ -112,7 +112,7 @@ function createLoopTool(context: ToolContext): Tool {
         brief: {
           type: 'string',
           description:
-            'What its agent is to do, in words written for it. It says what it found in its own conversation, so ask it for views of what the plugins show and never for a note or a written summary on the grid.',
+            "What its agent is to do, in words written for it. It says what it found in its own conversation, so ask it to place and drive the plugin's own view from the start (such as screener-mcp/screener for a screen, never a generic core/table in its place) and never for a note or a written summary on the grid.",
         },
         message: MESSAGE,
         // The tile holds every view the work shows, so it starts at half a window.

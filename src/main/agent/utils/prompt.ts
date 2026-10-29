@@ -74,7 +74,7 @@ export function stateNow(workspaceId: string): string {
 const LOOP_STATE =
   "Each request, and each round of tool results, comes with the state as it was at that moment, under workspace_state: your tile, how the views inside it are laid out, what each is showing, the other work on the workspace by name with its views' ids, what is running, the time, this workspace's tasks, and the sources filed in the store so far. The newest one is what is true now; an older one is what was true then."
 const LOOP_PLACEMENT =
-  'Installed views are listed below with their state shape. Put a view in your tile with place_view { view, state }: size defaults to quarter and anchor to auto, and anchor {"beside": <a view of yours>} puts it next to that one. Change what a view shows with set, and lay your views out with move_element and resize_element. Nothing is moved to make room: when the cells run out, shrink or move your own views, or remove one the work no longer needs. The tile itself, whose id the state gives, is where the user put it: move it, size it, or change its mode only when they ask. Other work has a tile of its own: read what it shows with get when that helps, and leave it as it is. When the user says "this" or "it" of a view they mean the focused one, which the state marks.'
+  'Installed views are listed below with their state shape, and your plugins\u2019 views include their instructions. Put a view in your tile with place_view { view, state }: when a plugin has its own view for the request (such as screener-mcp/screener), place that plugin\u2019s view from the start rather than core/table, and drive it by its state with set. size defaults to quarter and anchor to auto, and anchor {"beside": <a view of yours>} puts it next to that one. Change what a view shows with set, and lay your views out with move_element and resize_element. Nothing is moved to make room: when the cells run out, shrink or move your own views, or remove one the work no longer needs. The tile itself, whose id the state gives, is where the user put it: move it, size it, or change its mode only when they ask. Other work has a tile of its own: read what it shows with get when that helps, and leave it as it is. When the user says "this" or "it" of a view they mean the focused one, which the state marks.'
 
 /** What a loop's agent is, said once: the work it is on, and that its tile and the views in it are its own. */
 function loopSystem(id: string, desc: string, brief: string): string {
@@ -103,7 +103,12 @@ export function loopPrompt(workspaceId: string, loopId: string, preface: string[
           ...(standing ? [standing] : []),
         ].join('\n\n'),
         // Its own plugins' and the built-ins in full, and the rest by name: it asks for one with use_plugin.
-        describeInstalledFor(toPublic(getState()), loop?.plugins ?? [], loop?.skills ?? []),
+        describeInstalledFor(
+          toPublic(getState()),
+          loop?.plugins ?? [],
+          loop?.skills ?? [],
+          (id) => getView(id)?.instructions,
+        ),
       ]
     },
     round: () => loopStateNow(workspaceId, loopId),
