@@ -1,6 +1,7 @@
-import type { RunResult } from './datasets'
-import type { Bridge, PanelRef, RunOptions } from './bridge'
-import type { BridgeMethod, BridgeNotification, BridgeReply, BridgeRequest } from './protocol'
+import type { RunResult } from './datasets.ts'
+import type { Bridge, PanelRef, RunOptions } from './bridge.ts'
+import type { BridgeMethod, BridgeNotification, BridgeReply, BridgeRequest } from './protocol.ts'
+import { stableStringify } from './stable.ts'
 
 // The bridge a plugin view gets inside its iframe. Every call is a message to the page that framed
 // it, which runs it against the same host bridge a built-in view uses, so the hooks above this
@@ -8,12 +9,80 @@ import type { BridgeMethod, BridgeNotification, BridgeReply, BridgeRequest } fro
 // the plugin frames a site), so both sides post to '*' and each checks the window the message came
 // from instead, which is also what keeps a framed site's messages out of the bridge.
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function setInRecord(
+  record: Record<string, unknown>,
+  path: readonly string[],
+  value: unknown,
+): Record<string, unknown> {
+  if (path.length === 0) return record
+  const [head, ...rest] = path
+  if (!head) return record
+  if (rest.length === 0) return { ...record, [head]: value }
+  const current = isRecord(record[head]) ? (record[head] as Record<string, unknown>) : {}
+  return { ...record, [head]: setInRecord(current, rest, value) }
+}
+
 /** A view talking to the app it is framed by. One per iframe, built once by boot. */
 export function createIframeBridge(): Bridge {
   const host = window.parent
   let nextId = 1
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
-  const listeners = new Map<number, (value: unknown) => void>()
+  const listeners = new Map<
+    number,
+    { path: string; listener: (value: unknown) => void; seeded: boolean; lastJson: string }
+  >()
+  const cache = new Map<string, unknown>()
+
+  function writeCache(path: string, value: unknown): void {
+    if (path.endsWith('/state')) {
+      const prefix = `${path}/`
+      for (const key of cache.keys()) {
+        if (key.startsWith(prefix)) cache.delete(key)
+      }
+    }
+    cache.set(path, value)
+    const idx = path.indexOf('/state/')
+    if (idx !== -1) {
+      const base = path.slice(0, idx + '/state'.length)
+      const keys = path
+        .slice(idx + '/state/'.length)
+        .split('/')
+        .filter(Boolean)
+      const parent = cache.get(base)
+      if (keys.length > 0 && isRecord(parent)) {
+        cache.set(base, setInRecord(parent, keys, value))
+      }
+    }
+  }
+
+  function hasCached(path: string): boolean {
+    if (cache.has(path)) return true
+    const idx = path.indexOf('/state/')
+    if (idx === -1) return false
+    const base = path.slice(0, idx + '/state'.length)
+    return isRecord(cache.get(base))
+  }
+
+  function readCached(path: string): unknown {
+    if (cache.has(path)) return cache.get(path)
+    const idx = path.indexOf('/state/')
+    if (idx === -1) return undefined
+    const base = path.slice(0, idx + '/state'.length)
+    const keys = path
+      .slice(idx + '/state/'.length)
+      .split('/')
+      .filter(Boolean)
+    let current: unknown = cache.get(base)
+    for (const key of keys) {
+      if (!isRecord(current)) return undefined
+      current = current[key]
+    }
+    return current
+  }
 
   window.addEventListener('message', (event: MessageEvent) => {
     // Only the page that framed this one speaks the protocol.
@@ -30,7 +99,16 @@ export function createIframeBridge(): Bridge {
     // resize and focus arrive the same way; no hook reads them yet, so they fall through.
     if (message?.method === 'store.changed') {
       const params = message.params as { subId: number; value: unknown }
-      listeners.get(params.subId)?.(params.value)
+      const entry = listeners.get(params.subId)
+      if (!entry) return
+      writeCache(entry.path, params.value)
+      const nextJson = stableStringify(params.value)
+      if (entry.seeded) {
+        entry.seeded = false
+        if (nextJson === entry.lastJson) return
+      }
+      entry.lastJson = nextJson
+      entry.listener(params.value)
     }
   })
 
@@ -44,8 +122,14 @@ export function createIframeBridge(): Bridge {
   }
 
   return {
+    peek(path: string) {
+      return readCached(path)
+    },
+
     async get(path: string) {
-      return call('store.get', { path })
+      const result = await call('store.get', { path })
+      writeCache(path, result)
+      return result
     },
 
     // The id the listener is filed under arrives in a reply, and the first value in the
@@ -53,13 +137,17 @@ export function createIframeBridge(): Bridge {
     subscribe(path: string, listener: (value: unknown) => void) {
       let subId: number | null = null
       let live = true
+      const seeded = hasCached(path)
+      const initial = seeded ? readCached(path) : undefined
+      const lastJson = seeded ? stableStringify(initial) : ''
+      if (seeded) listener(initial)
       void call('store.subscribe', { path }).then((id) => {
         if (!live) {
           void call('store.unsubscribe', { subId: id })
           return
         }
         subId = id as number
-        listeners.set(subId, listener)
+        listeners.set(subId, { path, listener, seeded, lastJson })
       })
       return () => {
         live = false
@@ -71,6 +159,9 @@ export function createIframeBridge(): Bridge {
     },
 
     async setState(panel: PanelRef, path: string[], value: unknown) {
+      if (path.length > 0) {
+        writeCache(`workspaces/${panel.workspaceId}/panels/${panel.id}/state/${path.join('/')}`, value)
+      }
       await call('panel.setState', { panelId: panel.id, path, value })
     },
 

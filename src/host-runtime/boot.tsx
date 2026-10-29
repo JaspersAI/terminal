@@ -44,11 +44,17 @@ export async function boot(): Promise<void> {
   const root = document.getElementById('root')
   if (!root) return
   try {
+    const bridge = createIframeBridge()
     // Relative to this page, so it is the plugin's own bundle: jaspers-plugin://<id>/bundle.js.
-    const loaded = (await import(new URL('bundle.js', location.href).href)) as PluginModule
+    // Prime the panel's state in parallel so useData and usePanelState have it on first render.
+    const [loaded] = await Promise.all([
+      import(new URL('bundle.js', location.href).href) as Promise<PluginModule>,
+      panel.workspaceId && panel.id
+        ? bridge.get(`workspaces/${panel.workspaceId}/panels/${panel.id}/state`).catch(() => undefined)
+        : Promise.resolve(undefined),
+    ])
     const component = loaded.default?.views?.[view]?.component as ComponentType<{ panel: PanelRef }> | undefined
     if (!component) throw new Error(`No view "${view}" in this plugin`)
-    const bridge = createIframeBridge()
     createRoot(root).render(
       <BridgeProvider value={bridge}>
         <PanelProvider value={panel}>
