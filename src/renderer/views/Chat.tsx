@@ -24,37 +24,28 @@ import { send } from '../components/grid/send'
 import { useAppState } from '../lib/state'
 import type { ViewProps } from './index'
 
-// The chat on the grid: the same conversation the composer floating at the bottom of the window
-// holds, in an element that stays where it is put and moves and resizes with the grid's own drag.
-// One window shows one or the other, never both (`Home` reads `chatElement`), so docking is a swap
-// and not a second chat; undocking removes this element and the overlay comes back.
-//
-// It is a built-in view, so it runs in the renderer and reads the tree with `useAppState`, and it
-// asks main for a run the way the composer does, through `useRequest`. The key field and the
-// assistant's questions appear here too, above the command line: with the overlay away this is the
-// only place they could, and a run waiting on one would otherwise wait on nothing.
-//
-// Voice stays with the overlay. Holding the orb or the space bar is what starts a recording, and
-// neither reads as a gesture inside an element whose command line has the keyboard.
-
+/**
+ * Docked Central room on the current tab (`core/chat`, titled "Central").
+ * Shares the same Central store (`draft`, `voice`, `live`, `earlier`) with the top command line and
+ * the floating Voice Orb, so typing or speaking in either replicates context in both, and has its
+ * own small voice button alongside the text input.
+ */
 export function Chat({ panel }: ViewProps): ReactElement {
   const workspaceId = panel.workspaceId
-  // This chat's own element, so undocking removes the one the user is looking at.
   const elementId = useAppState(
     (s) => s.grids[workspaceId]?.[MAIN_WINDOW]?.panels.find((p) => p.id === panel.id)?.elementId ?? null,
   )
+  const hasVoice = useAppState((s) => s.voice !== null)
   const secretRequest = useAppState((s) => askedIn(s.secretRequests))
   const question = useAppState((s) => askedIn(s.questions))
   const skills = useAppState((s) => s.skills)
   const disabledSkills = useAppState((s) => s.disabledSkills)
   const notices = useAppState((s) => s.notices)
   const request = useRequest()
-  const { busy, working, shown, earlier, ask, stop, clear } = request
-  const [draft, setDraft] = useState('')
+  const { draft, setDraft, phase, busy, working, shown, earlier, ask, toggleVoice, stop, clear } = request
   const attachments = useAttachments()
   const drop = useFileDrop(attachments.attach)
   const [menuIndex, setMenuIndex] = useState(0)
-  // The draft the skills menu was closed on with Escape; typing opens it again.
   const [menuClosedOn, setMenuClosedOn] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const matches = useMemo(
@@ -63,24 +54,18 @@ export function Chat({ panel }: ViewProps): ReactElement {
   )
   const menuOpen = matches.length > 0 && menuClosedOn !== draft
   const active = Math.min(menuIndex, Math.max(0, matches.length - 1))
-  // A task's reply on this workspace is in the thread, so it arrives as history rather than as a line.
   const notice = notices.find((one) => one.chat !== workspaceId) ?? null
   const told = notices.find((one) => one.chat === workspaceId)?.id ?? null
-  // The welcome after setup, while it is being said here: each message lands as history.
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
 
-  // The conversation so far. The chat is always up, so it reads it whenever nothing is in flight; the
-  // rest of it is a page further up each time the reader nears the top.
   const more = useEarlier({ request, workspaceId, when: true, said: told, welcome })
-  // Nothing here fades a notice, so its wait runs and main drops it, as it does over the composer.
   useNoticeTimer(notice?.id ?? null)
   usePublish(panel, { exchanges: earlier.length, busy: working })
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    if (busy || attachments.reading > 0) return
-    const text = withAttachments(draft, attachments.files)
-    if (!text) return
+    const text = withAttachments(draft.trim(), attachments.files)
+    if (!text || busy || attachments.reading > 0) return
     setDraft('')
     attachments.clear()
     void ask(text)
@@ -92,7 +77,6 @@ export function Chat({ panel }: ViewProps): ReactElement {
     input.current?.focus()
   }
 
-  /** The skills menu's keys, heard on the field before the form or the window hear them. */
   function menuKey(event: ReactKeyboardEvent<HTMLInputElement>): void {
     if (!menuOpen) return
     const skill = matches[active]!
@@ -101,7 +85,6 @@ export function Chat({ panel }: ViewProps): ReactElement {
       const step = event.key === 'ArrowDown' ? 1 : matches.length - 1
       setMenuIndex((active + step) % matches.length)
     } else if (event.key === 'Tab' || (event.key === 'Enter' && draft !== `/${skill.id}`)) {
-      // Enter on a finished /name sends it; anything short of that picks.
       event.preventDefault()
       pickSkill(skill)
     } else if (event.key === 'Escape') {
@@ -111,7 +94,6 @@ export function Chat({ panel }: ViewProps): ReactElement {
     }
   }
 
-  // The key field takes the keyboard while it is up; the command line waits its turn.
   useEffect(() => {
     if (secretRequest === null && question === null) input.current?.focus()
   }, [secretRequest, question])
@@ -122,7 +104,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
       onDragOver={drop.onDragOver}
       onDragLeave={drop.onDragLeave}
       onDrop={drop.onDrop}
-      className={`flex h-full flex-col ${drop.dropping ? 'outline-2 -outline-offset-2 outline-foreground outline-dashed' : ''}`}
+      className="flex h-full flex-col"
     >
       <Transcript earlier={earlier} onEarlier={more} live={shown} onStop={stop} className="min-h-0 flex-1 px-3 py-3" />
       {notice && (
@@ -138,9 +120,9 @@ export function Chat({ panel }: ViewProps): ReactElement {
       )}
       <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
         {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
-        <AttachmentChips attachments={attachments} className="mb-1.5" />
-        <div className="flex items-center border border-border bg-background pr-1 focus-within:border-foreground">
-          <AttachButton disabled={busy} onFiles={attachments.attach} />
+        {attachments.hasAny && <AttachmentChips attachments={attachments} className="mb-1.5" />}
+        <div className="flex items-center gap-1.5">
+          <AttachButton onFiles={attachments.attach} disabled={busy} />
           <input
             ref={input}
             name="prompt"
@@ -148,7 +130,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
             spellCheck={false}
             disabled={busy}
             value={draft}
-            placeholder="Ask anything, or / for a skill"
+            placeholder="command the terminal from here"
             role="combobox"
             aria-expanded={menuOpen}
             aria-controls={menuOpen ? 'slash-menu' : undefined}
@@ -160,20 +142,32 @@ export function Chat({ panel }: ViewProps): ReactElement {
               setDraft(event.target.value)
               setMenuIndex(0)
             }}
-            className="min-w-0 flex-1 bg-transparent py-1.5 pr-2 pl-1 text-sm outline-none disabled:opacity-50"
+            className="min-w-0 flex-1 border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-foreground disabled:opacity-50"
           />
-          {attachments.files.length > 0 && (
-            <button
-              type="submit"
-              aria-label="Send"
-              disabled={busy || attachments.reading > 0}
-              className="flex h-6 w-6 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-30"
-            >
-              <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
-                <path d="M5 9V1.5M1.5 5 5 1.5 8.5 5" />
-              </svg>
-            </button>
-          )}
+          <button
+            type="button"
+            id="docked-chat-voice"
+            aria-label={phase === 'recording' ? 'Stop voice recording' : 'Voice input'}
+            title={
+              !hasVoice
+                ? 'Add a voice provider in Settings to talk'
+                : phase === 'recording'
+                  ? 'Listening — click to send'
+                  : 'Voice input'
+            }
+            disabled={!hasVoice || phase === 'transcribing' || phase === 'opening'}
+            onClick={() => toggleVoice()}
+            className={`flex h-7 w-7 shrink-0 items-center justify-center border border-border transition-colors disabled:opacity-40 ${
+              phase === 'recording'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+            }`}
+          >
+            <svg viewBox="0 0 14 14" fill="none" aria-hidden className="h-3.5 w-3.5 stroke-current stroke-[1.4]">
+              <rect x="5" y="1.5" width="4" height="6.5" rx="2" />
+              <path d="M3 6.5a4 4 0 0 0 8 0M7 10.5v2M5 12.5h4" />
+            </svg>
+          </button>
         </div>
       </form>
       <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">

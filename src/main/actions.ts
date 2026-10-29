@@ -73,6 +73,7 @@ import {
   type Workspace,
   type SecretRequest,
 } from '../shared/state'
+import { isTabColor, reorderTabs } from '../shared/tabs/tabs'
 import type { TaskCall, TaskInput } from '../shared/tasks/tasks'
 import { connectionsOf } from './plugins/connections'
 import { secretProgress, secretRefs, type SecretProgress } from '../shared/plugins/connections'
@@ -132,6 +133,9 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'tab.rename': (raw) => renameWorkspace(asString(raw.id), asString(raw.name)),
   'tab.select': (raw) => selectWorkspace(asString(raw.id)),
   'tab.delete': (raw) => deleteWorkspace(asString(raw.id)),
+  'tab.color': (raw) =>
+    colorWorkspace(asString(raw.id), raw.color === null || raw.color === undefined ? null : asString(raw.color)),
+  'tab.reorder': (raw) => reorderWorkspaces(asString(raw.id), asFiniteNumber(raw.toIndex)),
   'tab.detach': (raw) => detachTab(asString(raw.id)),
   // An element is addressed by id alone: ids are unique across a workspace's windows, and main finds the grid.
   'element.focus': (raw) => focus(asString(raw.workspaceId), asString(raw.elementId)),
@@ -724,6 +728,30 @@ export function renameWorkspace(id: string, rawName: string): void {
   update((state) => {
     if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown tab.')
     return { ...state, workspaces: state.workspaces.map((w) => (w.id === id ? { ...w, name } : w)) }
+  })
+}
+
+export function colorWorkspace(id: string, rawColor: string | null): void {
+  const color = rawColor === null ? null : rawColor.trim().toLowerCase()
+  if (color !== null && !isTabColor(color)) {
+    throw new Error('Choose a color from the 32-color palette, or null for default grayscale.')
+  }
+  update((state) => {
+    if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown tab.')
+    return {
+      ...state,
+      workspaces: state.workspaces.map((w) =>
+        w.id === id ? (color ? { ...w, color } : { id: w.id, name: w.name }) : w,
+      ),
+    }
+  })
+}
+
+export function reorderWorkspaces(id: string, toIndex: number): void {
+  update((state) => {
+    if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown tab.')
+    const workspaces = reorderTabs(state.workspaces, id, toIndex)
+    return workspaces === state.workspaces ? state : { ...state, workspaces }
   })
 }
 

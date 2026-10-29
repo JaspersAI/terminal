@@ -29,6 +29,8 @@ export interface ProviderSetting {
 export interface Workspace {
   id: string
   name: string
+  /** Optional hex color from the 32-color palette; null/undefined uses default grayscale. */
+  color?: string | null
 }
 
 /** Names are trimmed and capped. Main rejects anything else. */
@@ -342,6 +344,8 @@ export type Action =
   | { type: 'tab.rename'; id: string; name: string }
   | { type: 'tab.select'; id: string }
   | { type: 'tab.delete'; id: string }
+  | { type: 'tab.color'; id: string; color: string | null }
+  | { type: 'tab.reorder'; id: string; toIndex: number }
   /** Detaches a tab into a second Terminal window titled "Terminal (copy)" starting with that tab. */
   | { type: 'tab.detach'; id: string }
   | { type: 'element.focus'; workspaceId: string; elementId: string }

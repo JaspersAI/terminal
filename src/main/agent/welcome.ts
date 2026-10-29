@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { sleep } from '../../shared/abort'
+import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { EXAMPLE_ASK, EXAMPLE_FALLBACK, EXPLANATION, GREETING, WELCOME_NOTE } from '../../shared/agent/welcome'
 import { getProviderConfig } from '../secrets'
 import { getState, update } from '../state'
@@ -36,7 +37,7 @@ function startWelcome(): void {
   if (welcomed) return
   const config = getProviderConfig('llm')
   const workspaceId = state.currentWorkspaceId
-  if (!config || threadFor(workspaceId, config).length > 0) return
+  if (!config || threadFor(CENTRAL_CHAT, config).length > 0) return
   welcomed = true
   void welcome(workspaceId).catch((err: unknown) => {
     console.error('[welcome]', err instanceof Error ? err.message : String(err))

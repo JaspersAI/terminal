@@ -1,7 +1,7 @@
 import { handedBy } from '../../shared/agent/typed'
 import { asksForLoop, loopName, named, NO, notStarted, START, startQuestion, type Loop } from '../../shared/loops/loops'
 import { checkModel } from '../../shared/tasks/tasks'
-import { askUserFor, asWindow, closeLoop, createLoop, deleteLoop, reopenLoop, roomForLoop } from '../actions'
+import { askUserFor, asWindow, closeLoop, createLoop, deleteLoop, detachTab, reopenLoop, roomForLoop } from '../actions'
 import { gridSizeOf } from '../grid/grid'
 import { findRoomTab } from '../loops/loops'
 import { getState, toPublic } from '../state'
@@ -18,7 +18,7 @@ import { askedBy } from './utils/runs'
 // permanently deleted.
 
 export function routerTools(context: ToolContext): Tool[] {
-  return [createRoomTool(context), updateRoom, closeRoomTool, reopenRoomTool, deleteRoomTool]
+  return [createRoomTool(context), updateRoom, closeRoomTool, reopenRoomTool, deleteRoomTool, detachTabTool]
 }
 
 const ROOM = { type: 'string', description: 'Its name, like room_3.' } as const
@@ -115,6 +115,30 @@ const deleteRoomTool: Tool = {
     }
     deleteLoop(ownerTabId, loop.id)
     return `Deleted ${loopName(loop.id)}.`
+  },
+}
+
+const detachTabTool: Tool = {
+  name: 'detach_tab',
+  description:
+    'Detaches a tab from the main terminal into a second window titled "Terminal (copy)" starting on that tab. Pass the tab name or id, or leave it out to detach the active tab.',
+  parameters: {
+    type: 'object',
+    properties: {
+      tab: { type: 'string', description: 'The tab name or id to detach. Defaults to the active tab.' },
+    },
+  },
+  async run(input, { workspaceId }) {
+    const state = getState()
+    const raw = optional(input.tab, (v) => (typeof v === 'string' ? v.trim() : ''))
+    const target = raw
+      ? state.workspaces.find((w) => w.id === raw || w.name.toLowerCase() === raw.toLowerCase())
+      : state.workspaces.find((w) => w.id === workspaceId)
+    if (!target) {
+      throw new Error(`No tab named ${JSON.stringify(raw)}. Tabs: ${state.workspaces.map((w) => w.name).join(', ')}.`)
+    }
+    detachTab(target.id)
+    return `Detached ${target.name} into Terminal (copy).`
   },
 }
 
