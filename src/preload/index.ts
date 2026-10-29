@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { AgentEvent, AgentOrigin } from '../shared/agent/agent'
 import type { AttachedFile } from '../shared/agent/attachments'
+import type { TerminalSession } from '../shared/agent/history'
 import type { AppOpened } from '../shared/plugins/apps'
 import type { BrowserAction, BrowserBounds, BrowserSnapshot } from '../shared/grid/browser'
 import type { ConnectionForm } from '../shared/plugins/connection-plugin'
@@ -83,6 +84,11 @@ const api = {
       ipcRenderer.invoke('agent:history', limit, before ?? null, loop ?? null),
     /** Clears Central's single conversation flow across all tabs: thread and log. */
     clear: (): Promise<void> => ipcRenderer.invoke('agent:clear'),
+    /** Returns all saved Terminal Sessions from start to finish (newest first). */
+    sessions: (): Promise<TerminalSession[]> => ipcRenderer.invoke('agent:sessions'),
+    /** Records a direct assistant exchange (such as an attachment error response) in the conversation log. */
+    logExchange: (question: string, answer: string, loop?: string): Promise<void> =>
+      ipcRenderer.invoke('agent:log-exchange', question, answer, loop ?? null),
     /** The welcome after setup, once the workspace is on screen: main says its messages into the chat on its own. */
     welcome: (): Promise<void> => ipcRenderer.invoke('agent:welcome'),
     /** What a run is doing, as it does it. For showing only: the reply comes back from `run`. */

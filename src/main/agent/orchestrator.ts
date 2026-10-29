@@ -26,7 +26,18 @@ import { inBackground } from './utils/lanes'
 import { orchestratorPrompt, stateNow, taskPreface } from './utils/prompt'
 import { begin, ended, running, stop, stopAsked, Stopped } from './utils/runs'
 import { configured } from './utils/settings'
-import { centralGoesOn, citedBy, clearChat, exchanges, file, keep, threadFor, threadReads } from './utils/thread'
+import {
+  centralGoesOn,
+  citedBy,
+  clearChat,
+  exchanges,
+  file,
+  fileDirectExchange,
+  keep,
+  terminalSessions,
+  threadFor,
+  threadReads,
+} from './utils/thread'
 
 // The orchestrator's requests: who asks the agent loop (agent.ts), on which thread, and when. The user's
 // request continues its workspace's thread, one per workspace, so follow-up questions work and
@@ -285,6 +296,19 @@ export function registerAgentIpc(): void {
   )
   ipcMain.handle('agent:clear', () => {
     clearChat(CENTRAL_CHAT)
+  })
+  ipcMain.handle('agent:sessions', () => terminalSessions())
+  ipcMain.handle('agent:log-exchange', (_event, question: unknown, answer: unknown, loop: unknown) => {
+    if (typeof question !== 'string' || typeof answer !== 'string') return
+    if (loop != null && typeof loop === 'string' && LOOP_ID.test(loop)) {
+      const state = getState()
+      const ownerTab =
+        Object.entries(state.loops).find(([, one]) => one.list.some((l) => l.id === loop))?.[0] ??
+        state.currentWorkspaceId
+      fileDirectExchange(`${ownerTab}/${loop}`, question, answer)
+      return
+    }
+    fileDirectExchange(CENTRAL_CHAT, question, answer)
   })
   // A window that opened partway through a run, or reloaded, asks what is in flight.
   ipcMain.handle('agent:running', () => running())

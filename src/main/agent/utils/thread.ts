@@ -11,7 +11,15 @@ import {
 } from '../../../shared/agent/aside'
 import { cited, keptOn, type Citation } from '../../../shared/agent/citations'
 import { portableFork, putBack, standing, type Fork } from '../../../shared/agent/fork'
-import { compressSession, isNewSession, RECENT, recent, withoutThinking } from '../../../shared/agent/history'
+import {
+  CENTRAL_CHAT,
+  compressSession,
+  isNewSession,
+  RECENT,
+  recent,
+  withoutThinking,
+  type TerminalSession,
+} from '../../../shared/agent/history'
 import { keepTail, settle } from '../../../shared/agent/thread-store'
 import { CLOSED_NOTE, lastExchange, maskExchange, transcript, type Exchange } from '../../../shared/agent/transcript'
 import { attachedFileNames, stripAttachedFiles } from '../../../shared/agent/attachments'
@@ -22,7 +30,14 @@ import { stripSkillContent } from '../../../shared/skills/skills'
 import { citationsFor } from '../../data/citations'
 import { fileExchange, forgetChat, readExchanges } from '../../data/store'
 import { getProviderConfig } from '../../secrets'
-import { dropThread, forgetThread, threadFile } from '../thread-file'
+import {
+  dropThread,
+  forgetThread,
+  getTerminalSessions,
+  recordSessionExchange,
+  startTerminalSession,
+  threadFile,
+} from '../thread-file'
 import { createThreads, threadKey, type ThreadModel } from '../threads'
 import type { Tool, ToolContext } from '../tools/types'
 import { knownSecrets } from './settings'
@@ -144,6 +159,7 @@ let lastCentralActivityAt = Date.now()
  */
 export function centralGoesOn(history: Turn[], now = Date.now()): void {
   if (isNewSession(lastCentralActivityAt, now, 'activity')) {
+    startTerminalSession(now)
     const compressed = compressSession(history)
     if (compressed !== history) {
       console.log('[agent] central session boundary crossed: compressed prior sitting into summary')
@@ -157,8 +173,8 @@ export function centralGoesOn(history: Turn[], now = Date.now()): void {
 
 /**
  * Clears a reusable chat (such as Central's single flow across tabs): resets the model thread in
- * memory and on disk, and clears its exchange log in SQLite, while allowing future messages on the
- * same chat key.
+ * memory and on disk, and clears its active exchange log in SQLite, while archiving the finished
+ * session in Terminal Sessions and starting a fresh session.
  */
 export function clearChat(chat: string): void {
   const config = getProviderConfig('llm')
@@ -169,6 +185,9 @@ export function clearChat(chat: string): void {
     dropThread(chat)
   }
   forgetChat(chat)
+  if (chat === CENTRAL_CHAT) {
+    startTerminalSession()
+  }
   lastCentralActivityAt = Date.now()
 }
 
@@ -181,7 +200,13 @@ export function file(chat: string, history: Turn[], steps: string[] = []): void 
   if (forgotten.has(chat)) return
   const secrets = knownSecrets()
   const exchange = lastExchange(history, secrets)
-  if (exchange) void fileExchange(chat, Date.now(), maskExchange({ ...exchange, steps }, secrets))
+  if (!exchange) return
+  const now = Date.now()
+  const masked = maskExchange({ ...exchange, steps }, secrets)
+  void fileExchange(chat, now, masked)
+  if (chat === CENTRAL_CHAT) {
+    recordSessionExchange(masked, now)
+  }
 }
 
 /**
@@ -190,7 +215,32 @@ export function file(chat: string, history: Turn[], steps: string[] = []): void 
  */
 export function fileFailed(chat: string, question: string, steps: string[], error: string): void {
   if (forgotten.has(chat)) return
-  void fileExchange(chat, Date.now(), maskExchange({ question, answer: '', steps, error }, knownSecrets()))
+  const now = Date.now()
+  const masked = maskExchange({ question, answer: '', steps, error }, knownSecrets())
+  void fileExchange(chat, now, masked)
+  if (chat === CENTRAL_CHAT) {
+    recordSessionExchange(masked, now)
+  }
+}
+
+/**
+ * Files a direct assistant/system response (such as an attachment error surfaced as a regular LLM
+ * response) into the chat's log and, for Central, into the active Terminal Session.
+ */
+export function fileDirectExchange(chat: string, question: string, answer: string): void {
+  if (forgotten.has(chat)) return
+  const now = Date.now()
+  const masked = maskExchange({ question, answer, steps: [] }, knownSecrets())
+  void fileExchange(chat, now, masked)
+  if (chat === CENTRAL_CHAT) {
+    recordSessionExchange(masked, now)
+  }
+}
+
+/** Returns all saved Terminal Sessions from start to finish (newest first). */
+export async function terminalSessions(): Promise<TerminalSession[]> {
+  const activeExchanges = await exchanges(CENTRAL_CHAT, 100)
+  return getTerminalSessions(activeExchanges)
 }
 
 /**

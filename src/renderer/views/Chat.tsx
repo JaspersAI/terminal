@@ -42,8 +42,11 @@ export function Chat({ panel }: ViewProps): ReactElement {
   const disabledSkills = useAppState((s) => s.disabledSkills)
   const notices = useAppState((s) => s.notices)
   const request = useRequest()
-  const { draft, setDraft, phase, busy, working, shown, earlier, ask, press, release, stop, clear } = request
-  const attachments = useAttachments()
+  const { draft, setDraft, phase, busy, working, shown, earlier, ask, reportResponse, press, release, stop, clear } =
+    request
+  const attachments = useAttachments((msg, fileName) => {
+    reportResponse(`[Attached: ${fileName}]`, msg)
+  })
   const drop = useFileDrop(attachments.attach)
   const [menuIndex, setMenuIndex] = useState(0)
   const [menuClosedOn, setMenuClosedOn] = useState<string | null>(null)
@@ -121,8 +124,8 @@ export function Chat({ panel }: ViewProps): ReactElement {
       <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
         {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
         {attachments.hasAny && <AttachmentChips attachments={attachments} className="mb-1.5" />}
-        <div className="flex items-center gap-1.5">
-          <AttachButton onFiles={attachments.attach} disabled={busy} />
+        <div className="flex min-h-7 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground">
+          <AttachButton compact onFiles={attachments.attach} disabled={busy} />
           <input
             ref={input}
             name="prompt"
@@ -142,7 +145,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
               setDraft(event.target.value)
               setMenuIndex(0)
             }}
-            className="min-w-0 flex-1 border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-foreground disabled:opacity-50"
+            className="min-w-0 flex-1 bg-transparent px-1.5 py-1 text-sm outline-none disabled:opacity-50"
           />
           <button
             type="button"
@@ -167,10 +170,10 @@ export function Chat({ panel }: ViewProps): ReactElement {
             }}
             onPointerUp={release}
             onPointerCancel={release}
-            className={`flex h-7 w-7 shrink-0 touch-none select-none items-center justify-center border border-border transition-colors disabled:opacity-40 ${
+            className={`flex h-5 w-5 shrink-0 touch-none select-none items-center justify-center transition-colors disabled:opacity-40 ${
               phase === 'recording'
                 ? 'bg-primary text-primary-foreground'
-                : 'bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <svg viewBox="0 0 14 14" fill="none" aria-hidden className="h-3.5 w-3.5 stroke-current stroke-[1.4]">

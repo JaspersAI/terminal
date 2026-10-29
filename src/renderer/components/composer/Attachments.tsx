@@ -21,11 +21,17 @@ export function hasDroppedFiles(
   return Array.from(dataTransfer?.types ?? []).includes('Files')
 }
 
-/** Owns the files attached to a conversation input before they are sent. */
-export function useAttachments(): AttachmentsControl {
+/**
+ * Owns the files attached to a conversation input before they are sent.
+ * Any parse or size error is forwarded to `onError` so it appears as a regular LLM response in the
+ * conversation rather than sticking on top of the command line.
+ */
+export function useAttachments(onError?: (message: string, fileName: string) => void): AttachmentsControl {
   const [files, setFiles] = useState<AttachedFile[]>([])
   const [reading, setReading] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
 
   const attach = useCallback((incoming: Iterable<File> | ArrayLike<File>): void => {
     const list = Array.from(incoming)
@@ -33,7 +39,9 @@ export function useAttachments(): AttachmentsControl {
     setError(null)
     for (const file of list) {
       if (file.size > UPLOAD_MAX) {
-        setError(`${file.name} is larger than 20 MB.`)
+        const msg = `${file.name} is larger than 20 MB.`
+        setError(msg)
+        onErrorRef.current?.(msg, file.name)
         continue
       }
       setReading((n) => n + 1)
@@ -44,7 +52,9 @@ export function useAttachments(): AttachmentsControl {
           setFiles((current) => [...current.filter((one) => one.name !== parsed.name), parsed])
         })
         .catch((err: unknown) => {
-          setError(errorMessage(err))
+          const msg = errorMessage(err)
+          setError(msg)
+          onErrorRef.current?.(msg, file.name)
         })
         .finally(() => {
           setReading((n) => Math.max(0, n - 1))
@@ -66,7 +76,7 @@ export function useAttachments(): AttachmentsControl {
     files,
     reading,
     error,
-    hasAny: files.length > 0 || reading > 0 || error !== null,
+    hasAny: files.length > 0 || reading > 0,
     attach,
     remove,
     clear,
@@ -104,7 +114,7 @@ export function useFileDrop(onFiles: (files: File[]) => void): {
   }
 }
 
-/** A paperclip button and hidden file input for picking one or more files to attach. */
+/** A "+" button placed inside the left of a command line and hidden file input for picking files to attach. */
 export function AttachButton({
   disabled = false,
   compact = false,
@@ -119,21 +129,17 @@ export function AttachButton({
     <>
       <button
         type="button"
+        data-attach-button
         aria-label="Attach file"
         title="Attach file"
         disabled={disabled}
         onClick={() => input.current?.click()}
-        className={`flex shrink-0 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-40 ${
-          compact ? 'h-6 w-6' : 'h-7 w-7'
+        className={`flex shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 ${
+          compact ? 'h-5 w-5' : 'h-6 w-6'
         }`}
       >
-        <svg viewBox="0 0 16 16" fill="none" aria-hidden className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'}>
-          <path
-            d="M13.2 7.3 7.6 12.9a3.2 3.2 0 0 1-4.5-4.5l6.1-6.1a2.1 2.1 0 0 1 3 3L6.4 11.1a1 1 0 0 1-1.4-1.4l5.3-5.3"
-            stroke="currentColor"
-            strokeWidth="1.3"
-            strokeLinecap="square"
-          />
+        <svg viewBox="0 0 12 12" fill="none" aria-hidden className="h-3 w-3 stroke-current stroke-[1.5]">
+          <path d="M6 2v8M2 6h8" />
         </svg>
       </button>
       <input
@@ -151,7 +157,7 @@ export function AttachButton({
   )
 }
 
-/** Shows attached file chips with a remove button for each, plus reading or parse error status. */
+/** Shows attached file chips with a remove button for each. Errors are surfaced as regular LLM responses in the conversation. */
 export function AttachmentChips({
   attachments,
   className = '',
@@ -159,33 +165,30 @@ export function AttachmentChips({
   attachments: AttachmentsControl
   className?: string
 }): ReactElement | null {
-  const { files, reading, error, remove } = attachments
-  if (files.length === 0 && reading === 0 && error === null) return null
+  const { files, reading, remove } = attachments
+  if (files.length === 0 && reading === 0) return null
   return (
     <div data-attachments className={`flex flex-col gap-1 ${className}`}>
-      {(files.length > 0 || reading > 0) && (
-        <div className="flex flex-wrap items-center gap-1">
-          {files.map((file) => (
-            <span
-              key={file.name}
-              data-attachment={file.name}
-              className="inline-flex max-w-full items-center gap-1 border border-border bg-muted px-1.5 py-0.5 text-xs"
+      <div className="flex flex-wrap items-center gap-1">
+        {files.map((file) => (
+          <span
+            key={file.name}
+            data-attachment={file.name}
+            className="inline-flex max-w-full items-center gap-1 border border-border bg-muted px-1.5 py-0.5 text-xs"
+          >
+            <span className="truncate">{file.name}</span>
+            <button
+              type="button"
+              aria-label={`Remove ${file.name}`}
+              onClick={() => remove(file.name)}
+              className="text-muted-foreground hover:text-foreground"
             >
-              <span className="truncate">{file.name}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${file.name}`}
-                onClick={() => remove(file.name)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-          {reading > 0 && <span className="text-xs text-muted-foreground">Reading file…</span>}
-        </div>
-      )}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+              ×
+            </button>
+          </span>
+        ))}
+        {reading > 0 && <span className="text-xs text-muted-foreground">Reading file…</span>}
+      </div>
     </div>
   )
 }

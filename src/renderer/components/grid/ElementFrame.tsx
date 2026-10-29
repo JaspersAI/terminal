@@ -29,7 +29,7 @@ import { useAppState } from '../../lib/state'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
 import { loopName, showsChat } from '../../../shared/loops/loops'
-import { barLabel, boxActivity, canZoomLoop, tileBoxExpanded, tileBoxSeen } from './box'
+import { barLabel, boxActivity, canZoomLoop, tileBoxSeen } from './box'
 import { LoopBox, updateTileBox, useTileBox } from './LoopBox'
 import { LoopMenu } from './LoopMenu'
 import { Held } from './Held'
@@ -182,7 +182,6 @@ export function ElementFrame({
   // What the work is doing. A tile whose box asks for what a view waits on is asking, whatever its runs are doing.
   const doing = useLoopStatus(workspaceId, element.loop)
   const status = need ? 'asking' : doing
-  // What the bar says of the loop, which opens and folds its box.
   const said = loop ? barLabel(status, activity, chat || earlier.length > 0) : null
   // The box opens itself as the bar says a run is at work in a tile with no view yet, and folds as the
   // first view lands: between those it is the user's. The tile as the box last saw it, born empty and idle.
@@ -343,45 +342,6 @@ export function ElementFrame({
         <span className="sr-only" aria-live="polite">
           {said && said.kind !== 'conversation' ? said.text.split(' · ')[0] : ''}
         </span>
-        {said && (
-          <button
-            type="button"
-            id={`loop-status-${element.id}`}
-            data-loop-status={said.kind}
-            data-loop-mark={status === 'idle' ? undefined : status}
-            aria-expanded={expanded}
-            aria-controls={`loop-box-${element.id}`}
-            aria-label={`${said.text}. ${expanded ? 'Fold' : 'Open'} the conversation.`}
-            title={said.text}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
-            // Above the corner that resizes, as the bar's buttons are.
-            className={`relative z-20 flex h-6 max-w-[45%] min-w-0 shrink-0 cursor-default items-center gap-1.5 px-1.5 text-xs hover:text-foreground ${
-              said.kind === 'failed' ? 'text-destructive' : 'text-muted-foreground'
-            }`}
-          >
-            {said.kind === 'working' && (
-              <span
-                aria-hidden
-                className="h-1.5 w-1.5 shrink-0 animate-dots bg-foreground motion-reduce:animate-none"
-              />
-            )}
-            {said.kind === 'asking' && (
-              <span aria-hidden className="shrink-0 text-foreground">
-                ?
-              </span>
-            )}
-            <span className="truncate">{said.text}</span>
-            <svg
-              viewBox="0 0 10 10"
-              fill="none"
-              aria-hidden
-              className={`h-2 w-2 shrink-0 stroke-current stroke-[1.5] ${expanded ? 'rotate-90' : ''}`}
-            >
-              <path d="M3.5 1.5 7 5 3.5 8.5" />
-            </svg>
-          </button>
-        )}
         {loop && zoom !== ZOOM_DEFAULT && (
           <button
             ref={zoomTriggerRef}

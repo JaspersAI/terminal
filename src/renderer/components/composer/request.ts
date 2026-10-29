@@ -22,7 +22,7 @@ import { Recorder } from './recorder'
  * How much of the chat is read at a time: its newest exchanges when it comes up, and as many again
  * ahead of them each time the reader nears the top of what is there.
  */
-export const PAGE = 30
+export const PAGE = 100
 
 /** The microphone's part of a request: nothing typed or said can be sent while it has the floor. */
 type Voice = Exclude<Phase, 'thinking'>
@@ -129,6 +129,21 @@ export async function askCentral(text: string): Promise<void> {
 export function clearCentralStore(): void {
   emitStore({ earlier: [], live: [], error: null })
   void window.app.agent.clear().catch(() => undefined)
+}
+
+/**
+ * Surfaces an error (such as an attachment error) as a regular LLM response in Central's
+ * conversation flow rather than sticking on top of the command line.
+ */
+export function reportCentralResponse(question: string, answer: string): void {
+  const name = crypto.randomUUID()
+  const next = answered(sent(store.live, name, CENTRAL_CHAT, question), name, answer)
+  emitStore({
+    error: null,
+    sequence: store.sequence + 1,
+    live: next,
+  })
+  void window.app?.agent?.logExchange?.(question, answer).catch(() => undefined)
 }
 
 async function attemptVoice(action: () => Promise<void>): Promise<void> {
@@ -244,6 +259,7 @@ export function useRequest() {
     earlier,
     sequence,
     ask: askCentral,
+    reportResponse: reportCentralResponse,
     press: pressVoice,
     release: releaseVoice,
     cancelVoice,

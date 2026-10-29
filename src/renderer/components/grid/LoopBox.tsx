@@ -141,10 +141,19 @@ export function LoopBox({
   onSkip,
   zoom = 1,
 }: Props): ReactElement {
-  const attachments = useAttachments()
-  const drop = useFileDrop(attachments.attach)
   // This tile, as the place a run shows and asks: its workspace, and its element there.
   const place = useMemo(() => ({ workspaceId, on: elementId }), [workspaceId, elementId])
+  const attachments = useAttachments((msg, fileName) => {
+    const ask = crypto.randomUUID()
+    const questionText = `[Attached: ${fileName}]`
+    updateTileBox(place, (b) => {
+      const sentBox = tileBoxSent(b, place, ask, questionText)
+      const settledBox = tileBoxSettled(sentBox, ask, msg, null)
+      return tileBoxExpanded(settledBox, true)
+    })
+    void window.app?.agent?.logExchange?.(questionText, msg, loop.id).catch(() => undefined)
+  })
+  const drop = useFileDrop(attachments.attach)
   const tileBox = useTileBox(place)
   const { expanded: open, draft, live, earlier, more } = tileBox
   // The rows as they stand, for what happens between draws: stopping a request, reading the log.
@@ -158,8 +167,6 @@ export function LoopBox({
 
   const working = live.some((one) => one.working)
   const asked = question?.id ?? (secret ? `${secret.plugin}/${secret.key}` : (need?.name ?? null))
-  // The square at the line's end stops while a run works and nothing is typed, and sends otherwise.
-  const stopping = working && draft === '' && attachments.files.length === 0
   const shouldRead = shouldReadTileBox(tileBox)
 
   // What was said before: read on mount with no finished row up, and when opened with unread exchanges.
@@ -259,73 +266,93 @@ export function LoopBox({
       onDrop={drop.onDrop}
       // The command line is first in the box, at the top of the tile. Open in a tile with no view yet,
       // what it shows fills the tile under it.
-      className={`m-1 flex flex-col border border-border bg-background outline-none select-text focus-within:border-foreground ${
+      className={`m-1 flex flex-col bg-background outline-none select-text ${
         fills && open ? 'min-h-0 flex-1' : 'max-h-1/2 shrink-0'
       } ${drop.dropping ? 'outline-2 -outline-offset-2 outline-foreground outline-dashed' : ''}`}
     >
       {secret !== null ? (
-        <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} />
+        <div className="border border-border">
+          <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} />
+        </div>
       ) : question !== null ? (
-        <QuestionField key={question.id} question={question} shown={!covered} />
+        <div className="border border-border">
+          <QuestionField key={question.id} question={question} shown={!covered} />
+        </div>
       ) : need !== null ? (
-        <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} />
+        <div className="border border-border">
+          <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} />
+        </div>
       ) : (
-        <form id={`loop-form-${elementId}`} onSubmit={submit} className="flex shrink-0 flex-col p-0.5">
+        <form id={`loop-form-${elementId}`} onSubmit={submit} className="flex shrink-0 flex-col gap-1">
           <div className="flex items-center gap-1">
-            <AttachButton compact onFiles={attachments.attach} />
-            <input
-              id={`loop-input-${elementId}`}
-              name="loop-prompt"
-              aria-label={`Message ${label}`}
-              autoComplete="off"
-              value={draft}
-              placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
-              onChange={(event) =>
-                updateTileBox(place, (b) => (b.draft === event.target.value ? b : { ...b, draft: event.target.value }))
-              }
-              onPaste={(event) => pasteLinks(event, attachments.attach)}
-              className="min-w-0 flex-1 bg-transparent px-1 py-1 text-xs outline-none"
-            />
-            <button
-              type={stopping ? 'button' : 'submit'}
-              aria-label={stopping ? 'Stop' : 'Send'}
-              data-loop-stop={stopping ? '' : undefined}
-              disabled={
-                !stopping && ((draft.trim() === '' && attachments.files.length === 0) || attachments.reading > 0)
-              }
-              onClick={
-                stopping
-                  ? (event) => {
-                      event.preventDefault()
-                      stopNewest()
-                    }
-                  : undefined
-              }
-              style={zoom !== 1 ? { width: `${1.5 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
-              className="flex h-6 w-6 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-30"
-            >
-              {stopping ? (
-                <span aria-hidden className="h-2 w-2 bg-current" />
-              ) : (
-                <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
-                  <path d="M5 9V1.5M1.5 5 5 1.5 8.5 5" />
-                </svg>
+            <div className="flex min-h-6 min-w-0 flex-1 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground">
+              <AttachButton compact onFiles={attachments.attach} />
+              <input
+                id={`loop-input-${elementId}`}
+                name="loop-prompt"
+                aria-label={`Message ${label}`}
+                autoComplete="off"
+                value={draft}
+                placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
+                onChange={(event) =>
+                  updateTileBox(place, (b) =>
+                    b.draft === event.target.value ? b : { ...b, draft: event.target.value },
+                  )
+                }
+                onPaste={(event) => pasteLinks(event, attachments.attach)}
+                className="min-w-0 flex-1 bg-transparent px-1 py-1 text-xs outline-none"
+              />
+              {working && (
+                <button
+                  type="button"
+                  aria-label="Stop"
+                  data-loop-stop=""
+                  onClick={(event) => {
+                    event.preventDefault()
+                    stopNewest()
+                  }}
+                  style={zoom !== 1 ? { width: `${1.25 * zoom}rem`, height: `${1.25 * zoom}rem` } : undefined}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center bg-primary text-primary-foreground"
+                >
+                  <span aria-hidden className="h-2 w-2 bg-current" />
+                </button>
               )}
+            </div>
+            <button
+              type="button"
+              id={`loop-expand-${elementId}`}
+              data-loop-expand
+              aria-expanded={open}
+              aria-controls={`loop-box-${elementId}`}
+              aria-label={open ? 'Fold the conversation' : 'Open the conversation'}
+              title={open ? 'Collapse conversation' : 'Expand conversation'}
+              onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
+              style={zoom !== 1 ? { width: `${1.5 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
+              className="flex h-6 w-6 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+                {open ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
+              </svg>
             </button>
           </div>
           <AttachmentChips attachments={attachments} className="px-1 pt-0.5 pb-0.5" />
         </form>
       )}
-      {open && (live.length > 0 || earlier.length > 0) && (
-        <Transcript
-          named={false}
-          earlier={earlier}
-          onEarlier={older}
-          live={live}
-          onStop={stop}
-          className="min-h-0 flex-1 border-t border-border px-2 py-1.5"
-        />
-      )}
+      {open &&
+        (live.length > 0 || earlier.length > 0 ? (
+          <Transcript
+            named={false}
+            earlier={earlier}
+            onEarlier={older}
+            live={live}
+            onStop={stop}
+            className="mt-1 min-h-0 flex-1 overflow-y-auto border border-border px-2 py-1.5"
+          />
+        ) : (
+          <p className="mt-1 border border-border px-2 py-1.5 text-xs text-muted-foreground">
+            No conversation in {called} yet.
+          </p>
+        ))}
     </div>
   )
 }

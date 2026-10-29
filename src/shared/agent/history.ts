@@ -1,3 +1,4 @@
+import type { Exchange } from './transcript.ts'
 import { asTable } from '../data/datasets.ts'
 import type { Turn } from '../llm/llm'
 
@@ -42,6 +43,19 @@ export const RECENT = 3
 
 /** Single canonical chat key for Central across all tabs. */
 export const CENTRAL_CHAT = 'central'
+
+/** Storage key for persisted Terminal Sessions from start to finish. */
+export const SESSIONS_STORAGE_KEY = 'sessions:log'
+
+/** A full Terminal session from start to finish, accessible in the Rooms / Sessions log dialog. */
+export interface TerminalSession {
+  id: string
+  title: string
+  startedAt: number
+  updatedAt: number
+  active: boolean
+  exchanges: Exchange[]
+}
 
 /** Option 1 session boundaries: 15m cold launch gap, or 4h inactivity gap during a sitting. */
 export const COLD_LAUNCH_GAP_MS = 15 * 60_000

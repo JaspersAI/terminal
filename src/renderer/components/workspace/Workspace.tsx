@@ -49,16 +49,16 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
     <main id="workspace" className="flex h-screen flex-col">
       <header className="flex min-h-8 shrink-0 items-start gap-2 border-b border-border bg-background px-3 py-1">
         <Composer />
-        <div className="ml-auto flex shrink-0 items-center gap-1.5 self-start pt-0.5">
+        <div className="flex h-6 shrink-0 items-center gap-1.5 self-start">
           <button
             type="button"
             id="central-dock-toggle"
             aria-pressed={docked}
             onClick={toggleDock}
-            className={`flex h-6 items-center border px-2 text-xs transition-colors ${
+            className={`flex h-6 items-center justify-center border px-2.5 text-xs leading-none transition-colors ${
               docked
                 ? 'border-primary bg-primary text-primary-foreground'
-                : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+                : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
             }`}
           >
             Dock
@@ -68,10 +68,10 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
             id="central-orb-toggle"
             aria-pressed={orbOpen}
             onClick={toggleOrbOpen}
-            className={`flex h-6 items-center border px-2 text-xs transition-colors ${
+            className={`flex h-6 items-center justify-center border px-2.5 text-xs leading-none transition-colors ${
               orbOpen
                 ? 'border-primary bg-primary text-primary-foreground'
-                : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+                : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
             }`}
           >
             Orb
@@ -82,7 +82,7 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
               id="open-rooms-button"
               aria-label="Open Rooms"
               onClick={onOpenRooms}
-              className="flex h-6 items-center gap-1.5 border border-border px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="flex h-6 items-center justify-center gap-1.5 border border-border bg-background px-2.5 text-xs leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <span>Rooms</span>
               {totalRooms > 0 && <span className="tabular-nums text-foreground">{totalRooms}</span>}
