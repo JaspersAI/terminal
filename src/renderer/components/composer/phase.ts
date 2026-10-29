@@ -39,3 +39,35 @@ export function statusLine({
   if (phase === 'thinking' && !unseen) return ''
   return PHASE_TEXT[phase]
 }
+
+export type FloatingBoxMode =
+  'answer-live' | 'answer-notice-chat' | 'answer-notice' | 'answer-history' | 'secret' | 'question' | 'none'
+
+/**
+ * Which floating box `Composer` renders above the orb/prompt when Central is undocked. Live
+ * exchanges (`hasShown`) and visible conversation history (`historyVisible`) take precedence so
+ * transcribed questions and Central replies stay on screen with any active `SecretField` or
+ * `QuestionField` rendered inline at the bottom of `Answer`.
+ */
+export function floatingBoxMode({
+  hasShown,
+  showNotice,
+  noticeInChat,
+  historyVisible,
+  hasSecret,
+  hasQuestion,
+}: {
+  hasShown: boolean
+  showNotice: boolean
+  noticeInChat: boolean
+  historyVisible: boolean
+  hasSecret: boolean
+  hasQuestion: boolean
+}): FloatingBoxMode {
+  if (hasShown) return 'answer-live'
+  if (showNotice) return noticeInChat ? 'answer-notice-chat' : 'answer-notice'
+  if (historyVisible) return 'answer-history'
+  if (hasSecret) return 'secret'
+  if (hasQuestion) return 'question'
+  return 'none'
+}

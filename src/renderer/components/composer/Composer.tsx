@@ -20,7 +20,7 @@ import { hears } from './hears'
 import { Orb } from './Orb'
 import { pasteLinks } from './paste'
 import { Peek } from './Peek'
-import { PHASE_TEXT } from './phase'
+import { floatingBoxMode, statusLine, TAP_RECORDING_TEXT } from './phase'
 import { useRequest } from './request'
 import { useConversation } from './conversation'
 import { useReveal } from './reveal'
@@ -79,7 +79,7 @@ export function Composer(): ReactElement {
   // Why the last dock did not happen, shown on the status line in place of the hint.
   const [dockProblem, setDockProblem] = useState<string | null>(null)
   const request = useRequest()
-  const { phase, error, busy, working, shown, away, earlier, ask, release, stop } = request
+  const { phase, tapped, error, busy, working, shown, away, earlier, ask, release, stop } = request
   // A request on screen still working. One whose box was dismissed from over it works on out of
   // sight and is not counted: it lets the composer go, and is in the conversation when that comes up.
   const watching = shown.some((one) => one.working)
@@ -160,8 +160,18 @@ export function Composer(): ReactElement {
     if (welcoming) setMode('text')
   }, [welcoming])
 
+  // A voice request landing brings the composer and its answer box up and clears any leftover draft.
+  useEffect(
+    () =>
+      request.onVoiceSend(() => {
+        setDraft('')
+        poke()
+      }),
+    [request],
+  )
+
   function press(): void {
-    if (busy) return
+    if (phase === 'transcribing') return
     if (!hasVoice) {
       setMode('text')
       poke()
@@ -233,7 +243,7 @@ export function Composer(): ReactElement {
       if (!inControl(event)) event.preventDefault()
       handlers.current.release() // no-op unless a press started the recording
     }
-    const blur = (): void => handlers.current.release()
+    const blur = (): void => handlers.current.release(true)
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
     window.addEventListener('blur', blur)
@@ -300,7 +310,7 @@ export function Composer(): ReactElement {
   useEffect(() => {
     if (shown.length === 0 && !showNotice && !browsing && !(working && open)) return
     const down = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || secretRequest !== null || question !== null) return
       if (event.target instanceof HTMLElement && event.target.closest('#workspace-title')) return
       // Pressed in a tile's box, it is that tile's: it stops or closes nothing here.
       if (!hears(undefined, event.target)) return
@@ -317,7 +327,7 @@ export function Composer(): ReactElement {
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [shown.length, showNotice, noticeInChat, browsing, open, noticeId, working])
+  }, [shown.length, showNotice, noticeInChat, browsing, open, noticeId, working, secretRequest, question])
 
   // In text mode the field is the whole control, so it takes focus with the reveal and loses it
   // when the composer leaves. An unfinished line holds the composer up, so nothing typed is lost.
@@ -330,15 +340,27 @@ export function Composer(): ReactElement {
 
   const hint =
     mode === 'orb' ? (hasVoice ? 'Hold the orb or the space bar' : 'Click the orb or press space to type') : ''
-  // An error lands under its question when there is one; one from before a question (the microphone,
-  // a recording too short) has only this line. A run's steps are in the chat, so thinking says nothing
-  // here, unless its box was dismissed from over it and the conversation is not up to show it: the
-  // run goes on with nothing on screen saying so, so this line is then all there is to say it, and it
-  // carries Stop.
-  const shownError = shown.length === 0 ? error : null
+  // An error from a run lands under its question; a microphone or transcription error sits on this
+  // line. A run's steps are in the chat, so thinking says nothing here, unless its box was dismissed
+  // from over it and the conversation is not up to show it: the run goes on with nothing on screen
+  // saying so, so this line is then all there is to say it, and it carries Stop.
   const unseen = working && !watching && !browsing
-  const status =
-    shownError ?? dockProblem ?? (phase === 'idle' ? hint : phase === 'thinking' && !unseen ? '' : PHASE_TEXT[phase])
+  const status = statusLine({
+    phase,
+    tapped,
+    error,
+    dockProblem,
+    hint,
+    unseen,
+  })
+  const boxMode = floatingBoxMode({
+    hasShown: shown.length > 0,
+    showNotice,
+    noticeInChat,
+    historyVisible: conversation.mounted && !historyClosed,
+    hasSecret: secretRequest !== null,
+    hasQuestion: question !== null,
+  })
 
   return (
     <div
@@ -357,7 +379,12 @@ export function Composer(): ReactElement {
         } ${menuOpen ? 'z-10' : ''} ${drop.dropping ? 'outline-2 -outline-offset-2 outline-foreground outline-dashed' : ''}`}
       >
         {mode === 'orb' ? (
-          <Orb phase={phase} label={hasVoice ? 'Hold to talk' : 'Type a request'} onPress={press} onRelease={release} />
+          <Orb
+            phase={phase}
+            label={phase === 'recording' && tapped ? TAP_RECORDING_TEXT : hasVoice ? 'Hold to talk' : 'Type a request'}
+            onPress={press}
+            onRelease={release}
+          />
         ) : (
           <form onSubmit={submit} className="relative w-80 max-w-full">
             {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
@@ -406,7 +433,7 @@ export function Composer(): ReactElement {
 
         <p
           id="agent-status"
-          className={`text-center text-xs ${shownError || dockProblem ? 'text-destructive' : 'text-muted-foreground'}`}
+          className={`text-center text-xs ${error || dockProblem ? 'text-destructive' : 'text-muted-foreground'}`}
         >
           {status}
           {status && <span className="text-muted-foreground"> · </span>}
@@ -462,50 +489,57 @@ export function Composer(): ReactElement {
         </p>
       </div>
 
-      {secretRequest !== null ? (
-        <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} box={box} />
-      ) : question !== null ? (
-        <QuestionField key={question.id} question={question} box={box} />
-      ) : shown.length > 0 ? (
+      {boxMode === 'answer-live' ? (
         // Unkeyed, like the conversation below, so an answer joining it stays the same box.
         <Answer
           earlier={earlier}
           onEarlier={more}
           live={shown}
           onStop={stop}
+          secretRequest={secretRequest}
+          question={question}
           fading={fading && !open}
           box={box}
           onDismiss={close}
         />
-      ) : showNotice && notice ? (
-        noticeInChat ? (
-          // The chat, with the reply last; unkeyed, so it is the same box the conversation is. With
-          // the composer up the box is wanted, so it fades only away from it.
-          <Answer earlier={earlier} onEarlier={more} fading={noticeFading && !open} box={box} onDismiss={closeNotice} />
-        ) : (
-          <Answer
-            key={notice.id}
-            label={notice.plugin}
-            text={notice.text}
-            fading={noticeFading}
-            box={box}
-            onDismiss={closeNotice}
-          />
-        )
+      ) : boxMode === 'answer-notice-chat' && notice ? (
+        // The chat, with the reply last; unkeyed, so it is the same box the conversation is. With
+        // the composer up the box is wanted, so it fades only away from it.
+        <Answer
+          earlier={earlier}
+          onEarlier={more}
+          secretRequest={secretRequest}
+          question={question}
+          fading={noticeFading && !open}
+          box={box}
+          onDismiss={closeNotice}
+        />
+      ) : boxMode === 'answer-notice' && notice ? (
+        <Answer
+          key={notice.id}
+          label={notice.plugin}
+          text={notice.text}
+          fading={noticeFading}
+          box={box}
+          onDismiss={closeNotice}
+        />
+      ) : boxMode === 'answer-history' ? (
+        // The conversation so far, and under it whatever its box was dismissed from over, still working.
+        <Answer
+          earlier={earlier}
+          onEarlier={more}
+          live={away}
+          onStop={stop}
+          secretRequest={secretRequest}
+          question={question}
+          fading={conversation.leaving}
+          box={box}
+          onDismiss={() => closeHistory()}
+        />
+      ) : boxMode === 'secret' && secretRequest !== null ? (
+        <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} box={box} />
       ) : (
-        conversation.mounted &&
-        !historyClosed && (
-          // The conversation so far, and under it whatever its box was dismissed from over, still working.
-          <Answer
-            earlier={earlier}
-            onEarlier={more}
-            live={away}
-            onStop={stop}
-            fading={conversation.leaving}
-            box={box}
-            onDismiss={() => closeHistory()}
-          />
-        )
+        boxMode === 'question' && question !== null && <QuestionField key={question.id} question={question} box={box} />
       )}
 
       <Peek open={open} onFocusChange={setPeekFocused} onReveal={poke} arrow={arrow} />

@@ -16,7 +16,7 @@ import {
   workingOn,
   type LiveExchange,
 } from './live.ts'
-import { statusLine } from './phase.ts'
+import { statusLine, floatingBoxMode } from './phase.ts'
 
 const start = (runId: string, ask?: string): AgentEvent => ({
   kind: 'start',
@@ -560,5 +560,67 @@ test('statusLine surfaces microphone and transcription errors even when live exc
       unseen: false,
     }),
     'Did not catch that. Try again.',
+  )
+})
+
+test('floatingBoxMode keeps live exchanges and Central replies visible alongside an open question or secret prompt', () => {
+  // When live exchanges (such as run1 and run4 replies alongside run2 waiting on ask_user) are in shown,
+  // the floating box stays in answer-live mode so Transcript and QuestionField/SecretField render together.
+  assert.equal(
+    floatingBoxMode({
+      hasShown: true,
+      showNotice: false,
+      noticeInChat: false,
+      historyVisible: false,
+      hasSecret: false,
+      hasQuestion: true,
+    }),
+    'answer-live',
+  )
+  assert.equal(
+    floatingBoxMode({
+      hasShown: true,
+      showNotice: false,
+      noticeInChat: false,
+      historyVisible: false,
+      hasSecret: true,
+      hasQuestion: false,
+    }),
+    'answer-live',
+  )
+  // When browsing history or away runs while a question is up, answer-history keeps the transcript visible above it.
+  assert.equal(
+    floatingBoxMode({
+      hasShown: false,
+      showNotice: false,
+      noticeInChat: false,
+      historyVisible: true,
+      hasSecret: false,
+      hasQuestion: true,
+    }),
+    'answer-history',
+  )
+  // When no live exchanges or history box are up, a standalone question or secret field is shown.
+  assert.equal(
+    floatingBoxMode({
+      hasShown: false,
+      showNotice: false,
+      noticeInChat: false,
+      historyVisible: false,
+      hasSecret: false,
+      hasQuestion: true,
+    }),
+    'question',
+  )
+  assert.equal(
+    floatingBoxMode({
+      hasShown: false,
+      showNotice: false,
+      noticeInChat: false,
+      historyVisible: false,
+      hasSecret: true,
+      hasQuestion: true,
+    }),
+    'secret',
   )
 })

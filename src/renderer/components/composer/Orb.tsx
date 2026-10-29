@@ -11,7 +11,7 @@ interface Props {
   /** What pressing it does: hold to talk, or, with no voice provider, type a request. */
   label: string
   onPress: () => void
-  onRelease: () => void
+  onRelease: (cancel?: boolean) => void
 }
 
 /**
@@ -65,8 +65,8 @@ export function Orb({ phase, label, onPress, onRelease }: Props): ReactElement {
         }
         onPress()
       }}
-      onPointerUp={onRelease}
-      onPointerCancel={onRelease}
+      onPointerUp={() => onRelease()}
+      onPointerCancel={() => onRelease(true)}
       onPointerEnter={() => setHovering(true)}
       onPointerMove={follow}
       onPointerLeave={() => {

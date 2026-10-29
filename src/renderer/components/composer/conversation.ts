@@ -42,7 +42,7 @@ export function useConversation({
   const fading = fadeSequence === sequence
   // The conversation, up with the composer: what was said, and under it whatever works out of sight.
   const browsing =
-    open && !historyClosed && (earlier.length > 0 || away.length > 0) && shown.length === 0 && !showNotice && !blocked
+    open && !historyClosed && (earlier.length > 0 || away.length > 0) && shown.length === 0 && !showNotice
   const conversation = useLeaving(browsing, FADE_MS)
   // The notice bringing the chat up, by id, while it does.
   const told = showNotice && noticeInChat ? noticeId : null
@@ -104,10 +104,13 @@ export function useConversation({
     tuck()
   }, [handed])
   useEffect(() => {
-    if (!landed || handed) return
+    if (blocked) setFadeSequence(null)
+  }, [blocked])
+  useEffect(() => {
+    if (!landed || handed || blocked) return
     const timer = setTimeout(() => setFadeSequence(sequence), ANSWER_MS)
     return () => clearTimeout(timer)
-  }, [landed, handed, sequence])
+  }, [landed, handed, blocked, sequence])
   // Once they have sat, they join the conversation above them. With the composer up the box is
   // wanted, so that happens where it stands; away, the box fades out first.
   useEffect(() => {

@@ -1,6 +1,9 @@
 import type { ReactElement, RefObject } from 'react'
 import type { Exchange } from '../../../shared/agent/transcript'
+import type { Question, SecretRequest } from '../../../shared/state'
 import type { LiveExchange } from './live'
+import { QuestionField } from './QuestionField'
+import { SecretField } from './SecretField'
 import { Transcript } from './Transcript'
 
 interface Props {
@@ -16,6 +19,10 @@ interface Props {
   label?: string
   /** A notice's text. */
   text?: string
+  /** A key being asked for while the conversation box is up, shown below the transcript as in the docked chat. */
+  secretRequest?: SecretRequest | null
+  /** A question being asked while the conversation box is up, shown below the transcript as in the docked chat. */
+  question?: Question | null
   /** True once the answer has sat unread long enough; the box fades out before it is cleared. */
   fading: boolean
   /** The composer's spring drives this: it slides down with the panel to sit above the arrow. */
@@ -42,6 +49,8 @@ export function Answer({
   onStop,
   label,
   text,
+  secretRequest = null,
+  question = null,
   fading,
   box,
   onDismiss,
@@ -63,6 +72,11 @@ export function Answer({
         text={text}
         className="max-h-[40vh] py-4 pr-9 pl-5"
       />
+      {secretRequest !== null ? (
+        <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} />
+      ) : (
+        question !== null && <QuestionField key={question.id} question={question} />
+      )}
       <button
         type="button"
         id="agent-answer-dismiss"
