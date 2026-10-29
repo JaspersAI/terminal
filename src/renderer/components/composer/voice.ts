@@ -56,6 +56,26 @@ export function joinVoiceSegments(segments: readonly string[]): string {
 }
 
 /**
+ * Whether a focused control should keep the Spacebar for itself rather than letting it start or stop
+ * voice capture. While a voice session is active (`busy`), a focused button does not swallow Space;
+ * when a global question is open (`#question-input`) with nothing typed yet, Spacebar can start or
+ * stop voice to answer the question aloud.
+ */
+export function blocksSpaceVoiceControl(
+  target: { tag: string; id?: string; value?: string; contentEditable?: boolean } | null,
+  busy: boolean,
+): boolean {
+  if (!target) return false
+  const tag = target.tag.toLowerCase()
+  const id = target.id ?? ''
+  if (id === 'talk' || id === 'composer-peek') return false
+  if (tag === 'input' && id === 'question-input') return (target.value ?? '') !== ''
+  if (tag === 'input' || tag === 'textarea' || tag === 'select' || target.contentEditable === true) return true
+  if (tag === 'button') return !busy
+  return false
+}
+
+/**
  * Owns the lifecycle of speaking to the orb:
  * - A quick tap (`< TAP_MS`, or releasing while the microphone is still opening) latches recording
  *   open so the user can speak across pauses and tap again to send.
@@ -75,6 +95,7 @@ export function createVoiceSession({
   let opening = false
   let latched = false
   let micGranted = false
+  let stopping = 0
   let transcribing = 0
   let epoch = 0
   let pauseTimer: ReturnType<typeof setTimeout> | null = null
@@ -90,7 +111,7 @@ export function createVoiceSession({
   function updatePhase(): void {
     if (opening) onPhase('opening')
     else if (recorder.active) onPhase('recording')
-    else if (transcribing > 0 || pauseTimer !== null) onPhase('transcribing')
+    else if (stopping > 0 || transcribing > 0 || pauseTimer !== null) onPhase('transcribing')
     else onPhase('idle')
   }
 
@@ -102,7 +123,7 @@ export function createVoiceSession({
   }
 
   function scheduleFlush(immediate: boolean): void {
-    if (opening || recorder.active || pressed || latched || transcribing > 0) {
+    if (opening || recorder.active || stopping > 0 || pressed || latched || transcribing > 0) {
       updatePhase()
       return
     }
@@ -118,7 +139,7 @@ export function createVoiceSession({
     clearPauseTimer()
     pauseTimer = setTimeout(() => {
       pauseTimer = null
-      if (!opening && !recorder.active && !pressed && !latched && transcribing === 0) {
+      if (!opening && !recorder.active && stopping === 0 && !pressed && !latched && transcribing === 0) {
         flushNow()
       } else {
         updatePhase()
@@ -129,19 +150,23 @@ export function createVoiceSession({
 
   async function finishSegment(immediate: boolean): Promise<void> {
     const currentEpoch = epoch
+    stopping++
+    updatePhase()
     let recording: Recording
     try {
       recording = await recorder.stop()
     } catch (err) {
       if (currentEpoch !== epoch) return
+      stopping = Math.max(0, stopping - 1)
       onError(err instanceof Error ? err.message : String(err))
       updatePhase()
       return
     }
     if (currentEpoch !== epoch) return
+    stopping = Math.max(0, stopping - 1)
 
     if (recording.durationMs < TAP_MS) {
-      if (segments.length === 0 && transcribing === 0) {
+      if (segments.length === 0 && stopping === 0 && transcribing === 0) {
         onError(TOO_SHORT)
         updatePhase()
       } else {
@@ -157,7 +182,7 @@ export function createVoiceSession({
       if (currentEpoch !== epoch) return
       transcribing = Math.max(0, transcribing - 1)
       if (!text) {
-        if (segments.length === 0 && transcribing === 0 && !opening && !recorder.active && !pressed) {
+        if (segments.length === 0 && stopping === 0 && transcribing === 0 && !opening && !recorder.active && !pressed) {
           onError(DID_NOT_CATCH)
           updatePhase()
         } else {
@@ -245,6 +270,7 @@ export function createVoiceSession({
       pressed = false
       opening = false
       latched = false
+      stopping = 0
       transcribing = 0
       segments.length = 0
       clearPauseTimer()

@@ -29,6 +29,7 @@ import { SecretField } from './SecretField'
 import { completeSlash, slashMatches } from './slash'
 import { SlashMenu } from './SlashMenu'
 import { Spring } from './spring'
+import { blocksSpaceVoiceControl } from './voice'
 
 /** The orb, whether or not there is a voice provider to hold it for, or the text field. */
 type Mode = 'orb' | 'text'
@@ -219,18 +220,18 @@ export function Composer(): ReactElement {
 
   // Space bar is the keyboard version of the orb. Handlers live in a ref so the listeners,
   // registered once per mode, always call the current render's closures.
-  const handlers = useRef({ press, release })
-  handlers.current = { press, release }
+  const handlers = useRef({ press, release, busy })
+  handlers.current = { press, release, busy }
   useEffect(() => {
     if (mode !== 'orb') return
     const down = (event: KeyboardEvent): void => {
-      if (event.code !== 'Space' || event.repeat || inControl(event) || modalOpen()) return
+      if (event.code !== 'Space' || event.repeat || inControl(event, handlers.current.busy) || modalOpen()) return
       event.preventDefault()
       handlers.current.press()
     }
     const up = (event: KeyboardEvent): void => {
       if (event.code !== 'Space') return
-      if (!inControl(event)) event.preventDefault()
+      if (!inControl(event, handlers.current.busy)) event.preventDefault()
       handlers.current.release() // no-op unless a press started the recording
     }
     const blur = (): void => handlers.current.release()
@@ -534,9 +535,17 @@ function modalOpen(): boolean {
 }
 
 /** True when the key belongs to a focused control other than the orb: a text field, a menu button. */
-function inControl(event: KeyboardEvent): boolean {
-  return (
-    event.target instanceof HTMLElement &&
-    event.target.matches('input, textarea, select, button:not(#talk):not(#composer-peek), [contenteditable]')
+function inControl(event: KeyboardEvent, busy: boolean): boolean {
+  if (!(event.target instanceof HTMLElement)) return false
+  const el = event.target.closest('input, textarea, select, button, [contenteditable]')
+  if (!(el instanceof HTMLElement)) return false
+  return blocksSpaceVoiceControl(
+    {
+      tag: el.tagName,
+      id: el.id,
+      value: el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? el.value : undefined,
+      contentEditable: el.isContentEditable,
+    },
+    busy,
   )
 }

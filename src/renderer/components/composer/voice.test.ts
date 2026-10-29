@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createVoiceSession, joinVoiceSegments, matchVoiceChoice, PAUSE_MS, TAP_MS, type VoicePhase } from './voice.ts'
+import {
+  blocksSpaceVoiceControl,
+  createVoiceSession,
+  joinVoiceSegments,
+  matchVoiceChoice,
+  PAUSE_MS,
+  TAP_MS,
+  type VoicePhase,
+} from './voice.ts'
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 
-function harness(options?: { micAllowed?: boolean; openDelayMs?: number }) {
+function harness(options?: { micAllowed?: boolean; openDelayMs?: number; stopDelayMs?: number }) {
   let active = false
   let durationMs = 0
   let micCalls = 0
@@ -18,6 +26,7 @@ function harness(options?: { micAllowed?: boolean; openDelayMs?: number }) {
     reject: (err: Error) => void
   }[] = []
   let openGate: (() => void) | null = null
+  let stopGate: (() => void) | null = null
 
   const session = createVoiceSession({
     requestMicrophone: async () => {
@@ -42,10 +51,16 @@ function harness(options?: { micAllowed?: boolean; openDelayMs?: number }) {
       },
       async stop() {
         active = false
+        const captured = durationMs
+        if (options?.stopDelayMs) {
+          await new Promise<void>((resolve) => {
+            stopGate = resolve
+          })
+        }
         return {
           audio: new ArrayBuffer(8),
           mimeType: 'audio/webm',
-          durationMs,
+          durationMs: captured,
         }
       },
       close() {
@@ -92,6 +107,10 @@ function harness(options?: { micAllowed?: boolean; openDelayMs?: number }) {
     finishOpen() {
       openGate?.()
       openGate = null
+    },
+    finishStop() {
+      stopGate?.()
+      stopGate = null
     },
     resolveTranscript(text: string) {
       const next = transcribeQueue.shift()
@@ -265,4 +284,57 @@ test('cancel stops recording and clears pending segments without sending', async
   assert.equal(h.phase, 'idle')
   assert.deepEqual(h.sent, [])
   assert.equal(h.closeCalls, 1)
+})
+
+test('an earlier transcription settling while a second recording is awaiting recorder.stop does not flush early', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const h = harness({ stopDelayMs: 50 })
+
+  // First segment: hold and release.
+  h.session.press()
+  await tick()
+  h.setDuration(1200)
+  h.session.release()
+  h.finishStop()
+  await tick()
+  assert.equal(h.phase, 'transcribing')
+
+  // Second segment: press while first is transcribing, then release (now awaiting recorder.stop).
+  h.session.press()
+  await tick()
+  h.setDuration(1400)
+  h.session.release()
+  await tick()
+
+  // First segment's transcription resolves while second segment's recorder.stop() is still pending.
+  h.resolveTranscript('First part')
+  await tick()
+  t.mock.timers.tick(PAUSE_MS * 2)
+  await tick()
+  assert.deepEqual(h.sent, [])
+  assert.equal(h.phase, 'transcribing')
+
+  // Now second segment's recorder.stop() finishes and transcribes.
+  h.finishStop()
+  await tick()
+  h.resolveTranscript('and second part')
+  await tick()
+  t.mock.timers.tick(PAUSE_MS)
+  await tick()
+
+  assert.deepEqual(h.sent, ['First part and second part'])
+  assert.equal(h.phase, 'idle')
+})
+
+test('blocksSpaceVoiceControl lets Spacebar start or stop voice over an empty question input or while busy', () => {
+  assert.equal(blocksSpaceVoiceControl({ tag: 'button', id: 'talk' }, false), false)
+  assert.equal(blocksSpaceVoiceControl({ tag: 'button', id: 'composer-peek' }, false), false)
+  // A regular button blocks starting voice when idle, but does not block stopping an active voice session.
+  assert.equal(blocksSpaceVoiceControl({ tag: 'button', id: 'other' }, false), true)
+  assert.equal(blocksSpaceVoiceControl({ tag: 'button', id: 'other' }, true), false)
+  // An empty #question-input allows Spacebar voice control; a non-empty one keeps Spacebar for typing spaces.
+  assert.equal(blocksSpaceVoiceControl({ tag: 'input', id: 'question-input', value: '' }, false), false)
+  assert.equal(blocksSpaceVoiceControl({ tag: 'input', id: 'question-input', value: 'draft' }, false), true)
+  assert.equal(blocksSpaceVoiceControl({ tag: 'input', id: 'question-input', value: 'draft' }, true), true)
+  assert.equal(blocksSpaceVoiceControl({ tag: 'input', id: 'prompt', value: '' }, false), true)
 })

@@ -56,6 +56,7 @@ export function Orb({ phase, label, onPress, onRelease }: Props): ReactElement {
       aria-label={label}
       onPointerDown={(event) => {
         event.preventDefault()
+        event.currentTarget.focus()
         // Keep receiving the pointer while held, so drifting off the orb does not end the recording.
         try {
           event.currentTarget.setPointerCapture(event.pointerId)

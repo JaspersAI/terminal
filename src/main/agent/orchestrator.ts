@@ -39,14 +39,14 @@ import { createTurns } from './utils/turns'
 // A request that starts with /name carries that skill's instructions by the time the model reads it,
 // and a skill loaded once stays loaded for as long as its exchange is in the thread.
 //
-// The user's request never waits: it starts as it is sent, beside whatever else is running. Each works
-// on its own copy of the thread, taken as it starts, and what it added joins the thread when it ends
-// (shared/agent/fork.ts), so the thread is only ever changed in one step and no run writes under
-// another. Two requests in flight do not see each other's work until one has ended; the grid they do
-// see, since its state rides on every round. What is in the store is ahead of that: the thread as it
-// would stand were the run to end now, kept as each turn joins the run (`keepOpen` in utils/thread.ts),
-// so a run that fails or an app that closes leaves the conversation as far as it got. A task's run and
-// the welcome's are held to a few at a time (utils/lanes.ts).
+// One run at a time per workspace. A message sent while its workspace's run is at work joins that run
+// after the round in flight (`added`), or begins the next once the run is over (`turns.ts`). Each run
+// works on its own copy of the thread, taken as it starts, and what it added joins the thread when it
+// ends (shared/agent/fork.ts), so the thread is only ever changed in one step and nothing (`/new`,
+// `said`, or a background task) writes under a run in flight. What is in the store is ahead of that:
+// the thread as it would stand were the run to end now, kept as each turn joins the run (`keepOpen` in
+// utils/thread.ts), so a run that fails or an app that closes leaves the conversation as far as it got.
+// A task's run and the welcome's are held to a few at a time (utils/lanes.ts).
 //
 // A thread goes on with its last few exchanges, which is what the model works from. Everything said
 // is filed in the chat's log as it is said, and the chat shows that: the user reads the whole
