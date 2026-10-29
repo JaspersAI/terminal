@@ -16,6 +16,7 @@ export interface OrbDragState {
   downAt: number
   moved: boolean
   wasRecording: boolean
+  started: boolean
 }
 
 export function orbPointerDown({
@@ -49,6 +50,7 @@ export function orbPointerDown({
       downAt: now,
       moved: false,
       wasRecording,
+      started: canStart,
     },
     action: canStart ? 'start' : 'none',
   }
@@ -83,7 +85,7 @@ export function orbPointerMove(
       x: Math.max(8, Math.min(maxX, drag.originX + dx)),
       y: Math.max(40, Math.min(maxY, drag.originY + dy)),
     },
-    action: firstMove && !drag.wasRecording ? 'cancel' : 'none',
+    action: firstMove && drag.started ? 'cancel' : 'none',
   }
 }
 
@@ -93,6 +95,7 @@ export function orbPointerUp(
 ): 'send' | 'keep-recording' | 'none' {
   if (!drag || drag.moved || !hasVoice) return 'none'
   if (drag.wasRecording) return 'send'
+  if (!drag.started) return 'none'
   if (now - drag.downAt >= HOLD_THRESHOLD_MS) return 'send'
   return 'keep-recording'
 }

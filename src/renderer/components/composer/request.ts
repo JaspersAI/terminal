@@ -206,7 +206,7 @@ export function pressVoice(): void {
 }
 
 export function keepVoiceRecording(): void {
-  if (!pressed && store.voice === 'idle') return
+  if (!pressed && store.voice !== 'recording') return
   tapRecording = true
   pressed = true
 }

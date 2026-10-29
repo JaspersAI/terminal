@@ -114,6 +114,34 @@ test('dragging the floatingOrb cancels a newly started hold recording and does n
   assert.equal(up, 'none')
 })
 
+test('tapping or dragging the floating orb during opening or transcribing does not cancel transcription or enter tap-recording', () => {
+  const down = orbPointerDown({
+    phase: 'transcribing',
+    hasVoice: true,
+    button: 0,
+    clientX: 500,
+    clientY: 300,
+    posX: 480,
+    posY: 280,
+    now: 4_000,
+  })
+  assert.equal(down.action, 'none')
+  assert.ok(down.drag)
+
+  // Quick release during transcribing must return 'none', not 'keep-recording'.
+  assert.equal(orbPointerUp(down.drag, { hasVoice: true, now: 4_100 }), 'none')
+
+  // Dragging during transcribing moves the orb without cancelling the in-flight transcription.
+  const moved = orbPointerMove(down.drag, {
+    clientX: 500 + DRAG_THRESHOLD_PX + 10,
+    clientY: 300 + 20,
+    viewportWidth: 1440,
+    viewportHeight: 900,
+  })
+  assert.equal(moved.action, 'none')
+  assert.deepEqual(moved.pos, { x: 480 + DRAG_THRESHOLD_PX + 10, y: 300 })
+})
+
 test('routeVoiceTranscript answers an active Central question when one is open, and otherwise sends to Central', () => {
   assert.deepEqual(routeVoiceTranscript('   ', null), { kind: 'empty' })
   assert.deepEqual(routeVoiceTranscript('screen fast growing stocks', null), {

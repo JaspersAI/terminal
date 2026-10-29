@@ -108,6 +108,7 @@ export function FloatingOrb(): ReactElement {
     const down = (event: KeyboardEvent): void => {
       if (event.code !== 'Space' || event.repeat || inControl(event) || modalOpen()) return
       event.preventDefault()
+      if (phase === 'opening' || phase === 'transcribing') return
       if (phase === 'recording') {
         spaceDownAt.current = null
         release()
@@ -221,7 +222,7 @@ export function FloatingOrb(): ReactElement {
         id="talk"
         aria-label={phase === 'recording' ? 'Stop and send voice' : 'Hold or tap to speak to Central'}
         onKeyDown={(event) => {
-          if ((event.key === 'Enter' || event.key === ' ') && hasVoice) {
+          if (event.key === 'Enter' && !event.repeat && hasVoice) {
             event.preventDefault()
             toggleVoice()
           }
