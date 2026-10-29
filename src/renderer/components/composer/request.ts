@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { askedIn } from '../../../shared/agent/asking'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript'
 import { errorMessage } from '../../lib/errors'
-import { get, useAppState } from '../../lib/state'
+import { dispatch, get, useAppState } from '../../lib/state'
 import {
   answered,
   awayOn,
@@ -17,6 +18,7 @@ import {
 } from './live'
 import type { Phase } from './phase'
 import { Recorder } from './recorder'
+import { createVoiceSession, matchVoiceChoice, type VoicePhase } from './voice'
 
 /**
  * How much of the chat is read at a time: its newest exchanges when it comes up, and as many again
@@ -25,9 +27,6 @@ import { Recorder } from './recorder'
  */
 export const PAGE = 30
 
-/** The microphone's part of a request: nothing typed or said can be sent while it has the floor. */
-type Voice = Exclude<Phase, 'thinking'>
-
 /**
  * Owns microphone capture and the requests this window has sent, including their streamed replies.
  * A request starts as it is sent, so several can be working at once, each an exchange of its own
@@ -35,7 +34,7 @@ type Voice = Exclude<Phase, 'thinking'>
  */
 export function useRequest() {
   const workspaceId = useAppState((s) => s.currentWorkspaceId)
-  const [voice, setVoice] = useState<Voice>('idle')
+  const [voice, setVoice] = useState<VoicePhase>('idle')
   /** Why the microphone's part failed. A run's own failure sits on its exchange, under its question. */
   const [error, setError] = useState<string | null>(null)
   const [live, setLive] = useState<LiveExchange[]>([])
@@ -45,7 +44,6 @@ export function useRequest() {
   const [sequence, setSequence] = useState(0)
   const recorderRef = useRef<Recorder | null>(null)
   const recorder = (recorderRef.current ??= new Recorder())
-  const pressed = useRef(false)
   const busy = voice !== 'idle'
   /** This workspace's requests as its conversation shows them, in the order they were sent. */
   const shown = useMemo(() => shownOn(live, workspaceId), [live, workspaceId])
@@ -102,54 +100,44 @@ export function useRequest() {
     }
   }
 
-  /** Runs one step of the microphone's part. If it throws, show the message and give the floor back. */
-  async function attempt(action: () => Promise<void>): Promise<void> {
-    setError(null)
-    try {
-      await action()
-    } catch (err) {
-      setError(errorMessage(err))
-      setVoice('idle')
+  const sendVoice = useRef<(text: string) => void>(() => undefined)
+  sendVoice.current = (text: string): void => {
+    console.log('[voice] heard:', text)
+    const state = get()
+    const openQuestion = askedIn(state.secretRequests) === null ? askedIn(state.questions) : null
+    if (openQuestion) {
+      void dispatch({
+        type: 'question.answer',
+        id: openQuestion.id,
+        answer: matchVoiceChoice(openQuestion.choices, text),
+      }).catch((err: unknown) => setError(errorMessage(err)))
+      return
     }
+    void ask(text)
   }
 
+  const voiceSessionRef = useRef<ReturnType<typeof createVoiceSession> | null>(null)
+  const voiceSession = (voiceSessionRef.current ??= createVoiceSession({
+    requestMicrophone: () => window.app.voice.requestMicrophone(),
+    recorder,
+    transcribe: (audio, mimeType) => window.app.voice.transcribe(audio, mimeType),
+    onPhase: setVoice,
+    onError: setError,
+    onSend: (text) => sendVoice.current(text),
+  }))
+
+  useEffect(() => () => voiceSession.cancel(), [voiceSession])
+
   function press(): void {
-    if (busy || pressed.current) return
-    pressed.current = true
-    void attempt(async () => {
-      // The first press on macOS waits on the system permission prompt, so say what is happening.
-      setVoice('opening')
-      try {
-        if (!(await window.app.voice.requestMicrophone())) {
-          throw new Error('Microphone access is off. Allow it in System Settings, Privacy & Security, Microphone.')
-        }
-        if (!pressed.current) return setVoice('idle') // released before the mic opened
-        await recorder.start()
-      } catch (err) {
-        pressed.current = false
-        throw err
-      }
-      setVoice('recording')
-      if (!pressed.current) await finish() // released while the mic was opening
-    })
+    voiceSession.press()
   }
 
   function release(): void {
-    if (!pressed.current) return
-    pressed.current = false
-    if (recorder.active) void attempt(finish)
+    voiceSession.release()
   }
 
-  async function finish(): Promise<void> {
-    const recording = await recorder.stop()
-    if (recording.durationMs < 400) throw new Error('Too short. Hold until it says Listening, speak, then release.')
-    setVoice('transcribing')
-    const text = await window.app.voice.transcribe(recording.audio, recording.mimeType)
-    if (!text) throw new Error('Did not catch that. Try again.')
-    console.log('[voice] heard:', text)
-    // What was heard is sent like anything typed, and the microphone is free for the next.
-    setVoice('idle')
-    void ask(text)
+  function cancelVoice(): void {
+    voiceSession.cancel()
   }
 
   // What main says the runs are doing. Only this window's own: each event lands on the exchange whose
@@ -164,7 +152,7 @@ export function useRequest() {
     (ask?: string): void => {
       const mine = now.current.filter((one) => one.working && one.workspaceId === get().currentWorkspaceId)
       const target = ask === undefined ? mine[mine.length - 1] : now.current.find((one) => one.ask === ask)
-      if (target?.runId) void window.app.agent.stop(target.runId)
+      if (target) void window.app.agent.stop(target.runId ?? undefined, target.ask)
     },
     [now],
   )
@@ -181,6 +169,7 @@ export function useRequest() {
     ask,
     press,
     release,
+    cancelVoice,
     stop,
     dismiss,
     setEarlier,

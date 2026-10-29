@@ -79,7 +79,7 @@ export function Composer(): ReactElement {
   // Why the last dock did not happen, shown on the status line in place of the hint.
   const [dockProblem, setDockProblem] = useState<string | null>(null)
   const request = useRequest()
-  const { phase, error, busy, working, shown, away, earlier, ask, release, stop } = request
+  const { phase, error, busy, working, shown, away, earlier, ask, release, cancelVoice, stop } = request
   // A request on screen still working. One whose box was dismissed from over it works on out of
   // sight and is not counted: it lets the composer go, and is in the conversation when that comes up.
   const watching = shown.some((one) => one.working)
@@ -161,8 +161,8 @@ export function Composer(): ReactElement {
   }, [welcoming])
 
   function press(): void {
-    if (busy) return
     if (!hasVoice) {
+      if (busy) return
       setMode('text')
       poke()
       return
@@ -298,13 +298,14 @@ export function Composer(): ReactElement {
   // Escape is the keyboard version of the cross, except where something else on screen already
   // owns the key: the workspace title reverts a rename with it, the switcher menu closes with it.
   useEffect(() => {
-    if (shown.length === 0 && !showNotice && !browsing && !(working && open)) return
+    if (shown.length === 0 && !showNotice && !browsing && !(working && open) && !busy) return
     const down = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       if (event.target instanceof HTMLElement && event.target.closest('#workspace-title')) return
       // Pressed in a tile's box, it is that tile's: it stops or closes nothing here.
       if (!hears(undefined, event.target)) return
       if (document.querySelector('[role=menu]')) return
+      if (busy) return cancelVoice()
       // A run in flight is what Escape means first: stopping it leaves the question on screen,
       // where dismissing would take it away while the model was still working. With several in
       // flight it stops the one sent last, and each has a Stop of its own beside its trail. One
@@ -317,7 +318,7 @@ export function Composer(): ReactElement {
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [shown.length, showNotice, noticeInChat, browsing, open, noticeId, working])
+  }, [shown.length, showNotice, noticeInChat, browsing, open, noticeId, working, busy])
 
   // In text mode the field is the whole control, so it takes focus with the reveal and loses it
   // when the composer leaves. An unfinished line holds the composer up, so nothing typed is lost.

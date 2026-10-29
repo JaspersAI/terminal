@@ -54,7 +54,6 @@ export function Orb({ phase, label, onPress, onRelease }: Props): ReactElement {
       type="button"
       id="talk"
       aria-label={label}
-      disabled={phase === 'transcribing'}
       onPointerDown={(event) => {
         event.preventDefault()
         // Keep receiving the pointer while held, so drifting off the orb does not end the recording.
