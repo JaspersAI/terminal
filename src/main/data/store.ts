@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { app, utilityProcess, type UtilityProcess } from 'electron'
 import { jaspersHome } from '../home'
-import { createRpc, type Rpc } from '../../shared/rpc'
+import { createRpc, readyRequest, type Rpc } from '../../shared/rpc'
 import type { QueryRequest, QueryResult, RunRecord, StoreStats } from '../../shared/data/store'
 import { dayOf, type Spent } from '../../shared/agent/budget'
 import type { Exchange } from '../../shared/agent/transcript'
@@ -92,9 +92,9 @@ export function record(run: RunRecord): void {
     startStore()
     return
   }
-  void current.ready
-    .then(() => current.rpc.request('record', run, timeout(RECORD_TIMEOUT_MS)))
-    .catch((error: unknown) => console.warn(`[store] record ${run.source}: ${message(error)}`))
+  void request(current, 'record', run).catch((error: unknown) =>
+    console.warn(`[store] record ${run.source}: ${message(error)}`),
+  )
 }
 
 /**
@@ -105,8 +105,7 @@ export async function recordRun(run: RunRecord): Promise<number | null> {
   const current = live
   if (!current) return null
   try {
-    await current.ready
-    const id = await current.rpc.request('record', run, timeout(RECORD_TIMEOUT_MS))
+    const id = await request(current, 'record', run)
     return typeof id === 'number' ? id : null
   } catch (error) {
     console.warn(`[store] recordRun ${run.source}: ${message(error)}`)
@@ -118,21 +117,15 @@ export async function recordRun(run: RunRecord): Promise<number | null> {
 export function recordUsage(usage: Record<string, unknown>): void {
   const current = live
   if (!current) return
-  void current.ready
-    .then(() => current.rpc.request('usage.record', usage, timeout(RECORD_TIMEOUT_MS)))
-    .catch((error: unknown) => console.warn(`[store] usage: ${message(error)}`))
+  void request(current, 'usage.record', usage).catch((error: unknown) =>
+    console.warn(`[store] usage: ${message(error)}`),
+  )
 }
 
 /** What has been spent today by runs of one origin. Zero when the store is not up: a budget must not stop work because the file is missing. */
 export async function spentToday(day: string, origin: string): Promise<Spent> {
   try {
-    const current = running()
-    await current.ready
-    const rows = (await current.rpc.request('usage.read', { day }, timeout(RECORD_TIMEOUT_MS))) as {
-      origin: string
-      input: number
-      output: number
-    }[]
+    const rows = await request<{ origin: string; input: number; output: number }[]>(running(), 'usage.read', { day })
     const found = rows.find((row) => row.origin === origin)
     return { input: found?.input ?? 0, output: found?.output ?? 0 }
   } catch {
@@ -151,11 +144,7 @@ export async function watch(seen: {
   text: string
 }): Promise<{ previous: { text: string } | null }> {
   try {
-    const current = running()
-    await current.ready
-    return (await current.rpc.request('watch', seen, timeout(RECORD_TIMEOUT_MS))) as {
-      previous: { text: string } | null
-    }
+    return await request<{ previous: { text: string } | null }>(running(), 'watch', seen)
   } catch (error) {
     console.warn(`[store] watch ${seen.task}: ${message(error)}`)
     // No previous reads as "nothing changed", which keeps a broken store quiet rather than noisy.
@@ -169,11 +158,7 @@ export async function watch(seen: {
  */
 export async function notify(at: number, source: string, text: string): Promise<number | null> {
   try {
-    const current = running()
-    await current.ready
-    const { unread } = (await current.rpc.request('notify', { at, source, text }, timeout(RECORD_TIMEOUT_MS))) as {
-      unread: number
-    }
+    const { unread } = await request<{ unread: number }>(running(), 'notify', { at, source, text })
     return unread
   } catch (error) {
     console.warn(`[store] notify: ${message(error)}`)
@@ -185,30 +170,24 @@ export async function notify(at: number, source: string, text: string): Promise<
 export function saveThread(chat: string, at: number, model: string, turns: string): void {
   const current = live
   if (!current) return
-  void current.ready
-    .then(() => current.rpc.request('saveThread', { chat, at, model, turns }, timeout(RECORD_TIMEOUT_MS)))
-    .catch((error: unknown) => console.warn(`[store] thread ${chat}: ${message(error)}`))
+  void request(current, 'saveThread', { chat, at, model, turns }).catch((error: unknown) =>
+    console.warn(`[store] thread ${chat}: ${message(error)}`),
+  )
 }
 
 /** Forgets a chat for good: its kept thread and its log. Best effort, as keeping them is. */
 export function forgetChat(chat: string): void {
   const current = live
   if (!current) return
-  void current.ready
-    .then(() => current.rpc.request('chat.forget', { chat }, timeout(RECORD_TIMEOUT_MS)))
-    .catch((error: unknown) => console.warn(`[store] forget ${chat}: ${message(error)}`))
+  void request(current, 'chat.forget', { chat }).catch((error: unknown) =>
+    console.warn(`[store] forget ${chat}: ${message(error)}`),
+  )
 }
 
 /** What was kept for a chat, or null when there is nothing or the store is not up. */
 export async function loadThread(chat: string): Promise<{ at: number; model: string; turns: string } | null> {
   try {
-    const current = running()
-    await current.ready
-    return (await current.rpc.request('loadThread', { chat }, timeout(RECORD_TIMEOUT_MS))) as {
-      at: number
-      model: string
-      turns: string
-    } | null
+    return await request<{ at: number; model: string; turns: string } | null>(running(), 'loadThread', { chat })
   } catch {
     return null
   }
@@ -217,12 +196,7 @@ export async function loadThread(chat: string): Promise<{ at: number; model: str
 /** Every chat's kept conversation, by its key, read once at startup. */
 export async function allThreads(): Promise<Record<string, { at: number; model: string; turns: string }>> {
   try {
-    const current = running()
-    await current.ready
-    return (await current.rpc.request('allThreads', undefined, timeout(RECORD_TIMEOUT_MS))) as Record<
-      string,
-      { at: number; model: string; turns: string }
-    >
+    return await request<Record<string, { at: number; model: string; turns: string }>>(running(), 'allThreads')
   } catch {
     return {}
   }
@@ -234,9 +208,7 @@ export async function allThreads(): Promise<Record<string, { at: number; model: 
  */
 export async function fileExchange(chat: string, at: number, exchange: Exchange): Promise<void> {
   try {
-    const current = running()
-    await current.ready
-    await current.rpc.request('exchange.file', { chat, at, exchange }, timeout(RECORD_TIMEOUT_MS))
+    await request(running(), 'exchange.file', { chat, at, exchange })
   } catch (error) {
     console.warn(`[store] chat ${chat}: ${message(error)}`)
   }
@@ -248,40 +220,26 @@ export async function fileExchange(chat: string, at: number, exchange: Exchange)
  * as not knowing: the caller has the thread to read the last few from.
  */
 export async function readExchanges(chat: string, limit: number, before?: number): Promise<Exchange[]> {
-  const current = running()
-  await current.ready
-  return (await current.rpc.request('exchange.read', { chat, limit, before }, timeout(RECORD_TIMEOUT_MS))) as Exchange[]
+  return await request<Exchange[]>(running(), 'exchange.read', { chat, limit, before })
 }
 
 /** The inbox, newest first. */
 export async function notifications(
   limit: number,
 ): Promise<{ id: number; at: number; source: string; text: string; read: boolean }[]> {
-  const current = running()
-  await current.ready
-  return (await current.rpc.request('notifications', { limit }, timeout(RECORD_TIMEOUT_MS))) as {
-    id: number
-    at: number
-    source: string
-    text: string
-    read: boolean
-  }[]
+  return await request(running(), 'notifications', { limit })
 }
 
 /** Marks them read; no ids means all of them. Answers how many are unread after. */
 export async function markRead(ids: number[]): Promise<number> {
-  const current = running()
-  await current.ready
-  const { unread } = (await current.rpc.request('markRead', { ids }, timeout(RECORD_TIMEOUT_MS))) as { unread: number }
+  const { unread } = await request<{ unread: number }>(running(), 'markRead', { ids })
   return unread
 }
 
 /** How many are unread, for the inbox view. Zero when the store is not up, since a count must not guess. */
 export async function unreadCount(): Promise<number> {
   try {
-    const current = running()
-    await current.ready
-    return (await current.rpc.request('unread', undefined, timeout(RECORD_TIMEOUT_MS))) as number
+    return await request<number>(running(), 'unread')
   } catch {
     return 0
   }
@@ -290,25 +248,17 @@ export async function unreadCount(): Promise<number> {
 /** What every origin has spent today, for the Data pane. */
 export async function usageToday(): Promise<{ origin: string; input: number; output: number; runs: number }[]> {
   try {
-    const current = running()
-    await current.ready
-    return (await current.rpc.request('usage.read', { day: dayOf(Date.now()) }, timeout(RECORD_TIMEOUT_MS))) as {
-      origin: string
-      input: number
-      output: number
-      runs: number
-    }[]
+    return await request(running(), 'usage.read', { day: dayOf(Date.now()) })
   } catch {
     return []
   }
 }
 
 /** Reads the store. Throws with words the model can act on, since it is behind a tool. */
-export async function query(request: QueryRequest): Promise<QueryResult> {
+export async function query(req: QueryRequest): Promise<QueryResult> {
   const current = running()
-  await current.ready
   try {
-    return (await current.rpc.request('query', request, timeout(QUERY_TIMEOUT_MS))) as QueryResult
+    return await request<QueryResult>(current, 'query', req, QUERY_TIMEOUT_MS)
   } catch (error) {
     // Nothing can interrupt a statement inside SQLite, so a query that ran past its time leaves a
     // process that is still working. It goes, and the next call starts a fresh one.
@@ -339,15 +289,15 @@ export function sourcesSeen(): string[] {
 }
 
 export async function stats(): Promise<StoreStats> {
-  const current = running()
-  await current.ready
-  return (await current.rpc.request('stats')) as StoreStats
+  return await request<StoreStats>(running(), 'stats')
 }
 
 export async function compact(): Promise<StoreStats> {
-  const current = running()
-  await current.ready
-  return (await current.rpc.request('compact', undefined, timeout(QUERY_TIMEOUT_MS))) as StoreStats
+  return await request<StoreStats>(running(), 'compact', undefined, QUERY_TIMEOUT_MS)
+}
+
+function request<T>(current: Live, method: string, params?: unknown, ms = RECORD_TIMEOUT_MS): Promise<T> {
+  return readyRequest<T>(current.ready, current.rpc, method, params, timeout(ms))
 }
 
 /** Closes the file and stops the process. Called on quit. */

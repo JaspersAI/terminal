@@ -164,11 +164,12 @@ export function fileFailed(chat: string, question: string, steps: string[], erro
  */
 export async function exchanges(chat: string, limit: number, before?: number): Promise<Exchange[]> {
   const secrets = knownSecrets()
+  const config = before === undefined ? getProviderConfig('llm') : null
+  const snapshot = config ? threadFor(chat, config).slice() : null
   try {
     return (await readExchanges(chat, limit, before)).map((one) => maskExchange(one, secrets))
   } catch {
-    const config = getProviderConfig('llm')
-    return config && before === undefined ? transcript(threadFor(chat, config), limit, secrets) : []
+    return snapshot ? transcript(snapshot, limit, secrets) : []
   }
 }
 

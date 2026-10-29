@@ -151,10 +151,13 @@ function toEight(db: DatabaseSync): void {
   }
 }
 
-const RUN_INDEXES = `
+const RUN_DOCS_TRIGGER = `
 create trigger if not exists runs_docs_delete before delete on runs when old.text is not null begin
   insert into docs(docs, rowid, text) values('delete', old.id, old.text);
 end;
+`
+
+const RUN_INDEXES = `
 create index if not exists runs_args_symbol on runs(source, coalesce(json_extract(args, '$.symbol'), json_extract(args, '$.ticker')), fetched_at desc);
 create index if not exists run_rows_symbol on run_rows(json_extract(data, '$.symbol'), run_id, json_extract(data, '$.date'));
 create index if not exists run_rows_ticker on run_rows(json_extract(data, '$.ticker'), run_id, json_extract(data, '$.date'));
@@ -189,6 +192,7 @@ create table run_rows (
 create virtual table docs using fts5(text, content='runs', content_rowid='id');
 create index runs_source_at on runs(source, fetched_at desc);
 create index runs_lookup on runs(source, args_hash, fetched_at desc);
+${RUN_DOCS_TRIGGER}
 ${RUN_INDEXES}
 ${USAGE}
 ${WATCHED}
@@ -568,17 +572,18 @@ function migrate(db: DatabaseSync): void {
  * bounded run history without changing `user_version`.
  */
 function prepareRuns(db: DatabaseSync): void {
-  db.exec(RUN_INDEXES)
+  db.exec(RUN_DOCS_TRIGGER)
+  // Trim superseded and excess runs before building expression indexes on run_rows, so an older
+  // store does not index stale rows only to cascade-delete them a moment later.
   db.exec(`
     delete from runs
-    where row_count > 0
-      and id not in (
-        select id from (
-          select id, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
-          from runs
-          where row_count > 0
-        ) where rn = 1
-      );
+    where id in (
+      select id from (
+        select id, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
+        from runs
+        where row_count > 0
+      ) where rn > 1
+    );
     delete from runs
     where id in (
       select id from (
@@ -594,6 +599,7 @@ function prepareRuns(db: DatabaseSync): void {
       ) where rn > ${RUNS_PER_SOURCE_MAX}
     );
   `)
+  db.exec(RUN_INDEXES)
 }
 
 /** What is written beside an observation, so two runs can be told apart without reading both. */
