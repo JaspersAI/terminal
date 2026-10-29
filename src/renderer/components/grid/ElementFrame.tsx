@@ -574,7 +574,10 @@ export function ElementFrame({
           key={handle}
           aria-hidden
           data-edge={handle}
-          onPointerDown={(event) => onGrab(event, handle)}
+          onPointerDown={(event) => {
+            event.stopPropagation()
+            onGrab(event, handle)
+          }}
           className={`absolute z-10 ${EDGES[handle]}`}
         />
       ))}

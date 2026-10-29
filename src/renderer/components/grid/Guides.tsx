@@ -48,7 +48,7 @@ export function Labels({ size }: Props): ReactElement {
       className="pointer-events-none absolute inset-0 text-[10px] leading-none text-muted-foreground select-none"
     >
       <div
-        className="absolute inset-x-4 top-0 grid h-4"
+        className="absolute top-0 right-4 left-2.5 grid h-4"
         style={{ gridTemplateColumns: `repeat(${size.cols}, minmax(0, 1fr))` }}
       >
         {Array.from({ length: size.cols }, (_, x) => (
@@ -58,7 +58,7 @@ export function Labels({ size }: Props): ReactElement {
         ))}
       </div>
       <div
-        className="absolute inset-y-4 left-0 grid w-4"
+        className="absolute top-4 bottom-2.5 left-0 grid w-2.5"
         style={{ gridTemplateRows: `repeat(${size.rows}, minmax(0, 1fr))` }}
       >
         {Array.from({ length: size.rows }, (_, y) => (
