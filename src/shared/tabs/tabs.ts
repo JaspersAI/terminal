@@ -1,6 +1,7 @@
 // Pure rules for the bottom Excel-style tab bar: fixed stepped character widths (16 -> 12 -> 8 -> 6 -> 4)
-// so tabs never resize by title length and never scroll horizontally, three-dot truncation, the 32-color
-// palette with light/dark selected contrast, and tab reordering. Keep this file free of Node and DOM imports.
+// so tabs never resize by title length and never scroll horizontally, three-dot truncation, the curated
+// 32-color cool & high-contrast palette, per-window tab filtering, and tab reordering.
+// Keep this file free of Node and DOM imports.
 
 export const TAB_CHAR_DEFAULT = 16
 export const TAB_CHAR_STEPS: readonly number[] = [16, 12, 8, 6, 4]
@@ -34,40 +35,50 @@ export function formatTabLabel(name: string, maxChars: number = TAB_CHAR_DEFAULT
   return `${name.slice(0, limit - 3)}...`
 }
 
-/** 32-color palette (4 rows × 8 columns) for coloring tabs. */
+/**
+ * Curated 32-color cool & high-contrast terminal palette (4 rows × 8 columns):
+ * Row 1: Cool slates, steel blues, arctic cyans, and deep navy
+ * Row 2: Cobalt, sapphire, indigo, midnight violet, and cool plum
+ * Row 3: Deep teal, petrol, pine, Nordic emerald, and forest
+ * Row 4: High-contrast terminal accents (crimson, burgundy, copper, amber-gold, bronze, and graphite)
+ */
 export const TAB_PALETTE: readonly string[] = [
-  '#ef4444',
-  '#f97316',
-  '#f59e0b',
-  '#eab308',
-  '#84cc16',
-  '#22c55e',
-  '#10b981',
-  '#14b8a6',
-  '#06b6d4',
-  '#0ea5e9',
-  '#3b82f6',
-  '#6366f1',
-  '#8b5cf6',
-  '#a855f7',
-  '#d946ef',
-  '#ec4899',
-  '#f43f5e',
-  '#dc2626',
-  '#ea580c',
-  '#d97706',
-  '#65a30d',
-  '#16a34a',
-  '#059669',
-  '#0d9488',
-  '#0891b2',
+  // Row 1: Cool Slates & Arctic Blues
+  '#334155',
+  '#475569',
+  '#1e3a5f',
+  '#1d4ed8',
+  '#0369a1',
   '#0284c7',
+  '#0e7490',
+  '#0891b2',
+  // Row 2: Cobalt, Indigo & Cool Violet
+  '#1e40af',
   '#2563eb',
+  '#3730a3',
   '#4f46e5',
-  '#7c3aed',
-  '#9333ea',
-  '#c026d3',
-  '#db2777',
+  '#4c1d95',
+  '#6d28d9',
+  '#581c87',
+  '#7e22ce',
+  // Row 3: Petrol, Teal & Nordic Greens
+  '#115e59',
+  '#0f766e',
+  '#0d9488',
+  '#065f46',
+  '#047857',
+  '#15803d',
+  '#166534',
+  '#3f6212',
+  // Row 4: High-Contrast Signal & Graphite Tones
+  '#881337',
+  '#be123c',
+  '#991b1b',
+  '#9a3412',
+  '#b45309',
+  '#854d0e',
+  '#3f3f46',
+  '#18181b',
 ]
 
 const PALETTE_SET = new Set<string>(TAB_PALETTE)
@@ -97,7 +108,7 @@ function mixHex(a: [number, number, number], b: [number, number, number], weight
 /**
  * Computes background, text, and border colors for a tab:
  * - Default (no color): light grayscale on light theme (darker when selected), dark grayscale on dark theme (lighter when selected).
- * - Custom color: same contrast behavior (selected tab shifts darker on light theme, lighter on dark theme).
+ * - Custom color: high-contrast selected vs. unselected shades (selected shifts darker with crisp white text on light theme, and brighter/lighter on dark theme).
  */
 export function tabSwatchStyle(
   color: string | null | undefined,
@@ -107,39 +118,39 @@ export function tabSwatchStyle(
   if (!color || !isTabColor(color)) {
     if (!dark) {
       return selected
-        ? { backgroundColor: '#c4c4cc', color: '#18181b', borderColor: '#a1a1aa' }
+        ? { backgroundColor: '#b8b8c2', color: '#09090b', borderColor: '#71717a' }
         : { backgroundColor: '#e4e4e7', color: '#52525b', borderColor: '#d4d4d8' }
     }
     return selected
-      ? { backgroundColor: '#52525b', color: '#fafafa', borderColor: '#71717a' }
+      ? { backgroundColor: '#52525b', color: '#fafafa', borderColor: '#a1a1aa' }
       : { backgroundColor: '#27272a', color: '#a1a1aa', borderColor: '#3f3f46' }
   }
   const rgb = parseHex(color)
   if (!dark) {
-    // Light theme: unselected is a soft light tint, selected is a noticeably darker shade.
+    // Light theme: unselected is a cool muted tint; selected is the deep, high-contrast saturated shade with crisp white text.
     return selected
       ? {
-          backgroundColor: mixHex(rgb, [255, 255, 255], 0.55),
-          color: '#18181b',
-          borderColor: mixHex(rgb, [0, 0, 0], 0.75),
+          backgroundColor: mixHex(rgb, [15, 23, 42], 0.88),
+          color: '#f8fafc',
+          borderColor: mixHex(rgb, [0, 0, 0], 0.7),
         }
       : {
-          backgroundColor: mixHex(rgb, [255, 255, 255], 0.25),
-          color: '#3f3f46',
-          borderColor: mixHex(rgb, [255, 255, 255], 0.45),
+          backgroundColor: mixHex(rgb, [241, 245, 249], 0.28),
+          color: '#1e293b',
+          borderColor: mixHex(rgb, [203, 213, 225], 0.5),
         }
   }
-  // Dark theme: unselected is a deep dark shade, selected is a noticeably lighter shade.
+  // Dark theme: unselected is a deep muted tone; selected is a vivid, lighter high-contrast shade.
   return selected
     ? {
-        backgroundColor: mixHex(rgb, [255, 255, 255], 0.2),
-        color: '#fafafa',
-        borderColor: mixHex(rgb, [255, 255, 255], 0.4),
+        backgroundColor: mixHex(rgb, [255, 255, 255], 0.78),
+        color: '#ffffff',
+        borderColor: mixHex(rgb, [255, 255, 255], 0.5),
       }
     : {
-        backgroundColor: mixHex(rgb, [24, 24, 27], 0.4),
-        color: '#d4d4d8',
-        borderColor: mixHex(rgb, [24, 24, 27], 0.6),
+        backgroundColor: mixHex(rgb, [15, 23, 42], 0.52),
+        color: '#cbd5e1',
+        borderColor: mixHex(rgb, [30, 41, 59], 0.7),
       }
 }
 
@@ -153,4 +164,27 @@ export function reorderTabs<T extends { id: string }>(tabs: readonly T[], id: st
   const [moved] = next.splice(from, 1)
   next.splice(clamped, 0, moved!)
   return next
+}
+
+/**
+ * Filters tabs for a specific window:
+ * - Window 1 (main window) shows tabs with `window === undefined` or `window === 1`.
+ * - Window > 1 (`Terminal (copy)`) shows only tabs detached/created in that window (`window === windowNumber`).
+ */
+export function tabsForWindow<T extends { id: string; window?: number }>(
+  workspaces: readonly T[],
+  windowNumber: number,
+  initialTabId?: string | null,
+): T[] {
+  if (windowNumber > 1) {
+    const matching = workspaces.filter((w) => w.window === windowNumber)
+    if (matching.length > 0) return matching
+    if (initialTabId) {
+      const byInitial = workspaces.filter((w) => w.id === initialTabId)
+      if (byInitial.length > 0) return byInitial
+    }
+    return workspaces.slice(0, 1)
+  }
+  const mainTabs = workspaces.filter((w) => w.window === undefined || w.window === 1)
+  return mainTabs.length > 0 ? mainTabs : workspaces.slice(0, 1)
 }

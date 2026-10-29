@@ -7,6 +7,7 @@ import {
   TAB_CHAR_DEFAULT,
   TAB_PALETTE,
   tabCharLimit,
+  tabsForWindow,
   tabSwatchStyle,
   tabWidthPx,
 } from './tabs.ts'
@@ -72,5 +73,21 @@ test('reorderTabs moves a tab to the target index and preserves the array when u
   assert.deepEqual(
     reorderTabs(tabs, 'd', 0).map((t) => t.id),
     ['d', 'a', 'b', 'c'],
+  )
+})
+
+test('tabsForWindow isolates a detached tab into its Terminal (copy) window while keeping main window tabs in window 1', () => {
+  const all = [
+    { id: 't1', name: 'Tab 1' },
+    { id: 't2', name: 'Tab 2', window: 2 },
+    { id: 't3', name: 'Tab 3' },
+  ]
+  assert.deepEqual(
+    tabsForWindow(all, 1).map((t) => t.id),
+    ['t1', 't3'],
+  )
+  assert.deepEqual(
+    tabsForWindow(all, 2).map((t) => t.id),
+    ['t2'],
   )
 })

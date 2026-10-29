@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { reconcile } from '../../shared/data/hash'
 import type { Action, AppState, Workspace } from '../../shared/state'
+import { tabsForWindow } from '../../shared/tabs/tabs'
 import { errorMessage } from './errors'
 
 // The renderer's mirror of the tree main owns. Components read it with `useAppState`, plain code
@@ -60,6 +61,8 @@ export async function dispatch(action: Action): Promise<void> {
       }
       if (action.type === 'tab.create' || action.type === 'workspace.create') {
         localTabId = null
+        await window.app.state.dispatch({ type: 'tab.create', window: window.app.windowNumber })
+        return
       }
     }
     await window.app.state.dispatch(action)
@@ -68,13 +71,21 @@ export async function dispatch(action: Action): Promise<void> {
   }
 }
 
-/** The tab on screen in this window. A detached "Terminal (copy)" window starts on its detached tab. */
+/** The tabs belonging to this window (Window 1 shows main tabs; Terminal (copy) shows its detached tab). */
+export function windowWorkspaces(state: AppState): Workspace[] {
+  const winNum = typeof window !== 'undefined' ? window.app.windowNumber : 1
+  const initial = typeof window !== 'undefined' ? window.app.initialTabId : null
+  return tabsForWindow(state.workspaces, winNum, initial)
+}
+
+/** The tab on screen in this window. A detached "Terminal (copy)" window starts on its single detached tab. */
 export function currentWorkspace(state: AppState): Workspace {
+  const own = windowWorkspaces(state)
   if (localTabId) {
-    const found = state.workspaces.find((w) => w.id === localTabId)
+    const found = own.find((w) => w.id === localTabId)
     if (found) return found
   }
-  return state.workspaces.find((w) => w.id === state.currentWorkspaceId) ?? state.workspaces[0]!
+  return own.find((w) => w.id === state.currentWorkspaceId) ?? own[0] ?? state.workspaces[0]!
 }
 
 function publish(next: AppState): void {

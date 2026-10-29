@@ -34,7 +34,7 @@ export function Composer(): ReactElement {
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
   const [expanded, setExpanded] = useState(false)
   const request = useRequest()
-  const { draft, setDraft, phase, error, busy, working, shown, earlier, ask, toggleVoice, stop, clear } = request
+  const { draft, setDraft, phase, error, busy, working, shown, earlier, ask, press, release, stop, clear } = request
   const attachments = useAttachments()
   const drop = useFileDrop(attachments.attach)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -158,17 +158,27 @@ export function Composer(): ReactElement {
             <button
               type="button"
               id="central-voice-button"
-              aria-label={phase === 'recording' ? 'Stop voice recording' : 'Voice input'}
+              aria-label="Hold to talk"
               title={
                 !hasVoice
                   ? 'Add a voice provider in Settings to talk'
                   : phase === 'recording'
-                    ? 'Listening — click to send'
-                    : 'Voice input'
+                    ? 'Listening — release to send'
+                    : 'Hold to talk'
               }
-              disabled={!hasVoice || phase === 'transcribing' || phase === 'opening'}
-              onClick={() => toggleVoice()}
-              className={`flex h-6 w-6 shrink-0 items-center justify-center border border-border transition-colors disabled:opacity-40 ${
+              disabled={!hasVoice || phase === 'transcribing'}
+              onPointerDown={(event) => {
+                event.preventDefault()
+                try {
+                  event.currentTarget.setPointerCapture(event.pointerId)
+                } catch {
+                  // ignore
+                }
+                press()
+              }}
+              onPointerUp={release}
+              onPointerCancel={release}
+              className={`flex h-6 w-6 shrink-0 touch-none select-none items-center justify-center border border-border transition-colors disabled:opacity-40 ${
                 phase === 'recording'
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-background text-muted-foreground hover:bg-muted hover:text-foreground'

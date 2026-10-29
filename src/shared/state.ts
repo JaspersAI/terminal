@@ -31,6 +31,8 @@ export interface Workspace {
   name: string
   /** Optional hex color from the 32-color palette; null/undefined uses default grayscale. */
   color?: string | null
+  /** Optional window number (> 1) when detached into a "Terminal (copy)" window. */
+  window?: number
 }
 
 /** Names are trimmed and capped. Main rejects anything else. */
@@ -340,7 +342,7 @@ export type Action =
   | { type: 'workspace.rename'; id: string; name: string }
   | { type: 'workspace.select'; id: string }
   | { type: 'workspace.delete'; id: string }
-  | { type: 'tab.create' }
+  | { type: 'tab.create'; window?: number }
   | { type: 'tab.rename'; id: string; name: string }
   | { type: 'tab.select'; id: string }
   | { type: 'tab.delete'; id: string }

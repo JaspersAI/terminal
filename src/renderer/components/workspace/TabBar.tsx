@@ -49,8 +49,10 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
     startX: number
     startY: number
     moved: boolean
+    captured: boolean
     detached: boolean
   } | null>(null)
+  const lastClickRef = useRef<{ id: string; at: number } | null>(null)
 
   useEffect(() => {
     const el = barRef.current
@@ -111,17 +113,21 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
 
   function onTabPointerDown(event: ReactPointerEvent<HTMLDivElement>, tab: Workspace): void {
     if (event.button !== 0 || renamingId === tab.id) return
+    const now = Date.now()
+    if (lastClickRef.current && lastClickRef.current.id === tab.id && now - lastClickRef.current.at < 350) {
+      lastClickRef.current = null
+      dragRef.current = null
+      startRename(tab)
+      return
+    }
+    lastClickRef.current = { id: tab.id, at: now }
     dragRef.current = {
       tabId: tab.id,
       startX: event.clientX,
       startY: event.clientY,
       moved: false,
+      captured: false,
       detached: false,
-    }
-    try {
-      event.currentTarget.setPointerCapture(event.pointerId)
-    } catch {
-      // Synthetic pointer events in tests may not support capture.
     }
   }
 
@@ -132,6 +138,14 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
     const dy = event.clientY - drag.startY
     if (!drag.moved && Math.hypot(dx, dy) < 5) return
     drag.moved = true
+    if (!drag.captured) {
+      drag.captured = true
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch {
+        // Synthetic pointer events in tests may not support capture.
+      }
+    }
 
     // Dragging vertically out of the bottom bar detaches the tab into Terminal (copy).
     if (workspaces.length > 1 && Math.abs(dy) > DETACH_DRAG_Y_PX && Math.abs(dy) > Math.abs(dx)) {
@@ -241,7 +255,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
                     commitRename(tab)
                   }
                 }}
-                className="w-full min-w-0 bg-transparent text-center text-[10px] leading-none font-medium outline-none"
+                className="w-full min-w-0 border-b border-current bg-background/80 px-1 text-center text-[10px] leading-none font-medium outline-none"
               />
             ) : (
               <span

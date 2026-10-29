@@ -76,11 +76,24 @@ export function createWindow(n: number, show: boolean, at?: { x: number; y: numb
   win.on('closed', () => {
     if (windows.get(n) === win) windows.delete(n)
     if (focused === n) focused = MAIN_WINDOW
-    // An extension closed by hand leaves the list; on quit the list stays, so relaunch opens it again.
+    // A detached window closed by hand leaves the list and returns its detached tab(s) to the main window.
     if (n !== MAIN_WINDOW && !isQuitting()) {
-      update((state) =>
-        state.windows.includes(n) ? { ...state, windows: state.windows.filter((w) => w !== n) } : state,
-      )
+      update((state) => {
+        const hasWin = state.windows.includes(n)
+        const hasDetached = state.workspaces.some((w) => w.window === n)
+        if (!hasWin && !hasDetached) return state
+        return {
+          ...state,
+          windows: hasWin ? state.windows.filter((w) => w !== n) : state.windows,
+          workspaces: hasDetached
+            ? state.workspaces.map((w) => {
+                if (w.window !== n) return w
+                const { window: _win, ...rest } = w
+                return rest
+              })
+            : state.workspaces,
+        }
+      })
     }
   })
 

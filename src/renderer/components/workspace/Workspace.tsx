@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import { chatElement, EMPTY_GRID } from '../../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
 import { errorMessage } from '../../lib/errors'
-import { currentWorkspace, dispatch, useAppState } from '../../lib/state'
+import { currentWorkspace, dispatch, useAppState, windowWorkspaces } from '../../lib/state'
 import { Composer } from '../composer/Composer'
 import { dockChat, useDockedChat } from '../composer/dock'
 import { FloatingOrb } from '../composer/Orb'
@@ -26,6 +26,7 @@ interface Props {
 export function Workspace({ onOpenRooms }: Props): ReactElement {
   const app = useAppState()
   const current = currentWorkspace(app)
+  const tabs = windowWorkspaces(app)
   const docked = useDockedChat(current.id, MAIN_WINDOW)
   const orbOpen = useOrbOpen()
   const totalRooms =
@@ -96,7 +97,7 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
         <GridLayer key={current.id} workspaceId={current.id} windowNumber={MAIN_WINDOW} />
         {orbOpen && <FloatingOrb />}
       </div>
-      <TabBar workspaces={app.workspaces} currentId={current.id} />
+      <TabBar workspaces={tabs} currentId={current.id} />
     </main>
   )
 }

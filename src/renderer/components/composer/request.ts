@@ -50,7 +50,6 @@ let store: CentralStore = {
 const listeners = new Set<() => void>()
 const recorder = new Recorder()
 let pressed = false
-let tapRecording = false
 let listeningEvents = false
 
 function emitStore(patch: Partial<CentralStore>): void {
@@ -141,10 +140,10 @@ async function attemptVoice(action: () => Promise<void>): Promise<void> {
   }
 }
 
-async function finishVoice(allowShortTap = false): Promise<void> {
+async function finishVoice(): Promise<void> {
   const recording = await recorder.stop()
-  if (!allowShortTap && recording.durationMs < 400) {
-    throw new Error('Too short. Tap to start speaking, then tap again to send.')
+  if (recording.durationMs < 400) {
+    throw new Error('Too short. Hold until it says Listening, speak, then release.')
   }
   emitStore({ voice: 'transcribing' })
   const text = await window.app.voice.transcribe(recording.audio, recording.mimeType)
@@ -157,7 +156,6 @@ async function finishVoice(allowShortTap = false): Promise<void> {
 export function pressVoice(): void {
   if (store.voice !== 'idle' || pressed) return
   pressed = true
-  tapRecording = false
   void attemptVoice(async () => {
     emitStore({ voice: 'opening' })
     try {
@@ -171,47 +169,24 @@ export function pressVoice(): void {
       throw err
     }
     emitStore({ voice: 'recording' })
-    if (!pressed) await finishVoice(false)
+    if (!pressed) await finishVoice()
   })
 }
 
 export function releaseVoice(): void {
-  if (!pressed || tapRecording) return
+  if (!pressed) return
   pressed = false
-  if (recorder.active) void attemptVoice(() => finishVoice(false))
+  if (recorder.active) void attemptVoice(finishVoice)
 }
 
-/**
- * Tap-to-toggle voice recording (used by the small voice button in the command line / Central Dock
- * and by tapping the floating Voice Orb): first tap starts recording, second tap stops and submits
- * immediately to Central.
- */
-export function toggleVoice(): void {
-  if (store.voice === 'recording' || (pressed && tapRecording)) {
-    pressed = false
-    tapRecording = false
-    if (recorder.active) void attemptVoice(() => finishVoice(true))
-    else emitStore({ voice: 'idle' })
-    return
+/** Silently aborts an in-progress press when the user drags the Orb to move it instead of speaking. */
+export function cancelVoice(): void {
+  if (!pressed && !recorder.active) return
+  pressed = false
+  if (recorder.active) {
+    void recorder.stop().catch(() => undefined)
   }
-  if (store.voice !== 'idle') return
-  pressed = true
-  tapRecording = true
-  void attemptVoice(async () => {
-    emitStore({ voice: 'opening' })
-    try {
-      if (!(await window.app.voice.requestMicrophone())) {
-        throw new Error('Microphone access is off. Allow it in System Settings, Privacy & Security, Microphone.')
-      }
-      if (!pressed) return emitStore({ voice: 'idle' })
-      await recorder.start()
-    } catch (err) {
-      pressed = false
-      tapRecording = false
-      throw err
-    }
-    emitStore({ voice: 'recording' })
-  })
+  emitStore({ voice: 'idle' })
 }
 
 /**
@@ -271,7 +246,7 @@ export function useRequest() {
     ask: askCentral,
     press: pressVoice,
     release: releaseVoice,
-    toggleVoice,
+    cancelVoice,
     stop,
     dismiss,
     clear,

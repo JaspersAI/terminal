@@ -129,7 +129,7 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'workspace.rename': (raw) => renameWorkspace(asString(raw.id), asString(raw.name)),
   'workspace.select': (raw) => selectWorkspace(asString(raw.id)),
   'workspace.delete': (raw) => deleteWorkspace(asString(raw.id)),
-  'tab.create': () => createWorkspace(),
+  'tab.create': (raw) => createWorkspace(raw.window === undefined ? undefined : asWindow(raw.window)),
   'tab.rename': (raw) => renameWorkspace(asString(raw.id), asString(raw.name)),
   'tab.select': (raw) => selectWorkspace(asString(raw.id)),
   'tab.delete': (raw) => deleteWorkspace(asString(raw.id)),
@@ -699,25 +699,45 @@ function newWorkspace(workspaces: Workspace[]): Workspace {
 }
 
 /** Adds "Tab N" with an empty grid per open window and makes it current. */
-export function createWorkspace(): void {
+export function createWorkspace(targetWindow?: number): void {
   update((state) => {
-    const workspace = newWorkspace(state.workspaces)
+    const workspace: Workspace = {
+      ...newWorkspace(state.workspaces),
+      ...(targetWindow && targetWindow > MAIN_WINDOW ? { window: targetWindow } : {}),
+    }
     const seq = globalSeq(state.loops)
     return {
       ...state,
       workspaces: [...state.workspaces, workspace],
-      currentWorkspaceId: workspace.id,
+      currentWorkspaceId: targetWindow && targetWindow > MAIN_WINDOW ? state.currentWorkspaceId : workspace.id,
       grids: { ...state.grids, [workspace.id]: withWindows({}, state.windows) },
       loops: { ...state.loops, [workspace.id]: { seq, list: [] } },
     }
   })
 }
 
-/** Detaches a tab into a second Terminal window titled "Terminal (copy)" starting on that tab. */
+/** Detaches a tab into a second Terminal window titled "Terminal (copy)" containing that single tab. */
 export function detachTab(id: string): void {
   const state = getState()
-  if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown tab.')
-  openWindow(undefined, id)
+  const target = state.workspaces.find((w) => w.id === id)
+  if (!target) throw new Error('Unknown tab.')
+  const sourceWindow = target.window ?? MAIN_WINDOW
+  const tabsInSourceWindow = state.workspaces.filter((w) => (w.window ?? MAIN_WINDOW) === sourceWindow)
+  if (tabsInSourceWindow.length <= 1) {
+    throw new Error('The last tab in a window cannot be detached.')
+  }
+  const winNumber = openWindow(undefined, id)
+  update((current) => {
+    const workspaces = current.workspaces.map((w) => (w.id === id ? { ...w, window: winNumber } : w))
+    const remainingMain = workspaces.filter((w) => (w.window ?? MAIN_WINDOW) === MAIN_WINDOW)
+    const nextCurrentId =
+      current.currentWorkspaceId === id && remainingMain.length > 0 ? remainingMain[0]!.id : current.currentWorkspaceId
+    return {
+      ...current,
+      workspaces,
+      currentWorkspaceId: nextCurrentId,
+    }
+  })
 }
 
 export function renameWorkspace(id: string, rawName: string): void {
@@ -740,9 +760,11 @@ export function colorWorkspace(id: string, rawColor: string | null): void {
     if (!state.workspaces.some((w) => w.id === id)) throw new Error('Unknown tab.')
     return {
       ...state,
-      workspaces: state.workspaces.map((w) =>
-        w.id === id ? (color ? { ...w, color } : { id: w.id, name: w.name }) : w,
-      ),
+      workspaces: state.workspaces.map((w) => {
+        if (w.id !== id) return w
+        const { color: _prev, ...rest } = w
+        return color ? { ...rest, color } : rest
+      }),
     }
   })
 }
