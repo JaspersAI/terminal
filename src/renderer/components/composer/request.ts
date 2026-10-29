@@ -5,11 +5,11 @@ import { get, useAppState } from '../../lib/state'
 import {
   answered,
   awayOn,
+  beginAsk,
   dismissed,
   failed,
   heard,
   over,
-  sent,
   shownOn,
   without,
   workingOn,
@@ -24,6 +24,8 @@ import { Recorder } from './recorder'
  * within reach, and what is drawn stays what was asked for.
  */
 export const PAGE = 30
+/** How long `ask` waits on a history refresh before starting the run anyway if the store is busy. */
+const REREAD_WAIT_MS = 250
 
 /** The microphone's part of a request: nothing typed or said can be sent while it has the floor. */
 type Voice = Exclude<Phase, 'thinking'>
@@ -70,10 +72,17 @@ export function useRequest() {
    * for, which it holds. `fresh` puts what was read in place of what was up; otherwise it goes under
    * whatever the reader has gone back through.
    */
-  async function reread(fresh: boolean): Promise<void> {
-    const done = over(now.current)
+  async function reread(
+    fresh: boolean,
+    done: ReadonlySet<string> = over(now.current),
+    whileWorking?: string,
+  ): Promise<void> {
     const past = await window.app.agent.history(PAGE).catch(() => null)
-    if (past) setEarlier((was) => (fresh ? past : rejoin(was, past)))
+    if (past) {
+      const stillWorking =
+        whileWorking === undefined || now.current.some((one) => one.ask === whileWorking && one.working)
+      setEarlier((was) => (fresh && stillWorking ? past : rejoin(was, past)))
+    }
     change((list) => without(list, done))
   }
 
@@ -83,13 +92,21 @@ export function useRequest() {
    */
   async function ask(text: string): Promise<void> {
     setError(null)
-    // The conversation this question continues, read before the run adds to it. Its newest page only:
-    // the view goes to the new question, so whatever the reader had loaded above is let go.
-    await reread(true)
     const name = crypto.randomUUID()
+    const currentWorkspaceId = get().currentWorkspaceId
+    let done = new Set<string>()
     setSequence((value) => value + 1)
-    // The workspace on screen now is the one main runs it on.
-    change((list) => sent(list, name, get().currentWorkspaceId, text))
+    // Put the question on screen at once, while capturing the already-finished exchanges that the
+    // history read below will supersede.
+    change((list) => {
+      const begun = beginAsk(list, name, currentWorkspaceId, text)
+      done = begun.done
+      return begun.list
+    })
+    // The conversation this question continues, read before the run adds to it. Its newest page only:
+    // the view goes to the new question, so whatever the reader had loaded above is let go. Bounded so
+    // a busy store never holds up the run itself.
+    await Promise.race([reread(true, done, name), new Promise<void>((resolve) => setTimeout(resolve, REREAD_WAIT_MS))])
     try {
       const reply = await window.app.agent.run(text, name)
       console.log('[agent]', reply)

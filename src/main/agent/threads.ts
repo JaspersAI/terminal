@@ -32,10 +32,27 @@ export function threadKey(model: ThreadModel): string {
 
 export function createThreads(store?: ThreadStore): (chat: string, model: ThreadModel) => Turn[] {
   const threads = new Map<string, { key: string; turns: Turn[] }>()
+  const loaded = new Set<string>()
   return (chat, model) => {
     const key = threadKey(model)
-    const thread = threads.get(chat) ?? { key, turns: [] as Turn[], ...store?.load(chat) }
-    threads.set(chat, thread)
+    let thread = threads.get(chat)
+    if (!thread || (thread.turns.length === 0 && !loaded.has(chat))) {
+      const kept = store?.load(chat)
+      if (kept) {
+        loaded.add(chat)
+        if (thread) {
+          thread.key = kept.key
+          thread.turns.push(...kept.turns)
+        } else {
+          thread = { key: kept.key, turns: kept.turns }
+        }
+      } else if (!thread) {
+        thread = { key, turns: [] }
+      }
+      threads.set(chat, thread)
+    } else {
+      loaded.add(chat)
+    }
     // Another model goes on with the conversation, in place, so a run at work on it still joins it.
     if (thread.key !== key) {
       thread.turns.splice(0, thread.turns.length, ...portable(thread.turns))

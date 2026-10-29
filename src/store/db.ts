@@ -565,35 +565,65 @@ function migrate(db: DatabaseSync): void {
 
 /**
  * Ensures an existing store has the `runs`/`run_rows` expression indexes, FTS5 delete trigger, and
- * bounded run history without changing `user_version`.
+ * bounded run history without changing `user_version`. When excess runs need trimming, drops the
+ * secondary `run_rows` indexes and FTS delete trigger first, trims inside one transaction, and
+ * rebuilds the `docs` index before ensuring the indexes exist on the surviving rows.
  */
 function prepareRuns(db: DatabaseSync): void {
-  db.exec(RUN_INDEXES)
-  db.exec(`
-    delete from runs
-    where row_count > 0
-      and id not in (
+  const needsTrim = db
+    .prepare(
+      `
+      select 1 from (
+        select row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as dataset_rn
+        from runs
+        where row_count > 0
+      ) where dataset_rn > 1
+      union all
+      select 1 from (
+        select row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as call_rn,
+               row_number() over (partition by source order by fetched_at desc, id desc) as source_rn
+        from runs
+      ) where call_rn > ${RUNS_PER_CALL_MAX} or source_rn > ${RUNS_PER_SOURCE_MAX}
+      limit 1
+      `,
+    )
+    .get()
+  if (needsTrim) {
+    db.exec(`
+      begin;
+      drop trigger if exists runs_docs_delete;
+      drop index if exists run_rows_symbol;
+      drop index if exists run_rows_ticker;
+      drop index if exists run_rows_coalesce_sym;
+      drop index if exists run_rows_date;
+      delete from runs
+      where row_count > 0
+        and id not in (
+          select id from (
+            select id, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
+            from runs
+            where row_count > 0
+          ) where rn = 1
+        );
+      delete from runs
+      where id in (
         select id from (
           select id, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
           from runs
-          where row_count > 0
-        ) where rn = 1
+        ) where rn > ${RUNS_PER_CALL_MAX}
       );
-    delete from runs
-    where id in (
-      select id from (
-        select id, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
-        from runs
-      ) where rn > ${RUNS_PER_CALL_MAX}
-    );
-    delete from runs
-    where id in (
-      select id from (
-        select id, row_number() over (partition by source order by fetched_at desc, id desc) as rn
-        from runs
-      ) where rn > ${RUNS_PER_SOURCE_MAX}
-    );
-  `)
+      delete from runs
+      where id in (
+        select id from (
+          select id, row_number() over (partition by source order by fetched_at desc, id desc) as rn
+          from runs
+        ) where rn > ${RUNS_PER_SOURCE_MAX}
+      );
+      insert into docs(docs) values('rebuild');
+      commit;
+    `)
+  }
+  db.exec(RUN_INDEXES)
 }
 
 /** What is written beside an observation, so two runs can be told apart without reading both. */

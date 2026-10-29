@@ -5,6 +5,7 @@ import { createRpc, type Rpc } from '../../shared/rpc'
 import type { QueryRequest, QueryResult, RunRecord, StoreStats } from '../../shared/data/store'
 import { dayOf, type Spent } from '../../shared/agent/budget'
 import type { Exchange } from '../../shared/agent/transcript'
+import { createStoreQueue, type StoreQueue } from './store-queue'
 
 // Main's side of the store. It forks the process, holds the one connection to it, and answers the
 // three things anything here wants: file a run, read the file back, say how big it has got.
@@ -24,6 +25,7 @@ interface Live {
   rpc: Rpc
   /** Resolves once `init` has answered, so nothing is sent to a store that has not opened its file. */
   ready: Promise<void>
+  queue: StoreQueue
 }
 
 let live: Live | null = null
@@ -72,13 +74,21 @@ export function startStore(): void {
   // A rejected ready is handled by every caller; this keeps Node from calling it unhandled.
   ready.catch(() => undefined)
 
+  const queue = createStoreQueue({
+    ready,
+    sendRecord: (run) => rpc.request('record', run, timeout(RECORD_TIMEOUT_MS)),
+    sendUsage: (usage) => rpc.request('usage.record', usage, timeout(RECORD_TIMEOUT_MS)),
+    onError: (label, error) => console.warn(`[store] ${label}: ${message(error)}`),
+  })
+
   child.on('exit', (code) => {
     if (live?.child === child) live = null
+    queue.clear()
     rpc.close('the store stopped')
     if (!stopping) console.warn(`[store] exited with code ${code}`)
   })
 
-  live = { child, rpc, ready }
+  live = { child, rpc, ready, queue }
 }
 
 /**
@@ -87,14 +97,8 @@ export function startStore(): void {
  */
 export function record(run: RunRecord): void {
   seen.add(run.source)
-  const current = live
-  if (!current) {
-    startStore()
-    return
-  }
-  void current.ready
-    .then(() => current.rpc.request('record', run, timeout(RECORD_TIMEOUT_MS)))
-    .catch((error: unknown) => console.warn(`[store] record ${run.source}: ${message(error)}`))
+  if (!live) startStore()
+  live?.queue.enqueueRecord(run)
 }
 
 /**
@@ -105,8 +109,7 @@ export async function recordRun(run: RunRecord): Promise<number | null> {
   const current = live
   if (!current) return null
   try {
-    await current.ready
-    const id = await current.rpc.request('record', run, timeout(RECORD_TIMEOUT_MS))
+    const id = await current.queue.foreground(() => current.rpc.request('record', run, timeout(RECORD_TIMEOUT_MS)))
     return typeof id === 'number' ? id : null
   } catch (error) {
     console.warn(`[store] recordRun ${run.source}: ${message(error)}`)
@@ -116,19 +119,16 @@ export async function recordRun(run: RunRecord): Promise<number | null> {
 
 /** Files what one run of the model cost. Best effort, like recording a run: never holds the loop up. */
 export function recordUsage(usage: Record<string, unknown>): void {
-  const current = live
-  if (!current) return
-  void current.ready
-    .then(() => current.rpc.request('usage.record', usage, timeout(RECORD_TIMEOUT_MS)))
-    .catch((error: unknown) => console.warn(`[store] usage: ${message(error)}`))
+  live?.queue.enqueueUsage(usage)
 }
 
 /** What has been spent today by runs of one origin. Zero when the store is not up: a budget must not stop work because the file is missing. */
 export async function spentToday(day: string, origin: string): Promise<Spent> {
   try {
     const current = running()
-    await current.ready
-    const rows = (await current.rpc.request('usage.read', { day }, timeout(RECORD_TIMEOUT_MS))) as {
+    const rows = (await current.queue.foreground(() =>
+      current.rpc.request('usage.read', { day }, timeout(RECORD_TIMEOUT_MS)),
+    )) as {
       origin: string
       input: number
       output: number
@@ -152,8 +152,7 @@ export async function watch(seen: {
 }): Promise<{ previous: { text: string } | null }> {
   try {
     const current = running()
-    await current.ready
-    return (await current.rpc.request('watch', seen, timeout(RECORD_TIMEOUT_MS))) as {
+    return (await current.queue.foreground(() => current.rpc.request('watch', seen, timeout(RECORD_TIMEOUT_MS)))) as {
       previous: { text: string } | null
     }
   } catch (error) {
@@ -170,8 +169,9 @@ export async function watch(seen: {
 export async function notify(at: number, source: string, text: string): Promise<number | null> {
   try {
     const current = running()
-    await current.ready
-    const { unread } = (await current.rpc.request('notify', { at, source, text }, timeout(RECORD_TIMEOUT_MS))) as {
+    const { unread } = (await current.queue.foreground(() =>
+      current.rpc.request('notify', { at, source, text }, timeout(RECORD_TIMEOUT_MS)),
+    )) as {
       unread: number
     }
     return unread
@@ -185,8 +185,8 @@ export async function notify(at: number, source: string, text: string): Promise<
 export function saveThread(chat: string, at: number, model: string, turns: string): void {
   const current = live
   if (!current) return
-  void current.ready
-    .then(() => current.rpc.request('saveThread', { chat, at, model, turns }, timeout(RECORD_TIMEOUT_MS)))
+  void current.queue
+    .foreground(() => current.rpc.request('saveThread', { chat, at, model, turns }, timeout(RECORD_TIMEOUT_MS)))
     .catch((error: unknown) => console.warn(`[store] thread ${chat}: ${message(error)}`))
 }
 
@@ -194,8 +194,8 @@ export function saveThread(chat: string, at: number, model: string, turns: strin
 export function forgetChat(chat: string): void {
   const current = live
   if (!current) return
-  void current.ready
-    .then(() => current.rpc.request('chat.forget', { chat }, timeout(RECORD_TIMEOUT_MS)))
+  void current.queue
+    .foreground(() => current.rpc.request('chat.forget', { chat }, timeout(RECORD_TIMEOUT_MS)))
     .catch((error: unknown) => console.warn(`[store] forget ${chat}: ${message(error)}`))
 }
 
@@ -203,8 +203,9 @@ export function forgetChat(chat: string): void {
 export async function loadThread(chat: string): Promise<{ at: number; model: string; turns: string } | null> {
   try {
     const current = running()
-    await current.ready
-    return (await current.rpc.request('loadThread', { chat }, timeout(RECORD_TIMEOUT_MS))) as {
+    return (await current.queue.foreground(() =>
+      current.rpc.request('loadThread', { chat }, timeout(RECORD_TIMEOUT_MS)),
+    )) as {
       at: number
       model: string
       turns: string
@@ -218,11 +219,9 @@ export async function loadThread(chat: string): Promise<{ at: number; model: str
 export async function allThreads(): Promise<Record<string, { at: number; model: string; turns: string }>> {
   try {
     const current = running()
-    await current.ready
-    return (await current.rpc.request('allThreads', undefined, timeout(RECORD_TIMEOUT_MS))) as Record<
-      string,
-      { at: number; model: string; turns: string }
-    >
+    return (await current.queue.foreground(() =>
+      current.rpc.request('allThreads', undefined, timeout(RECORD_TIMEOUT_MS)),
+    )) as Record<string, { at: number; model: string; turns: string }>
   } catch {
     return {}
   }
@@ -235,8 +234,9 @@ export async function allThreads(): Promise<Record<string, { at: number; model: 
 export async function fileExchange(chat: string, at: number, exchange: Exchange): Promise<void> {
   try {
     const current = running()
-    await current.ready
-    await current.rpc.request('exchange.file', { chat, at, exchange }, timeout(RECORD_TIMEOUT_MS))
+    await current.queue.foreground(() =>
+      current.rpc.request('exchange.file', { chat, at, exchange }, timeout(RECORD_TIMEOUT_MS)),
+    )
   } catch (error) {
     console.warn(`[store] chat ${chat}: ${message(error)}`)
   }
@@ -249,8 +249,9 @@ export async function fileExchange(chat: string, at: number, exchange: Exchange)
  */
 export async function readExchanges(chat: string, limit: number, before?: number): Promise<Exchange[]> {
   const current = running()
-  await current.ready
-  return (await current.rpc.request('exchange.read', { chat, limit, before }, timeout(RECORD_TIMEOUT_MS))) as Exchange[]
+  return (await current.queue.foreground(() =>
+    current.rpc.request('exchange.read', { chat, limit, before }, timeout(RECORD_TIMEOUT_MS)),
+  )) as Exchange[]
 }
 
 /** The inbox, newest first. */
@@ -258,8 +259,9 @@ export async function notifications(
   limit: number,
 ): Promise<{ id: number; at: number; source: string; text: string; read: boolean }[]> {
   const current = running()
-  await current.ready
-  return (await current.rpc.request('notifications', { limit }, timeout(RECORD_TIMEOUT_MS))) as {
+  return (await current.queue.foreground(() =>
+    current.rpc.request('notifications', { limit }, timeout(RECORD_TIMEOUT_MS)),
+  )) as {
     id: number
     at: number
     source: string
@@ -271,8 +273,9 @@ export async function notifications(
 /** Marks them read; no ids means all of them. Answers how many are unread after. */
 export async function markRead(ids: number[]): Promise<number> {
   const current = running()
-  await current.ready
-  const { unread } = (await current.rpc.request('markRead', { ids }, timeout(RECORD_TIMEOUT_MS))) as { unread: number }
+  const { unread } = (await current.queue.foreground(() =>
+    current.rpc.request('markRead', { ids }, timeout(RECORD_TIMEOUT_MS)),
+  )) as { unread: number }
   return unread
 }
 
@@ -280,8 +283,9 @@ export async function markRead(ids: number[]): Promise<number> {
 export async function unreadCount(): Promise<number> {
   try {
     const current = running()
-    await current.ready
-    return (await current.rpc.request('unread', undefined, timeout(RECORD_TIMEOUT_MS))) as number
+    return (await current.queue.foreground(() =>
+      current.rpc.request('unread', undefined, timeout(RECORD_TIMEOUT_MS)),
+    )) as number
   } catch {
     return 0
   }
@@ -291,8 +295,9 @@ export async function unreadCount(): Promise<number> {
 export async function usageToday(): Promise<{ origin: string; input: number; output: number; runs: number }[]> {
   try {
     const current = running()
-    await current.ready
-    return (await current.rpc.request('usage.read', { day: dayOf(Date.now()) }, timeout(RECORD_TIMEOUT_MS))) as {
+    return (await current.queue.foreground(() =>
+      current.rpc.request('usage.read', { day: dayOf(Date.now()) }, timeout(RECORD_TIMEOUT_MS)),
+    )) as {
       origin: string
       input: number
       output: number
@@ -306,9 +311,11 @@ export async function usageToday(): Promise<{ origin: string; input: number; out
 /** Reads the store. Throws with words the model can act on, since it is behind a tool. */
 export async function query(request: QueryRequest): Promise<QueryResult> {
   const current = running()
-  await current.ready
   try {
-    return (await current.rpc.request('query', request, timeout(QUERY_TIMEOUT_MS))) as QueryResult
+    return await current.queue.foreground(async () => {
+      await current.queue.flushForQuery(request.sql)
+      return (await current.rpc.request('query', request, timeout(QUERY_TIMEOUT_MS))) as QueryResult
+    })
   } catch (error) {
     // Nothing can interrupt a statement inside SQLite, so a query that ran past its time leaves a
     // process that is still working. It goes, and the next call starts a fresh one.
@@ -329,6 +336,7 @@ function killStore(target: Live): void {
     live = null
     startedAt = 0
   }
+  target.queue.clear()
   target.rpc.close('the store stopped')
   target.child.kill()
 }
@@ -340,14 +348,14 @@ export function sourcesSeen(): string[] {
 
 export async function stats(): Promise<StoreStats> {
   const current = running()
-  await current.ready
-  return (await current.rpc.request('stats')) as StoreStats
+  return (await current.queue.foreground(() => current.rpc.request('stats'))) as StoreStats
 }
 
 export async function compact(): Promise<StoreStats> {
   const current = running()
-  await current.ready
-  return (await current.rpc.request('compact', undefined, timeout(QUERY_TIMEOUT_MS))) as StoreStats
+  return (await current.queue.foreground(() =>
+    current.rpc.request('compact', undefined, timeout(QUERY_TIMEOUT_MS)),
+  )) as StoreStats
 }
 
 /** Closes the file and stops the process. Called on quit. */
@@ -356,6 +364,7 @@ export function stop(): void {
   if (!current) return
   live = null
   stopping = true
+  current.queue.clear()
   const done = current.rpc.request('shutdown', undefined, timeout(2000)).catch(() => undefined)
   void done.finally(() => {
     current.child.kill()

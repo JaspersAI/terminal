@@ -629,6 +629,24 @@ test('periodic refreshes bound history per call and per source, and opening an a
   })
   assert.deepEqual(quotes.rows, [[130]])
   reopened.close()
+
+  // Simulate an older store file where a run with text was written without a matching FTS entry before trimming.
+  const desynced = new DatabaseSync(file)
+  for (let i = 1; i <= 5; i++) {
+    desynced
+      .prepare(
+        "insert into runs (source, args, args_hash, workspace, fetched_at, row_count, text) values ('yfinance/quote', '{\"symbol\":\"AAPL\"}', 'h-quote-aapl', 'w1', ?, 1, ?)",
+      )
+      .run(100_000 + i * 1000, `unindexed quote ${i}`)
+  }
+  desynced.close()
+
+  const recovered = openStore(file)
+  const fts = recovered.query({
+    sql: "select rowid from docs where docs match 'unindexed'",
+  })
+  assert.equal(fts.rows.length, 1)
+  recovered.close()
 })
 
 test('correlated symbol and date lookups over run_rows use expression indexes instead of full scans', () => {
