@@ -85,7 +85,7 @@ export function heard(list: LiveExchange[], event: AgentEvent): LiveExchange[] {
   }
   // How a run ended comes back from the request itself.
   if (event.kind === 'done' || event.kind === 'failed' || event.kind === 'stopped') return list
-  return change(
+  const next = change(
     list,
     (one) => one.runId === event.runId,
     (one) => {
@@ -105,6 +105,9 @@ export function heard(list: LiveExchange[], event: AgentEvent): LiveExchange[] {
       return same(one, { answer: one.answer, steps, thinking })
     },
   )
+  return event.kind === 'steered' && event.ask !== undefined
+    ? next.filter((one) => !(one.ask === event.ask && one.runId === null))
+    : next
 }
 
 /**

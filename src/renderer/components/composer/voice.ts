@@ -1,5 +1,8 @@
+import { matchChoice } from '../../../shared/agent/asking.ts'
 import type { Phase } from './phase.ts'
 import type { Recording } from './recorder.ts'
+
+export { matchChoice as matchVoiceChoice }
 
 /** The microphone's part of a request. */
 export type VoicePhase = Exclude<Phase, 'thinking'>
@@ -50,28 +53,6 @@ export function joinVoiceSegments(segments: readonly string[]): string {
     .map((one) => one.trim())
     .filter(Boolean)
     .join(' ')
-}
-
-/**
- * Matches a spoken answer against a question's offered choices, ignoring case and trailing sentence
- * punctuation that speech-to-text models add ("Start." -> "Start"), or returns the trimmed transcript.
- */
-export function matchVoiceChoice(choices: readonly string[], spoken: string): string {
-  const trimmed = spoken.trim()
-  if (choices.length === 0 || !trimmed) return trimmed
-  const normalized = trimmed
-    .replace(/[.!?,;:]+$/, '')
-    .trim()
-    .toLowerCase()
-  const matched = choices.find(
-    (choice) =>
-      choice
-        .trim()
-        .replace(/[.!?,;:]+$/, '')
-        .trim()
-        .toLowerCase() === normalized,
-  )
-  return matched ?? trimmed
 }
 
 /**

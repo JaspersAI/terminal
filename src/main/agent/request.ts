@@ -173,6 +173,7 @@ export async function userRequest({
       added &&
       (() =>
         (stillOn(chat, thread, era) ? added() : []).map((one): UserTurn => {
+          context.asked = [context.asked, one.text].filter(Boolean).join('\n\n')
           emit({
             kind: 'steered',
             runId: entry.runId,

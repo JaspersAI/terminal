@@ -39,3 +39,25 @@ export function onScreen(waiting: Question[]): Question[] {
 export function askedIn<T extends { place?: Place }>(asks: readonly T[], place?: Place): T | null {
   return asks.find((one) => samePlace(one.place, place)) ?? null
 }
+
+/**
+ * Matches a spoken or typed answer against a question's offered choices, ignoring case and trailing
+ * sentence punctuation ("start." -> "Start"), or returns the trimmed answer.
+ */
+export function matchChoice(choices: readonly string[], answer: string): string {
+  const trimmed = answer.trim()
+  if (choices.length === 0 || !trimmed) return trimmed
+  const normalized = trimmed
+    .replace(/[.!?,;:]+$/, '')
+    .trim()
+    .toLowerCase()
+  const matched = choices.find(
+    (choice) =>
+      choice
+        .trim()
+        .replace(/[.!?,;:]+$/, '')
+        .trim()
+        .toLowerCase() === normalized,
+  )
+  return matched ?? trimmed
+}
