@@ -12,6 +12,15 @@
 import { addStep, plain, stepped, THINKING, thought, type AgentEvent } from '../../../shared/agent/agent.ts'
 import { shownQuestion } from '../../../shared/agent/attachments.ts'
 import type { Citation } from '../../../shared/agent/citations'
+import { rejoin, type Exchange } from '../../../shared/agent/transcript.ts'
+import { errorMessage } from '../../lib/errors.ts'
+
+/**
+ * How much of the chat is read at a time: its newest exchanges when it comes up, and as many again
+ * ahead of them each time the reader nears the top of what is there. The whole conversation is
+ * within reach, and what is drawn stays what was asked for.
+ */
+export const PAGE = 30
 
 export interface LiveExchange {
   /** This window's own name for the request, given as it is sent. */
@@ -230,4 +239,122 @@ function change(
   if (at === -1) return list
   const next = to(list[at]!)
   return next === list[at] ? list : list.map((one, index) => (index === at ? next : one))
+}
+
+export interface RequestState {
+  live: LiveExchange[]
+  earlier: Exchange[]
+  sequence: number
+}
+
+export interface RequestDriver {
+  currentWorkspaceId: () => string
+  history: (limit: number) => Promise<Exchange[]>
+  run: (text: string, ask: string) => Promise<string>
+  stop: (runId: string | undefined, ask: string) => Promise<boolean> | void
+  newAsk?: () => string
+  onReply?: (reply: string) => void
+}
+
+/**
+ * Owns the requests this window has sent to the global assistant, their streamed events, and the
+ * history read behind them. Shared across the floating composer and the docked chat view so
+ * docking or undocking keeps every in-flight exchange and its Stop button on screen.
+ */
+export function createRequestStore(driver: RequestDriver) {
+  let state: RequestState = { live: [], earlier: [], sequence: 0 }
+  let readSeq = 0
+  const listeners = new Set<() => void>()
+
+  function put(next: RequestState): void {
+    if (next.live === state.live && next.earlier === state.earlier && next.sequence === state.sequence) return
+    state = next
+    for (const listener of listeners) listener()
+  }
+
+  function setLive(to: LiveExchange[] | ((list: LiveExchange[]) => LiveExchange[])): void {
+    const live = typeof to === 'function' ? to(state.live) : to
+    put({ ...state, live })
+  }
+
+  function setEarlier(to: Exchange[] | ((was: Exchange[]) => Exchange[])): void {
+    const earlier = typeof to === 'function' ? to(state.earlier) : to
+    put({ ...state, earlier })
+  }
+
+  /**
+   * Reads the end of the chat again and lets go of the exchanges here that were over when it was asked
+   * for, which it holds. `fresh` puts what was read in place of what was up; otherwise it goes under
+   * whatever the reader has gone back through.
+   */
+  async function reread(fresh: boolean, done = over(state.live)): Promise<void> {
+    const workspace = driver.currentWorkspaceId()
+    const seq = ++readSeq
+    const past = await driver.history(PAGE).catch(() => null)
+    const earlier =
+      past !== null && seq === readSeq && driver.currentWorkspaceId() === workspace
+        ? fresh
+          ? past
+          : rejoin(state.earlier, past)
+        : state.earlier
+    put({
+      ...state,
+      earlier,
+      live: without(state.live, done),
+    })
+  }
+
+  /**
+   * Sends one request. It starts at once, beside whatever is working, and its exchange joins the end
+   * of the conversation; nothing here waits for it but its own reply.
+   */
+  async function ask(text: string): Promise<void> {
+    const done = over(state.live)
+    const name = (driver.newAsk ?? (() => crypto.randomUUID()))()
+    const workspace = driver.currentWorkspaceId()
+    put({
+      ...state,
+      sequence: state.sequence + 1,
+      live: sent(state.live, name, workspace, text),
+    })
+    // The conversation this question continues, read in parallel without holding up the run. Its
+    // newest page only: the view goes to the new question, so whatever the reader had loaded above is let go.
+    void reread(true, done)
+    try {
+      const reply = await driver.run(text, name)
+      driver.onReply?.(reply)
+      setLive((list) => answered(list, name, reply))
+      // A stopped run says nothing and its exchange goes; the log has what it got done.
+      if (!reply) void reread(false)
+    } catch (err) {
+      // The exchange stays: the error is shown under the question, with the trail above it.
+      setLive((list) => failed(list, name, errorMessage(err)))
+    }
+  }
+
+  /**
+   * Asks main to stop a run: the one named, or the newest still working on this workspace. The run
+   * resolves with nothing and its exchange gives way to what the log kept of it.
+   */
+  function stop(ask?: string): void {
+    const workspace = driver.currentWorkspaceId()
+    const mine = state.live.filter((one) => one.working && one.workspaceId === workspace)
+    const target = ask === undefined ? mine[mine.length - 1] : state.live.find((one) => one.ask === ask)
+    if (target) void driver.stop(target.runId ?? undefined, target.ask)
+  }
+
+  return {
+    getState: () => state,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    hear: (event: AgentEvent) => setLive((list) => heard(list, event)),
+    dismiss: (workspaceId: string) => setLive((list) => dismissed(list, workspaceId)),
+    setLive,
+    setEarlier,
+    reread,
+    ask,
+    stop,
+  }
 }

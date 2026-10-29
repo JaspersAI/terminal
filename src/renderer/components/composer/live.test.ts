@@ -4,6 +4,7 @@ import type { AgentEvent } from '../../../shared/agent/agent.ts'
 import {
   answered,
   awayOn,
+  createRequestStore,
   dismissed,
   failed,
   heard,
@@ -311,4 +312,111 @@ test('trailOf keeps the active step or thought visible while working and folds c
 test('a sent request with attached_file blocks shows the concise attachment summary in its live question', () => {
   const list = sent([], 'a1', 'w1', 'Summarize this.\n\n<attached_file name="report.pdf">\nFull text\n</attached_file>')
   assert.equal(list[0]?.question, 'Summarize this.\n[Attached: report.pdf]')
+})
+
+test('asking starts the run and shows the question at once without waiting on a slow history read', async () => {
+  let resolveHistory!: (rows: { id: number; question: string; answer: string }[]) => void
+  const historyPromise = new Promise<{ id: number; question: string; answer: string }[]>((resolve) => {
+    resolveHistory = resolve
+  })
+  const runs: { text: string; ask: string; resolve: (reply: string) => void }[] = []
+  let seq = 0
+  const store = createRequestStore({
+    currentWorkspaceId: () => 'w1',
+    newAsk: () => `ask-${++seq}`,
+    history: () => historyPromise,
+    run: (text, ask) =>
+      new Promise<string>((resolve) => {
+        runs.push({ text, ask, resolve })
+      }),
+    stop: () => undefined,
+  })
+
+  // Send a prompt while history() is completely stalled on the store.
+  const firstDone = store.ask('first question')
+
+  // Both the UI state and the agent:run call happen immediately, before history() resolves.
+  assert.equal(runs.length, 1)
+  assert.deepEqual({ text: runs[0]?.text, ask: runs[0]?.ask }, { text: 'first question', ask: 'ask-1' })
+  assert.equal(store.getState().sequence, 1)
+  assert.deepEqual(
+    store.getState().live.map((one) => [one.ask, one.question, one.working]),
+    [['ask-1', 'first question', true]],
+  )
+
+  // The run can even receive its start event and finish while history() is still pending.
+  store.hear(start('run1', 'ask-1'))
+  runs[0]!.resolve('first answer')
+  await firstDone
+  assert.deepEqual(
+    store.getState().live.map((one) => [one.ask, one.answer, one.working]),
+    [['ask-1', 'first answer', false]],
+  )
+
+  // When the slow history() from before ask-1 finally resolves, it populates earlier and does not drop ask-1.
+  resolveHistory([{ id: 1, question: 'prior question', answer: 'prior answer' }])
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    store.getState().earlier.map((one) => [one.question, one.answer]),
+    [['prior question', 'prior answer']],
+  )
+  assert.deepEqual(
+    store.getState().live.map((one) => [one.ask, one.answer, one.working]),
+    [['ask-1', 'first answer', false]],
+  )
+
+  // Sending a second request retires the already-finished ask-1 once the new history read lands.
+  resolveHistory = () => undefined
+  const secondHistory = Promise.resolve([
+    { id: 1, question: 'prior question', answer: 'prior answer' },
+    { id: 2, question: 'first question', answer: 'first answer' },
+  ])
+  const store2 = createRequestStore({
+    currentWorkspaceId: () => 'w1',
+    newAsk: () => `ask-${++seq}`,
+    history: () => secondHistory,
+    run: (text, ask) =>
+      new Promise<string>((resolve) => {
+        runs.push({ text, ask, resolve })
+      }),
+    stop: () => undefined,
+  })
+  store2.setLive(store.getState().live)
+  const secondDone = store2.ask('second question')
+  assert.equal(runs.length, 2)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(
+    store2.getState().earlier.map((one) => one.question),
+    ['prior question', 'first question'],
+  )
+  assert.deepEqual(
+    store2.getState().live.map((one) => [one.ask, one.question, one.working]),
+    [['ask-2', 'second question', true]],
+  )
+  runs[1]!.resolve('second answer')
+  await secondDone
+})
+
+test('stopping a request passes its ask id even before its start event arrives', () => {
+  const stopped: [string | undefined, string][] = []
+  const store = createRequestStore({
+    currentWorkspaceId: () => 'w1',
+    newAsk: () => 'ask-1',
+    history: () => Promise.resolve([]),
+    run: () => new Promise<string>(() => undefined),
+    stop: (runId, ask) => {
+      stopped.push([runId, ask])
+    },
+  })
+
+  void store.ask('stop me early')
+  store.stop()
+  assert.deepEqual(stopped, [[undefined, 'ask-1']])
+
+  store.hear(start('run1', 'ask-1'))
+  store.stop('ask-1')
+  assert.deepEqual(stopped, [
+    [undefined, 'ask-1'],
+    ['run1', 'ask-1'],
+  ])
 })
