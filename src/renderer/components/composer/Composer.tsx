@@ -8,11 +8,15 @@ import {
 } from 'react'
 import { askedIn } from '../../../shared/agent/asking'
 import { withAttachments } from '../../../shared/agent/attachments'
-import { dispatch, useAppState } from '../../lib/state'
+import { CENTRAL_CHAT } from '../../../shared/agent/history'
+import { currentWorkspace, useAppState } from '../../lib/state'
 import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from './Attachments'
+import { useEarlier, useNoticeTimer } from './conversation'
 import { pasteLinks } from './paste'
 import { PHASE_TEXT } from './phase'
+import { QuestionField } from './QuestionField'
 import { useRequest } from './request'
+import { SecretField } from './SecretField'
 
 /**
  * Central's default space: a command line at the top of the terminal.
@@ -22,28 +26,37 @@ import { useRequest } from './request'
  * - Synchronized with Docked Central ("Central" room on the tab) and the Voice Orb via the shared Central store.
  */
 export function Composer(): ReactElement {
+  const workspaceId = useAppState((s) => currentWorkspace(s).id)
   const hasVoice = useAppState((s) => s.voice !== null)
   const secretRequest = useAppState((s) => askedIn(s.secretRequests))
   const question = useAppState((s) => askedIn(s.questions))
+  const notices = useAppState((s) => s.notices)
+  const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
   const [expanded, setExpanded] = useState(false)
-  const [secretDraft, setSecretDraft] = useState('')
   const request = useRequest()
   const { draft, setDraft, phase, error, busy, working, shown, earlier, ask, toggleVoice, stop, clear } = request
   const attachments = useAttachments()
   const drop = useFileDrop(attachments.attach)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  const notice = notices.find((one) => one.chat !== CENTRAL_CHAT && one.chat !== workspaceId) ?? null
+  const told = notices.find((one) => one.chat === CENTRAL_CHAT || one.chat === workspaceId)?.id ?? null
+  useEarlier({ request, workspaceId, when: true, said: told, welcome })
+  useNoticeTimer(notice?.id ?? null)
+
   const latestLive = shown[shown.length - 1]
   const latestDone = earlier[earlier.length - 1]
+  const voiceStatus = phase !== 'idle' && phase !== 'thinking' ? PHASE_TEXT[phase] : null
   const latestStatus =
     error ??
+    voiceStatus ??
     (latestLive
       ? latestLive.error
         ? `Error: ${latestLive.error}`
         : latestLive.working
           ? (latestLive.steps[latestLive.steps.length - 1] ?? (latestLive.answer || 'Working…'))
           : latestLive.answer
-      : (latestDone?.answer ?? null))
+      : (notice?.text ?? latestDone?.answer ?? null))
 
   // Auto-expand to 5 lines when a multi-line reply arrives or the user types multiple lines.
   useEffect(() => {
@@ -57,19 +70,6 @@ export function Composer(): ReactElement {
     setDraft('')
     attachments.clear()
     void ask(text)
-  }
-
-  function submitSecret(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault()
-    if (!secretRequest || !secretDraft.trim()) return
-    const value = secretDraft.trim()
-    setSecretDraft('')
-    void dispatch({
-      type: 'plugin.setSecret',
-      plugin: secretRequest.plugin,
-      key: secretRequest.key,
-      value,
-    })
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
@@ -96,50 +96,9 @@ export function Composer(): ReactElement {
       className="flex min-w-0 flex-1 flex-col justify-center"
     >
       {secretRequest !== null ? (
-        <form onSubmit={submitSecret} className="flex h-7 items-center gap-1.5 px-1 text-xs">
-          <span className="shrink-0 font-medium text-foreground">{secretRequest.label}:</span>
-          <input
-            type="password"
-            value={secretDraft}
-            onChange={(e) => setSecretDraft(e.target.value)}
-            placeholder={`Paste ${secretRequest.key}…`}
-            autoFocus
-            className="min-w-0 flex-1 border border-border bg-background px-2 py-0.5 text-xs outline-none focus:border-primary"
-          />
-          <button
-            type="submit"
-            disabled={!secretDraft.trim()}
-            className="border border-border bg-primary px-2 py-0.5 text-xs text-primary-foreground disabled:opacity-40"
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            onClick={() => void dispatch({ type: 'secret.dismiss' })}
-            className="border border-border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
-          >
-            Cancel
-          </button>
-        </form>
+        <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} />
       ) : question !== null ? (
-        <div id="central-question-inline" className="flex min-h-7 flex-wrap items-center gap-1.5 px-1 py-0.5 text-xs">
-          <span className="min-w-0 flex-1 truncate font-medium text-foreground" title={question.text}>
-            {question.text}
-          </span>
-          <div className="flex shrink-0 items-center gap-1">
-            {question.choices.map((choice) => (
-              <button
-                key={choice}
-                type="button"
-                data-question-choice={choice}
-                onClick={() => void dispatch({ type: 'question.answer', id: question.id, answer: choice })}
-                className="border border-border bg-muted px-2 py-0.5 text-xs font-medium text-foreground hover:bg-primary hover:text-primary-foreground"
-              >
-                {choice}
-              </button>
-            ))}
-          </div>
-        </div>
+        <QuestionField key={question.id} question={question} />
       ) : (
         <form onSubmit={submit} className="flex min-w-0 flex-1 flex-col gap-1">
           {attachments.hasAny && <AttachmentChips attachments={attachments} />}
@@ -193,7 +152,7 @@ export function Composer(): ReactElement {
                   error || latestLive?.error ? 'text-destructive' : 'text-muted-foreground'
                 }`}
               >
-                {phase !== 'idle' && phase !== 'thinking' ? PHASE_TEXT[phase] : latestStatus}
+                {latestStatus}
               </span>
             )}
             <button
