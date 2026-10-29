@@ -51,4 +51,20 @@ export class Recorder {
       recorder.stop()
     })
   }
+
+  /** Stops and discards any active recording without producing audio. */
+  cancel(): void {
+    const recorder = this.recorder
+    if (!recorder) return
+    this.recorder = null
+    this.chunks = []
+    recorder.onstop = null
+    recorder.ondataavailable = null
+    try {
+      if (recorder.state !== 'inactive') recorder.stop()
+    } catch {
+      // ignore
+    }
+    for (const track of recorder.stream.getTracks()) track.stop()
+  }
 }

@@ -2,9 +2,16 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, ty
 import logo from '../../assets/jaspers-logo-black.png'
 import { useAppState } from '../../lib/state'
 import type { Phase } from './phase'
-import { PHASE_TEXT } from './phase'
 import { useRequest } from './request'
 import { Spring } from './spring'
+import {
+  HOLD_THRESHOLD_MS,
+  orbPointerDown,
+  orbPointerMove,
+  orbPointerUp,
+  orbStatusLine,
+  type OrbDragState,
+} from './voice-orb'
 
 /** How far the orb drifts toward a hovering pointer, in px. */
 const PULL = 6
@@ -83,54 +90,94 @@ export function Orb({ phase, label, onPress, onRelease }: Props): ReactElement {
 
 /**
  * Draggable Voice Orb overlay on top of the tab surface (Regime 2.2).
- * User can drag it anywhere around the screen, or tap it to start/stop voice input, which feeds
- * directly into Central (replicated in the top command line and Central Dock).
+ * Supports both hold-to-talk (press and hold while speaking, release to send) and tap-to-talk
+ * (tap once to start speaking, tap again to send), plus dragging anywhere on screen.
  */
 export function FloatingOrb(): ReactElement {
   const hasVoice = useAppState((s) => s.voice !== null)
-  const { phase, error, toggleVoice } = useRequest()
+  const { phase, error, lastHeard, shown, press, release, keepRecording, cancel, toggleVoice } = useRequest()
   const [pos, setPos] = useState<{ x: number; y: number }>(() => ({
     x: typeof window !== 'undefined' ? Math.max(40, Math.round(window.innerWidth / 2 - 32)) : 400,
     y: typeof window !== 'undefined' ? Math.max(60, Math.round(window.innerHeight - 130)) : 500,
   }))
-  const dragRef = useRef<{
-    startX: number
-    startY: number
-    originX: number
-    originY: number
-    moved: boolean
-  } | null>(null)
+  const dragRef = useRef<OrbDragState | null>(null)
+  const spaceDownAt = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!hasVoice) return
+    const down = (event: KeyboardEvent): void => {
+      if (event.code !== 'Space' || event.repeat || inControl(event) || modalOpen()) return
+      event.preventDefault()
+      if (phase === 'recording') {
+        spaceDownAt.current = null
+        release()
+        return
+      }
+      spaceDownAt.current = Date.now()
+      press()
+    }
+    const up = (event: KeyboardEvent): void => {
+      if (event.code !== 'Space' || spaceDownAt.current === null) return
+      if (!inControl(event)) event.preventDefault()
+      const held = Date.now() - spaceDownAt.current
+      spaceDownAt.current = null
+      if (held >= HOLD_THRESHOLD_MS) release()
+      else keepRecording()
+    }
+    const blur = (): void => {
+      if (spaceDownAt.current !== null) {
+        spaceDownAt.current = null
+        release()
+      }
+    }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', blur)
+    }
+  }, [hasVoice, phase, press, release, keepRecording])
 
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
-    if (event.button !== 0) return
+    const { drag, action } = orbPointerDown({
+      phase,
+      hasVoice,
+      button: event.button,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      posX: pos.x,
+      posY: pos.y,
+      now: Date.now(),
+    })
+    if (!drag) return
     event.preventDefault()
-    dragRef.current = {
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: pos.x,
-      originY: pos.y,
-      moved: false,
-    }
+    dragRef.current = drag
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch {
       // ignore synthetic pointer events
     }
+    if (action === 'start') press()
   }
 
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
-    const drag = dragRef.current
-    if (!drag) return
-    const dx = event.clientX - drag.startX
-    const dy = event.clientY - drag.startY
-    if (!drag.moved && Math.hypot(dx, dy) < 5) return
-    drag.moved = true
-    const maxX = Math.max(0, window.innerWidth - 72)
-    const maxY = Math.max(0, window.innerHeight - 96)
-    setPos({
-      x: Math.max(8, Math.min(maxX, drag.originX + dx)),
-      y: Math.max(40, Math.min(maxY, drag.originY + dy)),
+    const current = dragRef.current
+    if (!current) return
+    const {
+      drag,
+      pos: nextPos,
+      action,
+    } = orbPointerMove(current, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
     })
+    dragRef.current = drag
+    if (action === 'cancel') cancel()
+    if (nextPos) setPos(nextPos)
   }
 
   function onPointerUp(event: ReactPointerEvent<HTMLDivElement>): void {
@@ -143,19 +190,19 @@ export function FloatingOrb(): ReactElement {
     } catch {
       // ignore
     }
-    if (!drag || drag.moved) return
-    if (hasVoice) toggleVoice()
+    const outcome = orbPointerUp(drag, { hasVoice, now: Date.now() })
+    if (outcome === 'send') release()
+    else if (outcome === 'keep-recording') keepRecording()
   }
 
-  const statusText =
-    error ??
-    (phase === 'recording'
-      ? 'Listening — tap to send'
-      : phase === 'idle'
-        ? hasVoice
-          ? 'Tap to speak · drag to move'
-          : 'Add voice provider in Settings'
-        : PHASE_TEXT[phase])
+  const latestLive = shown[shown.length - 1]
+  const statusText = orbStatusLine({
+    phase,
+    hasVoice,
+    error,
+    lastHeard,
+    latestQuestion: latestLive?.question ?? null,
+  })
 
   return (
     <div
@@ -165,13 +212,14 @@ export function FloatingOrb(): ReactElement {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       className="fixed z-40 flex cursor-grab flex-col items-center gap-1 select-none active:cursor-grabbing"
     >
       <div
         role="button"
         tabIndex={0}
         id="talk"
-        aria-label={phase === 'recording' ? 'Stop and send voice' : 'Tap to speak to Central'}
+        aria-label={phase === 'recording' ? 'Stop and send voice' : 'Hold or tap to speak to Central'}
         onKeyDown={(event) => {
           if ((event.key === 'Enter' || event.key === ' ') && hasVoice) {
             event.preventDefault()
@@ -188,9 +236,23 @@ export function FloatingOrb(): ReactElement {
           className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle_at_32%_26%,rgba(255,255,255,0.5),rgba(255,255,255,0.06)_42%,rgba(0,0,0,0)_70%)] shadow-[inset_0_-6px_10px_rgba(255,255,255,0.14),inset_0_6px_10px_rgba(255,255,255,0.2)]"
         />
       </div>
-      <span className="border border-border bg-background/95 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground shadow-sm">
+      <span
+        id="floating-orb-status"
+        className="max-w-72 truncate border border-border bg-background/95 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground shadow-sm"
+      >
         {statusText}
       </span>
     </div>
+  )
+}
+
+function modalOpen(): boolean {
+  return document.querySelector('[aria-modal=true]') !== null
+}
+
+function inControl(event: KeyboardEvent): boolean {
+  return (
+    event.target instanceof HTMLElement &&
+    event.target.matches('input, textarea, select, button:not(#talk), [contenteditable]')
   )
 }

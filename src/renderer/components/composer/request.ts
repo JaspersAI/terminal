@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
+import { askedIn } from '../../../shared/agent/asking'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript'
 import { errorMessage } from '../../lib/errors'
+import { dispatch, get } from '../../lib/state'
 import {
   answered,
   awayOn,
@@ -17,6 +19,7 @@ import {
 } from './live'
 import type { Phase } from './phase'
 import { Recorder } from './recorder'
+import { routeVoiceTranscript } from './voice-orb'
 
 /**
  * How much of the chat is read at a time: its newest exchanges when it comes up, and as many again
@@ -29,6 +32,7 @@ type Voice = Exclude<Phase, 'thinking'>
 
 interface CentralStore {
   draft: string
+  lastHeard: string | null
   voice: Voice
   error: string | null
   live: LiveExchange[]
@@ -39,6 +43,7 @@ interface CentralStore {
 
 let store: CentralStore = {
   draft: '',
+  lastHeard: null,
   voice: 'idle',
   error: null,
   live: [],
@@ -51,6 +56,7 @@ const listeners = new Set<() => void>()
 const recorder = new Recorder()
 let pressed = false
 let tapRecording = false
+let voiceSession = 0
 let listeningEvents = false
 
 function emitStore(patch: Partial<CentralStore>): void {
@@ -106,19 +112,27 @@ async function reread(fresh: boolean): Promise<void> {
  * Sends one request to Central. Replicated across the top command line and Docked Central room.
  */
 export async function askCentral(text: string): Promise<void> {
-  emitStore({ error: null })
-  if (/^\/clear\s*$/i.test(text.trim())) {
+  const trimmed = text.trim()
+  if (!trimmed) return
+  emitStore({ error: null, draft: '', lastHeard: trimmed })
+  if (/^\/clear\s*$/i.test(trimmed)) {
     clearCentralStore()
     return
   }
-  await reread(true)
+  const done = over(store.live)
   const name = crypto.randomUUID()
   emitStore({
     sequence: store.sequence + 1,
-    live: sent(store.live, name, CENTRAL_CHAT, text),
+    live: sent(store.live, name, CENTRAL_CHAT, trimmed),
   })
+  void window.app.agent
+    .history(PAGE)
+    .then((past) => {
+      emitStore({ earlier: past, live: without(store.live, done) })
+    })
+    .catch(() => undefined)
   try {
-    const reply = await window.app.agent.run(text, name)
+    const reply = await window.app.agent.run(trimmed, name)
     console.log('[agent]', reply)
     changeLive((list) => answered(list, name, reply))
     if (!reply) void reread(false)
@@ -128,7 +142,7 @@ export async function askCentral(text: string): Promise<void> {
 }
 
 export function clearCentralStore(): void {
-  emitStore({ earlier: [], live: [], error: null })
+  emitStore({ earlier: [], live: [], error: null, lastHeard: null })
   void window.app.agent.clear().catch(() => undefined)
 }
 
@@ -143,42 +157,73 @@ async function attemptVoice(action: () => Promise<void>): Promise<void> {
 
 async function finishVoice(allowShortTap = false): Promise<void> {
   const recording = await recorder.stop()
-  if (!allowShortTap && recording.durationMs < 400) {
-    throw new Error('Too short. Tap to start speaking, then tap again to send.')
+  if (!allowShortTap && recording.durationMs < 300) {
+    throw new Error('Too short. Hold the orb while speaking, or tap once to start and tap again to send.')
   }
   emitStore({ voice: 'transcribing' })
   const text = await window.app.voice.transcribe(recording.audio, recording.mimeType)
-  if (!text) throw new Error('Did not catch that. Try again.')
-  console.log('[voice] heard:', text)
-  emitStore({ voice: 'idle' })
-  void askCentral(text)
+  const route = routeVoiceTranscript(text, askedIn(get().questions))
+  if (route.kind === 'empty') throw new Error('Did not catch that. Try again.')
+  console.log('[voice] heard:', route.text)
+  emitStore({ voice: 'idle', draft: '', lastHeard: route.text })
+  if (route.kind === 'answer-question') {
+    void dispatch({ type: 'question.answer', id: route.questionId, answer: route.text }).catch((err: unknown) => {
+      emitStore({ error: errorMessage(err) })
+    })
+    return
+  }
+  void askCentral(route.text)
 }
 
 export function pressVoice(): void {
   if (store.voice !== 'idle' || pressed) return
   pressed = true
   tapRecording = false
+  const session = ++voiceSession
   void attemptVoice(async () => {
     emitStore({ voice: 'opening' })
     try {
       if (!(await window.app.voice.requestMicrophone())) {
         throw new Error('Microphone access is off. Allow it in System Settings, Privacy & Security, Microphone.')
       }
-      if (!pressed) return emitStore({ voice: 'idle' })
+      if (session !== voiceSession) return
+      if (!pressed && !tapRecording) return emitStore({ voice: 'idle' })
       await recorder.start()
+      if (session !== voiceSession) {
+        recorder.cancel()
+        return
+      }
     } catch (err) {
-      pressed = false
+      if (session === voiceSession) {
+        pressed = false
+        tapRecording = false
+      }
       throw err
     }
     emitStore({ voice: 'recording' })
-    if (!pressed) await finishVoice(false)
+    if (!pressed && !tapRecording) await finishVoice(true)
   })
 }
 
-export function releaseVoice(): void {
-  if (!pressed || tapRecording) return
+export function keepVoiceRecording(): void {
+  if (!pressed && store.voice === 'idle') return
+  tapRecording = true
+  pressed = true
+}
+
+export function cancelVoice(): void {
+  voiceSession++
   pressed = false
-  if (recorder.active) void attemptVoice(() => finishVoice(false))
+  tapRecording = false
+  recorder.cancel()
+  emitStore({ voice: 'idle', error: null })
+}
+
+export function releaseVoice(): void {
+  if (!pressed && store.voice !== 'recording') return
+  pressed = false
+  tapRecording = false
+  if (recorder.active) void attemptVoice(() => finishVoice(true))
 }
 
 /**
@@ -197,17 +242,25 @@ export function toggleVoice(): void {
   if (store.voice !== 'idle') return
   pressed = true
   tapRecording = true
+  const session = ++voiceSession
   void attemptVoice(async () => {
     emitStore({ voice: 'opening' })
     try {
       if (!(await window.app.voice.requestMicrophone())) {
         throw new Error('Microphone access is off. Allow it in System Settings, Privacy & Security, Microphone.')
       }
+      if (session !== voiceSession) return
       if (!pressed) return emitStore({ voice: 'idle' })
       await recorder.start()
+      if (session !== voiceSession) {
+        recorder.cancel()
+        return
+      }
     } catch (err) {
-      pressed = false
-      tapRecording = false
+      if (session === voiceSession) {
+        pressed = false
+        tapRecording = false
+      }
       throw err
     }
     emitStore({ voice: 'recording' })
@@ -221,7 +274,7 @@ export function toggleVoice(): void {
  */
 export function useRequest() {
   const snap = useSyncExternalStore(subscribeCentral, getCentral)
-  const { draft, voice, error, live, earlier, sequence } = snap
+  const { draft, lastHeard, voice, error, live, earlier, sequence } = snap
   const busy = voice !== 'idle'
   const shown = useMemo(() => shownOn(live, CENTRAL_CHAT), [live])
   const away = useMemo(() => awayOn(live, CENTRAL_CHAT), [live])
@@ -259,6 +312,7 @@ export function useRequest() {
 
   return {
     draft,
+    lastHeard,
     setDraft: setCentralDraft,
     phase,
     error,
@@ -271,6 +325,8 @@ export function useRequest() {
     ask: askCentral,
     press: pressVoice,
     release: releaseVoice,
+    keepRecording: keepVoiceRecording,
+    cancel: cancelVoice,
     toggleVoice,
     stop,
     dismiss,
