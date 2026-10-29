@@ -23,7 +23,8 @@ export interface StoreQueue {
   clear(): void
 }
 
-const SOURCE_ID = /[a-z0-9_-]+\/[a-z0-9_-]+/i
+const HAS_SOURCE_COLUMN = /\bsource\b/i
+const QUOTED_SOURCE_ID = /['"][a-z0-9_-]+\/[a-z0-9_-]+['"]/i
 
 function isDatasetRun(run: RunRecord): boolean {
   return (run.rows?.length ?? 0) > 0 && !run.error
@@ -32,10 +33,24 @@ function isDatasetRun(run: RunRecord): boolean {
 export function createStoreQueue({ ready, sendRecord, sendUsage, onError }: StoreQueueOptions): StoreQueue {
   const pendingRecords: RunRecord[] = []
   const pendingUsage: Record<string, unknown>[] = []
+  const inFlightRecords = new Map<RunRecord, Promise<void>>()
   let activeForeground = 0
   let idleWaiters: (() => void)[] = []
   let draining = false
   let closed = false
+
+  function sendTrackedRecord(run: RunRecord): Promise<void> {
+    const promise = sendRecord(run)
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        onError?.(`record ${run.source}`, error)
+      })
+      .finally(() => {
+        inFlightRecords.delete(run)
+      })
+    inFlightRecords.set(run, promise)
+    return promise
+  }
 
   function notifyIdle(): void {
     if (activeForeground > 0 || idleWaiters.length === 0) return
@@ -73,11 +88,7 @@ export function createStoreQueue({ ready, sendRecord, sendUsage, onError }: Stor
         }
         const run = pendingRecords.shift()
         if (run) {
-          try {
-            await sendRecord(run)
-          } catch (error) {
-            onError?.(`record ${run.source}`, error)
-          }
+          await sendTrackedRecord(run)
         }
       }
     } catch {
@@ -122,25 +133,22 @@ export function createStoreQueue({ ready, sendRecord, sendUsage, onError }: Stor
     },
 
     async flushForQuery(sql: string): Promise<void> {
-      if (closed || pendingRecords.length === 0) return
-      const filterBySource = SOURCE_ID.test(sql)
-      const toFlush: RunRecord[] = []
-      for (let i = 0; i < pendingRecords.length;) {
-        const candidate = pendingRecords[i]!
-        if (!filterBySource || sql.includes(candidate.source)) {
-          toFlush.push(candidate)
-          pendingRecords.splice(i, 1)
-        } else {
-          i++
+      if (closed) return
+      const filterBySource = HAS_SOURCE_COLUMN.test(sql) && QUOTED_SOURCE_ID.test(sql)
+      const matches = (run: RunRecord): boolean => !filterBySource || sql.includes(run.source)
+      while (!closed) {
+        const index = pendingRecords.findIndex(matches)
+        if (index !== -1) {
+          const [run] = pendingRecords.splice(index, 1)
+          if (run) await sendTrackedRecord(run)
+          continue
         }
-      }
-      for (const run of toFlush) {
-        if (closed) break
-        try {
-          await sendRecord(run)
-        } catch (error) {
-          onError?.(`record ${run.source}`, error)
+        const active: Promise<void>[] = []
+        for (const [run, promise] of inFlightRecords) {
+          if (matches(run)) active.push(promise)
         }
+        if (active.length === 0) break
+        await Promise.all(active)
       }
     },
 
@@ -148,6 +156,7 @@ export function createStoreQueue({ ready, sendRecord, sendUsage, onError }: Stor
       closed = true
       pendingRecords.length = 0
       pendingUsage.length = 0
+      inFlightRecords.clear()
       const waiters = idleWaiters
       idleWaiters = []
       for (const wake of waiters) wake()

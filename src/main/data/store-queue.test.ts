@@ -134,3 +134,40 @@ test('flushForQuery flushes only queued records matching a source-qualified quer
     'record:yf-chart/history:h2',
   ])
 })
+
+test('concurrent flushForQuery calls wait on all matching queued and in-flight records, and division or FTS slashes do not skip flushing', async () => {
+  const order: string[] = []
+  let releaseH1!: () => void
+  const h1Gate = new Promise<void>((resolve) => {
+    releaseH1 = resolve
+  })
+  const queue = createStoreQueue({
+    ready: Promise.resolve(),
+    sendRecord: async (run) => {
+      order.push(`send:start:${run.argsHash}`)
+      if (run.argsHash === 'h1') await h1Gate
+      order.push(`send:done:${run.argsHash}`)
+    },
+    sendUsage: async () => undefined,
+  })
+
+  queue.enqueueRecord(makeRun({ source: 'yfinance/quote', argsHash: 'h1' }))
+  queue.enqueueRecord(makeRun({ source: 'yfinance/quote', argsHash: 'h2' }))
+
+  const q1 = queue.foreground(async () => {
+    await queue.flushForQuery("select * from runs where source='yfinance/quote'")
+    order.push('query:1')
+  })
+  const q2 = queue.foreground(async () => {
+    await queue.flushForQuery('select close/open from run_rows')
+    order.push('query:2')
+  })
+
+  releaseH1()
+  await Promise.all([q1, q2])
+
+  const h2Done = order.indexOf('send:done:h2')
+  assert.ok(h2Done !== -1)
+  assert.ok(order.indexOf('query:1') > h2Done)
+  assert.ok(order.indexOf('query:2') > h2Done)
+})
