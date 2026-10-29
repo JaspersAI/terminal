@@ -27,6 +27,7 @@ import {
   describeRound,
   describeTiles,
   describeWork,
+  LOOP_PLACEMENT,
   LOOP_RULES,
   loopRules,
   gridPrimer,
@@ -1107,6 +1108,41 @@ test('the rules instruct the assistant to launch the Browser view when the user 
     assert.match(rules, /Bloomberg/i)
     assert.match(rules, /core\/browser/)
   }
+})
+
+test('the rules and source catalog direct screening and rendered sources to the plugin view rather than core/table', () => {
+  const screener: ViewInfo = {
+    id: 'screener-mcp/screener',
+    plugin: 'screener-mcp',
+    title: 'Screener',
+    renders: ['screener-mcp/screen'],
+    stateSchema: { type: 'object', properties: {} },
+  }
+  const screen: SourceInfo = {
+    ...SCREEN,
+    id: 'screener-mcp/screen',
+    plugin: 'screener-mcp',
+  }
+  const state = tree(
+    EMPTY_GRID,
+    { 'screener-mcp/screener': screener },
+    { 'screener-mcp/screen': screen },
+    { 'jaspers/sec': READY },
+  )
+  const context = describeContext(state, WS, instructionsFor, CLOCK)
+  assert.match(
+    context,
+    /- screener-mcp\/screen: Screen companies\. — takes filters, \[limit\] \(rendered by screener-mcp\/screener\)/,
+  )
+
+  assert.match(ROUTER_RULES, /plugin's own view.*rather than a generic table/i)
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /screener-mcp\/screener/)
+    assert.match(rules, /never.*core\/table.*run_rows/i)
+    assert.match(rules, /top 10/i)
+  }
+  assert.match(LOOP_PLACEMENT, /screener-mcp\/screener/)
+  assert.match(LOOP_PLACEMENT, /core\/table/)
 })
 
 test('a task preface lists allowed commands for run_shell only while Pro mode is on', () => {
