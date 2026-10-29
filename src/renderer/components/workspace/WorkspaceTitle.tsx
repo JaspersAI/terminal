@@ -8,9 +8,9 @@ interface Props {
 }
 
 /**
- * The tab name as an input overlaid on an invisible sizing span that uses the exact same classes
- * as an inactive tab's label, so switching between active and inactive tabs causes zero layout shift.
- * Enter or blur saves; Escape or an empty name reverts.
+ * The tab name as an absolutely-positioned input overlaid on an invisible sizing span that uses the
+ * exact same element and classes as an inactive tab's label, so switching between active and inactive
+ * tabs causes zero layout shift. Enter or blur saves; Escape or an empty name reverts.
  */
 export function WorkspaceTitle({ workspace }: Props): ReactElement {
   const input = useRef<HTMLInputElement>(null)
@@ -42,10 +42,10 @@ export function WorkspaceTitle({ workspace }: Props): ReactElement {
   }
 
   return (
-    <span className="inline-grid items-center">
+    <span className="relative inline-flex items-center">
       <span
         aria-hidden
-        className="invisible col-start-1 row-start-1 max-w-40 min-w-12 truncate whitespace-pre px-1.5 py-0.5 text-sm font-medium"
+        className="invisible inline-block max-w-40 min-w-12 truncate whitespace-pre px-1.5 py-0.5 text-sm font-medium"
       >
         {draft || workspace.name}
       </span>
@@ -53,6 +53,7 @@ export function WorkspaceTitle({ workspace }: Props): ReactElement {
         ref={input}
         id="workspace-title"
         aria-label="Workspace name"
+        size={1}
         defaultValue={workspace.name}
         maxLength={WORKSPACE_NAME_MAX}
         autoComplete="off"
@@ -64,7 +65,7 @@ export function WorkspaceTitle({ workspace }: Props): ReactElement {
         }}
         onBlur={() => void commit()}
         onKeyDown={onKeyDown}
-        className="col-start-1 row-start-1 w-full min-w-0 bg-transparent px-1.5 py-0.5 text-sm font-medium outline-none focus:bg-background focus:ring-1 focus:ring-primary"
+        className="absolute inset-0 w-full bg-transparent px-1.5 py-0.5 text-sm font-medium outline-none focus:bg-background focus:ring-1 focus:ring-primary"
       />
     </span>
   )

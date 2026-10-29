@@ -50,8 +50,10 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
             {active ? (
               <WorkspaceTitle key={tab.id} workspace={tab} />
             ) : (
-              <span className="inline-block max-w-40 min-w-12 truncate whitespace-pre px-1.5 py-0.5 text-sm font-medium">
-                {tab.name}
+              <span className="relative inline-flex items-center">
+                <span className="inline-block max-w-40 min-w-12 truncate whitespace-pre px-1.5 py-0.5 text-sm font-medium">
+                  {tab.name}
+                </span>
               </span>
             )}
             {workspaces.length > 1 &&
