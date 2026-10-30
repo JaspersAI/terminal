@@ -61,3 +61,26 @@ test("a thread kept under a workspace's id is carried on by that id, on whicheve
   thread('w1', OPUS)
   assert.deepEqual(asked, ['w1', 'w2', 'w3'])
 })
+
+test('a chat read before the store finished loading its kept turns still picks them up once ready', () => {
+  let ready = false
+  const kept = [ASKED, ANSWERED]
+  const thread = createThreads({
+    load(chat) {
+      if (!ready || chat !== 'w1') return null
+      ready = false
+      return { key: threadKey(OPUS), turns: [...kept] }
+    },
+    save() {},
+  })
+
+  // First read happens while startThreads() is still awaiting the store.
+  const early = thread('w1', OPUS)
+  assert.deepEqual(early, [])
+
+  // Once the store has loaded, the next read populates the thread in place.
+  ready = true
+  const after = thread('w1', OPUS)
+  assert.equal(after, early)
+  assert.deepEqual(after, kept)
+})

@@ -3,6 +3,8 @@
 // and cancel a request it made, which reaches the other end as an AbortSignal. Pure: the port is
 // anything that can post a message and hear one, so the tests run both ends over an in-memory pair.
 
+import { untilAborted } from './abort.ts'
+
 export interface RpcPort {
   postMessage(message: unknown): void
   /** Calls `listener` with the data of every message that arrives. Returns a way to stop. */
@@ -145,6 +147,21 @@ export function createRpc(port: RpcPort): Rpc {
       running.clear()
     },
   }
+}
+
+/**
+ * Waits for `ready` and then asks the other end, both under the same `signal` so a caller's timeout
+ * covers an `init` still in flight as well as the request itself.
+ */
+export async function readyRequest<T>(
+  ready: Promise<void>,
+  rpc: Pick<Rpc, 'request'>,
+  method: string,
+  params?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  await untilAborted(ready, signal)
+  return (await rpc.request(method, params, signal)) as T
 }
 
 /** An aborted signal's reason as an error, whatever the one who aborted passed. */

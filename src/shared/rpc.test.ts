@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createRpc, type RpcPort } from './rpc.ts'
+import { createRpc, readyRequest, type RpcPort } from './rpc.ts'
 
 // Two ends of one wire in memory. Delivery waits a turn, as postMessage does, and every message is
 // cloned, so neither end can lean on sharing an object with the other.
@@ -207,4 +207,20 @@ test('a handler error with a cause carries the cause across the wire without dup
     main.request('vmCause'),
     (err: Error) => err.message === 'BLS request failed (getaddrinfo EAI_FAIL api.bls.gov)',
   )
+})
+
+test('readyRequest aborts while waiting on ready without hanging or sending the request', async () => {
+  const [a, b] = pair()
+  const main = createRpc(a)
+  const host = createRpc(b)
+  let calls = 0
+  host.handle('exchange.read', () => ++calls)
+
+  const neverReady = new Promise<void>(() => undefined)
+  const controller = new AbortController()
+  const pending = readyRequest(neverReady, main, 'exchange.read', { chat: 'w1' }, controller.signal)
+  controller.abort(new Error('init timed out'))
+  await assert.rejects(pending, /init timed out/)
+  await tick()
+  assert.equal(calls, 0)
 })

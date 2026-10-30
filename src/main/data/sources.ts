@@ -1,4 +1,11 @@
-import { extractRows, mapToolResult, type Dataset, type RunResult } from '../../shared/data/datasets'
+import {
+  canShareInFlight,
+  createInFlightMap,
+  extractRows,
+  mapToolResult,
+  type Dataset,
+  type RunResult,
+} from '../../shared/data/datasets'
 import { stableStringify } from '../../shared/data/hash'
 import type { RunRecord } from '../../shared/data/store'
 import { isMcpSource, type BackendContext, type FunctionSourceSpec } from '@jaspers-ai/sdk/define'
@@ -34,6 +41,7 @@ const texts = new Map<string, string>()
 const cache = new Map<string, string>()
 /** Every stored result by id, and when it may go. */
 const expires = new Map<string, number>()
+const inFlight = createInFlightMap<{ result: RunResult & { text: string }; citations: unknown }>()
 let seq = 0
 
 export interface RunOptions {
@@ -79,69 +87,80 @@ export async function runSource(
     }
   }
 
-  const startedAt = Date.now()
-  let value: unknown
-  let text: string
-  try {
-    ;({ value, text } = isMcpSource(def)
-      ? mapped(await call(source.connection!, def.tool, mcpArgs!, { signal: options.signal }), options.raw, declared())
-      : await runFunction(source, preparedArgs, workspaceId, options.raw))
-  } catch (error) {
-    const rawMessage = messageOf(error)
-    const message = isMcpSource(def) ? withParameters(rawMessage, declared()) : rawMessage
-    // A run that failed is worth keeping: what a source stopped answering is half of what changed.
-    file(source.id, preparedArgs, key, workspaceId, {
-      rows: null,
-      meta: null,
-      text: null,
-      error: message,
-    })
+  const ttlMs = def.ttlMs ?? DEFAULT_TTL_MS
+  const share = canShareInFlight({ ttlMs, fresh: options.fresh, signal: options.signal, raw: options.raw })
+  const { result, citations } = await inFlight.run(key, share, async () => {
+    const startedAt = Date.now()
+    let value: unknown
+    let text: string
+    try {
+      ;({ value, text } = isMcpSource(def)
+        ? mapped(
+            await call(source.connection!, def.tool, mcpArgs!, { signal: options.signal }),
+            options.raw,
+            declared(),
+          )
+        : await runFunction(source, preparedArgs, workspaceId, options.raw))
+    } catch (error) {
+      const rawMessage = messageOf(error)
+      const message = isMcpSource(def) ? withParameters(rawMessage, declared()) : rawMessage
+      // A run that failed is worth keeping: what a source stopped answering is half of what changed.
+      file(source.id, preparedArgs, key, workspaceId, {
+        rows: null,
+        meta: null,
+        text: null,
+        error: message,
+      })
+      recordEye(
+        sourceEvent(source.id, {
+          workspace: workspaceId,
+          ms: Date.now() - startedAt,
+          ok: false,
+          error: message,
+        }),
+      )
+      throw error instanceof Error && error.message === message ? error : new Error(message, { cause: error })
+    }
+
+    const now = Date.now()
+    sweep(now)
+    const found = extractRows(value)
     recordEye(
       sourceEvent(source.id, {
         workspace: workspaceId,
-        ms: Date.now() - startedAt,
-        ok: false,
-        error: message,
+        ms: now - startedAt,
+        ok: true,
+        ...(found ? { count: found.rows.length } : {}),
       }),
     )
-    throw error instanceof Error && error.message === message ? error : new Error(message, { cause: error })
-  }
-
-  keepCitations(workspaceId, value)
-  const now = Date.now()
-  sweep(now)
-  const found = extractRows(value)
-  recordEye(
-    sourceEvent(source.id, {
-      workspace: workspaceId,
-      ms: now - startedAt,
-      ok: true,
-      ...(found ? { count: found.rows.length } : {}),
-    }),
-  )
-  if (!found) {
-    const resultId = `r${++seq}`
-    texts.set(resultId, text)
-    expires.set(resultId, now + KEEP_MS)
-    file(source.id, preparedArgs, key, workspaceId, { rows: null, meta: null, text, error: null })
-    return { kind: 'text', resultId, text }
-  }
-  const datasetId = `d${++seq}`
-  const ttlMs = def.ttlMs ?? DEFAULT_TTL_MS
-  datasets.set(datasetId, {
-    id: datasetId,
-    source: source.id,
-    args: preparedArgs,
-    rows: found.rows,
-    meta: found.meta,
-    at: now,
-    ttlMs,
+    if (!found) {
+      const resultId = `r${++seq}`
+      texts.set(resultId, text)
+      expires.set(resultId, now + KEEP_MS)
+      file(source.id, preparedArgs, key, workspaceId, { rows: null, meta: null, text, error: null })
+      return { result: { kind: 'text', resultId, text }, citations: value }
+    }
+    const datasetId = `d${++seq}`
+    datasets.set(datasetId, {
+      id: datasetId,
+      source: source.id,
+      args: preparedArgs,
+      rows: found.rows,
+      meta: found.meta,
+      at: now,
+      ttlMs,
+    })
+    texts.set(datasetId, text)
+    expires.set(datasetId, now + Math.max(0, ttlMs) + KEEP_MS)
+    cache.set(key, datasetId)
+    file(source.id, preparedArgs, key, workspaceId, { rows: found.rows, meta: found.meta, text, error: null })
+    return {
+      result: { kind: 'dataset', datasetId, rowCount: found.rows.length, meta: found.meta, text },
+      citations: value,
+    }
   })
-  texts.set(datasetId, text)
-  expires.set(datasetId, now + Math.max(0, ttlMs) + KEEP_MS)
-  cache.set(key, datasetId)
-  file(source.id, preparedArgs, key, workspaceId, { rows: found.rows, meta: found.meta, text, error: null })
-  return { kind: 'dataset', datasetId, rowCount: found.rows.length, meta: found.meta, text }
+  keepCitations(workspaceId, citations)
+  return result
 }
 
 /**

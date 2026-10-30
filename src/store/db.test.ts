@@ -607,8 +607,15 @@ test('periodic refreshes bound history per call and per source, and opening an a
   assert.equal(kept, 100)
   db.close()
 
-  // Simulate an older store file that accumulated duplicate dataset runs for the same call before trimming existed.
+  // Simulate an older store file that accumulated duplicate dataset runs for the same call before trimming
+  // or run_rows expression indexes existed.
   const raw = new DatabaseSync(file)
+  raw.exec(`
+    drop index if exists run_rows_symbol;
+    drop index if exists run_rows_ticker;
+    drop index if exists run_rows_coalesce_sym;
+    drop index if exists run_rows_date;
+  `)
   for (let i = 1; i <= 30; i++) {
     const res = raw
       .prepare(
@@ -616,9 +623,10 @@ test('periodic refreshes bound history per call and per source, and opening an a
       )
       .run(i * 1000, `quote ${i}`)
     const id = Number(res.lastInsertRowid)
+    // Stale rows are deleted before expression indexes are built, so they are never JSON-parsed during indexing.
     raw
       .prepare('insert into run_rows (run_id, idx, data) values (?, 0, ?)')
-      .run(id, JSON.stringify({ symbol: 'AAPL', price: 100 + i }))
+      .run(id, i < 30 ? 'not-json' : JSON.stringify({ symbol: 'AAPL', price: 100 + i }))
     raw.prepare('insert into docs (rowid, text) values (?, ?)').run(id, `quote ${i}`)
   }
   raw.close()
@@ -629,6 +637,24 @@ test('periodic refreshes bound history per call and per source, and opening an a
   })
   assert.deepEqual(quotes.rows, [[130]])
   reopened.close()
+
+  // Simulate an older store file where a run with text was written without a matching FTS entry before trimming.
+  const desynced = new DatabaseSync(file)
+  for (let i = 1; i <= 5; i++) {
+    desynced
+      .prepare(
+        "insert into runs (source, args, args_hash, workspace, fetched_at, row_count, text) values ('yfinance/quote', '{\"symbol\":\"AAPL\"}', 'h-quote-aapl', 'w1', ?, 1, ?)",
+      )
+      .run(100_000 + i * 1000, `unindexed quote ${i}`)
+  }
+  desynced.close()
+
+  const recovered = openStore(file)
+  const fts = recovered.query({
+    sql: "select rowid from docs where docs match 'unindexed'",
+  })
+  assert.equal(fts.rows.length, 1)
+  recovered.close()
 })
 
 test('correlated symbol and date lookups over run_rows use expression indexes instead of full scans', () => {
