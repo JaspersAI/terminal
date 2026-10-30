@@ -97,8 +97,8 @@ function confine(dir: string): esbuild.Plugin {
 }
 
 /**
- * Wraps lightweight-charts chart factories so removing a series or reading a detached series' pane
- * during synchronous crosshair/range callbacks does not throw an unhandled 'Value is null' error.
+ * Wraps lightweight-charts factories so null/NaN bars, empty series, non-trailing pane removals,
+ * detached series/price scales, and post-unmount calls do not throw an unhandled 'Value is null' error.
  */
 function lightweightChartsShim(entryPath: string): string {
   const spec = JSON.stringify(`./${path.basename(entryPath)}`)
@@ -107,15 +107,216 @@ export * from ${spec}
 import * as _lwc from ${spec}
 
 function _isNullValueError(err) {
-  return err instanceof Error && err.message === 'Value is null'
+  return (
+    err instanceof Error &&
+    (err.message === 'Value is null' ||
+      err.message === 'Value is undefined' ||
+      err.message.startsWith('Trying to apply price scale options with incorrect'))
+  )
+}
+
+function _timeKey(time) {
+  if (typeof time === 'number') return Number.isFinite(time) ? time : null
+  if (typeof time === 'string') {
+    if (time.trim() === '') return null
+    const ms = Date.parse(time)
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null
+  }
+  if (typeof time === 'object' && time !== null) {
+    const { year, month, day } = time
+    if (
+      typeof year === 'number' &&
+      typeof month === 'number' &&
+      typeof day === 'number' &&
+      Number.isFinite(year) &&
+      Number.isFinite(month) &&
+      Number.isFinite(day)
+    ) {
+      return Math.floor(Date.UTC(year, month - 1, day) / 1000)
+    }
+  }
+  return null
+}
+
+function _isValidBar(type, item) {
+  if (!item || typeof item !== 'object') return false
+  if (_timeKey(item.time) === null) return false
+  const isOhlc =
+    type === 'Candlestick' ||
+    type === 'Bar' ||
+    (type === null && ('open' in item || 'high' in item || 'low' in item || 'close' in item))
+  if (isOhlc) {
+    return (
+      typeof item.open === 'number' &&
+      Number.isFinite(item.open) &&
+      typeof item.high === 'number' &&
+      Number.isFinite(item.high) &&
+      typeof item.low === 'number' &&
+      Number.isFinite(item.low) &&
+      typeof item.close === 'number' &&
+      Number.isFinite(item.close)
+    )
+  }
+  const isSingle =
+    type === 'Line' ||
+    type === 'Area' ||
+    type === 'Baseline' ||
+    type === 'Histogram' ||
+    (type === null && 'value' in item)
+  if (isSingle) {
+    return typeof item.value === 'number' && Number.isFinite(item.value)
+  }
+  return true
+}
+
+function _sanitizeData(type, data) {
+  if (!Array.isArray(data) || data.length === 0) return []
+  const byTime = new Map()
+  let prevKey = -Infinity
+  let ordered = true
+  for (const item of data) {
+    if (!_isValidBar(type, item)) continue
+    const key = _timeKey(item.time)
+    if (key === null) continue
+    if (key <= prevKey) ordered = false
+    prevKey = key
+    byTime.set(key, item)
+  }
+  if (byTime.size === 0) return []
+  if (ordered) return Array.from(byTime.values())
+  return Array.from(byTime.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map((entry) => entry[1])
+}
+
+function _sanitizeMarkers(markers) {
+  if (!Array.isArray(markers) || markers.length === 0) return []
+  const valid = []
+  for (const m of markers) {
+    if (!m || typeof m !== 'object') continue
+    const key = _timeKey(m.time)
+    if (key === null) continue
+    if (
+      (m.position === 'atPriceTop' || m.position === 'atPriceBottom' || m.position === 'atPriceMiddle') &&
+      (typeof m.price !== 'number' || !Number.isFinite(m.price))
+    ) {
+      continue
+    }
+    valid.push({ key, marker: m })
+  }
+  valid.sort((a, b) => a.key - b.key)
+  return valid.map((entry) => entry.marker)
 }
 
 function _wrapChart(chart) {
   if (!chart || typeof chart !== 'object') return chart
   const removedSeries = new WeakSet()
   const wrappedSeries = new WeakSet()
+  const wrappedPriceScales = new WeakSet()
   const crosshairMap = new Map()
+  const userPreserved = new Map([[0, true]])
   let removingDepth = 0
+  let chartRemoved = false
+
+  const origRemovePane = typeof chart.removePane === 'function' ? chart.removePane.bind(chart) : null
+
+  try {
+    chart.panes?.()?.[0]?.setPreserveEmptyPane?.(true)
+  } catch {}
+
+  const fallbackPriceScale = {
+    applyOptions: () => {},
+    options: () => ({}),
+    width: () => 0,
+    getVisibleRange: () => null,
+    setVisibleRange: () => {},
+    setAutoScale: () => {},
+  }
+
+  function wrapPriceScale(ps) {
+    if (!ps || typeof ps !== 'object') return fallbackPriceScale
+    if (wrappedPriceScales.has(ps)) return ps
+    wrappedPriceScales.add(ps)
+    if (typeof ps.applyOptions === 'function') {
+      const orig = ps.applyOptions.bind(ps)
+      ps.applyOptions = (opts) => {
+        if (chartRemoved) return
+        try {
+          orig(opts)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+        }
+      }
+    }
+    if (typeof ps.options === 'function') {
+      const orig = ps.options.bind(ps)
+      ps.options = () => {
+        if (chartRemoved) return {}
+        try {
+          return orig()
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+          return {}
+        }
+      }
+    }
+    if (typeof ps.width === 'function') {
+      const orig = ps.width.bind(ps)
+      ps.width = () => {
+        if (chartRemoved) return 0
+        try {
+          return orig()
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+          return 0
+        }
+      }
+    }
+    if (typeof ps.getVisibleRange === 'function') {
+      const orig = ps.getVisibleRange.bind(ps)
+      ps.getVisibleRange = () => {
+        if (chartRemoved) return null
+        try {
+          return orig()
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+          return null
+        }
+      }
+    }
+    if (typeof ps.setVisibleRange === 'function') {
+      const orig = ps.setVisibleRange.bind(ps)
+      ps.setVisibleRange = (range) => {
+        if (
+          chartRemoved ||
+          !range ||
+          typeof range.from !== 'number' ||
+          typeof range.to !== 'number' ||
+          !Number.isFinite(range.from) ||
+          !Number.isFinite(range.to)
+        ) {
+          return
+        }
+        try {
+          orig(range)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+        }
+      }
+    }
+    if (typeof ps.setAutoScale === 'function') {
+      const orig = ps.setAutoScale.bind(ps)
+      ps.setAutoScale = (on) => {
+        if (chartRemoved) return
+        try {
+          orig(on)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+        }
+      }
+    }
+    return ps
+  }
 
   const fallbackPane = {
     paneIndex: () => -1,
@@ -131,29 +332,97 @@ function _wrapChart(chart) {
     attachPrimitive: () => {},
     detachPrimitive: () => {},
     priceScale: (id) => {
+      if (chartRemoved) return fallbackPriceScale
       try {
-        return chart.priceScale(id ?? 'right', 0)
+        return wrapPriceScale(chart.priceScale(id ?? 'right', 0))
       } catch {
-        return { applyOptions: () => {}, options: () => ({}), width: () => 0 }
+        return fallbackPriceScale
       }
     },
   }
 
-  function wrapSeries(series) {
+  function wrapPane(pane, indexHint) {
+    if (!pane || typeof pane !== 'object') return fallbackPane
+    if (typeof pane.setPreserveEmptyPane === 'function' && !pane._jaspersWrapped) {
+      const origSetPreserve = pane.setPreserveEmptyPane.bind(pane)
+      const origGetPreserve = typeof pane.preserveEmptyPane === 'function' ? pane.preserveEmptyPane.bind(pane) : null
+      pane.setPreserveEmptyPane = (v) => {
+        const idx = typeof pane.paneIndex === 'function' ? pane.paneIndex() : indexHint
+        if (typeof idx === 'number' && idx >= 0) userPreserved.set(idx, Boolean(v))
+        try {
+          origSetPreserve(Boolean(v))
+        } catch {}
+      }
+      if (origGetPreserve) {
+        pane.preserveEmptyPane = () => {
+          const idx = typeof pane.paneIndex === 'function' ? pane.paneIndex() : indexHint
+          if (typeof idx === 'number' && userPreserved.has(idx)) return userPreserved.get(idx)
+          try {
+            return origGetPreserve()
+          } catch {
+            return false
+          }
+        }
+      }
+      if (typeof pane.priceScale === 'function') {
+        const origPanePriceScale = pane.priceScale.bind(pane)
+        pane.priceScale = (id) => {
+          if (chartRemoved) return fallbackPriceScale
+          try {
+            return wrapPriceScale(origPanePriceScale(id))
+          } catch (err) {
+            if (!_isNullValueError(err)) throw err
+            return fallbackPriceScale
+          }
+        }
+      }
+      Object.defineProperty(pane, '_jaspersWrapped', { value: true, enumerable: false })
+    }
+    return pane
+  }
+
+  function cleanupTrailingEmptyPanes() {
+    if (chartRemoved || typeof chart.panes !== 'function' || !origRemovePane) return
+    while (true) {
+      const panes = chart.panes()
+      if (!Array.isArray(panes) || panes.length <= 1) break
+      const lastIdx = panes.length - 1
+      if (userPreserved.get(lastIdx)) break
+      const lastPane = panes[lastIdx]
+      const seriesInLast = typeof lastPane?.getSeries === 'function' ? lastPane.getSeries() : null
+      if (!Array.isArray(seriesInLast) || seriesInLast.length > 0) break
+      try {
+        origRemovePane(lastIdx)
+        userPreserved.delete(lastIdx)
+      } catch {
+        break
+      }
+    }
+  }
+
+  function wrapSeries(series, defType) {
     if (!series || typeof series !== 'object' || wrappedSeries.has(series)) return series
     wrappedSeries.add(series)
+    const getSeriesType = () => {
+      if (typeof series.seriesType === 'function') {
+        try {
+          return series.seriesType()
+        } catch {}
+      }
+      return defType ?? null
+    }
     let lastPane = null
     if (typeof series.getPane === 'function') {
       const origGetPane = series.getPane.bind(series)
       try {
-        lastPane = origGetPane()
+        lastPane = wrapPane(origGetPane())
       } catch {}
       series.getPane = () => {
-        if (!removedSeries.has(series)) {
+        if (!chartRemoved && !removedSeries.has(series)) {
           try {
             const pane = origGetPane()
-            if (pane) lastPane = pane
-            return pane
+            if (pane) lastPane = wrapPane(pane)
+            return lastPane ?? fallbackPane
           } catch (err) {
             if (!_isNullValueError(err)) throw err
           }
@@ -161,10 +430,95 @@ function _wrapChart(chart) {
         return lastPane ?? fallbackPane
       }
     }
+    if (typeof series.setData === 'function') {
+      const origSetData = series.setData.bind(series)
+      series.setData = (data) => {
+        if (chartRemoved || removedSeries.has(series)) return
+        const clean = _sanitizeData(getSeriesType(), data)
+        try {
+          origSetData(clean)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+        }
+      }
+    }
+    if (typeof series.update === 'function') {
+      const origUpdate = series.update.bind(series)
+      series.update = (bar, historicalUpdate) => {
+        if (chartRemoved || removedSeries.has(series)) return
+        if (!_isValidBar(getSeriesType(), bar)) return
+        try {
+          origUpdate(bar, historicalUpdate)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+        }
+      }
+    }
+    if (typeof series.applyOptions === 'function') {
+      const origApplyOptions = series.applyOptions.bind(series)
+      series.applyOptions = (opts) => {
+        if (chartRemoved || removedSeries.has(series)) return
+        try {
+          origApplyOptions(opts)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+        }
+      }
+    }
+    if (typeof series.priceToCoordinate === 'function') {
+      const origPriceToCoord = series.priceToCoordinate.bind(series)
+      series.priceToCoordinate = (price) => {
+        if (chartRemoved || removedSeries.has(series) || typeof price !== 'number' || !Number.isFinite(price)) {
+          return null
+        }
+        try {
+          return origPriceToCoord(price)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+          return null
+        }
+      }
+    }
+    if (typeof series.coordinateToPrice === 'function') {
+      const origCoordToPrice = series.coordinateToPrice.bind(series)
+      series.coordinateToPrice = (coord) => {
+        if (chartRemoved || removedSeries.has(series) || typeof coord !== 'number' || !Number.isFinite(coord)) {
+          return null
+        }
+        try {
+          return origCoordToPrice(coord)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+          return null
+        }
+      }
+    }
+    if (typeof series.barsInLogicalRange === 'function') {
+      const origBarsInRange = series.barsInLogicalRange.bind(series)
+      series.barsInLogicalRange = (range) => {
+        if (
+          chartRemoved ||
+          removedSeries.has(series) ||
+          !range ||
+          typeof range.from !== 'number' ||
+          typeof range.to !== 'number' ||
+          !Number.isFinite(range.from) ||
+          !Number.isFinite(range.to)
+        ) {
+          return null
+        }
+        try {
+          return origBarsInRange(range)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+          return null
+        }
+      }
+    }
     if (typeof series.moveToPane === 'function') {
       const origMoveToPane = series.moveToPane.bind(series)
       series.moveToPane = (paneIndex) => {
-        if (removedSeries.has(series)) return
+        if (chartRemoved || removedSeries.has(series)) return
         try {
           origMoveToPane(paneIndex)
           lastPane = series.getPane?.() ?? lastPane
@@ -176,8 +530,9 @@ function _wrapChart(chart) {
     if (typeof series.priceScale === 'function') {
       const origPriceScale = series.priceScale.bind(series)
       series.priceScale = (...args) => {
+        if (chartRemoved || removedSeries.has(series)) return fallbackPriceScale
         try {
-          return origPriceScale(...args)
+          return wrapPriceScale(origPriceScale(...args))
         } catch (err) {
           if (!_isNullValueError(err)) throw err
           return fallbackPane.priceScale(args[0])
@@ -187,22 +542,95 @@ function _wrapChart(chart) {
     return series
   }
 
+  if (typeof chart.panes === 'function') {
+    const origPanes = chart.panes.bind(chart)
+    chart.panes = () => {
+      if (chartRemoved) return []
+      try {
+        return origPanes().map((p, idx) => wrapPane(p, idx))
+      } catch (err) {
+        if (!_isNullValueError(err)) throw err
+        return []
+      }
+    }
+  }
+  if (typeof chart.addPane === 'function') {
+    const origAddPane = chart.addPane.bind(chart)
+    chart.addPane = (preserve = false) => {
+      if (chartRemoved) return fallbackPane
+      const idx = typeof chart.panes === 'function' ? chart.panes().length : 1
+      userPreserved.set(idx, Boolean(preserve))
+      const pane = origAddPane(preserve)
+      return wrapPane(pane, idx)
+    }
+  }
+  if (typeof chart.removePane === 'function' && origRemovePane) {
+    chart.removePane = (index) => {
+      if (chartRemoved || typeof index !== 'number' || index <= 0) return
+      const panes = typeof chart.panes === 'function' ? chart.panes() : []
+      if (index >= panes.length) return
+      userPreserved.set(index, false)
+      if (index === panes.length - 1) {
+        try {
+          origRemovePane(index)
+          userPreserved.delete(index)
+        } catch (err) {
+          if (!_isNullValueError(err)) throw err
+        }
+        cleanupTrailingEmptyPanes()
+      }
+    }
+  }
+  if (typeof chart.priceScale === 'function') {
+    const origChartPriceScale = chart.priceScale.bind(chart)
+    chart.priceScale = (id, paneIndex = 0) => {
+      if (chartRemoved) return fallbackPriceScale
+      try {
+        return wrapPriceScale(origChartPriceScale(id, paneIndex))
+      } catch (err) {
+        if (!_isNullValueError(err)) throw err
+        return fallbackPriceScale
+      }
+    }
+  }
   if (typeof chart.addSeries === 'function') {
     const origAddSeries = chart.addSeries.bind(chart)
-    chart.addSeries = (...args) => wrapSeries(origAddSeries(...args))
+    chart.addSeries = (def, opts, paneIndex = 0) => {
+      const s = origAddSeries(def, opts, paneIndex)
+      try {
+        chart.panes?.()?.[0]?.setPreserveEmptyPane?.(true)
+      } catch {}
+      return wrapSeries(s, def?.type ?? null)
+    }
   }
   if (typeof chart.addCustomSeries === 'function') {
     const origAddCustomSeries = chart.addCustomSeries.bind(chart)
-    chart.addCustomSeries = (...args) => wrapSeries(origAddCustomSeries(...args))
+    chart.addCustomSeries = (view, opts, paneIndex = 0) => {
+      const s = origAddCustomSeries(view, opts, paneIndex)
+      try {
+        chart.panes?.()?.[0]?.setPreserveEmptyPane?.(true)
+      } catch {}
+      return wrapSeries(s, 'Custom')
+    }
   }
   if (typeof chart.removeSeries === 'function') {
     const origRemoveSeries = chart.removeSeries.bind(chart)
     chart.removeSeries = (series) => {
-      if (!series || typeof series !== 'object' || removedSeries.has(series)) return
+      if (chartRemoved || !series || typeof series !== 'object' || removedSeries.has(series)) return
       try {
         series.getPane?.()
       } catch {}
-      const panesBefore = typeof chart.panes === 'function' ? chart.panes().length : 0
+      const rawPanes = typeof chart.panes === 'function' ? chart.panes() : []
+      const panesBefore = rawPanes.length
+      // Prevent lightweight-charts from splicing a non-trailing pane (such as pane 0), which would
+      // cause _private__syncGuiWithModel to pop the last paneWidget and destroy a live pane.
+      for (let i = 0; i < rawPanes.length; i++) {
+        try {
+          const keep = i === 0 || i < rawPanes.length - 1 ? true : Boolean(userPreserved.get(i))
+          rawPanes[i]?.setPreserveEmptyPane?.(keep)
+          if (i < rawPanes.length - 1 && !userPreserved.has(i)) userPreserved.set(i, i === 0)
+        } catch {}
+      }
       removedSeries.add(series)
       removingDepth++
       try {
@@ -212,6 +640,7 @@ function _wrapChart(chart) {
       } finally {
         removingDepth--
       }
+      cleanupTrailingEmptyPanes()
       try {
         if (typeof chart.panes === 'function' && chart.panes().length < panesBefore) {
           chart.clearCrosshairPosition?.()
@@ -226,7 +655,7 @@ function _wrapChart(chart) {
       let wrapped = crosshairMap.get(handler)
       if (!wrapped) {
         wrapped = (param) => {
-          if (removingDepth > 0) return
+          if (chartRemoved || removingDepth > 0) return
           handler(param)
         }
         crosshairMap.set(handler, wrapped)
@@ -239,15 +668,37 @@ function _wrapChart(chart) {
     chart.unsubscribeCrosshairMove = (handler) => {
       const wrapped = crosshairMap.get(handler) ?? handler
       crosshairMap.delete(handler)
-      origUnsub(wrapped)
+      try {
+        origUnsub(wrapped)
+      } catch {}
     }
   }
   if (typeof chart.setCrosshairPosition === 'function') {
     const origSetCrosshair = chart.setCrosshairPosition.bind(chart)
     chart.setCrosshairPosition = (price, horizontalPosition, seriesApi) => {
-      if (!seriesApi || removedSeries.has(seriesApi)) return
+      if (
+        chartRemoved ||
+        !seriesApi ||
+        removedSeries.has(seriesApi) ||
+        typeof price !== 'number' ||
+        !Number.isFinite(price) ||
+        _timeKey(horizontalPosition) === null
+      ) {
+        return
+      }
       try {
         origSetCrosshair(price, horizontalPosition, seriesApi)
+      } catch (err) {
+        if (!_isNullValueError(err)) throw err
+      }
+    }
+  }
+  if (typeof chart.clearCrosshairPosition === 'function') {
+    const origClearCrosshair = chart.clearCrosshairPosition.bind(chart)
+    chart.clearCrosshairPosition = () => {
+      if (chartRemoved) return
+      try {
+        origClearCrosshair()
       } catch (err) {
         if (!_isNullValueError(err)) throw err
       }
@@ -258,13 +709,84 @@ function _wrapChart(chart) {
     let wrappedTimeScale = null
     chart.timeScale = () => {
       const ts = origTimeScale()
-      if (ts && typeof ts === 'object' && ts !== wrappedTimeScale && typeof ts.setVisibleRange === 'function') {
-        const origSetVisibleRange = ts.setVisibleRange.bind(ts)
-        ts.setVisibleRange = (range) => {
-          try {
-            origSetVisibleRange(range)
-          } catch (err) {
-            if (!_isNullValueError(err)) throw err
+      if (ts && typeof ts === 'object' && ts !== wrappedTimeScale) {
+        if (typeof ts.getVisibleRange === 'function') {
+          const origGetVisibleRange = ts.getVisibleRange.bind(ts)
+          ts.getVisibleRange = () => {
+            if (chartRemoved) return null
+            try {
+              return origGetVisibleRange()
+            } catch (err) {
+              if (!_isNullValueError(err)) throw err
+              return null
+            }
+          }
+        }
+        if (typeof ts.setVisibleRange === 'function') {
+          const origSetVisibleRange = ts.setVisibleRange.bind(ts)
+          ts.setVisibleRange = (range) => {
+            if (chartRemoved || !range || _timeKey(range.from) === null || _timeKey(range.to) === null) return
+            try {
+              origSetVisibleRange(range)
+            } catch (err) {
+              if (!_isNullValueError(err)) throw err
+            }
+          }
+        }
+        if (typeof ts.setVisibleLogicalRange === 'function') {
+          const origSetLogicalRange = ts.setVisibleLogicalRange.bind(ts)
+          ts.setVisibleLogicalRange = (range) => {
+            if (
+              chartRemoved ||
+              !range ||
+              typeof range.from !== 'number' ||
+              typeof range.to !== 'number' ||
+              !Number.isFinite(range.from) ||
+              !Number.isFinite(range.to) ||
+              range.from > range.to
+            ) {
+              return
+            }
+            try {
+              origSetLogicalRange(range)
+            } catch (err) {
+              if (!_isNullValueError(err)) throw err
+            }
+          }
+        }
+        if (typeof ts.timeToIndex === 'function') {
+          const origTimeToIndex = ts.timeToIndex.bind(ts)
+          ts.timeToIndex = (time, findNearest) => {
+            if (chartRemoved || _timeKey(time) === null) return null
+            try {
+              return origTimeToIndex(time, findNearest)
+            } catch (err) {
+              if (!_isNullValueError(err)) throw err
+              return null
+            }
+          }
+        }
+        if (typeof ts.timeToCoordinate === 'function') {
+          const origTimeToCoord = ts.timeToCoordinate.bind(ts)
+          ts.timeToCoordinate = (time) => {
+            if (chartRemoved || _timeKey(time) === null) return null
+            try {
+              return origTimeToCoord(time)
+            } catch (err) {
+              if (!_isNullValueError(err)) throw err
+              return null
+            }
+          }
+        }
+        if (typeof ts.fitContent === 'function') {
+          const origFitContent = ts.fitContent.bind(ts)
+          ts.fitContent = () => {
+            if (chartRemoved) return
+            try {
+              origFitContent()
+            } catch (err) {
+              if (!_isNullValueError(err)) throw err
+            }
           }
         }
         wrappedTimeScale = ts
@@ -272,13 +794,72 @@ function _wrapChart(chart) {
       return ts
     }
   }
+  if (typeof chart.applyOptions === 'function') {
+    const origChartApplyOptions = chart.applyOptions.bind(chart)
+    chart.applyOptions = (opts) => {
+      if (chartRemoved) return
+      try {
+        origChartApplyOptions(opts)
+      } catch (err) {
+        if (!_isNullValueError(err)) throw err
+      }
+    }
+  }
+  if (typeof chart.resize === 'function') {
+    const origResize = chart.resize.bind(chart)
+    chart.resize = (w, h, force) => {
+      if (chartRemoved) return
+      try {
+        origResize(w, h, force)
+      } catch (err) {
+        if (!_isNullValueError(err)) throw err
+      }
+    }
+  }
+  if (typeof chart.remove === 'function') {
+    const origRemove = chart.remove.bind(chart)
+    chart.remove = () => {
+      if (chartRemoved) return
+      chartRemoved = true
+      try {
+        origRemove()
+      } catch (err) {
+        if (!_isNullValueError(err)) throw err
+      }
+    }
+  }
   return chart
+}
+
+function _wrapMarkersPlugin(plugin) {
+  if (!plugin || typeof plugin !== 'object') return plugin
+  if (typeof plugin.setMarkers === 'function') {
+    const origSetMarkers = plugin.setMarkers.bind(plugin)
+    plugin.setMarkers = (markers) => {
+      try {
+        origSetMarkers(_sanitizeMarkers(markers))
+      } catch (err) {
+        if (!_isNullValueError(err)) throw err
+      }
+    }
+  }
+  return plugin
 }
 
 export const createChart = (...args) => _wrapChart(_lwc.createChart(...args))
 export const createChartEx = typeof _lwc.createChartEx === 'function' ? (...args) => _wrapChart(_lwc.createChartEx(...args)) : undefined
 export const createOptionsChart = typeof _lwc.createOptionsChart === 'function' ? (...args) => _wrapChart(_lwc.createOptionsChart(...args)) : undefined
 export const createYieldCurveChart = typeof _lwc.createYieldCurveChart === 'function' ? (...args) => _wrapChart(_lwc.createYieldCurveChart(...args)) : undefined
+export const createSeriesMarkers = typeof _lwc.createSeriesMarkers === 'function'
+  ? (series, markers, options) => {
+      try {
+        return _wrapMarkersPlugin(_lwc.createSeriesMarkers(series, _sanitizeMarkers(markers), options))
+      } catch (err) {
+        if (!_isNullValueError(err)) throw err
+        return { setMarkers: () => {}, markers: () => [], detach: () => {}, getSeries: () => series, applyOptions: () => {} }
+      }
+    }
+  : undefined
 `
 }
 
