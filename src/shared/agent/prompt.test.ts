@@ -26,6 +26,7 @@ import {
   describeRound,
   describeTiles,
   describeWork,
+  LOOP_PLACEMENT,
   LOOP_RULES,
   loopRules,
   gridPrimer,
@@ -1118,4 +1119,99 @@ test('a task preface lists allowed commands for run_shell only while Pro mode is
   const proModeOff = taskPreface('t4', ['tail -40 out/run.log'], false)
   assert.equal(proModeOff, withoutCommands)
   assert.doesNotMatch(proModeOff, /<command>|run_shell/)
+})
+
+test('the rules forbid unsolicited chart views on watchlist or table requests, fanning out one chart per symbol, and leaving extra views when narrowing to one', () => {
+  assert.match(ROUTER_RULES, /never unrequested charts alongside a watchlist or table/i)
+  assert.match(ROUTER_RULES, /indicators belong as columns/i)
+  assert.match(ROUTER_RULES, /never one chart per symbol unless they asked for separate charts/i)
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /never add unsolicited chart views alongside a watchlist, screen, or table/i)
+    assert.match(rules, /numeric columns inside the watchlist or table/i)
+    assert.match(rules, /place one chart view.*rather than a separate chart tile per symbol/i)
+    assert.match(rules, /replace or close the extra views in your tile so only the view they asked for remains/i)
+  }
+  assert.match(LOOP_PLACEMENT, /do not add chart views alongside a watchlist or table/i)
+  assert.match(LOOP_PLACEMENT, /do not place a separate chart per symbol when one chart/i)
+  assert.match(LOOP_PLACEMENT, /pass replace to place_view or call remove_element on the extra views/i)
+  // Preserves isolated room blindness from PR #122:
+  assert.doesNotMatch(LOOP_PLACEMENT, /Other work has a tile of its own/i)
+})
+
+test("a room's agent is told the instructions of its own plugins' views from the start, and to place a plugin's own view rather than core/table", () => {
+  const table: ViewInfo = {
+    id: 'core/table',
+    plugin: null,
+    title: 'Table',
+    renders: [],
+    stateSchema: { type: 'object', properties: { source: { type: ['string', 'null'] } } },
+  }
+  const screener: ViewInfo = {
+    id: 'screener-mcp/screener',
+    plugin: 'screener-mcp',
+    title: 'Screener',
+    renders: ['screener-mcp/screen'],
+    stateSchema: { type: 'object', properties: { filters: { type: 'array', items: { type: 'object' } } } },
+  }
+  const state = tree(
+    EMPTY_GRID,
+    { 'core/table': table, 'screener-mcp/screener': screener },
+    {},
+    {},
+    { 'screener-mcp': plugin('screener-mcp', { views: ['screener-mcp/screener'] }) },
+  )
+  const lookup = (id: string): string | undefined =>
+    id === 'screener-mcp/screener'
+      ? 'This element is the whole screen: drive it by its state only.'
+      : id === 'core/table'
+        ? 'A generic table.'
+        : undefined
+  const told = describeInstalledFor(state, ['screener-mcp'], [], lookup)
+  assert.match(
+    told,
+    /- screener-mcp\/screener: Screener\. Renders screener-mcp\/screen\. state: \{ filters\?: object\[\] \}\n  Instructions: This element is the whole screen: drive it by its state only\./,
+  )
+  // Built-in views stay one line in the installed block; only the work's own plugins' views carry their instructions up front.
+  assert.doesNotMatch(told, /Instructions: A generic table\./)
+
+  const fromUsePlugin = describePlugin(state, 'screener-mcp', lookup)
+  assert.match(
+    fromUsePlugin,
+    /- screener-mcp\/screener: Screener\. Renders screener-mcp\/screen\. state: \{ filters\?: object\[\] \}\n  Instructions: This element is the whole screen: drive it by its state only\./,
+  )
+})
+
+test('the rules and source catalog direct screening and rendered sources to the plugin view rather than core/table', () => {
+  const screener: ViewInfo = {
+    id: 'screener-mcp/screener',
+    plugin: 'screener-mcp',
+    title: 'Screener',
+    renders: ['screener-mcp/screen'],
+    stateSchema: { type: 'object', properties: {} },
+  }
+  const screen: SourceInfo = {
+    ...SCREEN,
+    id: 'screener-mcp/screen',
+    plugin: 'screener-mcp',
+  }
+  const state = tree(
+    EMPTY_GRID,
+    { 'screener-mcp/screener': screener },
+    { 'screener-mcp/screen': screen },
+    { 'jaspers/sec': READY },
+  )
+  const context = describeContext(state, WS, instructionsFor, CLOCK)
+  assert.match(
+    context,
+    /- screener-mcp\/screen: Screen companies\. — takes filters, \[limit\] \(rendered by screener-mcp\/screener\)/,
+  )
+
+  assert.match(ROUTER_RULES, /plugin's own view.*rather than a generic/i)
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /screener-mcp\/screener/)
+    assert.match(rules, /never.*core\/table.*run_rows/i)
+    assert.match(rules, /top 10/i)
+  }
+  assert.match(LOOP_PLACEMENT, /screener-mcp\/screener/)
+  assert.match(LOOP_PLACEMENT, /core\/table/)
 })

@@ -27,6 +27,7 @@ test('the setup call is told the work, its brief, and what the user asked, and t
   )
   assert.equal(setupRequest('Notes', '', undefined), 'The work: Notes\nIts brief: (none)')
   assert.match(setupSystem('CATALOG'), new RegExp(`answer only by calling ${SETUP_TOOL}\\.[^]*\\n\\nCATALOG$`))
+  assert.match(setupSystem('CATALOG'), /chart-only plugin.*watchlist.*indicators/i)
   assert.deepEqual(SETUP_DEFINITION.parameters.required, ['plugins', 'skills'])
   assert.equal(SETUP_EFFORT, 'low')
   assert.equal(SETUP_TIMEOUT_MS, 20_000)

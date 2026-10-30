@@ -4,6 +4,7 @@ import { globalRoomLog, searchRooms } from '../../../shared/loops/closed'
 import { frameOf, loopChat, loopName, named, type Loop } from '../../../shared/loops/loops'
 import type { AppState } from '../../../shared/state'
 import { usePlugin } from '../../loops/loops'
+import { getView } from '../../plugins/registry'
 import { getState, toPublic } from '../../state'
 import { statusNow } from '../utils/status'
 import { exchanges } from '../utils/thread'
@@ -174,7 +175,7 @@ function usePluginTool(loop: string): Tool {
         throw new Error(`Unknown plugin ${id}. Installed: ${Object.keys(state.plugins).join(', ') || 'none'}.`)
       }
       usePlugin(workspaceId, loop, id)
-      return describePlugin(state, id)
+      return describePlugin(state, id, (viewId) => getView(viewId)?.instructions)
     },
   }
 }
