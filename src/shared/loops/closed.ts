@@ -19,9 +19,11 @@ import {
 } from '../grid/grid.ts'
 import {
   frameOf,
+  loopChat,
   loopName,
   loopNumber,
   named,
+  NO_LOOPS,
   type ClosedLoop,
   type Loop,
   type Loops,
@@ -67,9 +69,9 @@ export function closedWithout(
   return closed.length > 0 ? { ...loops, list, closed } : { ...loops, list }
 }
 
-/** A loop's record with one more change in its log. */
+/** A room's record with one more change in its log, and its lastActiveAt updated. */
 function withChange(loop: Loop, change: LoopChange['change'], at: number): Loop {
-  return { ...loop, log: [...(loop.log ?? []), { at, change }] }
+  return { ...loop, lastActiveAt: Math.max(loop.lastActiveAt ?? 0, at), log: [...(loop.log ?? []), { at, change }] }
 }
 
 /** The loops without one, open or closed: what deleting it leaves. The same object when there is no such loop. */
@@ -215,7 +217,12 @@ export const CHANGE_TEXT: Record<LoggedChange['change'], string> = {
   reopened: 'Reopened',
 }
 
-/** The loop log: every loop of a workspace, open and closed, the one changed last first. */
+/** The timestamp of a room's most recent activity: creation, a lifecycle change, or an agent/view update. */
+export function lastActivityOf(loop: Loop): number {
+  return Math.max(loop.lastActiveAt ?? 0, loop.createdAt, ...(loop.log ?? []).map((c) => c.at))
+}
+
+/** The room log: every room of a tab, open and closed, ordered by most recent activity first. */
 export function loopLog(open: readonly Loop[], closed: readonly Loop[]): LogEntry[] {
   const entry = (loop: Loop, isOpen: boolean): LogEntry => ({
     loop,
@@ -223,6 +230,245 @@ export function loopLog(open: readonly Loop[], closed: readonly Loop[]): LogEntr
     changes: [{ at: loop.createdAt, change: 'created' } as LoggedChange, ...(loop.log ?? [])].reverse(),
   })
   return [...open.map((one) => entry(one, true)), ...closed.map((one) => entry(one, false))].sort(
-    (a, b) => b.changes[0]!.at - a.changes[0]!.at || loopNumber(b.loop.id) - loopNumber(a.loop.id),
+    (a, b) => lastActivityOf(b.loop) - lastActivityOf(a.loop) || loopNumber(b.loop.id) - loopNumber(a.loop.id),
   )
+}
+
+export interface GlobalLogEntry extends LogEntry {
+  workspaceId: string
+  workspaceName: string
+  lastActiveAt: number
+}
+
+/**
+ * The single global room log across all tabs: every room (open on any tab or saved in memory),
+ * ordered chronologically by its most recent activity first.
+ */
+export function globalRoomLog(
+  workspaces: readonly { id: string; name: string }[],
+  openByTab: Record<string, readonly Loop[]>,
+  closedByTab: Record<string, readonly Loop[]>,
+): GlobalLogEntry[] {
+  const nameOf = new Map(workspaces.map((w) => [w.id, w.name]))
+  const tabIds = [...new Set([...workspaces.map((w) => w.id), ...Object.keys(openByTab), ...Object.keys(closedByTab)])]
+  const all: GlobalLogEntry[] = []
+  for (const workspaceId of tabIds) {
+    const workspaceName = nameOf.get(workspaceId) ?? 'Saved'
+    const entries = loopLog(openByTab[workspaceId] ?? [], closedByTab[workspaceId] ?? [])
+    for (const entry of entries) {
+      all.push({
+        ...entry,
+        workspaceId,
+        workspaceName,
+        lastActiveAt: lastActivityOf(entry.loop),
+      })
+    }
+  }
+  return all.sort((a, b) => b.lastActiveAt - a.lastActiveAt || loopNumber(b.loop.id) - loopNumber(a.loop.id))
+}
+
+/**
+ * Filters a room log by keyword query: every whitespace-separated term must match the room's name
+ * (room_N / loop_N / fN), description, brief, system prompt, plugins, skills, tab name, or any
+ * extra text (panel summaries/text or exchange history) indexed for the room.
+ */
+export function searchRooms<T extends LogEntry & { workspaceName?: string }>(
+  entries: readonly T[],
+  query: string,
+  extraText: Record<string, string> = {},
+): T[] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (terms.length === 0) return [...entries]
+  return entries.filter((entry) => {
+    const { loop } = entry
+    const n = loopNumber(loop.id)
+    const haystack = [
+      loop.id,
+      loopName(loop.id),
+      `room ${n}`,
+      `loop_${n}`,
+      `loop ${n}`,
+      loop.desc,
+      loop.brief,
+      loop.systemPrompt ?? '',
+      loop.plugins.join(' '),
+      loop.skills.join(' '),
+      entry.workspaceName ?? '',
+      extraText[loop.id] ?? '',
+    ]
+      .join('\n')
+      .toLowerCase()
+    return terms.every((term) => haystack.includes(term))
+  })
+}
+
+/** The highest room sequence number across all tabs, so every new room gets a globally unique number. */
+export function globalSeq(loopsByTab: Record<string, Loops>): number {
+  let max = 0
+  for (const one of Object.values(loopsByTab)) {
+    if (one.seq > max) max = one.seq
+    for (const r of one.list) max = Math.max(max, loopNumber(r.id))
+    for (const c of one.closed ?? []) max = Math.max(max, loopNumber(c.loop.id))
+  }
+  return max
+}
+
+/**
+ * Archives all open and closed rooms of a closing tab (`closingTabId`) into `intoLoops`'s closed
+ * memory, stamping each room's canonical `chat` key (`<closingTabId>/<id>`) so its conversation history
+ * survives after the tab is gone.
+ */
+export function archiveTabRooms(
+  closingLoops: Loops,
+  closingGrids: Record<number, Grid>,
+  closingTabId: string,
+  intoLoops: Loops,
+  now: number,
+): Loops {
+  const closedAll = closedWithout(closingLoops, closingGrids, {}, now)
+  const incoming = (closedAll.closed ?? []).map((shut): ClosedLoop => ({
+    ...shut,
+    loop: { ...shut.loop, chat: loopChat(closingTabId, shut.loop) },
+  }))
+  const seq = Math.max(intoLoops.seq, closedAll.seq)
+  if (incoming.length === 0) return seq === intoLoops.seq ? intoLoops : { ...intoLoops, seq }
+  const existingIds = new Set([...intoLoops.list.map((r) => r.id), ...(intoLoops.closed ?? []).map((c) => c.loop.id)])
+  const filtered = incoming.filter((c) => !existingIds.has(c.loop.id))
+  const closed = [...(intoLoops.closed ?? []), ...filtered]
+  return closed.length > 0 ? { ...intoLoops, seq, closed } : { ...intoLoops, seq }
+}
+
+/**
+ * Reopens a closed room (from whichever tab's closed list holds it) onto `targetTabId`'s grid,
+ * preserving its canonical `chat` key when it moves across tabs.
+ */
+export function reopenAcrossTabs(
+  gridsByTab: Record<string, Record<number, Grid>>,
+  loopsByTab: Record<string, Loops>,
+  targetTabId: string,
+  roomId: string,
+  window: number,
+  now: number,
+): {
+  grids: Record<string, Record<number, Grid>>
+  loops: Record<string, Loops>
+  frame: GridElement
+} {
+  const sourceTabId = Object.keys(loopsByTab).find((tabId) => closedLoop(loopsByTab[tabId] ?? NO_LOOPS, roomId))
+  if (!sourceTabId) throw new Error(`${loopName(roomId)} is not closed.`)
+  const sourceLoops = loopsByTab[sourceTabId] ?? NO_LOOPS
+  const targetLoops = loopsByTab[targetTabId] ?? NO_LOOPS
+  const targetGrids = gridsByTab[targetTabId]
+  if (!targetGrids) throw new Error('Unknown tab.')
+
+  if (sourceTabId === targetTabId) {
+    const back = reopened(targetGrids, targetLoops, roomId, window, now)
+    return {
+      grids: { ...gridsByTab, [targetTabId]: back.grids },
+      loops: { ...loopsByTab, [targetTabId]: back.loops },
+      frame: back.frame,
+    }
+  }
+
+  const shut = closedLoop(sourceLoops, roomId)!
+  const taggedShut: ClosedLoop = {
+    ...shut,
+    loop: { ...shut.loop, chat: loopChat(sourceTabId, shut.loop) },
+  }
+  const stagedTarget: Loops = {
+    ...targetLoops,
+    seq: Math.max(targetLoops.seq, sourceLoops.seq, loopNumber(roomId)),
+    closed: [...(targetLoops.closed ?? []), taggedShut],
+  }
+  const back = reopened(targetGrids, stagedTarget, roomId, window, now)
+  const nextSourceClosed = (sourceLoops.closed ?? []).filter((one) => one.loop.id !== roomId)
+  const { closed: _was, ...restSource } = sourceLoops
+  const nextSource: Loops = nextSourceClosed.length > 0 ? { ...restSource, closed: nextSourceClosed } : restSource
+  return {
+    grids: { ...gridsByTab, [targetTabId]: back.grids },
+    loops: {
+      ...loopsByTab,
+      [sourceTabId]: nextSource,
+      [targetTabId]: back.loops,
+    },
+    frame: back.frame,
+  }
+}
+
+/**
+ * Ensures room ids (`f1`, `f2`, …) are globally unique across all tabs on load. If a legacy multi-workspace
+ * install had overlapping room ids across two tabs, the later tab's colliding rooms are re-numbered to fresh
+ * global ids while keeping their original `chat` key (`<tabId>/<oldId>`) so their SQLite threads are preserved.
+ */
+export function unifyTabRooms(
+  workspaces: readonly { id: string }[],
+  gridsByTab: Record<string, Record<number, Grid>>,
+  loopsByTab: Record<string, Loops>,
+): { grids: Record<string, Record<number, Grid>>; loops: Record<string, Loops> } {
+  let maxSeq = globalSeq(loopsByTab)
+  const used = new Set<string>()
+  let changed = false
+  const nextGrids: Record<string, Record<number, Grid>> = { ...gridsByTab }
+  const nextLoops: Record<string, Loops> = { ...loopsByTab }
+
+  for (const { id: tabId } of workspaces) {
+    const loops = loopsByTab[tabId] ?? NO_LOOPS
+    const grids = gridsByTab[tabId] ?? {}
+    const rename = new Map<string, string>()
+
+    for (const r of loops.list) {
+      if (used.has(r.id)) {
+        maxSeq += 1
+        rename.set(r.id, `f${maxSeq}`)
+        used.add(`f${maxSeq}`)
+      } else {
+        used.add(r.id)
+      }
+    }
+    for (const c of loops.closed ?? []) {
+      if (used.has(c.loop.id)) {
+        maxSeq += 1
+        rename.set(c.loop.id, `f${maxSeq}`)
+        used.add(`f${maxSeq}`)
+      } else {
+        used.add(c.loop.id)
+      }
+    }
+
+    if (rename.size > 0) {
+      changed = true
+      const list = loops.list.map((r) => {
+        const to = rename.get(r.id)
+        return to ? { ...r, id: to, chat: loopChat(tabId, r) } : r
+      })
+      const closed = loops.closed?.map((c) => {
+        const to = rename.get(c.loop.id)
+        if (!to) return c
+        return {
+          ...c,
+          loop: { ...c.loop, id: to, chat: loopChat(tabId, c.loop) },
+          elements: c.elements.map((e) => (e.loop && rename.has(e.loop) ? { ...e, loop: rename.get(e.loop)! } : e)),
+        }
+      })
+      nextLoops[tabId] = {
+        ...loops,
+        seq: maxSeq,
+        list,
+        ...(closed && closed.length > 0 ? { closed } : {}),
+      }
+      const updatedGrids: Record<number, Grid> = {}
+      for (const [win, grid] of Object.entries(grids)) {
+        updatedGrids[Number(win)] = {
+          ...grid,
+          elements: grid.elements.map((e) => (e.loop && rename.has(e.loop) ? { ...e, loop: rename.get(e.loop)! } : e)),
+        }
+      }
+      nextGrids[tabId] = updatedGrids
+    } else if (loops.seq < maxSeq) {
+      changed = true
+      nextLoops[tabId] = { ...loops, seq: maxSeq }
+    }
+  }
+
+  return changed ? { grids: nextGrids, loops: nextLoops } : { grids: gridsByTab, loops: loopsByTab }
 }

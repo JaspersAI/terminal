@@ -11,6 +11,8 @@ interface Props {
    * Left out in the docked chat, which does not move: the field is a row of it, above its command line.
    */
   box?: RefObject<HTMLDivElement | null>
+  /** True in the top command line so the secret prompt fits strictly inside a single 24px (h-6) line. */
+  compact?: boolean
 }
 
 /** Over the composer, riding its spring; in the docked chat, a plain row above the command line; in a tile's box, in its line's place. */
@@ -29,7 +31,7 @@ const TILE = 'relative shrink-0 bg-background'
  * are: its ids carry the tile, it takes the keyboard only from its own tile's line, and it hears
  * Escape only when it is pressed in its own box.
  */
-export function SecretField({ request, box }: Props): ReactElement {
+export function SecretField({ request, box, compact = false }: Props): ReactElement {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -68,6 +70,53 @@ export function SecretField({ request, box }: Props): ReactElement {
       setError(errorMessage(err))
       setBusy(false)
     })
+  }
+
+  if (compact) {
+    return (
+      <div
+        ref={box}
+        id={id('secret-field')}
+        className="flex h-6 min-w-0 flex-1 items-center gap-1.5 border border-border bg-background px-2 text-xs leading-none focus-within:border-foreground"
+      >
+        <form onSubmit={submit} className="flex h-full min-w-0 flex-1 items-center gap-1.5">
+          <label htmlFor={id('secret-input')} className="shrink-0 truncate font-medium text-foreground">
+            {request.label} <span className="font-normal text-muted-foreground">({request.plugin})</span>
+          </label>
+          <input
+            ref={input}
+            id={id('secret-input')}
+            name="secret"
+            type="password"
+            value={value}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={error ?? 'paste key & press Enter'}
+            onChange={(event) => setValue(event.target.value)}
+            className="h-full min-w-20 flex-1 bg-transparent px-1 font-mono text-xs leading-none outline-none"
+          />
+          <button
+            type="submit"
+            disabled={busy || !value.trim()}
+            className="flex h-4 shrink-0 items-center bg-primary px-1.5 text-[11px] leading-none font-medium text-primary-foreground disabled:opacity-40"
+          >
+            Save
+          </button>
+        </form>
+        <button
+          type="button"
+          id={id('secret-field-cancel')}
+          aria-label="Cancel"
+          title="Cancel"
+          onClick={cancel}
+          className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+        >
+          <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+            <path d="M1 1 9 9M9 1 1 9" />
+          </svg>
+        </button>
+      </div>
+    )
   }
 
   return (

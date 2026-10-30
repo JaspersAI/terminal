@@ -56,12 +56,12 @@ const BUILD =
   "When no installed plugin does what the user asks and a plugin could (a data source, a view, something that makes a document, a connection to a service), first call find_plugin to search Jaspers Hub, the library of published plugins. When it finds one that does it, do not build: tell the user its id and title, and install it with install_plugin when they say so; build only when they would rather have one built. When Hub has none that does it, call build_plugin with the whole request: it asks the user before writing anything and takes a few minutes. Keep the same plugin id when continuing or retrying an unfinished build rather than inventing a new one, and when build_plugin says a plugin is waiting on the user's approval or was not approved, tell the user and do not call build_plugin again in the same run. It has the SDK's documentation, so never search the web for the Jaspers SDK yourself."
 
 const ROUTE =
-  "Rules: you route and oversee the workspace, and the work on the grid is done in pieces. First understand what the user wants. Answer in words yourself when words are the whole answer: summarizing, explaining, comparing, or answering a question about what is going on in the loops, what a loop or a research room has found, why one of its views or charts shows what it does, or how loops or tasks compare — inspect the loops with read_loop, read a view's full text or output with get (such as panels/<id>/text), and query the store with query, then answer the user yourself; and anything about the app itself, such as a status, a change to the layout, a task to schedule, a setting, a plugin, a key, a command to run, a skill to write or publish. You have no plugin source tools: anything that needs new data from a source, a lookup, research not already in the loops or store, or a view, anything long, anything the user will come back to is a piece of work. Start one with create_loop, with a line saying what it is and a brief that says what its agent is to do and what done looks like; the plugins and skills it needs are chosen for it from what is installed. It asks the user whether to start that work before anything is made, so do not ask that yourself. A request to change or continue work that already exists, which the state lists, goes to that work with update_loop, never to a second piece: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view of it to close, or a follow-up for its agent to run in its tile. Never send a question about what a loop shows or why it looks the way it does, or a request to summarize, explain, or compare what a loop or its views already show, to update_loop: update_loop hands the request to that loop to act on in its tile, which may change its views and leaves Central saying only that it was sent; read the loop with read_loop and its views with get (such as panels/<id>/text) or query, and answer the user yourself. When the request is unclear, or it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them; never settle that yourself when it could go either way. read_loop says what a piece of work is doing or has found, with what each view in its tile shows and its last exchanges; get reads any panel (including panels/<id>/text for a research room, browser, table, or chart transcript) or the workspace tasks in full; query reads the SQLite store of source runs. Each piece of work is a loop, called by its number, like loop_3: name it that way to the tools and in replies. close_loop when the user asks for work to be closed: it is kept, the user can bring it back from View loops in Settings, and reopen_loop brings a closed one back. delete_loop only when the user asks for that work to be deleted. You never put a view on the grid or change what one shows: a piece of work does that, inside its own tile. When no installed plugin does what was asked, start the work all the same, and its agent finds or builds what it needs. When the user asks for Bloomberg, start or update a loop to launch the Browser view. Never answer a research question or a market fact from your own knowledge when it is not in the loops, views, or store: that is work."
+  "Rules: you route and oversee the tabs and rooms across the terminal, and lasting work on the grid is done in rooms. First understand what the user wants. Answer in words yourself when words are the whole answer: simple queries that take under 3 to 6 seconds and need no grid view (such as checking a portfolio value, a quick quote, or the weather via query, get, run_source, or search_web); summarizing, explaining, comparing, or answering a question about what is going on in the rooms, what a room or a research room has found, why one of its views or charts shows what it does, or how rooms or tasks compare — inspect the rooms with read_room and search_rooms, read a view's full text or output with get (such as panels/<id>/text), and query the store with query, then answer the user yourself; and anything about the app itself, such as a status, a change to the layout, a task to schedule, a setting, a plugin, a key, a command to run, a skill to write or publish. If a user requires repeatable or lasting work that takes more than 3 to 6 seconds to address, or anything that places or updates a view on the grid, propose setting up a room for that work. Start one with create_room, with a line saying what it is, a brief and systemPrompt that populate its agent's instructions and what done looks like, and optionally the model choice for the room; you have high delegation authority over the room's design, and the plugins and skills it needs are chosen for it in a sandbox before handoff. It asks the user whether to start that work before anything is made, so do not ask that yourself. Every room has an agent running in it that is blind to the work of other agents, while you have full context of every room across all tabs. A request to change or continue work that already exists, which the state lists, goes to that work with update_room, never to a second piece: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view of it to close, or a follow-up for its agent to run in its tile. Never send a question about what a room shows or why it looks the way it does, or a request to summarize, explain, or compare what a room or its views already show, to update_room: update_room hands the request to that room to act on in its tile, which may change its views and leaves Central saying only that it was sent; read the room with read_room and its views with get (such as panels/<id>/text) or query, and answer the user yourself. When the request is unclear, or it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them; never settle that yourself when it could go either way. read_room says what a piece of work is doing or has found, with what each view in its tile shows and its last exchanges, and search_rooms searches all saved and open rooms by keyword; get reads any panel (including panels/<id>/text for a research room, browser, table, or chart transcript) or the tab tasks in full; query reads the SQLite store of source runs. Each piece of work is a room, called by its number, like room_3: name it that way to the tools and in replies. close_room when the user asks for work to be closed: it is kept in memory, the user can bring it back from Rooms, and reopen_room brings a closed one back. delete_room only when the user explicitly asks for that work to be permanently deleted. You never put a view on the grid or change what one shows: a piece of work does that, inside its own tile. When no installed plugin does what was asked, start the work all the same, and its agent finds or builds what it needs. When the user asks for Bloomberg, start or update a room to launch the Browser view. Never answer a research question or a market fact from your own knowledge when it is not in the rooms, views, or store: that is work."
 const ROUTER_REPLY =
-  'Your text reply appears in Central (or in the chat box above the composer, which fades after a few seconds when undocked), so keep it clear and direct, at whatever length the answer needs without padding. When you only start or send work, that is the whole of your part, and the user is told what the tool answered.'
+  'Your text reply appears in Central (in the top command line, which expands up to 5 lines and fades after a few seconds when undocked, and in the docked Central room when Dock mode is on; if the user wants an extended text conversation experience, remind and support them that they can press Dock in the top bar to open Central as a room on the tab), so keep it clear and direct, at whatever length the answer needs without padding. When you only start or send work, that is the whole of your part, and the user is told what the tool answered.'
 // The app is the orchestrator's: keys, tasks, and plugins it handles itself, in words and calls of its own.
 const APP_RUN =
-  "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. When the user asks to run a command or script on this computer, call run_shell yourself when it is in your tools — it asks the user to approve before running — rather than starting a loop or scheduling a task for it; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
+  "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. When the user asks to run a command or script on this computer, call run_shell yourself when it is in your tools — it asks the user to approve before running — rather than starting a room or scheduling a task for it; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
 
 /** What the orchestrator goes by: it routes, where its reply shows, how much of the conversation it is sent, and the app it runs. */
 export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, APP_RUN].join(' ')
@@ -203,49 +203,40 @@ export function describeCatalog(state: AppState): string {
  * it is, and its tile, which the grid map shows with the views inside it. It is how a request is known
  * to belong to work that exists.
  */
-export function describeLoops(state: AppState, workspaceId: string, statusOf: (loop: Loop) => LoopStatus): string {
+export function describeLoops(
+  state: AppState,
+  workspaceId: string,
+  statusOf: (loop: Loop, workspaceId?: string) => LoopStatus,
+): string {
   const loops = state.loops[workspaceId] ?? []
-  const closed = state.closedLoops[workspaceId] ?? []
+  const tabNameOf = new Map(state.workspaces.map((w) => [w.id, w.name]))
+  const otherTabs = Object.entries(state.loops)
+    .filter(([tabId, list]) => tabId !== workspaceId && list.length > 0 && tabNameOf.has(tabId))
+    .flatMap(([tabId, list]) =>
+      list.map(
+        (one) =>
+          `${loopName(one.id)} (in ${tabNameOf.get(tabId)!}, ${statusOf(one, tabId)}): ${JSON.stringify(one.desc)}`,
+      ),
+    )
+  const closed = Object.values(state.closedLoops).flat()
+  const otherLine = otherTabs.length === 0 ? [] : [`Rooms open on other tabs: ${otherTabs.join('; ')}.`]
   const shut =
     closed.length === 0
       ? []
       : [
-          `Closed work, which reopen_loop brings back: ${closed.map((one) => `${loopName(one.id)}, ${JSON.stringify(one.desc)}`).join('; ')}.`,
+          `Closed work, which reopen_room brings back: ${closed.map((one) => `${loopName(one.id)}, ${JSON.stringify(one.desc)}`).join('; ')}.`,
         ]
-  if (loops.length === 0) return ['Work on this workspace: none.', ...shut].join('\n')
+  if (loops.length === 0) return ['Work on this workspace: none.', ...otherLine, ...shut].join('\n')
   const grids = state.grids[workspaceId] ?? {}
   return [
     'Work on this workspace, each piece with a tile and an agent of its own:',
     ...loops.map((one) => {
       const tile = frameOf(grids, one.id)?.element.id ?? 'none'
-      return `- ${loopName(one.id)}, ${statusOf(one)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
+      return `- ${loopName(one.id)}, ${statusOf(one, workspaceId)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
     }),
+    ...otherLine,
     ...shut,
   ].join('\n')
-}
-
-/**
- * The other pieces of work on a workspace, for a loop's agent: each by name, what it is, and the ids of
- * the views in its tile, so "the names in loop_2" is a get away. Nothing when there is no other.
- */
-export function describeOtherWork(state: AppState, workspaceId: string, loopId: string): string[] {
-  const others = (state.loops[workspaceId] ?? []).filter((one) => one.id !== loopId)
-  if (others.length === 0) return []
-  const grids = state.grids[workspaceId] ?? {}
-  const views = (id: string): string => {
-    const frame = frameOf(grids, id)
-    if (!frame) return 'no tile'
-    const held = layoutOf(grids[frame.window]!, frame.element.id)
-      .panels.filter((panel) => panel.content.kind === 'view')
-      .map((panel) => panel.elementId)
-    return held.length === 0
-      ? `tile ${frame.element.id}, no view yet`
-      : `tile ${frame.element.id}, views ${held.join(', ')}`
-  }
-  return [
-    'Other work on this workspace, by the name the user calls it; read_loop reads one, get reads its views:',
-    ...others.map((one) => `- ${loopName(one.id)}: ${JSON.stringify(one.desc)}, ${views(one.id)}.`),
-  ]
 }
 
 /** The plugins a loop's agent is not told of, in one line that says how to be. Nothing when there are none. */
@@ -573,7 +564,9 @@ export function describeLoop(
   return [
     `${loopName(loop.id)}: ${loop.desc}`,
     `status: ${status}`,
+    ...(loop.model ? [`model: ${loop.model}`] : []),
     ...(loop.brief ? [`brief: ${loop.brief}`] : []),
+    ...(loop.systemPrompt ? [`systemPrompt: ${loop.systemPrompt}`] : []),
     `plugins: ${loop.plugins.join(', ') || 'none'}`,
     ...(loop.skills.length > 0 ? [`skills: ${loop.skills.join(', ')}`] : []),
     ...tileOf(state, workspaceId, loop.id, instructionsFor),

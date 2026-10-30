@@ -24,6 +24,7 @@ export interface AttachedFile {
   chunkCount?: number
   runId?: number | null
   sheets?: AttachmentSheet[]
+  mimeType?: string
 }
 
 /** Files up to this size (and at most `INLINE_ROWS_MAX` rows) go inline in the turn; larger ones send a manifest and are read with `read_attachment` or `query`. */
@@ -34,6 +35,7 @@ export const CHUNK_SIZE = 3_000
 const ATTACHED_BLOCK = /<attached_file\b[^>]*>[\s\S]*?<\/attached_file>/g
 const ATTACHED_OPEN = /<attached_file\b([^>]*)>/g
 const NAME_ATTR = /\bname="([^"]*)"/
+const ID_ATTR = /\bid="([^"]*)"/
 
 /**
  * Wraps each attached file in a sealed `<attached_file ...>` block and appends the blocks after the
@@ -74,6 +76,17 @@ export function attachedFileNames(text: string): string[] {
     if (attr !== undefined) names.push(unescapeAttribute(attr))
   }
   return names
+}
+
+/** The attachment ids (`a1`, `a2`, ...) from every `<attached_file>` block in a turn, in order. */
+export function attachedFileIds(text: string): string[] {
+  if (!text.includes('<attached_file')) return []
+  const ids: string[] = []
+  for (const match of text.matchAll(ATTACHED_OPEN)) {
+    const attr = ID_ATTR.exec(match[1] ?? '')?.[1]
+    if (attr !== undefined) ids.push(unescapeAttribute(attr))
+  }
+  return ids
 }
 
 /**

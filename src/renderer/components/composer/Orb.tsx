@@ -1,28 +1,31 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react'
 import logo from '../../assets/jaspers-logo-black.png'
-import type { Phase } from './phase'
+import { useAppState } from '../../lib/state'
+import { useRequest } from './request'
 import { Spring } from './spring'
 
 /** How far the orb drifts toward a hovering pointer, in px. */
 const PULL = 6
-
-interface Props {
-  phase: Phase
-  /** What pressing it does: hold to talk, or, with no voice provider, type a request. */
-  label: string
-  onPress: () => void
-  onRelease: () => void
-}
+/** 1.5x of the original 56px (3.5rem) diameter = 84px. */
+const ORB_DIAMETER_PX = 84
+/** Distance past which holding and moving the pointer drags the orb across the screen. */
+const DRAG_THRESHOLD_PX = 10
 
 /**
- * The logo clipped to a circle and shaded like a sphere: the one round thing in the app, on purpose.
- * Hovering lifts it and pulls it a few px toward the pointer, with the gloss sliding the same way so
- * the light seems to follow the cursor. Pressing squashes it, listening pops it out, release lets it
- * settle. Every change of target overshoots a little: the spring. Motion is written straight to the
- * DOM, so nothing re-renders while it moves.
+ * Draggable Voice Orb overlay on top of the tab surface (Regime 2.2), 1.5x larger in diameter (84px)
+ * with no text underneath.
+ * - Press once: starts listening (`recording`).
+ * - Press again: stops listening, transcribes into the command line (`draft`), and auto-submits to Central.
+ * - Dragging the orb beyond 10px moves the orb smoothly to any spot on screen without toggling recording.
  */
-export function Orb({ phase, label, onPress, onRelease }: Props): ReactElement {
+export function FloatingOrb(): ReactElement {
+  const hasVoice = useAppState((s) => s.voice !== null)
+  const { phase, toggleVoice } = useRequest()
   const [hovering, setHovering] = useState(false)
+  const [pos, setPos] = useState<{ x: number; y: number }>(() => ({
+    x: typeof window !== 'undefined' ? Math.max(40, Math.round(window.innerWidth / 2 - ORB_DIAMETER_PX / 2)) : 400,
+    y: typeof window !== 'undefined' ? Math.max(60, Math.round(window.innerHeight - ORB_DIAMETER_PX - 64)) : 500,
+  }))
   const button = useRef<HTMLButtonElement>(null)
   const gloss = useRef<HTMLSpanElement>(null)
   const springRef = useRef<Spring | null>(null)
@@ -38,7 +41,50 @@ export function Orb({ phase, label, onPress, onRelease }: Props): ReactElement {
   useEffect(() => spring.set({ scale }), [spring, scale])
   useEffect(() => () => spring.stop(), [spring])
 
-  /** Pull toward the pointer, at most `PULL` px, from where the pointer sits relative to the center. */
+  const stateRef = useRef({ hasVoice, toggleVoice })
+  stateRef.current = { hasVoice, toggleVoice }
+
+  // Keep the native top-layer Orb overlay synchronized so the Orb stays in front of native core/browser views.
+  useEffect(() => {
+    window.app.browser?.syncOrb?.({
+      visible: true,
+      x: pos.x,
+      y: pos.y,
+      size: ORB_DIAMETER_PX,
+      phase,
+      logoSrc: logo,
+    })
+  }, [pos.x, pos.y, phase])
+
+  useEffect(() => {
+    const off = window.app.browser?.onOrbPointer?.((event) => {
+      if (event.kind === 'move' && typeof event.x === 'number' && typeof event.y === 'number') {
+        setPos({ x: event.x, y: event.y })
+      } else if (event.kind === 'click') {
+        if (stateRef.current.hasVoice) stateRef.current.toggleVoice('orb')
+      }
+    })
+    return () => {
+      off?.()
+      window.app.browser?.syncOrb?.({
+        visible: false,
+        x: 0,
+        y: 0,
+        size: ORB_DIAMETER_PX,
+        phase: 'idle',
+        logoSrc: '',
+      })
+    }
+  }, [])
+
+  const dragRef = useRef<{
+    startX: number
+    startY: number
+    originX: number
+    originY: number
+    dragging: boolean
+  } | null>(null)
+
   function follow(event: ReactPointerEvent<HTMLButtonElement>): void {
     const rect = event.currentTarget.getBoundingClientRect()
     const dx = (event.clientX - (rect.left + rect.width / 2)) / (rect.width / 2)
@@ -46,42 +92,104 @@ export function Orb({ phase, label, onPress, onRelease }: Props): ReactElement {
     spring.set({ x: PULL * Math.max(-1, Math.min(1, dx)), y: PULL * Math.max(-1, Math.min(1, dy)) })
   }
 
+  function onPointerDown(event: ReactPointerEvent<HTMLButtonElement>): void {
+    if (event.button !== 0) return
+    event.preventDefault()
+    dragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: pos.x,
+      originY: pos.y,
+      dragging: false,
+    }
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    } catch {
+      // synthetic events have no capturable pointer
+    }
+  }
+
+  function onPointerMove(event: ReactPointerEvent<HTMLButtonElement>): void {
+    const drag = dragRef.current
+    if (!drag) {
+      follow(event)
+      return
+    }
+    const dx = event.clientX - drag.startX
+    const dy = event.clientY - drag.startY
+    if (!drag.dragging) {
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+        follow(event)
+        return
+      }
+      drag.dragging = true
+      spring.set({ x: 0, y: 0 })
+    }
+    const maxX = Math.max(16, window.innerWidth - ORB_DIAMETER_PX - 16)
+    const maxY = Math.max(40, window.innerHeight - ORB_DIAMETER_PX - 32)
+    setPos({
+      x: Math.max(16, Math.min(maxX, drag.originX + dx)),
+      y: Math.max(40, Math.min(maxY, drag.originY + dy)),
+    })
+  }
+
+  function finishPointer(event: ReactPointerEvent<HTMLButtonElement>): void {
+    const drag = dragRef.current
+    dragRef.current = null
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } catch {
+      // ignore
+    }
+    if (!drag || drag.dragging) return
+    if (hasVoice) toggleVoice('orb')
+  }
+
   const look = phase === 'recording' ? 'ring-8 ring-primary/15' : phase === 'idle' ? '' : 'animate-pulse'
 
   return (
-    <button
-      ref={button}
-      type="button"
-      id="talk"
-      aria-label={label}
-      disabled={phase === 'transcribing'}
-      onPointerDown={(event) => {
-        event.preventDefault()
-        // Keep receiving the pointer while held, so drifting off the orb does not end the recording.
-        try {
-          event.currentTarget.setPointerCapture(event.pointerId)
-        } catch {
-          // synthetic events (the driver skill) have no capturable pointer
-        }
-        onPress()
-      }}
-      onPointerUp={onRelease}
-      onPointerCancel={onRelease}
-      onPointerEnter={() => setHovering(true)}
-      onPointerMove={follow}
-      onPointerLeave={() => {
-        setHovering(false)
-        spring.set({ x: 0, y: 0 })
-      }}
-      className={`relative h-14 w-14 touch-none select-none overflow-hidden rounded-full bg-primary shadow-[0_14px_24px_-10px_rgba(0,0,0,0.6)] transition-shadow duration-300 hover:shadow-[0_22px_34px_-12px_rgba(0,0,0,0.55)] ${look}`}
+    <div
+      id="floating-voice-orb"
+      data-floating-orb
+      style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
+      className="fixed z-50 select-none"
     >
-      <img src={logo} alt="" draggable={false} className="pointer-events-none h-full w-full object-cover" />
-      {/* Gloss: a highlight up and to the left that follows the pull, a faint rim light along the bottom. */}
-      <span
-        ref={gloss}
-        aria-hidden
-        className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle_at_var(--gloss,32%_26%),rgba(255,255,255,0.5),rgba(255,255,255,0.06)_42%,rgba(0,0,0,0)_70%)] shadow-[inset_0_-6px_10px_rgba(255,255,255,0.14),inset_0_6px_10px_rgba(255,255,255,0.2)]"
-      />
-    </button>
+      <button
+        ref={button}
+        type="button"
+        id="talk"
+        aria-label={phase === 'recording' ? 'Stop listening and send' : 'Press to talk'}
+        title={
+          !hasVoice
+            ? 'Add a voice provider in Settings to talk'
+            : phase === 'recording'
+              ? 'Listening — press again to send'
+              : 'Press to talk'
+        }
+        disabled={phase === 'transcribing'}
+        style={{ width: `${ORB_DIAMETER_PX}px`, height: `${ORB_DIAMETER_PX}px` }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={finishPointer}
+        onPointerCancel={() => {
+          dragRef.current = null
+        }}
+        onPointerEnter={() => setHovering(true)}
+        onPointerLeave={() => {
+          setHovering(false)
+          spring.set({ x: 0, y: 0 })
+        }}
+        className={`relative touch-none select-none overflow-hidden rounded-full bg-primary shadow-[0_14px_24px_-10px_rgba(0,0,0,0.6)] transition-shadow duration-300 hover:shadow-[0_22px_34px_-12px_rgba(0,0,0,0.55)] ${look}`}
+      >
+        <img src={logo} alt="" draggable={false} className="pointer-events-none h-full w-full object-cover" />
+        <span
+          ref={gloss}
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle_at_var(--gloss,32%_26%),rgba(255,255,255,0.5),rgba(255,255,255,0.06)_42%,rgba(0,0,0,0)_70%)] shadow-[inset_0_-6px_10px_rgba(255,255,255,0.14),inset_0_6px_10px_rgba(255,255,255,0.2)]"
+        />
+      </button>
+    </div>
   )
 }

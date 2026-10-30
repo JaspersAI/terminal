@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EXAMPLE_ASK, EXPLANATION, GREETING, WELCOME_NOTE } from './welcome.ts'
 
-test('the explanation puts talking first and keeps typing as a way in', () => {
+test('the explanation puts talking first, keeps typing as a way in, and explains Dock for extended text', () => {
   assert.match(EXPLANATION, /hold the orb/)
+  assert.match(EXPLANATION, /Dock/)
   assert.ok(EXPLANATION.indexOf('talk') < EXPLANATION.indexOf('Typing'))
 })
 

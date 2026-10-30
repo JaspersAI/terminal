@@ -1,5 +1,6 @@
 import { post, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
+import { getAttachedImages } from '../agent/attachments.ts'
 import { INSTRUCTIONS, LARGE, WHOLE_MAX as ASIDE_WHOLE_MAX } from '../../shared/agent/aside.ts'
 import { added } from '../../shared/agent/transcript.ts'
 import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../shared/llm/llm'
@@ -240,7 +241,13 @@ function anthropicMessages(history: Turn[], stateAsMessage: boolean, mark: boole
     }
     const content: Record<string, unknown>[] =
       turn.role === 'user'
-        ? [{ type: 'text', text: turn.text }]
+        ? [
+            ...getAttachedImages(turn.text).map((img) => ({
+              type: 'image',
+              source: { type: 'base64', media_type: img.mimeType, data: img.base64 },
+            })),
+            { type: 'text', text: turn.text },
+          ]
         : turn.results.map((r) => ({
             type: 'tool_result',
             tool_use_id: r.callId,

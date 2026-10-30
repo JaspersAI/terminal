@@ -1,5 +1,6 @@
 import { post, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
+import { getAttachedImages } from '../agent/attachments.ts'
 import type { Completion, CompleteOptions, Effort, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
   streams,
@@ -111,7 +112,20 @@ export function responsesBody(
   for (const [index, turn] of history.entries()) {
     const mine = index === history.length - 1 ? state : null
     if (turn.role === 'user') {
-      input.push({ role: 'user', content: withState(turn.text, mine) })
+      const images = getAttachedImages(turn.text)
+      input.push({
+        role: 'user',
+        content:
+          images.length > 0
+            ? [
+                { type: 'input_text', text: withState(turn.text, mine) },
+                ...images.map((img) => ({
+                  type: 'input_image',
+                  image_url: `data:${img.mimeType};base64,${img.base64}`,
+                })),
+              ]
+            : withState(turn.text, mine),
+      })
     } else if (turn.role === 'assistant') {
       if (turn.raw) {
         input.push(...turn.raw)

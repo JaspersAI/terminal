@@ -10,6 +10,7 @@ import {
 } from '../../../shared/paths'
 import { coerceViewState, schemaAt } from '../../../shared/agent/view-state'
 import { panelOf, type Panel } from '../../../shared/grid/grid'
+import { loopName } from '../../../shared/loops/loops'
 import { RESEARCH_PLUGIN, RESEARCH_THREAD_SOURCE, researchLiveText, researchRoomOf } from '../../../shared/plugins/live'
 import { publishTextChecked, setPanelStateChecked, settlePanel } from '../../actions'
 import { runSource } from '../../data/sources'
@@ -100,11 +101,27 @@ export const stateTools: Tool[] = [
       },
       required: ['path'],
     },
-    async run(input, { workspaceId, signal }) {
+    async run(input, context) {
+      const { workspaceId, signal, loop } = context
       const path = parsePath(asPathString(input.path))
+      if (loop !== undefined) {
+        if ('workspaceId' in path && path.workspaceId !== undefined && path.workspaceId !== workspaceId) {
+          throw new Error("get reaches only this room's own tiles.")
+        }
+        if (path.kind === 'tasks') {
+          throw new Error('Tasks are managed by Central, not inside a room.')
+        }
+        if (path.kind === 'panel' || path.kind === 'panelEntry') {
+          ownTile(context, path.panelId)
+        }
+      }
       await syncPathPanels(workspaceId, path, signal)
       const state = toPublic(getState())
-      const value = readPath(state, workspaceId, path)
+      const rawValue = readPath(state, workspaceId, path)
+      const value =
+        loop !== undefined && path.kind === 'panels' && Array.isArray(rawValue)
+          ? rawValue.filter((entry: { loop?: string | null }) => entry.loop === loopName(loop))
+          : rawValue
       const error = path.kind === 'panel' && path.field !== 'error' ? panelErrorAt(state, workspaceId, path) : null
       if (path.kind === 'panel' && path.field === 'text' && typeof value === 'string') {
         return JSON.stringify({

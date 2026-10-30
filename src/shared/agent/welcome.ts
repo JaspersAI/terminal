@@ -13,11 +13,11 @@ export const WELCOME_NOTE =
 
 export const GREETING = 'Hi, I’m Jaspers, the assistant in this terminal. Welcome.'
 
-/** What the terminal is, and how to speak to it: talking first, since that is the way in we want taken. */
+/** What the terminal is, and how to speak to it: talking first, typing in the command line, and Dock for an extended text conversation. */
 export const EXPLANATION = [
-  'This is a workspace for financial research: a grid, and plugins that bring it views and data.',
-  'Ask me for something and I put the right view on the grid, fill it, and keep it current.',
-  'The easiest way is to talk: choose Talk below and hold the orb while you speak. Typing here works any time too.',
+  'This is a terminal for financial research: tabs along the bottom, isolated rooms on the grid, and plugins that bring views and data.',
+  'Ask me for something in the top command line and I answer quick questions right here or set up a room on the grid.',
+  'To talk, tap the microphone or press Orb to open the voice orb (or hold the orb while you speak). Typing here works any time too, and if you want an extended text conversation view, press Dock in the top bar to open Central on the tab.',
 ].join(' ')
 
 /**

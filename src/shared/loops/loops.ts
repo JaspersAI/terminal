@@ -30,8 +30,8 @@ import {
 
 export interface Loop {
   /**
-   * f1, f2, … from a counter kept with its workspace, never reused: the key its tiles, its thread,
-   * and its log are filed under. Users and models call it by its name, loop_1 (`loopName`).
+   * f1, f2, … from a counter kept across the terminal, never reused: the key its tiles, its thread,
+   * and its log are filed under. Users and models call it by its name, room_1 (`loopName` / `roomName`).
    */
   id: string
   /** One line saying what the work is. */
@@ -43,7 +43,15 @@ export interface Loop {
   /** The skills named for it, beyond its plugins' own. */
   skills: string[]
   createdAt: number
-  /** What happened to it since it was made, oldest first, for the loop log. Absent until the first. */
+  /** Timestamp of most recent activity in this room, for chronological sorting. */
+  lastActiveAt?: number
+  /** Model chosen by Central for this room's agent, or null/undefined for the configured default. */
+  model?: string | null
+  /** Custom system prompt populated by Central for this room's agent. */
+  systemPrompt?: string
+  /** Canonical chat key (`<originTabId>/<id>`) so a room moved or reopened across tabs keeps its thread. */
+  chat?: string
+  /** What happened to it since it was made, oldest first, for the room log. Absent until the first. */
   log?: LoopChange[]
 }
 
@@ -90,17 +98,20 @@ export function isTile(content: PanelContent): boolean {
   return content.kind !== 'view' || content.view !== CHAT_VIEW
 }
 
-/** What a loop is made from when the orchestrator starts one: what it is for, and what its agent is told. */
+/** What a room is made from when the orchestrator starts one: what it is for, and what its agent is told. */
 export interface LoopSpec {
   desc: string
   brief: string
   plugins: string[]
   skills: string[]
+  model?: string | null
+  systemPrompt?: string
+  chat?: string
 }
 
-/** A workspace's loops with one more, made as the orchestrator asked, under the next id: its desc cut. */
-export function withLoopAsked(loops: Loops, spec: LoopSpec, now: number): { loops: Loops; loop: Loop } {
-  const seq = loops.seq + 1
+/** A tab's rooms with one more, made as the orchestrator asked, under the next id: its desc cut. */
+export function withLoopAsked(loops: Loops, spec: LoopSpec, now: number, minSeq = 0): { loops: Loops; loop: Loop } {
+  const seq = Math.max(loops.seq, minSeq) + 1
   const loop: Loop = {
     id: `f${seq}`,
     desc: spec.desc.slice(0, DESC_MAX),
@@ -108,8 +119,11 @@ export function withLoopAsked(loops: Loops, spec: LoopSpec, now: number): { loop
     plugins: [...spec.plugins],
     skills: [...spec.skills],
     createdAt: now,
+    ...(spec.model ? { model: spec.model } : {}),
+    ...(spec.systemPrompt ? { systemPrompt: spec.systemPrompt } : {}),
+    ...(spec.chat ? { chat: spec.chat } : {}),
   }
-  return { loops: { seq, list: [...loops.list, loop] }, loop }
+  return { loops: { ...loops, seq, list: [...loops.list, loop] }, loop }
 }
 
 /** The plugin a view came with, by its id: none for a built-in. */
@@ -127,11 +141,11 @@ export function loopNumber(id: string): number {
 }
 
 /**
- * What a loop is called, by the user, by the models, and on its tile: loop_3 for f3. The number is
- * the one its workspace's counter gave it, so a name is never given twice and says nothing of the work.
+ * What a room is called, by the user, by the models, and on its tile: room_3 for f3. The number is
+ * the one the counter gave it, so a name is never given twice and says nothing of the work.
  */
 export function loopName(id: string): string {
-  return `loop_${loopNumber(id)}`
+  return `room_${loopNumber(id)}`
 }
 
 /** The plugin of the Jaspers deep research agent: its research rooms. */
@@ -162,16 +176,27 @@ function recordFor(id: string, content: PanelContent, seen: TileSeen, now: numbe
   }
 }
 
-/** A workspace's loops with one more, made for a tile nobody named a loop for, under the next id. */
+/** A tab's rooms with one more, made for a tile nobody named a room for, under the next id. */
 export function withLoopFor(
   loops: Loops,
   content: PanelContent,
   seen: TileSeen,
   now: number,
+  minSeq = 0,
 ): { loops: Loops; loop: Loop } {
-  const seq = loops.seq + 1
+  const seq = Math.max(loops.seq, minSeq) + 1
   const loop = recordFor(`f${seq}`, content, seen, now)
-  return { loops: { seq, list: [...loops.list, loop] }, loop }
+  return { loops: { ...loops, seq, list: [...loops.list, loop] }, loop }
+}
+
+/** Updates a room's lastActiveAt timestamp when it is run or modified. */
+export function withActivity(loops: Loops, loopId: string, at: number): Loops {
+  const target = loops.list.find((one) => one.id === loopId)
+  if (!target || target.lastActiveAt === at) return loops
+  return {
+    ...loops,
+    list: loops.list.map((one) => (one.id === loopId ? { ...one, lastActiveAt: at } : one)),
+  }
 }
 
 /** What a loop is doing: read off the runs in flight and what is asked on its tiles, never stored, so a restart cannot leave one working that is not. */
@@ -183,22 +208,21 @@ export function statusOf(working: boolean, asking: boolean): LoopStatus {
 }
 
 /**
- * The loop a model or a user names: by its name, loop_3, however it is written (@loop_3, loop 3,
- * Loop #3, loop3), or by its id, f3, which a model may have read in a conversation from before loops
- * had names.
+ * The room a model or a user names: by its name, room_3 (or legacy loop_3), however it is written
+ * (@room_3, room 3, Room #3, room3, @loop_3, loop_3), or by its id, f3.
  */
 export function named(loops: readonly Loop[], text: string): Loop | undefined {
-  const number = /^@?(?:loop[\s_#-]*|f)([1-9]\d*)$/i.exec(text.trim())?.[1]
+  const number = /^@?(?:(?:room|loop)[\s_#-]*|f)([1-9]\d*)$/i.exec(text.trim())?.[1]
   return number === undefined ? undefined : loops.find((one) => one.id === `f${number}`)
 }
 
 /**
- * The loop a typed message is for, and the message without its address: it starts with that loop's
- * name behind an @, @loop_3, and says something after it. Null when the message is for no loop by
- * name, which leaves it the orchestrator's.
+ * The room a typed message is for, and the message without its address: it starts with that room's
+ * name behind an @, @room_3 (or @loop_3), and says something after it. Null when the message is for
+ * no room by name, which leaves it the orchestrator's.
  */
 export function addressed(loops: readonly Loop[], input: string): { loop: Loop; message: string } | null {
-  const match = /^@loop[_-]?([1-9]\d*)\s+(\S[\s\S]*)$/i.exec(input.trim())
+  const match = /^@(?:room|loop)[_-]?([1-9]\d*)\s+(\S[\s\S]*)$/i.exec(input.trim())
   const loop = match ? loops.find((one) => one.id === `f${match[1]}`) : undefined
   return loop ? { loop, message: match![2]! } : null
 }
@@ -300,6 +324,12 @@ function readRecord(raw: unknown, taken: readonly Loop[]): Loop | null {
     plugins: strings(one.plugins),
     skills: strings(one.skills),
     createdAt: typeof one.createdAt === 'number' ? one.createdAt : 0,
+    ...(typeof one.lastActiveAt === 'number' ? { lastActiveAt: one.lastActiveAt } : {}),
+    ...(typeof one.model === 'string' && one.model.trim() ? { model: one.model.trim() } : {}),
+    ...(typeof one.systemPrompt === 'string' && one.systemPrompt.trim()
+      ? { systemPrompt: one.systemPrompt.trim() }
+      : {}),
+    ...(typeof one.chat === 'string' && one.chat.trim() ? { chat: one.chat.trim() } : {}),
     ...(log.length > 0 ? { log } : {}),
   }
 }
@@ -571,34 +601,34 @@ function insideFrame(
   return found ? { ...inside, rect: found.rect, mode: 'tiled' } : { ...inside, mode: 'floating' }
 }
 
-/** The chat a loop's thread and log are filed under: its workspace's key, then its own id. */
-export function loopChat(workspaceId: string, loop: string): string {
+/** The chat a room's thread and log are filed under: its canonical chat key if carried across tabs, else its tab's key then its own id. */
+export function loopChat(workspaceId: string, loop: string | Pick<Loop, 'id' | 'chat'>): string {
+  if (typeof loop === 'object') return loop.chat ?? `${workspaceId}/${loop.id}`
   return `${workspaceId}/${loop}`
 }
 
 /**
- * What a loop's agent is not offered, of what the global assistant has: arranging the window and
- * what is focused in it, opening and gathering windows, the window's cells behind the tiles, and the
- * app's settings.
+ * What a room's agent is not offered, of what the global assistant has: arranging the window and
+ * what is focused in it, the window's cells behind the tiles, the app's settings, and reading or
+ * searching other rooms (since a room agent is blind to other rooms).
  */
 export const LOOP_EXCLUDED_TOOLS: readonly string[] = [
   'arrange',
   'focus',
-  'open_window',
-  'use_all_screens',
-  'use_one_screen',
   'write_cells',
   'read_cells',
   'clear_cells',
   'change_setting',
+  'read_room',
+  'search_rooms',
 ]
 
 /**
- * What the orchestrator is offered of the tool families, by name: a tool not named here is a loop's.
- * It runs the app and oversees the workspace: the grid and its windows, the cells, keys, plugins,
- * skills, tasks, the shell, memory, and reading loops, panels, and the store, and it asks the user.
- * It has no plugin source tools and nothing that drives a view: work in a tile does those. The tools
- * that hold loops are added where it is run.
+ * What the orchestrator is offered of the tool families, by name: a tool not named here is a room's.
+ * It runs the app and oversees the tabs and rooms: the grid, the cells, keys, plugins,
+ * skills, tasks, the shell, memory, and reading/searching rooms, panels, and the store, and it asks the user.
+ * It has nothing that drives a view: work in a room does those. The tools
+ * that hold rooms are added where it is run.
  */
 export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'move_element',
@@ -607,9 +637,6 @@ export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'arrange',
   'free_space',
   'focus',
-  'open_window',
-  'use_all_screens',
-  'use_one_screen',
   'refresh_element',
   'write_cells',
   'read_cells',
@@ -621,6 +648,10 @@ export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'get',
   'query',
   'read_attachment',
+  'run_source',
+  'describe_source',
+  'search_web',
+  'fetch_page',
   'install_plugin',
   'install_skill',
   'add_connection',
@@ -632,7 +663,8 @@ export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'cancel_task',
   'write_skill',
   'change_setting',
-  'read_loop',
+  'read_room',
+  'search_rooms',
   'run_shell',
 ]
 
@@ -658,22 +690,24 @@ export const START = 'Start'
 export const NO = 'No'
 
 /**
- * What the user is asked before the orchestrator starts a loop, since none is started without their
- * say: what the work is, as the loop will carry it, and which plugins do it.
+ * What the user is asked before the orchestrator starts a room, since none is started without their
+ * say: what the work is, as the room will carry it, which plugins do it, and the model if chosen.
  */
-export function startQuestion(desc: string, plugins: readonly string[]): string {
+export function startQuestion(desc: string, plugins: readonly string[], model?: string | null): string {
   const what = desc.slice(0, DESC_MAX)
-  return `Start a new loop for this: ${what}${plugins.length > 0 ? `, with ${plugins.join(', ')}` : ''}?`
+  const withPlugins = plugins.length > 0 ? `, with ${plugins.join(', ')}` : ''
+  const withModel = model ? ` (model: ${model})` : ''
+  return `Start a new room for this: ${what}${withPlugins}${withModel}?`
 }
 
 /**
- * Whether the user's request already asks to start a new loop, or the run has already asked the
+ * Whether the user's request already asks to start a new room, or the run has already asked the
  * user and been answered. Only the words the user typed count, never a skill's text or what the
- * assistant handed over, and a clause that says not to start one, names an existing or closed loop,
+ * assistant handed over, and a clause that says not to start one, names an existing or closed room,
  * or asks which place to use still asks.
  */
 const START_LOOP_CLAUSE =
-  /\b(?:(?:spin(?:\s+up)?|start|create|open|make|add|launch|build|set\s+up|run)\s+(?:a|an|new|another|a\s+new|one\s+more|(?:a\s+)?separate|(?:a\s+)?fresh|(?:a\s+)?second)\s+loop|(?:in|on|as|into|with)\s+(?:a\s+new|another|a\s+separate|a\s+fresh|a\s+second|one\s+more)\s+loop)\b|^(?:a\s+)?(?:new|another|separate|fresh)\s+loop\s*(?:[:,;-]|\b(?:for|to|with|using|use|showing|show|that|where)\b)/i
+  /\b(?:(?:spin(?:\s+up)?|start|create|open|make|add|launch|build|set\s+up|run)\s+(?:a|an|new|another|a\s+new|one\s+more|(?:a\s+)?separate|(?:a\s+)?fresh|(?:a\s+)?second)\s+(?:room|loop)|(?:in|on|as|into|with)\s+(?:a\s+new|another|a\s+separate|a\s+fresh|a\s+second|one\s+more)\s+(?:room|loop))\b|^(?:a\s+)?(?:new|another|separate|fresh)\s+(?:room|loop)\s*(?:[:,;-]|\b(?:for|to|with|using|use|showing|show|that|where)\b)/i
 const NEGATED_LOOP_CLAUSE =
   /\b(?:don'?t|do\s+not|doesn'?t|did\s+not|didn'?t|never|no|not|without|instead\s+of|rather\s+than|whether(?:\s+to)?|should\s+(?:i|we|you))\b/i
 
@@ -685,14 +719,14 @@ export function asksForLoop(asked: string | undefined, answered = false): boolea
   for (const clause of text.split(/[.!?;,\n]+|\b(?:but|and|then)\b/i)) {
     const trimmed = clause.trim()
     if (!trimmed || NEGATED_LOOP_CLAUSE.test(trimmed)) continue
-    if (/\b(?:closed\s+loop|loop[\s_#-]*\d)\b/i.test(trimmed)) continue
+    if (/\b(?:closed\s+(?:room|loop)|(?:room|loop)[\s_#-]*\d)\b/i.test(trimmed)) continue
     if (START_LOOP_CLAUSE.test(trimmed)) return true
   }
   return false
 }
 
 /**
- * Why no loop was started, in words for the orchestrator's model, or null when the user said Start.
+ * Why no room was started, in words for the orchestrator's model, or null when the user said Start.
  * Only that one choice starts one: a no, a closed question, a question nobody answered in time, and
  * words of the user's own all leave the request where it was, and the words are the model's to follow.
  */
@@ -705,14 +739,14 @@ export function notStarted(
   if (answer === START) return null
   if (answer === null) {
     if (why === 'timeout') {
-      return 'Nobody answered the question to start this loop within ten minutes, so nothing was started. The user did not close or refuse it; they may be away. Say it is waiting on their confirmation and that they can ask for it again.'
+      return 'Nobody answered the question to start this room within ten minutes, so nothing was started. The user did not close or refuse it; they may be away. Say it is waiting on their confirmation and that they can ask for it again.'
     }
     return 'The user closed the question without answering, so nothing was started. Say what you would have started, and leave it to them.'
   }
   if (answer === NO) {
     return 'The user said no to starting new work for this, so nothing was started. Answer in words, send it to work that exists, or ask them which.'
   }
-  return `Nothing was started. In place of an answer the user wrote ${JSON.stringify(answer)}: do as it says, and call create_loop again only if it says to start.`
+  return `Nothing was started. In place of an answer the user wrote ${JSON.stringify(answer)}: do as it says, and call create_room again only if it says to start.`
 }
 
 /**
@@ -761,25 +795,28 @@ export function notOwn(grids: Record<number, Grid>, loops: readonly Loop[], loop
     const owner = loops.find((one) => one.id === element.loop)
     const whose = owner ? `it belongs to ${loopName(owner.id)}` : 'it is the chat'
     const mine = tilesOf(grids, loop).map((one) => one.element.id)
-    return `${element.id} is not one of this work's tiles: ${whose}. Yours are ${mine.join(', ') || 'none'}. Read it with get if that helps; changing it is for its own conversation.`
+    return `${element.id} is not one of this work's tiles: ${whose}. Yours are ${mine.join(', ') || 'none'}.`
   }
   return null
 }
 
-/** The chats of the loops that were there and are not, open or closed: deleted, or their workspace was. */
+/** The chats of the rooms that were there and are not in any tab, open or closed: permanently deleted. */
 export function gone(prev: Record<string, Loops>, next: Record<string, Loops>): string[] {
+  const stillKept = new Set(
+    Object.entries(next).flatMap(([workspaceId, now]) =>
+      [...now.list, ...(now.closed ?? []).map((one) => one.loop)].map((one) => loopChat(workspaceId, one)),
+    ),
+  )
   return Object.entries(prev).flatMap(([workspaceId, had]) => {
-    const now = next[workspaceId]
-    const has = new Set([...(now?.list ?? []), ...(now?.closed ?? []).map((one) => one.loop)].map((one) => one.id))
     const all = [...had.list, ...(had.closed ?? []).map((one) => one.loop)]
-    return all.filter((one) => !has.has(one.id)).map((one) => loopChat(workspaceId, one.id))
+    return all.map((one) => loopChat(workspaceId, one)).filter((chat) => !stillKept.has(chat))
   })
 }
 
-/** The chats of the loops that were open and are not: closed, deleted, or their workspace was. What they were doing stops. */
+/** The chats of the rooms that were open and are not: closed, deleted, or their tab was closed. What they were doing stops. */
 export function shut(prev: Record<string, Loops>, next: Record<string, Loops>): string[] {
   return Object.entries(prev).flatMap(([workspaceId, had]) => {
     const open = new Set((next[workspaceId]?.list ?? []).map((one) => one.id))
-    return had.list.filter((one) => !open.has(one.id)).map((one) => loopChat(workspaceId, one.id))
+    return had.list.filter((one) => !open.has(one.id)).map((one) => loopChat(workspaceId, one))
   })
 }

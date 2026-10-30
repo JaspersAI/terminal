@@ -13,6 +13,8 @@ interface Props {
   box?: RefObject<HTMLDivElement | null>
   /** Whether it is drawn where it can be read. A tile's box says no while another element is maximized over its tile. */
   shown?: boolean
+  /** True in the top command line so the question and choices fit strictly inside a single 24px (h-6) line. */
+  compact?: boolean
 }
 
 /** Over the composer, riding its spring; in the docked chat, a plain row above the command line; in a tile's box, in its line's place. */
@@ -37,7 +39,7 @@ const TILE = 'relative shrink-0 bg-background'
  * up at once. Its ids carry the tile, since an id names one thing. It takes the keyboard only from its
  * own tile's line, which the box sees to, and hears Escape only when it is pressed in its own box.
  */
-export function QuestionField({ question, box, shown = true }: Props): ReactElement {
+export function QuestionField({ question, box, shown = true, compact = false }: Props): ReactElement {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -83,6 +85,60 @@ export function QuestionField({ question, box, shown = true }: Props): ReactElem
     event.preventDefault()
     if (!value.trim()) return
     answer(value)
+  }
+
+  if (compact) {
+    const oneLineText = [question.text, question.code].filter(Boolean).join(' — ').replace(/\s+/g, ' ').trim()
+    return (
+      <div
+        ref={box}
+        id={id('question-field')}
+        className="flex h-6 min-w-0 flex-1 items-center gap-1.5 border border-border bg-background px-2 text-xs leading-none focus-within:border-foreground"
+      >
+        <form onSubmit={submit} className="flex h-full min-w-0 flex-1 items-center gap-1.5">
+          <label
+            htmlFor={id('question-input')}
+            title={oneLineText}
+            className="max-w-[55%] min-w-0 shrink truncate font-medium text-foreground"
+          >
+            {oneLineText}
+          </label>
+          {question.choices.map((choice) => (
+            <button
+              key={choice}
+              type="button"
+              disabled={busy}
+              onClick={() => answer(choice)}
+              className="flex h-4 shrink-0 items-center border border-border bg-muted/60 px-1.5 text-[11px] leading-none text-foreground transition-colors hover:bg-primary hover:text-primary-foreground disabled:opacity-50"
+            >
+              {choice}
+            </button>
+          ))}
+          <input
+            ref={input}
+            id={id('question-input')}
+            name="answer"
+            value={value}
+            autoComplete="off"
+            placeholder={question.choices.length > 0 ? 'or type answer…' : 'type answer…'}
+            onChange={(event) => setValue(event.target.value)}
+            className="h-full min-w-16 flex-1 bg-transparent px-1 text-xs leading-none outline-none"
+          />
+        </form>
+        <button
+          type="button"
+          id={id('question-field-close')}
+          aria-label="Close"
+          title="Dismiss"
+          onClick={() => answer('')}
+          className="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+        >
+          <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+            <path d="M1 1 9 9M9 1 1 9" />
+          </svg>
+        </button>
+      </div>
+    )
   }
 
   return (

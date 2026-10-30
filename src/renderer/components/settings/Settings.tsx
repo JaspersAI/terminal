@@ -118,7 +118,7 @@ export function Settings({ onClose, onViewLoops }: Props): ReactElement {
             />
           ))}
           <div className="mt-auto border-t border-border pt-2">
-            <NavRow id="view-loops" icon={LoopIcon} label="View loops" onClick={() => requestLeave(onViewLoops)} />
+            <NavRow id="view-loops" icon={LoopIcon} label="View rooms" onClick={() => requestLeave(onViewLoops)} />
           </div>
         </nav>
 

@@ -19,7 +19,6 @@ import {
   type Rect,
   type Size,
 } from '../../../shared/grid/grid'
-import { MAIN_WINDOW, windowNumbers, WINDOWS_MAX } from '../../../shared/grid/windows'
 import { elementTarget, frameOf, isTile, notPlaced, refreshTarget } from '../../../shared/loops/loops'
 import { asWindow, placeChecked, refreshChecked, removeChecked, settlePanel } from '../../actions'
 import { loopsOf, notOwnFrame, ownTile } from '../../loops/loops'
@@ -35,8 +34,6 @@ import {
   moveElementAcross,
 } from '../../grid/grid'
 import { getState } from '../../state'
-import { displayCount, openWindow, useAllScreens, useOneScreen } from '../../grid/windows'
-import { screenToolsOffered } from '../../../shared/grid/screens'
 import type { Tool, ToolContext } from './types'
 import { optional, unstring, isRecord, WINDOW } from './input'
 import { coerceViewState } from '../../../shared/agent/view-state'
@@ -45,7 +42,7 @@ const MODES: ElementMode[] = ['tiled', 'floating', 'maximized', 'minimized']
 
 const ELEMENT_ID = {
   type: 'string',
-  description: 'An element or loop id, like e3 or loop_1.',
+  description: 'An element or room id, like e3 or room_1.',
 }
 
 /** The cells a rect may take, on the grid this round acts on: the workspace's size, not a constant. */
@@ -117,11 +114,6 @@ export function placementProperties(size: GridSize, fallback: NamedSize = 'quart
 export function gridTools(context?: ToolContext): Tool[] {
   const size = context ? gridSizeOf(context.workspaceId) : DEFAULT_SIZE
   const RECT = rectSchema(size)
-  // Without a round to act in, every tool is here, so a task's call finds its tool by name.
-  const screens = context
-    ? screenToolsOffered(displayCount(), windowNumbers(getState().windows).length)
-    : { all: true, one: true }
-  const hidden = new Set([...(screens.all ? [] : ['use_all_screens']), ...(screens.one ? [] : ['use_one_screen'])])
   // A piece of work's agent lays its views out inside the work's own tile, wherever that is: it names no window.
   const inside = context?.loop !== undefined
   const MOVE_RECT = inside ? RECT : rectSchema(size, 1)
@@ -321,46 +313,6 @@ export function gridTools(context?: ToolContext): Tool[] {
       },
     },
     {
-      name: 'open_window',
-      description: `Open another window of this workspace with a grid of its own, empty, or as it was if that number was open before. It opens beside the main window, which is the only one with the chat. A last resort: open one only when the user asks for another window, or when no window already open has free cells for what is to be placed (free_space says), since the user wants the windows they see filled first. Up to ${WINDOWS_MAX} windows in all. Returns the number and the open ones; then place there with window.`,
-      parameters: {
-        type: 'object',
-        properties: {
-          window: {
-            type: 'integer',
-            minimum: 2,
-            maximum: WINDOWS_MAX,
-            description: 'A closed number to open again. Default: the lowest free one.',
-          },
-        },
-      },
-      async run(input) {
-        const window = openWindow(optional(input.window, asWindow))
-        return JSON.stringify({ window, open: windowNumbers(getState().windows) })
-      },
-    },
-    {
-      name: 'use_all_screens',
-      description: `Spread this workspace over every screen the computer has: one window per display, each placed on its own display and filling it, opening the windows it needs, up to ${WINDOWS_MAX}. For when the user asks to use all their screens, both monitors, or the second display. The windows already open are moved, never opened again, so calling it twice leaves the same arrangement, and every window shows this workspace, with the chat in the main one. With more windows open than displays, the ones left over stay open where they are and come back as surplus: say so, and offer to close them or use_one_screen. Returns the windows, how many displays there are, and the surplus; then place on one of them with window. With one display it just makes the window fill the screen.`,
-      parameters: { type: 'object', properties: {} },
-      async run() {
-        const { windows, displays, surplus } = useAllScreens()
-        return JSON.stringify({ windows, displays, surplus })
-      },
-    },
-    {
-      name: 'use_one_screen',
-      description:
-        "Back to one window on one screen: every other window's elements move into the main window's grid, keeping their size where it fits, and those windows close. For when the user is done with the other screens or asks for one window again. Fails, naming the window and what is in it, when a window has cells written in it, since a move does not carry cells, or when an element does not fit in the main window's grid; then clear those cells with clear_cells, or make room with move_element, resize_element, or arrange, and nothing has changed meanwhile. Returns the windows that closed and the elements that moved.",
-      parameters: { type: 'object', properties: {} },
-      async run() {
-        const { closed, moved } = useOneScreen()
-        // The closes are asynchronous, so the tree can still list the windows just closed: once this
-        // returns, the main window is the only one open.
-        return JSON.stringify({ closed, moved, open: [MAIN_WINDOW] })
-      },
-    },
-    {
       name: 'refresh_element',
       description:
         "Make an element's view fetch its data again, fresh, without changing what it shows: for update, reload, or the latest. A view that draws its own data is live already and ignores it.",
@@ -369,12 +321,12 @@ export function gridTools(context?: ToolContext): Tool[] {
         properties: {
           elementId: {
             type: 'string',
-            description: 'An element, panel, or loop id, like e3, p3, or loop_1. Give elementId, panelId, or id.',
+            description: 'An element, panel, or room id, like e3, p3, or room_1. Give elementId, panelId, or id.',
           },
           panelId: { type: 'string', description: 'A panel id, like p3, in place of elementId.' },
           id: {
             type: 'string',
-            description: 'An element, panel, or loop id, like e3, p3, or loop_1, in place of elementId.',
+            description: 'An element, panel, or room id, like e3, p3, or room_1, in place of elementId.',
           },
         },
       },
@@ -396,7 +348,7 @@ export function gridTools(context?: ToolContext): Tool[] {
       },
     },
   ]
-  return tools.filter((tool) => !hidden.has(tool.name))
+  return tools
 }
 
 function asViewId(value: unknown): string {

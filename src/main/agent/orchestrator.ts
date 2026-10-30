@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { taskNote } from '../../shared/agent/transcript'
 import { WELCOME_PREFACE } from '../../shared/agent/welcome'
 import { EXCHANGES_MAX } from '../../shared/data/store'
@@ -25,7 +26,18 @@ import { inBackground } from './utils/lanes'
 import { orchestratorPrompt, stateNow, taskPreface } from './utils/prompt'
 import { begin, ended, running, stop, stopAsked, Stopped } from './utils/runs'
 import { configured } from './utils/settings'
-import { citedBy, cutToRecent, exchanges, file, keep, threadFor, threadReads } from './utils/thread'
+import {
+  centralGoesOn,
+  citedBy,
+  clearChat,
+  exchanges,
+  file,
+  fileDirectExchange,
+  keep,
+  terminalSessions,
+  threadFor,
+  threadReads,
+} from './utils/thread'
 
 // The orchestrator's requests: who asks the agent loop (agent.ts), on which thread, and when. The user's
 // request continues its workspace's thread, one per workspace, so follow-up questions work and
@@ -64,20 +76,26 @@ function tools(context: ToolContext): Tool[] {
  * the user addressed to a loop by name is not routed at all.
  */
 function run(input: string, ask?: string): Promise<string> {
-  const workspaceId = getState().currentWorkspaceId
-  // A message that starts with a piece of work's @name is that work's: it goes straight to its agent
+  const state = getState()
+  const workspaceId = state.currentWorkspaceId
+  // A message that starts with a room's @name is that room's: it goes straight to its agent
   // as the user's own words, with no routing call, and is filed in its chat, not this one.
-  const to = addressed(loopsOf(workspaceId).list, input)
+  const allOpen = Object.entries(state.loops).flatMap(([tabId, one]) => one.list.map((loop) => ({ tabId, loop })))
+  const to = addressed(
+    allOpen.map((one) => one.loop),
+    input,
+  )
   if (to) {
-    handOver(workspaceId, to.loop.id, { typed: to.message })
+    const ownerTab = allOpen.find((one) => one.loop.id === to.loop.id)?.tabId ?? workspaceId
+    handOver(ownerTab, to.loop.id, { typed: to.message })
     return Promise.resolve(`Sent to ${loopName(to.loop.id)}.`)
   }
   return userRequest({
     workspaceId,
-    chat: workspaceId,
+    chat: CENTRAL_CHAT,
     input,
     ask,
-    goesOn: cutToRecent,
+    goesOn: centralGoesOn,
     prompt: orchestratorPrompt(workspaceId, []),
     tools,
     state: () => stateNow(workspaceId),
@@ -185,7 +203,7 @@ function closedTarget(call: TaskCall, workspaceId: string): string | null {
   const closed = closedHolding(loops, target)
   if (!closed) return null
   const name = loopName(closed.loop.id)
-  return `Skipped: ${target} is in ${name}, which is closed. It refreshes again once ${name} is reopened from View loops.`
+  return `Skipped: ${target} is in ${name}, which is closed. It refreshes again once ${name} is reopened from Rooms.`
 }
 
 /**
@@ -233,20 +251,20 @@ export function runWelcome(workspaceId: string, ask: string, signal: AbortSignal
 export async function said(workspaceId: string, note: string, text: string): Promise<boolean> {
   const config = getProviderConfig('llm')
   if (!config) return false
-  const history = threadFor(workspaceId, config)
+  const history = threadFor(CENTRAL_CHAT, config)
   // What this workspace's sources brought is here for the words to cite.
   const citations = citedBy(text, history, workspaceId)
-  cutToRecent(history)
+  centralGoesOn(history)
   history.push(
     { role: 'user', text: note },
     { role: 'assistant', text, toolCalls: [], raw: null, ...(citations.length > 0 ? { citations } : {}) },
   )
-  keep(workspaceId, config, history)
-  file(workspaceId, history)
+  keep(CENTRAL_CHAT, config, history)
+  file(CENTRAL_CHAT, history)
   return true
 }
 
-/** A task's reply, into its workspace's thread: the note saying which task, then the reply. */
+/** A task's reply, into Central's thread: the note saying which task, then the reply. */
 export function taskSaid(workspaceId: string, task: string, text: string): Promise<boolean> {
   return said(workspaceId, taskNote(task), text)
 }
@@ -260,8 +278,8 @@ export function registerAgentIpc(): void {
     if (typeof input !== 'string' || !input.trim()) throw new Error('Nothing to send.')
     if (ask != null && (typeof ask !== 'string' || !ASK_ID.test(ask)))
       throw new Error('agent:run names a request with a short id.')
-    if (on != null && (typeof on !== 'string' || !ELEMENT_ID.test(on)))
-      throw new Error('agent:run names the tile a message is for by its element id.')
+    if (on != null && (typeof on !== 'string' || (!ELEMENT_ID.test(on) && !LOOP_ID.test(on))))
+      throw new Error('agent:run names the tile or room a message is for by its id.')
     return on == null ? run(input.trim(), ask ?? undefined) : runLoop(input.trim(), on, ask ?? undefined)
   })
   ipcMain.handle('agent:stop', (_event, runId: unknown, ask: unknown) => {
@@ -276,6 +294,22 @@ export function registerAgentIpc(): void {
   ipcMain.handle('agent:parse-file', (_event, name: unknown, bytes: unknown) =>
     parseAttachment(name, bytes, { recordRun }),
   )
+  ipcMain.handle('agent:clear', () => {
+    clearChat(CENTRAL_CHAT)
+  })
+  ipcMain.handle('agent:sessions', () => terminalSessions())
+  ipcMain.handle('agent:log-exchange', (_event, question: unknown, answer: unknown, loop: unknown) => {
+    if (typeof question !== 'string' || typeof answer !== 'string') return
+    if (loop != null && typeof loop === 'string' && LOOP_ID.test(loop)) {
+      const state = getState()
+      const ownerTab =
+        Object.entries(state.loops).find(([, one]) => one.list.some((l) => l.id === loop))?.[0] ??
+        state.currentWorkspaceId
+      fileDirectExchange(`${ownerTab}/${loop}`, question, answer)
+      return
+    }
+    fileDirectExchange(CENTRAL_CHAT, question, answer)
+  })
   // A window that opened partway through a run, or reloaded, asks what is in flight.
   ipcMain.handle('agent:running', () => running())
   ipcMain.handle('agent:history', (_event, limit: unknown, before: unknown, loop: unknown) => {
@@ -285,9 +319,9 @@ export function registerAgentIpc(): void {
       throw new Error('agent:history reads before an exchange by its id.')
     if (loop != null && (typeof loop !== 'string' || !LOOP_ID.test(loop)))
       throw new Error('agent:history names a piece of work by its id.')
-    // A loop's chat when one is named; else the chat on screen, the workspace's own.
+    // A room's chat when one is named; else the single Central flow across all tabs.
     return loop == null
-      ? exchanges(getState().currentWorkspaceId, limit, before ?? undefined)
+      ? exchanges(CENTRAL_CHAT, limit, before ?? undefined)
       : loopHistory(loop, limit, before ?? undefined)
   })
 }

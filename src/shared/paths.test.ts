@@ -191,13 +191,15 @@ test('a panel reads its text whole, null until its view publishes one, and the l
   ])
 })
 
-test('the panels listing names the loop each panel is a tile of', () => {
+test('the panels listing names the room each panel is a tile of', () => {
   const state = fixture()
   const { grid } = placeView(EMPTY_GRID, { content: { kind: 'view', view: 'core/note' }, loop: 'f2' })
   state.grids[WS] = { 1: grid }
   assert.deepEqual(readPath(state, WS, parsePath('panels')), [
-    { id: 'p1', elementId: 'e1', window: 1, view: 'core/note', loop: 'loop_2', summary: null, textLength: null },
+    { id: 'p1', elementId: 'e1', window: 1, view: 'core/note', loop: 'room_2', summary: null, textLength: null },
   ])
+  assert.deepEqual(parsePath(`tabs/${WS}/tab`), { kind: 'workspace', workspaceId: WS })
+  assert.deepEqual(parsePath('tab'), { kind: 'workspace' })
 })
 
 test('one panel reads as its entry in the listing, by panel id or element id, in whichever window it is', () => {

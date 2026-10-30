@@ -21,8 +21,22 @@ import { configured } from './utils/settings'
 // the work's agent is told of. It runs under the orchestrator's run, so its stop stops this too and
 // Eye files it with that run.
 
-export async function setUpLoop(desc: string, brief: string, context: ToolContext): Promise<SetUp> {
+export async function setUpLoop(
+  desc: string,
+  brief: string,
+  context: ToolContext,
+  given?: { plugins?: unknown[]; skills?: unknown[] },
+): Promise<SetUp> {
   const state = toPublic(getState())
+  const havePlugins = Object.keys(state.plugins)
+  const haveSkills = usableSkills(state, 'model').map((one) => one.id)
+  const direct =
+    given?.plugins !== undefined || given?.skills !== undefined
+      ? setUpOf({ plugins: given.plugins ?? [], skills: given.skills ?? [] }, havePlugins, haveSkills)
+      : { plugins: [], skills: [] }
+  if (direct.plugins.length > 0 || (havePlugins.length === 0 && haveSkills.length === 0)) {
+    return direct
+  }
   const log = (line: string): void => console.log(`[agent] setup ${line}`)
   const controller = new AbortController()
   const stopped = (): void => controller.abort(context.signal?.reason)
@@ -47,13 +61,10 @@ export async function setUpLoop(desc: string, brief: string, context: ToolContex
     })
     const call = reply.toolCalls.find((one) => one.name === SETUP_TOOL)
     if (!call) throw new Error(`Setting up the work chose nothing${reply.text ? `: ${reply.text}` : '.'}`)
-    const chosen = setUpOf(
-      call.input,
-      Object.keys(state.plugins),
-      usableSkills(state, 'model').map((one) => one.id),
-    )
-    log(`plugins ${chosen.plugins.join(', ') || 'none'}; skills ${chosen.skills.join(', ') || 'none'}`)
-    return chosen
+    const chosen = setUpOf(call.input, havePlugins, haveSkills)
+    const mergedSkills = [...new Set([...chosen.skills, ...direct.skills])]
+    log(`plugins ${chosen.plugins.join(', ') || 'none'}; skills ${mergedSkills.join(', ') || 'none'}`)
+    return { plugins: chosen.plugins, skills: mergedSkills }
   } finally {
     context.signal?.removeEventListener('abort', stopped)
   }

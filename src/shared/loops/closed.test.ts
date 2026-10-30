@@ -2,7 +2,18 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_GRID, failPanel, type Grid, type GridElement, type Panel, type PanelContent } from '../grid/grid.ts'
 import { gone, loopName, readLoops, showsChat, shut, type Loop, type Loops } from './loops.ts'
-import { closedHolding, closedWithout, loopLog, reopened, withoutLoop } from './closed.ts'
+import {
+  archiveTabRooms,
+  closedHolding,
+  closedWithout,
+  globalRoomLog,
+  loopLog,
+  reopenAcrossTabs,
+  reopened,
+  searchRooms,
+  unifyTabRooms,
+  withoutLoop,
+} from './closed.ts'
 
 const loop = (id: string, desc: string, more: Partial<Loop> = {}): Loop => ({
   id,
@@ -132,7 +143,7 @@ test('a closed loop reopens where it was, with its tiles and their state, its id
     { at: 50, change: 'closed' },
     { at: 60, change: 'reopened' },
   ])
-  assert.throws(() => reopened(back.grids, back.loops, 'f1', 1, 70), /loop_1 is not closed/)
+  assert.throws(() => reopened(back.grids, back.loops, 'f1', 1, 70), /room_1 is not closed/)
 })
 
 test('a reopened loop takes the nearest free cells when its own were taken, and floats when there are none', () => {
@@ -183,7 +194,7 @@ test('a reopened loop keeps its name, and takes new ids when one of its own was 
     ['e5', 'e4'],
   ])
   assert.equal(back.grids[1]!.seq, 5)
-  assert.equal(loopName(back.loops.list.find((one) => one.id === 'f1')!.id), 'loop_1')
+  assert.equal(loopName(back.loops.list.find((one) => one.id === 'f1')!.id), 'room_1')
   // A reopened view mounts fresh, so any runtime error it had before closing is cleared.
   const errored = workspace()
   errored[1] = failPanel(errored[1]!, 'e2', 'children is not defined').grid
@@ -202,18 +213,63 @@ test('a reopened loop keeps its name, and takes new ids when one of its own was 
   assert.equal(reopenedZoomed.grids[1]!.elements.find((e) => e.id === 'e1')?.zoom, 1.25)
 })
 
-test('the loop log lists every loop, open and closed, the one changed last first, each change newest first', () => {
+test('the room log lists every room, open and closed, ordered by last activity first, and globalRoomLog + searchRooms span all tabs', () => {
   const log = loopLog(
-    [loop('f1', 'a', { createdAt: 10 }), loop('f3', 'c', { createdAt: 30, log: [{ at: 40, change: 'reopened' }] })],
-    [loop('f2', 'b', { createdAt: 20, log: [{ at: 35, change: 'closed' }] })],
+    [
+      loop('f1', 'Macro rates monitor', { createdAt: 10, lastActiveAt: 90, plugins: ['fed'] }),
+      loop('f3', 'FLWS options chain', { createdAt: 30, log: [{ at: 40, change: 'reopened' }] }),
+    ],
+    [
+      loop('f2', 'NVDA deep research', {
+        createdAt: 20,
+        log: [{ at: 35, change: 'closed' }],
+        systemPrompt: 'Analyze margins',
+      }),
+    ],
   )
   assert.deepEqual(
     log.map((one) => [one.loop.id, one.open, one.changes.map((c) => c.change)]),
     [
+      ['f1', true, ['created']],
       ['f3', true, ['reopened', 'created']],
       ['f2', false, ['closed', 'created']],
-      ['f1', true, ['created']],
     ],
+  )
+  const global = globalRoomLog(
+    [
+      { id: 't1', name: 'Macro Tab' },
+      { id: 't2', name: 'Derivatives Tab' },
+    ],
+    { t1: [log[0]!.loop], t2: [log[1]!.loop] },
+    { t1: [log[2]!.loop] },
+  )
+  assert.deepEqual(
+    global.map((one) => [one.loop.id, one.workspaceId, one.workspaceName, one.open]),
+    [
+      ['f1', 't1', 'Macro Tab', true],
+      ['f3', 't2', 'Derivatives Tab', true],
+      ['f2', 't1', 'Macro Tab', false],
+    ],
+  )
+  assert.deepEqual(
+    searchRooms(global, 'room_2').map((e) => e.loop.id),
+    ['f2'],
+  )
+  assert.deepEqual(
+    searchRooms(global, 'margins').map((e) => e.loop.id),
+    ['f2'],
+  )
+  assert.deepEqual(
+    searchRooms(global, 'fed').map((e) => e.loop.id),
+    ['f1'],
+  )
+  assert.deepEqual(
+    searchRooms(global, 'Derivatives').map((e) => e.loop.id),
+    ['f3'],
+  )
+  assert.deepEqual(
+    searchRooms(global, 'treasury', { f1: '10Y treasury yield is 4.2%' }).map((e) => e.loop.id),
+    ['f1'],
   )
 })
 
@@ -242,4 +298,49 @@ test('a file from before loops had their name reads the same: a closed record an
     elements: elements.map(({ loop: tag, ...element }) => ({ ...element, flurb: tag })),
   }))
   assert.deepEqual(readLoops(saved.list, 0, older), closed)
+})
+
+test('closing a tab archives its open and closed rooms into global memory without forgetting their chats, and reopenAcrossTabs reopens onto any tab', () => {
+  const before = workspace()
+  const archived = archiveTabRooms(both, before, 't2', { seq: 5, list: [loop('f5', 'main work')] }, 100)
+  assert.equal(archived.seq, 5)
+  assert.deepEqual(
+    archived.closed?.map((c) => [c.loop.id, c.loop.chat]),
+    [
+      ['f1', 't2/f1'],
+      ['f2', 't2/f2'],
+    ],
+  )
+  // Neither f1 nor f2 is reported as gone when t2 is removed and its rooms are archived in t1.
+  assert.deepEqual(gone({ t1: { seq: 5, list: [loop('f5', 'main work')] }, t2: both }, { t1: archived }), [])
+
+  // Reopening f1 onto t1 places its frame on t1 and keeps its t2/f1 chat key.
+  const back = reopenAcrossTabs({ t1: { 1: EMPTY_GRID } }, { t1: archived }, 't1', 'f1', 1, 120)
+  const reopenedRoom = back.loops['t1']!.list.find((r) => r.id === 'f1')!
+  assert.equal(reopenedRoom.chat, 't2/f1')
+  assert.equal(
+    back.grids['t1']![1]!.elements.some((e) => e.loop === 'f1'),
+    true,
+  )
+  // Closing f1 on t1 stops its canonical chat ('t2/f1'), not 't1/f1'.
+  assert.deepEqual(shut(back.loops, { t1: { seq: 5, list: [loop('f5', 'main work')] } }), ['t2/f1'])
+})
+
+test('unifyTabRooms deduplicates colliding room ids across legacy workspaces while preserving their chat keys', () => {
+  const t1Grids = workspace()
+  const t2Grids = workspace()
+  const unified = unifyTabRooms(
+    [{ id: 't1' }, { id: 't2' }],
+    { t1: t1Grids, t2: t2Grids },
+    { t1: both, t2: { seq: 1, list: [loop('f1', 'duplicate id room')] } },
+  )
+  assert.deepEqual(
+    unified.loops['t1']!.list.map((r) => r.id),
+    ['f1', 'f2'],
+  )
+  assert.deepEqual(
+    unified.loops['t2']!.list.map((r) => [r.id, r.chat]),
+    [['f3', 't2/f1']],
+  )
+  assert.equal(unified.grids['t2']![1]!.elements.find((e) => e.id === 'e1')?.loop, 'f3')
 })

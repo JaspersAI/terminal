@@ -5,7 +5,8 @@ import path from 'node:path'
 import { test } from 'node:test'
 import zlib from 'node:zlib'
 import { openStore } from '../../store/db.ts'
-import { parseAttachment, readAttachment } from './attachments.ts'
+import { withAttachments } from '../../shared/agent/attachments.ts'
+import { getAttachedImages, parseAttachment, readAttachment } from './attachments.ts'
 
 /** Builds a minimal valid ZIP buffer from path -> content entries (stored, method 0). */
 function makeZip(entries: Record<string, string | Buffer>): Buffer {
@@ -165,6 +166,23 @@ test('refuses empty, binary, or unreadable files with a clear message', async ()
     () => parseAttachment('scan.pdf', Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF')),
     /no extractable text/i,
   )
+})
+
+test('parses valid PNG, JPEG, and GIF image attachments and exposes base64 image blocks for vision turns', async () => {
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const parsed = await parseAttachment('chart.png', png)
+  assert.equal(parsed.name, 'chart.png')
+  assert.equal(parsed.mimeType, 'image/png')
+  assert.ok(parsed.text.includes('Attached PNG image: chart.png (1×1 px'), parsed.text)
+
+  const turn = withAttachments('Analyze this chart', [parsed])
+  const images = getAttachedImages(turn)
+  assert.equal(images.length, 1)
+  assert.equal(images[0]!.mimeType, 'image/png')
+  assert.equal(images[0]!.base64, png.toString('base64'))
 })
 
 test('bounds extreme XLSX column coordinates and isolates PDF stream dictionaries per object', async () => {

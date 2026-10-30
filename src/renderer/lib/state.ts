@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { reconcile } from '../../shared/data/hash'
 import type { Action, AppState, Workspace } from '../../shared/state'
+import { tabsForWindow } from '../../shared/tabs/tabs'
 import { errorMessage } from './errors'
 
 // The renderer's mirror of the tree main owns. Components read it with `useAppState`, plain code
@@ -9,10 +10,15 @@ import { errorMessage } from './errors'
 // main through one push, so the renderer's state has one source.
 
 let current: AppState | null = null
+let localTabId: string | null = null
 const listeners = new Set<() => void>()
 
 /** Subscribes to main's pushes, then reads the tree once. `main.tsx` awaits this before the first render. */
 export async function load(): Promise<void> {
+  if (typeof window !== 'undefined' && window.app.windowNumber > 1) {
+    document.title = 'Terminal (copy)'
+    if (window.app.initialTabId) localTabId = window.app.initialTabId
+  }
   const stop = window.app.state.onChange(publish)
   import.meta.hot?.dispose(stop)
   const snapshot = await window.app.state.get()
@@ -45,15 +51,41 @@ export function useAppState<T>(select?: (state: AppState) => T): T | AppState {
 /** Asks main for a change. Resolves once main applied it; the new tree arrives by push. Rejects with main's message. */
 export async function dispatch(action: Action): Promise<void> {
   try {
+    if (typeof window !== 'undefined' && window.app.windowNumber > 1) {
+      if (action.type === 'tab.select' || action.type === 'workspace.select') {
+        if (localTabId !== action.id) {
+          localTabId = action.id
+          for (const listener of listeners) listener()
+        }
+        return
+      }
+      if (action.type === 'tab.create' || action.type === 'workspace.create') {
+        localTabId = null
+        await window.app.state.dispatch({ type: 'tab.create', window: window.app.windowNumber })
+        return
+      }
+    }
     await window.app.state.dispatch(action)
   } catch (err) {
     throw new Error(errorMessage(err))
   }
 }
 
-/** The workspace on screen. Main guarantees the current id matches one. */
+/** The tabs belonging to this window (Window 1 shows main tabs; Terminal (copy) shows its detached tab). */
+export function windowWorkspaces(state: AppState): Workspace[] {
+  const winNum = typeof window !== 'undefined' ? window.app.windowNumber : 1
+  const initial = typeof window !== 'undefined' ? window.app.initialTabId : null
+  return tabsForWindow(state.workspaces, winNum, initial)
+}
+
+/** The tab on screen in this window. A detached "Terminal (copy)" window starts on its single detached tab. */
 export function currentWorkspace(state: AppState): Workspace {
-  return state.workspaces.find((w) => w.id === state.currentWorkspaceId) ?? state.workspaces[0]!
+  const own = windowWorkspaces(state)
+  if (localTabId) {
+    const found = own.find((w) => w.id === localTabId)
+    if (found) return found
+  }
+  return own.find((w) => w.id === state.currentWorkspaceId) ?? own[0] ?? state.workspaces[0]!
 }
 
 function publish(next: AppState): void {

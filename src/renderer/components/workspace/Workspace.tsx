@@ -1,39 +1,103 @@
 import type { ReactElement } from 'react'
+import { chatElement, EMPTY_GRID } from '../../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
-import { currentWorkspace, useAppState } from '../../lib/state'
+import { errorMessage } from '../../lib/errors'
+import { currentWorkspace, dispatch, useAppState, windowWorkspaces } from '../../lib/state'
+import { Composer } from '../composer/Composer'
+import { dockChat, useDockedChat } from '../composer/dock'
+import { FloatingOrb } from '../composer/Orb'
+import { toggleOrbOpen, useOrbOpen } from '../composer/request'
 import { GridLayer } from '../grid/GridLayer'
 import { EyeDot } from './EyeDot'
+import { TabBar } from './TabBar'
 import { UpdateButton } from './UpdateButton'
-import { WorkspaceSwitcher } from './WorkspaceSwitcher'
-import { WorkspaceTitle } from './WorkspaceTitle'
+
+interface Props {
+  onOpenRooms?: () => void
+}
 
 /**
- * The current workspace filling the main window: a bar across the top with its name, editable in place,
- * and the switcher beside it, at its right end Restart to update while an update waits and Eye's dot,
- * then the grid layer under it holding
- * whatever the orchestrator has placed. The bar takes its own row rather than floating: views are
- * interactive, and one in the top-left corner was reaching under it.
+ * The terminal workspace layout:
+ * - Top header bar: Central's command line (expandable up to 5 lines), followed on the right by
+ *   the "Dock" and "Orb" regime toggle buttons, "Rooms" directory button, Update button, and Eye dot.
+ * - Middle canvas: the active tab's grid layer, plus the draggable FloatingOrb layer when Orb mode is on.
+ * - Bottom bar: the Excel-style TabBar with smooth rounded bottom corners.
  */
-export function Workspace(): ReactElement {
+export function Workspace({ onOpenRooms }: Props): ReactElement {
   const app = useAppState()
   const current = currentWorkspace(app)
+  const tabs = windowWorkspaces(app)
+  const docked = useDockedChat(current.id, MAIN_WINDOW)
+  const orbOpen = useOrbOpen()
+  const totalRooms =
+    Object.values(app.loops).reduce((n, list) => n + list.length, 0) +
+    Object.values(app.closedLoops).reduce((n, list) => n + list.length, 0)
+
+  function toggleDock(): void {
+    const grid = app.grids[current.id]?.[MAIN_WINDOW] ?? EMPTY_GRID
+    const existing = chatElement(grid)
+    if (existing) {
+      dispatch({ type: 'element.remove', workspaceId: current.id, elementId: existing.id }).catch((err: unknown) =>
+        console.error('[dock]', errorMessage(err)),
+      )
+    } else {
+      dockChat(current.id, MAIN_WINDOW).catch((err: unknown) => console.error('[dock]', errorMessage(err)))
+    }
+  }
+
   return (
     <main id="workspace" className="flex h-screen flex-col">
-      <header className="flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-background px-3">
-        {/* Keyed by id so the draft resets when the workspace changes. */}
-        <WorkspaceTitle key={current.id} workspace={current} />
-        <WorkspaceSwitcher workspaces={app.workspaces} currentId={current.id} />
-        {/* At the far end of the bar, away from the name and the menu: an update waiting for a restart,
-            and whether live feedback sharing is on. */}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+      <header className="flex min-h-8 shrink-0 items-start gap-2 border-b border-border bg-background px-4 py-1">
+        <Composer />
+        <div className="flex h-6 shrink-0 items-center gap-1.5 self-start">
+          <button
+            type="button"
+            id="central-dock-toggle"
+            aria-pressed={docked}
+            onClick={toggleDock}
+            className={`flex h-6 items-center justify-center border px-2.5 text-xs leading-none transition-colors ${
+              docked
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+            }`}
+          >
+            Dock
+          </button>
+          <button
+            type="button"
+            id="central-orb-toggle"
+            aria-pressed={orbOpen}
+            onClick={toggleOrbOpen}
+            className={`flex h-6 items-center justify-center border px-2.5 text-xs leading-none transition-colors ${
+              orbOpen
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+            }`}
+          >
+            Orb
+          </button>
+          {onOpenRooms && (
+            <button
+              type="button"
+              id="open-rooms-button"
+              aria-label="Open Rooms"
+              onClick={onOpenRooms}
+              className="flex h-6 items-center justify-center gap-1.5 border border-border bg-background px-2.5 text-xs leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <span>Rooms</span>
+              {totalRooms > 0 && <span className="tabular-nums text-foreground">{totalRooms}</span>}
+            </button>
+          )}
           <UpdateButton />
           <EyeDot />
         </div>
       </header>
       <div className="relative min-h-0 flex-1">
-        {/* Keyed by id so elements from one workspace never take over another's views. */}
+        {/* Keyed by id so elements from one tab never take over another's views. */}
         <GridLayer key={current.id} workspaceId={current.id} windowNumber={MAIN_WINDOW} />
+        {orbOpen && <FloatingOrb />}
       </div>
+      <TabBar workspaces={tabs} currentId={current.id} />
     </main>
   )
 }

@@ -1,5 +1,6 @@
 import { post, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
+import { getAttachedImages } from '../agent/attachments.ts'
 import { marksCache } from '../../shared/llm/providers.ts'
 import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
@@ -110,7 +111,20 @@ export function openaiBody(
   history.forEach((turn, index) => {
     const mine = index === history.length - 1 ? state : null
     if (turn.role === 'user') {
-      messages.push({ role: 'user', content: withState(turn.text, mine) })
+      const images = getAttachedImages(turn.text)
+      messages.push({
+        role: 'user',
+        content:
+          images.length > 0
+            ? [
+                { type: 'text', text: withState(turn.text, mine) },
+                ...images.map((img) => ({
+                  type: 'image_url',
+                  image_url: { url: `data:${img.mimeType};base64,${img.base64}` },
+                })),
+              ]
+            : withState(turn.text, mine),
+      })
     } else if (turn.role === 'assistant') {
       const message: Record<string, unknown> = {
         role: 'assistant',

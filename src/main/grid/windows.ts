@@ -30,16 +30,18 @@ import { getState, update } from '../state'
 // and takes its number out of `windows`, its grids staying for the next time that number opens.
 
 const windows = new Map<number, BrowserWindow>()
+const renderedWindows = new WeakSet<BrowserWindow>()
 /** The window most recently focused: where "the focused element" is read from. */
 let focused = MAIN_WINDOW
 
 /** How far a new window sits from the one it was opened from, so it reads as a new window and not a change to the old one. */
 const CASCADE = 40
 
-export function createWindow(n: number, show: boolean, at?: { x: number; y: number }): BrowserWindow {
+export function createWindow(n: number, show: boolean, at?: { x: number; y: number }, tabId?: string): BrowserWindow {
   const win = new BrowserWindow({
     width: 1400,
     height: 1000,
+    title: n > MAIN_WINDOW ? 'Terminal (copy)' : 'Jaspers Terminal',
     ...at,
     backgroundColor: windowBackground(),
     // Shown below once the page has rendered; never, when the launch is to stay hidden.
@@ -51,6 +53,12 @@ export function createWindow(n: number, show: boolean, at?: { x: number; y: numb
       backgroundThrottling: false,
     },
   })
+  if (n > MAIN_WINDOW) {
+    win.on('page-title-updated', (event) => {
+      event.preventDefault()
+      if (!win.isDestroyed()) win.setTitle('Terminal (copy)')
+    })
+  }
   windows.set(n, win)
   if (show) showWhenRendered(win)
 
@@ -69,11 +77,24 @@ export function createWindow(n: number, show: boolean, at?: { x: number; y: numb
   win.on('closed', () => {
     if (windows.get(n) === win) windows.delete(n)
     if (focused === n) focused = MAIN_WINDOW
-    // An extension closed by hand leaves the list; on quit the list stays, so relaunch opens it again.
+    // A detached window closed by hand leaves the list and returns its detached tab(s) to the main window.
     if (n !== MAIN_WINDOW && !isQuitting()) {
-      update((state) =>
-        state.windows.includes(n) ? { ...state, windows: state.windows.filter((w) => w !== n) } : state,
-      )
+      update((state) => {
+        const hasWin = state.windows.includes(n)
+        const hasDetached = state.workspaces.some((w) => w.window === n)
+        if (!hasWin && !hasDetached) return state
+        return {
+          ...state,
+          windows: hasWin ? state.windows.filter((w) => w !== n) : state.windows,
+          workspaces: hasDetached
+            ? state.workspaces.map((w) => {
+                if (w.window !== n) return w
+                const { window: _win, ...rest } = w
+                return rest
+              })
+            : state.workspaces,
+        }
+      })
     }
   })
 
@@ -95,9 +116,12 @@ export function createWindow(n: number, show: boolean, at?: { x: number; y: numb
   if (dev) {
     const url = new URL(dev)
     url.searchParams.set('window', String(n))
+    if (tabId) url.searchParams.set('tab', tabId)
     void win.loadURL(url.toString())
   } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'), { query: { window: String(n) } })
+    void win.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      query: { window: String(n), ...(tabId ? { tab: tabId } : {}) },
+    })
   }
   return win
 }
@@ -125,6 +149,7 @@ const SHOW_ANYWAY_MS = 15_000
 function showWhenRendered(win: BrowserWindow): void {
   let shown = false
   const show = (): void => {
+    renderedWindows.add(win)
     if (!shown && !win.isDestroyed()) win.show()
   }
   const timer = setTimeout(show, SHOW_ANYWAY_MS)
@@ -136,6 +161,16 @@ function showWhenRendered(win: BrowserWindow): void {
   win.once('closed', () => clearTimeout(timer))
   win.webContents.ipc.on('window:rendered', (event) => {
     if (!win.isDestroyed() && !win.webContents.isDestroyed() && event.senderFrame === win.webContents.mainFrame) show()
+  })
+  // If the app bundle on disk was replaced by a new DMG install while the background tray process was
+  // still running, reading index.html from the replaced app.asar fails: relaunch into the new binary.
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return
+    console.error(`[window] main frame failed to load (${errorCode}: ${errorDescription}) at ${validatedURL}`)
+    if (app.isPackaged) {
+      app.relaunch()
+      app.exit(0)
+    }
   })
 }
 
@@ -155,7 +190,7 @@ function hide(win: BrowserWindow): void {
  * Opens an extension window: the number given, or the lowest free one. Every workspace gets a grid
  * for it first, so the window has something to show the moment it loads. Returns the number.
  */
-export function openWindow(n?: number): number {
+export function openWindow(n?: number, tabId?: string): number {
   const { windows: open } = getState()
   if (n !== undefined) {
     if (!Number.isInteger(n) || n <= MAIN_WINDOW || n > WINDOWS_MAX)
@@ -173,7 +208,7 @@ export function openWindow(n?: number): number {
       grids: Object.fromEntries(Object.entries(state.grids).map(([id, grids]) => [id, withWindows(grids, next)])),
     }
   })
-  createWindow(number, true, at)
+  createWindow(number, true, at, tabId)
   return number
 }
 
@@ -196,10 +231,13 @@ export function openAllStored(show: boolean): void {
 
 /** Shows and focuses every window, making the main one again if something destroyed it. */
 export function showAll(): void {
-  if (!windowOf(MAIN_WINDOW)) createWindow(MAIN_WINDOW, true)
-  for (const { win } of openWindows()) {
+  const createdMain = !windowOf(MAIN_WINDOW)
+  if (createdMain) createWindow(MAIN_WINDOW, true)
+  for (const { number, win } of openWindows()) {
     if (win.isMinimized()) win.restore()
-    win.show()
+    if (renderedWindows.has(win) || !(createdMain && number === MAIN_WINDOW)) {
+      win.show()
+    }
   }
   windowOf(MAIN_WINDOW)?.focus()
 }

@@ -4,6 +4,7 @@ import path from 'node:path'
 import zlib from 'node:zlib'
 import yauzl from 'yauzl'
 import {
+  attachedFileIds,
   chunkDocument,
   coerceCellValue,
   deduplicateHeaders,
@@ -44,6 +45,7 @@ interface IndexedAttachment {
   chunks: AttachmentChunk[]
   sheets: AttachmentSheet[]
   runId: number | null
+  image?: { mimeType: string; base64: string }
 }
 
 const MAX_CACHED_ATTACHMENTS = 50
@@ -51,12 +53,8 @@ const cachedById = new Map<string, IndexedAttachment>()
 let attachmentSeq = 0
 
 const HTML_EXTS = new Set(['.html', '.htm', '.xhtml'])
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
 const BINARY_EXTS = new Set([
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
   '.bmp',
   '.ico',
   '.mp3',
@@ -97,8 +95,15 @@ export async function parseAttachment(
   let text: string
   let sheets: AttachmentSheet[] = []
   let tableRows: Record<string, unknown>[] = []
+  let image: { mimeType: string; base64: string } | undefined
 
-  if (ext === '.pdf' || isPdfBuffer(buffer)) {
+  const detectedImage = detectImageBuffer(buffer)
+  if (detectedImage) {
+    text = detectedImage.summary(name, buffer)
+    image = { mimeType: detectedImage.mimeType, base64: buffer.toString('base64') }
+  } else if (IMAGE_EXTS.has(ext)) {
+    throw new Error(`${name} (${ext}) cannot be read as text or is an unsupported image file.`)
+  } else if (ext === '.pdf' || isPdfBuffer(buffer)) {
     text = parsePdf(name, buffer)
   } else if (ext === '.xlsx') {
     const parsed = await parseXlsx(name, buffer)
@@ -151,7 +156,7 @@ export async function parseAttachment(
   }
   const runId = store ? await store.recordRun(runRecord) : null
 
-  const entry: IndexedAttachment = { id, name, fullText, chunks, sheets, runId }
+  const entry: IndexedAttachment = { id, name, fullText, chunks, sheets, runId, ...(image ? { image } : {}) }
   rememberAttachment(entry)
 
   const body = formatAttachmentTurnBody({ id, name, fullText, chunks, sheets, runId })
@@ -163,7 +168,23 @@ export async function parseAttachment(
     chunkCount: chunks.length,
     ...(runId != null ? { runId } : {}),
     ...(sheets.length > 0 ? { sheets } : {}),
+    ...(image ? { mimeType: image.mimeType } : {}),
   }
+}
+
+/**
+ * Returns base64-encoded image attachments referenced by `<attached_file id="...">` in a user turn so
+ * vision-capable LLM providers can include native image blocks alongside the turn text.
+ */
+export function getAttachedImages(turnText: string): Array<{ mimeType: string; base64: string }> {
+  const ids = attachedFileIds(turnText)
+  if (ids.length === 0) return []
+  const images: Array<{ mimeType: string; base64: string }> = []
+  for (const id of ids) {
+    const entry = cachedById.get(id)
+    if (entry?.image) images.push(entry.image)
+  }
+  return images
 }
 
 function rememberAttachment(entry: IndexedAttachment): void {
@@ -304,6 +325,93 @@ function toBuffer(raw: unknown): Buffer {
 
 function isPdfBuffer(buffer: Buffer): boolean {
   return buffer.byteLength >= 5 && buffer.subarray(0, 5).toString('latin1') === '%PDF-'
+}
+
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+
+function detectImageBuffer(
+  buffer: Buffer,
+): { mimeType: string; summary: (name: string, buf: Buffer) => string } | null {
+  // Valid PNG: 8-byte PNG signature + IHDR chunk header + 8-byte dimensions (>= 24 bytes)
+  if (
+    buffer.byteLength >= 24 &&
+    buffer.subarray(0, 8).equals(PNG_MAGIC) &&
+    buffer.subarray(12, 16).toString('ascii') === 'IHDR'
+  ) {
+    return {
+      mimeType: 'image/png',
+      summary: (name, buf) => {
+        const width = buf.readUInt32BE(16)
+        const height = buf.readUInt32BE(20)
+        const meta = extractPngTextChunks(buf)
+        const lines = [
+          `Attached PNG image: ${name} (${width}×${height} px, ${buf.byteLength.toLocaleString('en-US')} bytes).`,
+        ]
+        if (meta.length > 0) lines.push(...meta)
+        return lines.join('\n')
+      },
+    }
+  }
+  // Valid JPEG: SOI FF D8 FF + at least 4 bytes
+  if (buffer.byteLength >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return {
+      mimeType: 'image/jpeg',
+      summary: (name, buf) => `Attached JPEG image: ${name} (${buf.byteLength.toLocaleString('en-US')} bytes).`,
+    }
+  }
+  // Valid GIF: GIF87a or GIF89a + logical screen descriptor (>= 10 bytes)
+  if (
+    buffer.byteLength >= 10 &&
+    (buffer.subarray(0, 6).toString('ascii') === 'GIF87a' || buffer.subarray(0, 6).toString('ascii') === 'GIF89a')
+  ) {
+    return {
+      mimeType: 'image/gif',
+      summary: (name, buf) => {
+        const width = buf.readUInt16LE(6)
+        const height = buf.readUInt16LE(8)
+        return `Attached GIF image: ${name} (${width}×${height} px, ${buf.byteLength.toLocaleString('en-US')} bytes).`
+      },
+    }
+  }
+  // Valid WebP: RIFF....WEBP (>= 12 bytes)
+  if (
+    buffer.byteLength >= 12 &&
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) {
+    return {
+      mimeType: 'image/webp',
+      summary: (name, buf) => `Attached WebP image: ${name} (${buf.byteLength.toLocaleString('en-US')} bytes).`,
+    }
+  }
+  return null
+}
+
+function extractPngTextChunks(buffer: Buffer): string[] {
+  const out: string[] = []
+  let offset = 8
+  while (offset + 8 <= buffer.byteLength) {
+    const length = buffer.readUInt32BE(offset)
+    const type = buffer.subarray(offset + 4, offset + 8).toString('ascii')
+    const dataStart = offset + 8
+    const dataEnd = dataStart + length
+    if (dataEnd > buffer.byteLength) break
+    if (type === 'tEXt' && length > 0 && length <= 4096) {
+      const raw = buffer.subarray(dataStart, dataEnd)
+      const nul = raw.indexOf(0)
+      if (nul > 0) {
+        const key = raw.subarray(0, nul).toString('latin1').trim()
+        const val = raw
+          .subarray(nul + 1)
+          .toString('utf8')
+          .trim()
+        if (key && val) out.push(`${key}: ${val}`)
+      }
+    }
+    if (type === 'IEND') break
+    offset = dataEnd + 4
+  }
+  return out
 }
 
 function decodeUtfText(name: string, buffer: Buffer): string {

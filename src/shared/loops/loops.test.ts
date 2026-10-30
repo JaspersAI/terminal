@@ -77,9 +77,9 @@ const at = (x: number, y: number, w: number, h: number): Partial<GridElement> =>
 const shape = (g: Grid) =>
   g.elements.map((e) => [e.id, e.loop ?? null, e.parent ?? null, [e.rect.x, e.rect.y, e.rect.w, e.rect.h]])
 
-test('a loop is called loop_ and the number its workspace gave it', () => {
-  assert.equal(loopName('f3'), 'loop_3')
-  assert.equal(loopName('f12'), 'loop_12')
+test('a room is called room_ and the number its counter gave it', () => {
+  assert.equal(loopName('f3'), 'room_3')
+  assert.equal(loopName('f12'), 'room_12')
 })
 
 test('everything on a grid is a tile but the docked chat', () => {
@@ -462,7 +462,7 @@ test("a loop's agent may change its own tiles, by element or by panel, and no ot
   assert.equal(notOwn(grids, loops, 'f1', 'p3'), null)
   assert.equal(
     notOwn(grids, loops, 'f1', 'e2'),
-    "e2 is not one of this work's tiles: it belongs to loop_2. Yours are e1, e3. Read it with get if that helps; changing it is for its own conversation.",
+    "e2 is not one of this work's tiles: it belongs to room_2. Yours are e1, e3.",
   )
   assert.match(notOwn(grids, loops, 'f1', 'p2') ?? '', /^e2 is not one of this work's tiles/)
   // One that is not on the grid at all is the tool's to refuse, in the words it always has.
@@ -472,18 +472,21 @@ test("a loop's agent may change its own tiles, by element or by panel, and no ot
   assert.match(notOwn(withChat, loops, 'f1', 'e4') ?? '', /^e4 is not one of this work's tiles: it is the chat\./)
 })
 
-test('what a loop’s agent is not offered is the window’s', () => {
+test('what a room’s agent is not offered is the window’s, and extension window tools are gone', () => {
   assert.deepEqual([...LOOP_EXCLUDED_TOOLS].sort(), [
     'arrange',
     'change_setting',
     'clear_cells',
     'focus',
-    'open_window',
     'read_cells',
-    'use_all_screens',
-    'use_one_screen',
+    'read_room',
+    'search_rooms',
     'write_cells',
   ])
+  for (const removed of ['open_window', 'use_all_screens', 'use_one_screen']) {
+    assert.equal(ORCHESTRATOR_TOOLS.includes(removed), false, removed)
+    assert.equal(LOOP_EXCLUDED_TOOLS.includes(removed), false, removed)
+  }
 })
 
 test('the loops that are gone are told by their chats, a deleted workspace\u2019s among them', () => {
@@ -501,11 +504,21 @@ test('a plugin told of is kept for the loop, once', () => {
   assert.equal(withPlugin(loops, 'f9', 'news'), loops)
 })
 
-test('a loop is named by its name however it is written, or by its id', () => {
+test('a room is named by its name however it is written, or by its id', () => {
   const list = [loop('f1', 'Note'), loop('f12', 'Backtest FLWS')]
-  for (const text of ['loop_12', ' @loop_12 ', 'Loop 12', 'loop #12', 'LOOP12', 'loop-12', 'f12'])
+  for (const text of [
+    'room_12',
+    ' @room_12 ',
+    'Room 12',
+    'room #12',
+    'ROOM12',
+    'room-12',
+    'loop_12',
+    ' @loop_12 ',
+    'f12',
+  ])
     assert.equal(named(list, text)?.id, 'f12', text)
-  for (const text of ['loop_2', 'loop_0', 'loop', 'Backtest FLWS', '12', 'f0', 'loop_12x'])
+  for (const text of ['room_2', 'room_0', 'room', 'Backtest FLWS', '12', 'f0', 'room_12x'])
     assert.equal(named(list, text), undefined, text)
 })
 
@@ -554,12 +567,20 @@ test('the orchestrator is offered nothing that drives a view, and a loop\u2019s 
   assert.equal(LOOP_EXCLUDED_TOOLS.includes('run_shell'), false)
   assert.equal(ORCHESTRATOR_TOOLS.includes('publish_plugin'), true)
   assert.equal(LOOP_EXCLUDED_TOOLS.includes('publish_plugin'), false)
-  for (const tool of ['read_loop', 'get', 'query']) {
+  for (const tool of [
+    'read_room',
+    'search_rooms',
+    'get',
+    'query',
+    'run_source',
+    'describe_source',
+    'search_web',
+    'fetch_page',
+  ]) {
     assert.equal(ORCHESTRATOR_TOOLS.includes(tool), true, tool)
-    assert.equal(LOOP_EXCLUDED_TOOLS.includes(tool), false, tool)
   }
-  for (const tool of ['run_source', 'describe_source']) {
-    assert.equal(ORCHESTRATOR_TOOLS.includes(tool), false, tool)
+  for (const tool of ['read_room', 'search_rooms']) {
+    assert.equal(LOOP_EXCLUDED_TOOLS.includes(tool), true, tool)
   }
 })
 
@@ -575,28 +596,29 @@ test('a name a file saved from before loops were numbered is left behind: a loop
   assert.deepEqual(read.list, [{ id: 'f1', desc: 'A note', brief: '', plugins: [], skills: [], createdAt: 0 }])
 })
 
-test('a typed message that starts with a loop\u2019s @name is for that loop, and says something after the name', () => {
+test('a typed message that starts with a room\u2019s @name is for that room, and says something after the name', () => {
   const all = [loop('f1', 'Note'), loop('f2', 'Note'), loop('f12', 'Backtest FLWS')]
   const to = (input: string): [string, string] | null => {
     const found = addressed(all, input)
     return found && [found.loop.id, found.message]
   }
+  assert.deepEqual(to('@room_1 add SPY'), ['f1', 'add SPY'])
   assert.deepEqual(to('@loop_1 add SPY'), ['f1', 'add SPY'])
   // As a person types it: capitals, no underscore or a dash, more than one space, space around it.
-  assert.deepEqual(to('  @LOOP12   use two years  '), ['f12', 'use two years'])
-  assert.deepEqual(to('@loop-2 hi'), ['f2', 'hi'])
+  assert.deepEqual(to('  @ROOM12   use two years  '), ['f12', 'use two years'])
+  assert.deepEqual(to('@room-2 hi'), ['f2', 'hi'])
   // The whole number decides, never a start of it.
-  assert.equal(to('@loop_1x hi'), null)
-  // A message of several lines is kept whole, and a /command after the address is that loop's.
-  assert.deepEqual(to('@loop_1 first line\nsecond line'), ['f1', 'first line\nsecond line'])
-  assert.deepEqual(to('@loop_1\nall on the next line'), ['f1', 'all on the next line'])
-  assert.deepEqual(to('@loop_1 /new'), ['f1', '/new'])
-  // For no loop by name: nothing after it, a number no loop has, a name not at the start, an id.
-  assert.equal(to('@loop_1'), null)
-  assert.equal(to('@loop_1   '), null)
-  assert.equal(to('@loop_9 hi'), null)
-  assert.equal(to('hi @loop_1'), null)
-  assert.equal(to('loop_1 hi'), null)
+  assert.equal(to('@room_1x hi'), null)
+  // A message of several lines is kept whole, and a /command after the address is that room's.
+  assert.deepEqual(to('@room_1 first line\nsecond line'), ['f1', 'first line\nsecond line'])
+  assert.deepEqual(to('@room_1\nall on the next line'), ['f1', 'all on the next line'])
+  assert.deepEqual(to('@room_1 /new'), ['f1', '/new'])
+  // For no room by name: nothing after it, a number no room has, a name not at the start, an id.
+  assert.equal(to('@room_1'), null)
+  assert.equal(to('@room_1   '), null)
+  assert.equal(to('@room_9 hi'), null)
+  assert.equal(to('hi @room_1'), null)
+  assert.equal(to('room_1 hi'), null)
   assert.equal(to('@f1 hi'), null)
 })
 
@@ -606,14 +628,18 @@ test('the note is no agent’s to place: its words go in the reply, and any othe
   assert.equal(notPlaced('watchlist/quotes'), null)
 })
 
-test('a loop is started only when the user says Start to what it is and which plugins; anything else starts nothing', () => {
+test('a room is started only when the user says Start to what it is and which plugins; anything else starts nothing', () => {
   assert.equal(
     startQuestion('Screen of US small caps', ['screener-mcp', 'yfinance']),
-    'Start a new loop for this: Screen of US small caps, with screener-mcp, yfinance?',
+    'Start a new room for this: Screen of US small caps, with screener-mcp, yfinance?',
   )
-  assert.equal(startQuestion('Screen of US small caps', []), 'Start a new loop for this: Screen of US small caps?')
-  // The desc is shown as the loop will carry it.
-  assert.equal(startQuestion('x'.repeat(DESC_MAX + 5), []), `Start a new loop for this: ${'x'.repeat(DESC_MAX)}?`)
+  assert.equal(
+    startQuestion('Screen of US small caps', ['screener-mcp'], 'gemini-4-argon'),
+    'Start a new room for this: Screen of US small caps, with screener-mcp (model: gemini-4-argon)?',
+  )
+  assert.equal(startQuestion('Screen of US small caps', []), 'Start a new room for this: Screen of US small caps?')
+  // The desc is shown as the room will carry it.
+  assert.equal(startQuestion('x'.repeat(DESC_MAX + 5), []), `Start a new room for this: ${'x'.repeat(DESC_MAX)}?`)
   assert.equal(START, 'Start')
   assert.equal(NO, 'No')
   assert.equal(notStarted(START), null)
@@ -629,29 +655,30 @@ test('a loop is started only when the user says Start to what it is and which pl
   )
   // Ten minutes with nobody answering is not the user closing or refusing it.
   for (const timedOut of [notStarted({ answer: null, ended: 'timeout' }), notStarted(null, 'timeout')]) {
-    assert.match(timedOut!, /^Nobody answered the question to start this loop within ten minutes/)
+    assert.match(timedOut!, /^Nobody answered the question to start this room within ten minutes/)
     assert.doesNotMatch(timedOut!, /closed the question|said no/)
   }
   assert.match(
-    notStarted('put it in loop_3')!,
-    /^Nothing was started\. .*"put it in loop_3".*call create_loop again only if it says to start\.$/,
+    notStarted('put it in room_3')!,
+    /^Nothing was started\. .*"put it in room_3".*call create_room again only if it says to start\.$/,
   )
   // Not read loosely: a typed yes is words of the user's own, not Start.
   assert.notEqual(notStarted('yes'), null)
   assert.notEqual(notStarted('start'), null)
 })
 
-test('a request that already asks to start a new loop, or a run the user already answered in, is not asked again', () => {
+test('a request that already asks to start a new room, or a run the user already answered in, is not asked again', () => {
   for (const prompt of [
-    'spin another loop use charts to show options prices for flws',
-    'spin up a loop for flws',
+    'spin another room use charts to show options prices for flws',
+    'spin up a room for flws',
+    'start a new room to chart SPY',
+    'create a room for AAPL fundamentals',
+    'open another room showing treasury yields',
+    'make a new room for NVDA',
+    'in a new room, chart SPY',
+    "don't touch room_1, start a new room for MSFT",
+    'new room: show options prices for flws',
     'start a new loop to chart SPY',
-    'create a loop for AAPL fundamentals',
-    'open another loop showing treasury yields',
-    'make a new loop for NVDA',
-    'in a new loop, chart SPY',
-    "don't touch loop_1, start a new loop for MSFT",
-    'new loop: show options prices for flws',
   ]) {
     assert.equal(asksForLoop(prompt), true, prompt)
   }
@@ -660,16 +687,16 @@ test('a request that already asks to start a new loop, or a run the user already
     undefined,
     '',
     'show options prices for flws',
-    'open loop 2',
-    'update loop_1 with 30 days',
-    'reopen the closed loop',
-    'open a closed loop',
-    "don't start a new loop",
-    'without starting a loop',
-    'instead of a new loop, update loop_1',
-    'should I update loop_1 or start a new loop?',
-    '<skill_content name="x">start a new loop</skill_content>\nshow options prices for flws',
-    'show options prices for flws\n\n(The assistant handed this to this piece of work. The user did not type what is below this line.)\nstart a new loop',
+    'open room 2',
+    'update room_1 with 30 days',
+    'reopen the closed room',
+    'open a closed room',
+    "don't start a new room",
+    'without starting a room',
+    'instead of a new room, update room_1',
+    'should I update room_1 or start a new room?',
+    '<skill_content name="x">start a new room</skill_content>\nshow options prices for flws',
+    'show options prices for flws\n\n(The assistant handed this to this piece of work. The user did not type what is below this line.)\nstart a new room',
   ]) {
     assert.equal(asksForLoop(prompt), false, String(prompt))
   }

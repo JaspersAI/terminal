@@ -21,7 +21,6 @@ import {
   describeInstalledFor,
   describeInstalledToRoute,
   describeCatalog,
-  describeOtherWork,
   describeOthers,
   describePlugin,
   describeRound,
@@ -610,14 +609,16 @@ test('a loop whose conversation is folded is told it has one, folded behind its 
   assert.match(LOOP_RULES, /Your reply is the conversation in your work's tile/)
   // Everything else is the same.
   assert.match(quiet, /call build_plugin with the whole request/)
-  assert.match(ROUTER_RULES, /called by its number, like loop_3/)
+  assert.match(ROUTER_RULES, /called by its number, like room_3/)
 })
 
 test('the rules say what calling a tool marked (has a view) does, to the agent that shows it and to the one that does not', () => {
   assert.match(LOOP_RULES, /marked \(has a view\) puts its server's own view of the answer on the grid/)
   assert.match(LOOP_RULES, /do not place a table or a document for the same result/)
-  // The orchestrator calls no source, so it is told nothing of what calling one does.
-  assert.doesNotMatch(ROUTER_RULES, /has a view|run_source/)
+  // Central answers fast queries in chat and never places views on the grid.
+  assert.doesNotMatch(ROUTER_RULES, /has a view/)
+  assert.match(ROUTER_RULES, /3 to 6 seconds/)
+  assert.match(ROUTER_RULES, /systemPrompt/)
 })
 
 test("a loop's agent is told how soon what it shows has to show, and to keep long waits out of it; the orchestrator, which shows nothing, is not", () => {
@@ -635,8 +636,8 @@ test('the rules say how much of the conversation the orchestrator is sent, by th
   assert.match(ROUTER_RULES, /say you no longer have it and ask, rather than guess/)
 })
 
-test('the orchestrator is told to oversee the loops and route work, by the tools that inspect and hold work, and of no tool that drives a view', () => {
-  for (const tool of ['create_loop', 'update_loop', 'read_loop', 'delete_loop', 'get', 'query']) {
+test('the orchestrator is told to oversee the rooms and route work, by the tools that inspect and hold work, and of no tool that drives a view', () => {
+  for (const tool of ['create_room', 'update_room', 'read_room', 'search_rooms', 'delete_room', 'get', 'query']) {
     assert.match(ROUTER_RULES, new RegExp(`\\b${tool}\\b`), tool)
   }
   for (const tool of VIEW_TOOLS) {
@@ -646,11 +647,11 @@ test('the orchestrator is told to oversee the loops and route work, by the tools
   assert.match(ROUTER_RULES, /never to a second piece/)
   assert.match(ROUTER_RULES, /to bring a view's data up to date now, call refresh_element\./)
   assert.doesNotMatch(ROUTER_RULES, /only about the app itself/)
-  assert.doesNotMatch(ROUTER_RULES, /update_loop[^.]*a question about what it shows/)
-  assert.match(ROUTER_RULES, /read_loop[^.]*get[^.]*query/)
+  assert.doesNotMatch(ROUTER_RULES, /update_room[^.]*a question about what it shows/)
+  assert.match(ROUTER_RULES, /read_room[^.]*get[^.]*query/)
   assert.match(
     ROUTER_RULES,
-    /Never send a question about what a loop shows or why it looks the way it does, or a request to summarize, explain, or compare what a loop or its views already show, to update_loop/,
+    /Never send a question about what a room shows or why it looks the way it does, or a request to summarize, explain, or compare what a room or its views already show, to update_room/,
   )
 })
 
@@ -666,24 +667,24 @@ test('the rules tell the assistant to run shell commands with run_shell when off
     ROUTER_RULES,
     /Answer in words yourself when words are the whole answer: [^.]*a command to run, a skill to write or publish\./,
   )
-  assert.match(ROUTER_RULES, /call run_shell\b[^.]*rather than starting a loop or scheduling a task/)
+  assert.match(ROUTER_RULES, /call run_shell\b[^.]*rather than starting a room or scheduling a task/)
   for (const rules of [ROUTER_RULES, LOOP_RULES, loopRules(false)]) {
     assert.match(rules, /when run_shell is not in your tools[^.]*Settings > Pro mode/)
   }
 })
 
-test('the orchestrator is told create_loop asks the user first, and to ask which place a request belongs in when that is not certain', () => {
+test('the orchestrator is told create_room asks the user first, and to ask which place a request belongs in when that is not certain', () => {
   // The tool asks, so the model is told not to: one question, not two.
   assert.match(
     ROUTER_RULES,
-    /Start one with create_loop[^.]*\. It asks the user whether to start that work before anything is made, so do not ask that yourself\./,
+    /Start one with create_room[^.]*\. It asks the user whether to start that work before anything is made, so do not ask that yourself\./,
   )
   assert.match(
     ROUTER_RULES,
     /When the request is unclear, or it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them/,
   )
   assert.match(ROUTER_RULES, /never settle that yourself when it could go either way/)
-  // A loop's agent routes nothing, and is told none of it.
+  // A room's agent routes nothing, and is told none of it.
   for (const rules of [loopRules(true), loopRules(false)]) {
     assert.doesNotMatch(rules, /ask the user which with ask_user/)
     assert.doesNotMatch(rules, /whether to start that work/)
@@ -744,7 +745,7 @@ test('the call that sets up work is told of every view with its state, every sou
   assert.deepEqual(catalog.split('\n')[0], describeInstalled(state).split('\n')[0])
 })
 
-test('the orchestrator is told each loop on the workspace by its name: what it is doing, what it is, its tile, and the closed ones', () => {
+test('the orchestrator is told each room on the tab by its name: what it is doing, what it is, its tile, rooms on other tabs, and the closed ones', () => {
   assert.equal(
     describeLoops(tree(EMPTY_GRID), WS, () => 'idle'),
     'Work on this workspace: none.',
@@ -758,19 +759,30 @@ test('the orchestrator is told each loop on the workspace by its name: what it i
     describeLoops(state, WS, (loop) => (loop.id === 'f2' ? 'working' : 'idle')),
     [
       'Work on this workspace, each piece with a tile and an agent of its own:',
-      '- loop_1, idle: "Note". Tile: e1.',
-      '- loop_2, working: "Backtest FLWS". Tile: e2.',
+      '- room_1, idle: "Note". Tile: e1.',
+      '- room_2, working: "Backtest FLWS". Tile: e2.',
     ].join('\n'),
   )
   const closed = { ...NOTE_LOOP, id: 'f3', desc: 'Screen' }
   assert.equal(
     describeLoops({ ...tree(EMPTY_GRID), closedLoops: { [WS]: [closed] } }, WS, () => 'idle'),
-    'Work on this workspace: none.\nClosed work, which reopen_loop brings back: loop_3, "Screen".',
+    'Work on this workspace: none.\nClosed work, which reopen_room brings back: room_3, "Screen".',
   )
-  // Another workspace's work is its own business.
+  // Central also sees rooms open on other tabs with their tab-specific status so it has full context across the terminal.
   assert.equal(
-    describeLoops({ ...state, loops: { other: [backtest] } }, WS, () => 'idle'),
-    'Work on this workspace: none.',
+    describeLoops(
+      {
+        ...state,
+        workspaces: [
+          { id: WS, name: 'Tab 1' },
+          { id: 'other', name: 'Tab 2' },
+        ],
+        loops: { other: [backtest] },
+      },
+      WS,
+      (loop, tabId) => (tabId === 'other' && loop.id === 'f2' ? 'working' : 'idle'),
+    ),
+    'Work on this workspace: none.\nRooms open on other tabs: room_2 (in Tab 2, working): "Backtest FLWS".',
   )
 })
 
@@ -906,7 +918,7 @@ test("a loop's agent is told its tile, how the views inside it are laid out, and
   assert.equal(
     describeTiles(state, WS, NOTE_LOOP, () => 'How a note works.'),
     [
-      'Your tile, of loop_1: e1 in window 1, [0,0 8×12] A1:H12. Inside it:',
+      'Your tile, of room_1: e1 in window 1, [0,0 8×12] A1:H12. Inside it:',
       'e2 [0,0 16×8] view core/note: "a"',
       'e3 [0,8 16×4] view tradingview/chart: "tradingview/chart"  ← focused',
       'free: none',
@@ -920,22 +932,6 @@ test("a loop's agent is told its tile, how the views inside it are laid out, and
       'output: null',
     ].join('\n'),
   )
-})
-
-test("a loop's agent is told the other work by name with its views' ids, so loop_2 is a get away", () => {
-  const frame = placeView(EMPTY_GRID, { content: { kind: 'frame' }, size: 'half', anchor: 'left', loop: 'f1' })
-  const other = placeView(layoutOf(frame.grid), { content: { kind: 'frame' }, loop: 'f2' })
-  const both = withLayout(frame.grid, undefined, other.grid)
-  const grid = inside(both, 'e2', { content: { kind: 'view', view: 'core/note' }, state: { text: 'a' }, loop: 'f2' })
-  const screener = { ...NOTE_LOOP, id: 'f2', desc: 'Screener: food and retail' }
-  const empty = { ...NOTE_LOOP, id: 'f3', desc: 'Not placed' }
-  const state = { ...tree(grid), loops: { [WS]: [NOTE_LOOP, screener, empty] } }
-  assert.deepEqual(describeOtherWork(state, WS, 'f1'), [
-    'Other work on this workspace, by the name the user calls it; read_loop reads one, get reads its views:',
-    '- loop_2: "Screener: food and retail", tile e2, views e3.',
-    '- loop_3: "Not placed", no tile.',
-  ])
-  assert.deepEqual(describeOtherWork({ ...state, loops: { [WS]: [NOTE_LOOP] } }, WS, 'f1'), [])
 })
 
 test('what is running, the time, and the tasks are said the same with or without a focus line', () => {
@@ -1027,7 +1023,7 @@ test('reading a loop gives its record, its status, its tile with what the views 
     ],
     () => undefined,
   )
-  assert.match(read, /^loop_1: Note\n/)
+  assert.match(read, /^room_1: Note\n/)
   assert.match(read, /\nstatus: idle\n/)
   assert.match(read, /\nbrief: Keep the note\.\n/)
   assert.match(read, /\nplugins: news\n/)
@@ -1041,7 +1037,7 @@ test('reading a loop gives its record, its status, its tile with what the views 
   )
 })
 
-test('a view that threw in its frame exposes its error in focus, in its tile, and in read_loop', () => {
+test('a view that threw in its frame exposes its error in focus, in its tile, and in read_room', () => {
   const frame = placeView(EMPTY_GRID, { content: { kind: 'frame' }, loop: 'f1' })
   const placed = inside(frame.grid, 'e1', {
     content: { kind: 'view', view: 'option-chain/table' },
@@ -1074,7 +1070,7 @@ test('a tile that holds no view yet says so, to its agent and to whoever reads i
   const state = tree(placed.grid)
   assert.equal(
     describeTiles(state, WS, NOTE_LOOP, () => undefined),
-    'Your tile, of loop_1: e1 in window 1, [0,0 8×6] A1:H6. Nothing is inside it yet.',
+    'Your tile, of room_1: e1 in window 1, [0,0 8×6] A1:H6. Nothing is inside it yet.',
   )
   assert.match(
     describeLoop(state, WS, NOTE_LOOP, 'working', [], () => undefined),
@@ -1088,7 +1084,7 @@ test('the focused tile of a piece of work is said by the work it is, since that 
   const state = { ...tree(grid), loops: { [WS]: [NOTE_LOOP] } }
   assert.equal(
     describeRound(state, WS, instructionsFor, CLOCK).split('\n')[0],
-    'Focused element e1, the tile of loop_1.',
+    'Focused element e1, the tile of room_1.',
   )
 })
 

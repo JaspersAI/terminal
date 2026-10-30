@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { AgentEvent, AgentOrigin } from '../shared/agent/agent'
 import type { AttachedFile } from '../shared/agent/attachments'
+import type { TerminalSession } from '../shared/agent/history'
 import type { AppOpened } from '../shared/plugins/apps'
 import type { BrowserAction, BrowserBounds, BrowserSnapshot } from '../shared/grid/browser'
 import type { ConnectionForm } from '../shared/plugins/connection-plugin'
@@ -20,8 +21,10 @@ import { MAIN_WINDOW, WINDOWS_MAX } from '../shared/grid/windows'
 // Everything the renderer may touch goes through this bridge.
 const api = {
   platform: process.platform,
-  /** Which window this page is, from its URL: 1 is the main window, the rest are extensions. */
+  /** Which window this page is, from its URL: 1 is the main window, >1 is a detached "Terminal (copy)" window. */
   windowNumber: readWindowNumber(),
+  /** The tab a detached "Terminal (copy)" window was opened to show, if any. */
+  initialTabId: new URLSearchParams(window.location.search).get('tab') || null,
   versions: {
     electron: process.versions.electron,
     chrome: process.versions.chrome,
@@ -79,6 +82,13 @@ const api = {
      */
     history: (limit: number, before?: number, loop?: string): Promise<Exchange[]> =>
       ipcRenderer.invoke('agent:history', limit, before ?? null, loop ?? null),
+    /** Clears Central's single conversation flow across all tabs: thread and log. */
+    clear: (): Promise<void> => ipcRenderer.invoke('agent:clear'),
+    /** Returns all saved Terminal Sessions from start to finish (newest first). */
+    sessions: (): Promise<TerminalSession[]> => ipcRenderer.invoke('agent:sessions'),
+    /** Records a direct assistant exchange (such as an attachment error response) in the conversation log. */
+    logExchange: (question: string, answer: string, loop?: string): Promise<void> =>
+      ipcRenderer.invoke('agent:log-exchange', question, answer, loop ?? null),
     /** The welcome after setup, once the workspace is on screen: main says its messages into the chat on its own. */
     welcome: (): Promise<void> => ipcRenderer.invoke('agent:welcome'),
     /** What a run is doing, as it does it. For showing only: the reply comes back from `run`. */
@@ -230,6 +240,10 @@ const api = {
     detach: (workspaceId: string, panelId: string): Promise<void> =>
       ipcRenderer.invoke('browser:detach', workspaceId, panelId),
     onState: (listener: (snapshot: BrowserSnapshot) => void): (() => void) => on('browser:state', listener),
+    syncOrb: (state: { visible: boolean; x: number; y: number; size: number; phase: string; logoSrc: string }): void =>
+      ipcRenderer.send('orb:sync', state),
+    onOrbPointer: (listener: (event: { kind: 'click' | 'move'; x?: number; y?: number }) => void): (() => void) =>
+      on('orb:pointer', listener),
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:open-external', url),
   /** Settings: opens the signed-in account's page on Account in the browser. Takes no address; main knows where Account is. */

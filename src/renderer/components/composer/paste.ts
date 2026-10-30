@@ -126,7 +126,10 @@ export function clipboardFiles(clipboardData: ClipboardSource | null | undefined
  * `pastedText`, where the selection is, as typing would put it, so the field's own change and undo
  * see it. Anything else is left to the field.
  */
-export function pasteLinks(event: ClipboardEvent<HTMLInputElement>, onFiles?: (files: File[]) => void): void {
+export function pasteLinks(
+  event: ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+  onFiles?: (files: File[]) => void,
+): void {
   if (onFiles) {
     const files = clipboardFiles(event.clipboardData)
     if (files.length > 0) {
