@@ -38,7 +38,6 @@ export function Composer(): ReactElement {
   const notices = useAppState((s) => s.notices)
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
   const [expanded, setExpanded] = useState(false)
-  const [focused, setFocused] = useState(false)
   const request = useRequest()
   const {
     draft,
@@ -69,10 +68,11 @@ export function Composer(): ReactElement {
     ? (latestLive.steps[latestLive.steps.length - 1] ?? (latestLive.answer ? firstLineOf(latestLive.answer) : null))
     : null
 
-  // In 1-line collapsed mode, when the user is not typing (`draft === ''`) and the input is not focused,
-  // display the first line of the processed response (or active status/notice) in alternating response style.
+  // In 1-line collapsed mode, when `draft === ''`, display the first line of the processed response
+  // (or active voice/step status) in alternating italic/muted response style. Clicking or typing
+  // clears the preview immediately so the user types fresh.
   const previewText =
-    draft === '' && !focused
+    draft === ''
       ? (voiceStatus ??
         liveStep ??
         responsePreview ??
@@ -192,11 +192,9 @@ export function Composer(): ReactElement {
                     aria-label="Command the terminal from here"
                     autoComplete="off"
                     spellCheck={false}
-                    onFocus={() => {
-                      setFocused(true)
-                      clearResponsePreview()
+                    onPointerDown={() => {
+                      if (showingPreview) clearResponsePreview()
                     }}
-                    onBlur={() => setFocused(false)}
                     onKeyDown={onKeyDown}
                     onChange={(event) => setDraft(event.target.value)}
                     className="h-4 min-w-0 flex-1 bg-transparent text-xs leading-4 text-foreground outline-none disabled:opacity-50"
@@ -257,12 +255,15 @@ export function Composer(): ReactElement {
                   aria-label="Command the terminal from here"
                   autoComplete="off"
                   spellCheck={false}
-                  onFocus={() => {
-                    setFocused(true)
+                  onPointerDown={() => {
                     if (showingPreview) clearResponsePreview()
                   }}
-                  onBlur={() => setFocused(false)}
-                  onKeyDown={onKeyDown}
+                  onKeyDown={(event) => {
+                    if (showingPreview && event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                      clearResponsePreview()
+                    }
+                    onKeyDown(event)
+                  }}
                   onChange={(event) => {
                     if (showingPreview) {
                       clearResponsePreview()
