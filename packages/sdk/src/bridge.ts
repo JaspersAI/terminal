@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
-import type { RunResult } from './datasets'
-import type { QueryResult } from './query'
+import type { RunResult } from './datasets.ts'
+import type { QueryResult } from './query.ts'
 
 // The one surface a view talks to the app through. A built-in view gets the host's own bridge over
 // the tree; a plugin view in an iframe will get one over postMessage that answers the same calls,

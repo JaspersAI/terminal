@@ -40,7 +40,7 @@ function withWindow<T>(
 test('after panel state is loaded, usePanelState and useData read keys synchronously on first render and preserve null', async () => {
   await withWindow(async (host) => {
     const panelState = {
-      symbols: ['FLWS', 'BRCB', 'GO', 'CWH', 'JBSS', 'WEN', '^GSPC'],
+      symbols: ['000300.SS', '^GSPC', 'AAPL'],
       interval: '15m',
       mode: 'lines',
       active: null,
@@ -98,7 +98,7 @@ test('after panel state is loaded, usePanelState and useData read keys synchrono
       const [symbols] = usePanelState(p, 'symbols', ['AAPL'])
       const [interval] = usePanelState(p, 'interval', '1d')
       const [volume] = usePanelState(p, 'volume', true)
-      const [active] = usePanelState<string | null>(p, 'active', 'FLWS')
+      const [active] = usePanelState<string | null>(p, 'active', '000300.SS')
       rendered = { stateDefined: true, interval, volume, active, symbolsCount: symbols.length }
       return createElement('div', null, `${interval}:${String(volume)}:${String(active)}:${symbols.length}`)
     }
@@ -117,13 +117,13 @@ test('after panel state is loaded, usePanelState and useData read keys synchrono
       ),
     )
 
-    assert.equal(html, '<div>15m:false:null:7</div>')
+    assert.equal(html, '<div>15m:false:null:3</div>')
     assert.deepEqual(rendered, {
       stateDefined: true,
       interval: '15m',
       volume: false,
       active: null,
-      symbolsCount: 7,
+      symbolsCount: 3,
     })
     assert.deepEqual(setStateCalls, [])
 

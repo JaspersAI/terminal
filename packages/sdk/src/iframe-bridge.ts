@@ -26,6 +26,10 @@ function setInRecord(
   return { ...record, [head]: setInRecord(current, rest, value) }
 }
 
+function sameCachedValue(a: unknown, b: unknown): boolean {
+  return a === b || (a !== undefined && b !== undefined && stableStringify(a) === stableStringify(b))
+}
+
 /** A view talking to the app it is framed by. One per iframe, built once by boot. */
 export function createIframeBridge(): Bridge {
   const host = window.parent
@@ -33,7 +37,7 @@ export function createIframeBridge(): Bridge {
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
   const listeners = new Map<
     number,
-    { path: string; listener: (value: unknown) => void; seeded: boolean; lastJson: string }
+    { path: string; listener: (value: unknown) => void; seeded: boolean; lastValue: unknown }
   >()
   const cache = new Map<string, unknown>()
 
@@ -102,12 +106,11 @@ export function createIframeBridge(): Bridge {
       const entry = listeners.get(params.subId)
       if (!entry) return
       writeCache(entry.path, params.value)
-      const nextJson = stableStringify(params.value)
       if (entry.seeded) {
         entry.seeded = false
-        if (nextJson === entry.lastJson) return
+        if (sameCachedValue(params.value, entry.lastValue)) return
       }
-      entry.lastJson = nextJson
+      entry.lastValue = params.value
       entry.listener(params.value)
     }
   })
@@ -139,7 +142,6 @@ export function createIframeBridge(): Bridge {
       let live = true
       const seeded = hasCached(path)
       const initial = seeded ? readCached(path) : undefined
-      const lastJson = seeded ? stableStringify(initial) : ''
       if (seeded) listener(initial)
       void call('store.subscribe', { path }).then((id) => {
         if (!live) {
@@ -147,7 +149,7 @@ export function createIframeBridge(): Bridge {
           return
         }
         subId = id as number
-        listeners.set(subId, { path, listener, seeded, lastJson })
+        listeners.set(subId, { path, listener, seeded, lastValue: initial })
       })
       return () => {
         live = false
