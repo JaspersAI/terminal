@@ -171,3 +171,17 @@ test('concurrent flushForQuery calls wait on all matching queued and in-flight r
   assert.ok(order.indexOf('query:1') > h2Done)
   assert.ok(order.indexOf('query:2') > h2Done)
 })
+
+test('foreground aborts while waiting on ready when its signal aborts without running work', async () => {
+  let ran = 0
+  const queue = createStoreQueue({
+    ready: new Promise<void>(() => undefined),
+    sendRecord: async () => undefined,
+    sendUsage: async () => undefined,
+  })
+  const controller = new AbortController()
+  const pending = queue.foreground(async () => ++ran, controller.signal)
+  controller.abort(new Error('init timed out'))
+  await assert.rejects(pending, /init timed out/)
+  assert.equal(ran, 0)
+})
