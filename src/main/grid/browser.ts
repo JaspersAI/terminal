@@ -31,6 +31,7 @@ import {
 } from './browser-manager'
 import { changeZoom, findElement, focus } from './grid'
 import { windowNumberOf, windowOf } from './windows'
+import orbLogoDataUrl from '../../renderer/assets/jaspers-logo-black.png?inline'
 
 // Electron's native `WebContentsView` backing for `core/browser` panels. Each tab runs in the
 // persistent `persist:browser` session partition with sandboxed, context-isolated preferences and a
@@ -126,6 +127,207 @@ const watchedWindows = new WeakSet<BrowserWindow>()
 const inFlightUrlsByWebContentsId = new Map<number, string>()
 let configuredSession: Session | null = null
 let activeManager: BrowserManager | null = null
+
+interface OrbOverlayState {
+  visible: boolean
+  x: number
+  y: number
+  size: number
+  phase: string
+  logoSrc: string
+}
+
+interface OrbOverlayEntry {
+  view: WebContentsView
+  state: OrbOverlayState
+  ready: boolean
+  dragOrigin: { x: number; y: number } | null
+}
+
+const orbOverlays = new WeakMap<BrowserWindow, OrbOverlayEntry>()
+
+function orbHtml(): string {
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #orb {
+    position: relative;
+    width: 84px;
+    height: 84px;
+    border-radius: 9999px;
+    overflow: hidden;
+    cursor: pointer;
+    background: #171717;
+    box-sizing: border-box;
+  }
+  #orb.recording {
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.35);
+  }
+  #orb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+  }
+  #gloss {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    pointer-events: none;
+    background: radial-gradient(circle at 32% 26%, rgba(255,255,255,0.5), rgba(255,255,255,0.06) 42%, rgba(0,0,0,0) 70%);
+    box-shadow: inset 0 -6px 10px rgba(255,255,255,0.14), inset 0 6px 10px rgba(255,255,255,0.2);
+  }
+</style>
+</head>
+<body>
+  <div id="orb">
+    <img id="logo" alt="" draggable="false" />
+    <span id="gloss"></span>
+  </div>
+  <script>
+    const orb = document.getElementById('orb');
+    let drag = null;
+    orb.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      drag = { sx: e.screenX, sy: e.screenY, dragging: false };
+      try { orb.setPointerCapture(e.pointerId); } catch {}
+      console.log('__ORB__:' + JSON.stringify({ kind: 'down' }));
+    });
+    orb.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.screenX - drag.sx;
+      const dy = e.screenY - drag.sy;
+      if (!drag.dragging && Math.hypot(dx, dy) < 10) return;
+      drag.dragging = true;
+      console.log('__ORB__:' + JSON.stringify({ kind: 'move', dx, dy }));
+    });
+    const end = (e) => {
+      if (!drag) return;
+      const wasDragging = drag.dragging;
+      drag = null;
+      try { if (orb.hasPointerCapture(e.pointerId)) orb.releasePointerCapture(e.pointerId); } catch {}
+      if (!wasDragging) console.log('__ORB__:' + JSON.stringify({ kind: 'click' }));
+    };
+    orb.addEventListener('pointerup', end);
+    orb.addEventListener('pointercancel', () => { drag = null; });
+    window.__updateOrb = (logoSrc, phase) => {
+      const img = document.getElementById('logo');
+      if (logoSrc && img.getAttribute('src') !== logoSrc) img.setAttribute('src', logoSrc);
+      orb.className = phase === 'recording' ? 'recording' : '';
+    };
+  </script>
+</body>
+</html>`
+}
+
+function getOrCreateOrbOverlay(win: BrowserWindow): OrbOverlayEntry {
+  let entry = orbOverlays.get(win)
+  if (entry && !entry.view.webContents.isDestroyed()) return entry
+  const view = new WebContentsView({
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  })
+  view.setBackgroundColor('#00000000')
+  view.setVisible(false)
+  entry = {
+    view,
+    state: { visible: false, x: 400, y: 500, size: 84, phase: 'idle', logoSrc: '' },
+    ready: false,
+    dragOrigin: null,
+  }
+  orbOverlays.set(win, entry)
+  view.webContents.on('did-finish-load', () => {
+    if (!entry) return
+    entry.ready = true
+    applyOrbVisuals(entry)
+  })
+  view.webContents.on('console-message', (event) => {
+    const msg = event.message
+    if (!msg.startsWith('__ORB__:')) return
+    try {
+      const payload = JSON.parse(msg.slice('__ORB__:'.length)) as {
+        kind: 'down' | 'move' | 'click'
+        dx?: number
+        dy?: number
+      }
+      if (!entry || win.isDestroyed() || win.webContents.isDestroyed()) return
+      if (payload.kind === 'down') {
+        entry.dragOrigin = { x: entry.state.x, y: entry.state.y }
+      } else if (payload.kind === 'move' && entry.dragOrigin) {
+        const [winW = 1200, winH = 800] = win.getContentSize()
+        const maxX = Math.max(16, winW - entry.state.size - 16)
+        const maxY = Math.max(40, winH - entry.state.size - 32)
+        const nextX = Math.max(16, Math.min(maxX, Math.round(entry.dragOrigin.x + (payload.dx ?? 0))))
+        const nextY = Math.max(40, Math.min(maxY, Math.round(entry.dragOrigin.y + (payload.dy ?? 0))))
+        entry.state.x = nextX
+        entry.state.y = nextY
+        entry.view.setBounds({ x: nextX, y: nextY, width: entry.state.size, height: entry.state.size })
+        win.webContents.send('orb:pointer', { kind: 'move', x: nextX, y: nextY })
+      } else if (payload.kind === 'click') {
+        win.webContents.send('orb:pointer', { kind: 'click' })
+      }
+    } catch {
+      // ignore malformed message
+    }
+  })
+  void view.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(orbHtml())}`)
+  win.once('closed', () => {
+    if (!view.webContents.isDestroyed()) view.webContents.close()
+  })
+  return entry
+}
+
+function applyOrbVisuals(entry: OrbOverlayEntry): void {
+  if (!entry.ready || entry.view.webContents.isDestroyed()) return
+  const logoSrc = entry.state.logoSrc.startsWith('data:') ? entry.state.logoSrc : orbLogoDataUrl
+  const { phase } = entry.state
+  void entry.view.webContents
+    .executeJavaScript(`window.__updateOrb && window.__updateOrb(${JSON.stringify(logoSrc)}, ${JSON.stringify(phase)})`)
+    .catch(() => undefined)
+}
+
+function syncOrbInWindow(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const entry = orbOverlays.get(win)
+  if (!entry || entry.view.webContents.isDestroyed()) return
+  const hasBrowserChildren = win.contentView.children.some((c) => c !== entry.view)
+  if (entry.state.visible && hasBrowserChildren) {
+    const children = win.contentView.children
+    if (children[children.length - 1] !== entry.view) {
+      win.contentView.addChildView(entry.view)
+    }
+    entry.view.setBounds({
+      x: Math.round(entry.state.x),
+      y: Math.round(entry.state.y),
+      width: Math.round(entry.state.size),
+      height: Math.round(entry.state.size),
+    })
+    entry.view.setVisible(true)
+    applyOrbVisuals(entry)
+  } else {
+    entry.view.setVisible(false)
+    if (win.contentView.children.includes(entry.view)) {
+      win.contentView.removeChildView(entry.view)
+    }
+  }
+}
 
 function browserWebPreferences(part: Session): WebPreferences {
   return {
@@ -436,11 +638,13 @@ function wrapWindow(number: number, win: BrowserWindow): ManagedWindow {
       const raw = nativeViews.get(view)
       if (!raw || win.isDestroyed() || raw.webContents.isDestroyed()) return
       if (!win.contentView.children.includes(raw)) win.contentView.addChildView(raw)
+      syncOrbInWindow(win)
     },
     detach: (view) => {
       const raw = nativeViews.get(view)
       if (!raw || win.isDestroyed() || raw.webContents.isDestroyed()) return
       if (win.contentView.children.includes(raw)) win.contentView.removeChildView(raw)
+      syncOrbInWindow(win)
     },
     sendState: (snapshot) => {
       if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('browser:state', snapshot)
@@ -512,6 +716,24 @@ export function registerBrowserIpc(): void {
   )
   ipcMain.handle('browser:detach', (event, workspaceId: unknown, panelId: unknown) => {
     manager().detach(windowNumberOf(event.sender), workspaceId, panelId)
+  })
+  ipcMain.on('orb:sync', (event, raw: unknown) => {
+    const winNum = windowNumberOf(event.sender)
+    if (winNum === null) return
+    const win = windowOf(winNum)
+    if (!win || win.isDestroyed()) return
+    const payload = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<OrbOverlayState>
+    if (!payload.visible && !orbOverlays.has(win)) return
+    const entry = getOrCreateOrbOverlay(win)
+    entry.state = {
+      visible: Boolean(payload.visible),
+      x: typeof payload.x === 'number' ? payload.x : entry.state.x,
+      y: typeof payload.y === 'number' ? payload.y : entry.state.y,
+      size: typeof payload.size === 'number' ? payload.size : 84,
+      phase: typeof payload.phase === 'string' ? payload.phase : 'idle',
+      logoSrc: typeof payload.logoSrc === 'string' ? payload.logoSrc : entry.state.logoSrc,
+    }
+    syncOrbInWindow(win)
   })
 }
 

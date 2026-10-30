@@ -240,6 +240,10 @@ const api = {
     detach: (workspaceId: string, panelId: string): Promise<void> =>
       ipcRenderer.invoke('browser:detach', workspaceId, panelId),
     onState: (listener: (snapshot: BrowserSnapshot) => void): (() => void) => on('browser:state', listener),
+    syncOrb: (state: { visible: boolean; x: number; y: number; size: number; phase: string; logoSrc: string }): void =>
+      ipcRenderer.send('orb:sync', state),
+    onOrbPointer: (listener: (event: { kind: 'click' | 'move'; x?: number; y?: number }) => void): (() => void) =>
+      on('orb:pointer', listener),
   },
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:open-external', url),
   /** Settings: opens the signed-in account's page on Account in the browser. Takes no address; main knows where Account is. */

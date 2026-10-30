@@ -41,6 +41,42 @@ export function FloatingOrb(): ReactElement {
   useEffect(() => spring.set({ scale }), [spring, scale])
   useEffect(() => () => spring.stop(), [spring])
 
+  const stateRef = useRef({ hasVoice, toggleVoice })
+  stateRef.current = { hasVoice, toggleVoice }
+
+  // Keep the native top-layer Orb overlay synchronized so the Orb stays in front of native core/browser views.
+  useEffect(() => {
+    window.app.browser?.syncOrb?.({
+      visible: true,
+      x: pos.x,
+      y: pos.y,
+      size: ORB_DIAMETER_PX,
+      phase,
+      logoSrc: logo,
+    })
+  }, [pos.x, pos.y, phase])
+
+  useEffect(() => {
+    const off = window.app.browser?.onOrbPointer?.((event) => {
+      if (event.kind === 'move' && typeof event.x === 'number' && typeof event.y === 'number') {
+        setPos({ x: event.x, y: event.y })
+      } else if (event.kind === 'click') {
+        if (stateRef.current.hasVoice) stateRef.current.toggleVoice('orb')
+      }
+    })
+    return () => {
+      off?.()
+      window.app.browser?.syncOrb?.({
+        visible: false,
+        x: 0,
+        y: 0,
+        size: ORB_DIAMETER_PX,
+        phase: 'idle',
+        logoSrc: '',
+      })
+    }
+  }, [])
+
   const dragRef = useRef<{
     startX: number
     startY: number
@@ -118,7 +154,7 @@ export function FloatingOrb(): ReactElement {
       id="floating-voice-orb"
       data-floating-orb
       style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
-      className="fixed z-40 select-none"
+      className="fixed z-50 select-none"
     >
       <button
         ref={button}

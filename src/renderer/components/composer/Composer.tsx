@@ -141,12 +141,14 @@ export function Composer(): ReactElement {
   return (
     <div id="composer" className="flex min-w-0 flex-1 items-start">
       {secretRequest !== null ? (
-        <div className="w-full">
-          <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} />
+        <div data-command-line-column className="flex w-full min-w-0 flex-1 items-center gap-1">
+          <SecretField compact key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} />
+          <span className="h-6 w-5 shrink-0" aria-hidden />
         </div>
       ) : question !== null ? (
-        <div className="w-full">
-          <QuestionField key={question.id} question={question} />
+        <div data-command-line-column className="flex w-full min-w-0 flex-1 items-center gap-1">
+          <QuestionField compact key={question.id} question={question} />
+          <span className="h-6 w-5 shrink-0" aria-hidden />
         </div>
       ) : (
         <form onSubmit={submit} data-command-line-column className="flex w-full min-w-0 flex-1 items-start gap-1">

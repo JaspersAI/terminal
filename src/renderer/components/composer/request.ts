@@ -74,8 +74,9 @@ function subscribeCentral(listener: () => void): () => void {
   if (!listeningEvents && typeof window !== 'undefined' && window.app?.agent) {
     listeningEvents = true
     window.app.agent.onEvent((event) => {
+      const isCentralRun = store.live.some((one) => one.runId === event.runId && !one.handed)
       const nextLive = heard(store.live, event)
-      if (event.kind === 'done' && event.text.trim()) {
+      if (isCentralRun && event.kind === 'done' && event.text.trim()) {
         const clearOrbDraft = orbDraftText !== null && store.draft === orbDraftText
         if (clearOrbDraft) orbDraftText = null
         emitStore({
@@ -83,7 +84,7 @@ function subscribeCentral(listener: () => void): () => void {
           ...(clearOrbDraft ? { draft: '' } : {}),
           responsePreview: firstLineOf(event.text),
         })
-      } else if (event.kind === 'failed' && event.message.trim()) {
+      } else if (isCentralRun && event.kind === 'failed' && event.message.trim()) {
         const clearOrbDraft = orbDraftText !== null && store.draft === orbDraftText
         if (clearOrbDraft) orbDraftText = null
         emitStore({
