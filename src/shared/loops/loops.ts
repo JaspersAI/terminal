@@ -148,6 +148,11 @@ export function loopName(id: string): string {
   return `room_${loopNumber(id)}`
 }
 
+/** What a room is titled in the UI: Room 3 for f3. */
+export function loopTitle(id: string): string {
+  return `Room ${loopNumber(id)}`
+}
+
 /** The plugin of the Jaspers deep research agent: its research rooms. */
 export const DEEP_RESEARCH_PLUGIN = 'research'
 
@@ -222,7 +227,7 @@ export function named(loops: readonly Loop[], text: string): Loop | undefined {
  * no room by name, which leaves it the orchestrator's.
  */
 export function addressed(loops: readonly Loop[], input: string): { loop: Loop; message: string } | null {
-  const match = /^@(?:room|loop)[_-]?([1-9]\d*)\s+(\S[\s\S]*)$/i.exec(input.trim())
+  const match = /^@(?:room|loop)[ _-]?([1-9]\d*)\s+(\S[\s\S]*)$/i.exec(input.trim())
   const loop = match ? loops.find((one) => one.id === `f${match[1]}`) : undefined
   return loop ? { loop, message: match![2]! } : null
 }

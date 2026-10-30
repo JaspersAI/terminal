@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TerminalSession } from '../../../shared/agent/history'
 import type { Exchange } from '../../../shared/agent/transcript'
 import { CHANGE_TEXT, globalRoomLog, searchRooms, type GlobalLogEntry } from '../../../shared/loops/closed'
-import { loopName } from '../../../shared/loops/loops'
+import { loopTitle } from '../../../shared/loops/loops'
 import { shortLocal } from '../../../shared/tasks/tasks'
 import { errorMessage } from '../../lib/errors'
 import { currentWorkspace, dispatch, useAppState } from '../../lib/state'
@@ -379,7 +379,7 @@ function LogRow({ entry, currentTabId, when, onJump, onClose, onReopen, onDelete
     >
       <div className="min-w-0 flex-1 text-sm">
         <p className="truncate">
-          <span className="font-medium">{loopName(loop.id)}</span>
+          <span className="font-medium">{loopTitle(loop.id)}</span>
           <span className={open ? 'text-foreground' : 'text-muted-foreground'}>
             {' · '}
             {open ? `Open in ${workspaceName}` : 'Saved in memory'}

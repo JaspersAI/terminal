@@ -28,7 +28,7 @@ import { noteZoom } from '../../lib/eye'
 import { useAppState } from '../../lib/state'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
-import { loopName, showsChat } from '../../../shared/loops/loops'
+import { loopTitle, showsChat } from '../../../shared/loops/loops'
 import { barLabel, boxActivity, canZoomLoop, tileBoxSeen } from './box'
 import { LoopBox, updateTileBox, useTileBox } from './LoopBox'
 import { LoopMenu } from './LoopMenu'
@@ -138,7 +138,7 @@ export function ElementFrame({
   const place = useMemo(() => ({ workspaceId, on: element.id }), [workspaceId, element.id])
   const { expanded, live, earlier } = useTileBox(place)
   const activity = useMemo(() => boxActivity(live), [live])
-  const called = loop ? loopName(loop.id) : ''
+  const called = loop ? loopTitle(loop.id) : ''
   const { x, y, w, h } = rect
   const content = panel?.content
   const title = content?.kind === 'view' ? (views[content.view]?.title ?? content.view) : ''
