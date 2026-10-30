@@ -27,8 +27,17 @@ export const PAGE = 100
 /** The microphone's part of a request: nothing typed or said can be sent while it has the floor. */
 type Voice = Exclude<Phase, 'thinking'>
 
+export function firstLineOf(text: string): string {
+  for (const raw of text.split(/\r?\n/)) {
+    const clean = raw.replace(/^[#>*\-\s]+/, '').trim()
+    if (clean) return clean
+  }
+  return text.trim()
+}
+
 interface CentralStore {
   draft: string
+  responsePreview: string | null
   voice: Voice
   error: string | null
   live: LiveExchange[]
@@ -39,6 +48,7 @@ interface CentralStore {
 
 let store: CentralStore = {
   draft: '',
+  responsePreview: null,
   voice: 'idle',
   error: null,
   live: [],
@@ -50,6 +60,8 @@ let store: CentralStore = {
 const listeners = new Set<() => void>()
 const recorder = new Recorder()
 let pressed = false
+let voiceSource: 'orb' | 'command' = 'command'
+let orbDraftText: string | null = null
 let listeningEvents = false
 
 function emitStore(patch: Partial<CentralStore>): void {
@@ -61,7 +73,26 @@ function subscribeCentral(listener: () => void): () => void {
   if (!listeningEvents && typeof window !== 'undefined' && window.app?.agent) {
     listeningEvents = true
     window.app.agent.onEvent((event) => {
-      emitStore({ live: heard(store.live, event) })
+      const nextLive = heard(store.live, event)
+      if (event.kind === 'done' && event.text.trim()) {
+        const clearOrbDraft = orbDraftText !== null && store.draft === orbDraftText
+        if (clearOrbDraft) orbDraftText = null
+        emitStore({
+          live: nextLive,
+          ...(clearOrbDraft ? { draft: '' } : {}),
+          responsePreview: firstLineOf(event.text),
+        })
+      } else if (event.kind === 'failed' && event.message.trim()) {
+        const clearOrbDraft = orbDraftText !== null && store.draft === orbDraftText
+        if (clearOrbDraft) orbDraftText = null
+        emitStore({
+          live: nextLive,
+          ...(clearOrbDraft ? { draft: '' } : {}),
+          responsePreview: firstLineOf(event.message),
+        })
+      } else {
+        emitStore({ live: nextLive })
+      }
     })
   }
   listeners.add(listener)
@@ -77,8 +108,19 @@ function changeLive(to: (list: LiveExchange[]) => LiveExchange[]): void {
 }
 
 export function setCentralDraft(draft: string): void {
-  if (store.draft === draft) return
-  emitStore({ draft })
+  orbDraftText = null
+  if (store.draft === draft && store.responsePreview === null) return
+  emitStore({ draft, responsePreview: null })
+}
+
+export function clearResponsePreview(): void {
+  if (store.responsePreview === null && orbDraftText === null) return
+  const clearOrb = orbDraftText !== null && store.draft === orbDraftText
+  orbDraftText = null
+  emitStore({
+    responsePreview: null,
+    ...(clearOrb ? { draft: '' } : {}),
+  })
 }
 
 export function setOrbOpen(orbOpen: boolean): void {
@@ -103,12 +145,20 @@ async function reread(fresh: boolean): Promise<void> {
 
 /**
  * Sends one request to Central. Replicated across the top command line and Docked Central room.
+ * When `options.fromOrb` is true, keeps the transcribed user text visible in the command line while
+ * Central processes the request, then transitions to the first line of the response preview.
  */
-export async function askCentral(text: string): Promise<void> {
-  emitStore({ error: null })
+export async function askCentral(text: string, options?: { fromOrb?: boolean }): Promise<void> {
+  emitStore({ error: null, responsePreview: null })
   if (/^\/clear\s*$/i.test(text.trim())) {
     clearCentralStore()
     return
+  }
+  if (options?.fromOrb) {
+    orbDraftText = text
+    emitStore({ draft: text, responsePreview: null })
+  } else {
+    orbDraftText = null
   }
   await reread(true)
   const name = crypto.randomUUID()
@@ -119,27 +169,42 @@ export async function askCentral(text: string): Promise<void> {
   try {
     const reply = await window.app.agent.run(text, name)
     console.log('[agent]', reply)
-    changeLive((list) => answered(list, name, reply))
+    const clearOrbDraft = orbDraftText !== null && store.draft === orbDraftText
+    if (clearOrbDraft) orbDraftText = null
+    emitStore({
+      live: answered(store.live, name, reply),
+      ...(clearOrbDraft ? { draft: '' } : {}),
+      ...(reply.trim() ? { responsePreview: firstLineOf(reply) } : {}),
+    })
     if (!reply) void reread(false)
   } catch (err) {
-    changeLive((list) => failed(list, name, errorMessage(err)))
+    const msg = errorMessage(err)
+    const clearOrbDraft = orbDraftText !== null && store.draft === orbDraftText
+    if (clearOrbDraft) orbDraftText = null
+    emitStore({
+      live: failed(store.live, name, msg),
+      ...(clearOrbDraft ? { draft: '' } : {}),
+      responsePreview: firstLineOf(msg),
+    })
   }
 }
 
 export function clearCentralStore(): void {
-  emitStore({ earlier: [], live: [], error: null })
+  orbDraftText = null
+  emitStore({ earlier: [], live: [], error: null, responsePreview: null })
   void window.app.agent.clear().catch(() => undefined)
 }
 
 /**
  * Surfaces an error (such as an attachment error) as a regular LLM response in Central's
- * conversation flow rather than sticking on top of the command line.
+ * conversation flow and sets the 1-line response preview.
  */
 export function reportCentralResponse(question: string, answer: string): void {
   const name = crypto.randomUUID()
   const next = answered(sent(store.live, name, CENTRAL_CHAT, question), name, answer)
   emitStore({
     error: null,
+    responsePreview: firstLineOf(answer),
     sequence: store.sequence + 1,
     live: next,
   })
@@ -151,28 +216,43 @@ async function attemptVoice(action: () => Promise<void>): Promise<void> {
   try {
     await action()
   } catch (err) {
-    emitStore({ error: errorMessage(err), voice: 'idle' })
+    const msg = errorMessage(err)
+    emitStore({ error: msg, voice: 'idle', responsePreview: firstLineOf(msg) })
   }
 }
 
-async function finishVoice(): Promise<void> {
+async function finishVoice(source: 'orb' | 'command'): Promise<void> {
   const recording = await recorder.stop()
-  if (recording.durationMs < 400) {
-    throw new Error('Too short. Hold until it says Listening, speak, then release.')
-  }
   emitStore({ voice: 'transcribing' })
   const text = await window.app.voice.transcribe(recording.audio, recording.mimeType)
   if (!text) throw new Error('Did not catch that. Try again.')
   console.log('[voice] heard:', text)
-  emitStore({ voice: 'idle' })
-  void askCentral(text)
+  // Always populate the command line with the user's transcribed words.
+  emitStore({ voice: 'idle', draft: text, responsePreview: null })
+  if (source === 'orb') {
+    // Orb auto-submits while keeping the transcribed text visible in the command line until answered.
+    void askCentral(text, { fromOrb: true })
+  }
 }
 
-export function pressVoice(): void {
-  if (store.voice !== 'idle' || pressed) return
+/**
+ * Press once to start listening (`recording`); press again to stop and transcribe (`transcribing`).
+ * - When triggered from `'orb'`, populates the command line with the transcription and auto-submits.
+ * - When triggered from `'command'`, populates the command line with the transcription and waits for `Enter`.
+ */
+export function toggleVoice(source: 'orb' | 'command' = 'command'): void {
+  if (store.voice === 'recording' || pressed) {
+    const activeSource = voiceSource
+    pressed = false
+    if (recorder.active) void attemptVoice(() => finishVoice(activeSource))
+    else emitStore({ voice: 'idle' })
+    return
+  }
+  if (store.voice !== 'idle') return
   pressed = true
+  voiceSource = source
   void attemptVoice(async () => {
-    emitStore({ voice: 'opening' })
+    emitStore({ voice: 'opening', responsePreview: null })
     try {
       if (!(await window.app.voice.requestMicrophone())) {
         throw new Error('Microphone access is off. Allow it in System Settings, Privacy & Security, Microphone.')
@@ -184,17 +264,18 @@ export function pressVoice(): void {
       throw err
     }
     emitStore({ voice: 'recording' })
-    if (!pressed) await finishVoice()
   })
 }
 
-export function releaseVoice(): void {
-  if (!pressed) return
-  pressed = false
-  if (recorder.active) void attemptVoice(finishVoice)
+export function pressVoice(): void {
+  toggleVoice('orb')
 }
 
-/** Silently aborts an in-progress press when the user drags the Orb to move it instead of speaking. */
+export function releaseVoice(): void {
+  // No-op: voice uses press-once to listen, press-again to process.
+}
+
+/** Silently aborts an in-progress press when the user drags the Orb to move it instead of toggling voice. */
 export function cancelVoice(): void {
   if (!pressed && !recorder.active) return
   pressed = false
@@ -211,7 +292,7 @@ export function cancelVoice(): void {
  */
 export function useRequest() {
   const snap = useSyncExternalStore(subscribeCentral, getCentral)
-  const { draft, voice, error, live, earlier, sequence } = snap
+  const { draft, responsePreview, voice, error, live, earlier, sequence } = snap
   const busy = voice !== 'idle'
   const shown = useMemo(() => shownOn(live, CENTRAL_CHAT), [live])
   const away = useMemo(() => awayOn(live, CENTRAL_CHAT), [live])
@@ -250,6 +331,8 @@ export function useRequest() {
   return {
     draft,
     setDraft: setCentralDraft,
+    responsePreview,
+    clearResponsePreview,
     phase,
     error,
     busy,
@@ -260,6 +343,7 @@ export function useRequest() {
     sequence,
     ask: askCentral,
     reportResponse: reportCentralResponse,
+    toggleVoice,
     press: pressVoice,
     release: releaseVoice,
     cancelVoice,

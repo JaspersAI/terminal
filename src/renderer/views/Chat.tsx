@@ -11,7 +11,7 @@ import { usePublish } from '@jaspers-ai/sdk'
 import { askedIn } from '../../shared/agent/asking'
 import { withAttachments } from '../../shared/agent/attachments'
 import { MAIN_WINDOW } from '../../shared/grid/windows'
-import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from '../components/composer/Attachments'
+import { AttachButton, useAttachments, useFileDrop } from '../components/composer/Attachments'
 import { useEarlier, useNoticeTimer } from '../components/composer/conversation'
 import { pasteLinks } from '../components/composer/paste'
 import { QuestionField } from '../components/composer/QuestionField'
@@ -42,7 +42,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
   const disabledSkills = useAppState((s) => s.disabledSkills)
   const notices = useAppState((s) => s.notices)
   const request = useRequest()
-  const { draft, setDraft, phase, busy, working, shown, earlier, ask, reportResponse, press, release, stop, clear } =
+  const { draft, setDraft, phase, busy, working, shown, earlier, ask, reportResponse, toggleVoice, stop, clear } =
     request
   const attachments = useAttachments((msg, fileName) => {
     reportResponse(`[Attached: ${fileName}]`, msg)
@@ -123,9 +123,25 @@ export function Chat({ panel }: ViewProps): ReactElement {
       )}
       <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
         {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
-        {attachments.hasAny && <AttachmentChips attachments={attachments} className="mb-1.5" />}
-        <div className="flex min-h-7 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground">
+        <div className="flex h-6 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground">
           <AttachButton compact onFiles={attachments.attach} disabled={busy} />
+          {attachments.files.map((file) => (
+            <span
+              key={file.name}
+              data-attachment={file.name}
+              className="inline-flex h-4 max-w-28 shrink-0 items-center gap-1 border border-border bg-muted px-1 text-[10px] leading-none"
+            >
+              <span className="truncate">{file.name}</span>
+              <button
+                type="button"
+                aria-label={`Remove ${file.name}`}
+                onClick={() => attachments.remove(file.name)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                ×
+              </button>
+            </span>
+          ))}
           <input
             ref={input}
             name="prompt"
@@ -145,38 +161,39 @@ export function Chat({ panel }: ViewProps): ReactElement {
               setDraft(event.target.value)
               setMenuIndex(0)
             }}
-            className="min-w-0 flex-1 bg-transparent px-1.5 py-1 text-sm outline-none disabled:opacity-50"
+            className="h-full min-w-0 flex-1 bg-transparent px-1 text-xs leading-none outline-none disabled:opacity-50"
           />
+          {working && (
+            <button
+              type="button"
+              aria-label="Stop"
+              title="Working — click to stop"
+              onClick={() => stop()}
+              className="progress-square flex h-4 w-4 shrink-0 items-center justify-center p-[2px]"
+            >
+              <span aria-hidden className="relative z-10 h-2.5 w-2.5 bg-background" />
+            </button>
+          )}
           <button
             type="button"
             id="docked-chat-voice"
-            aria-label="Hold to talk"
+            aria-label={phase === 'recording' ? 'Stop listening' : 'Voice input'}
             title={
               !hasVoice
                 ? 'Add a voice provider in Settings to talk'
                 : phase === 'recording'
-                  ? 'Listening — release to send'
-                  : 'Hold to talk'
+                  ? 'Listening — press again to transcribe into command line'
+                  : 'Press to talk (press Enter to send)'
             }
             disabled={!hasVoice || phase === 'transcribing'}
-            onPointerDown={(event) => {
-              event.preventDefault()
-              try {
-                event.currentTarget.setPointerCapture(event.pointerId)
-              } catch {
-                // ignore
-              }
-              press()
-            }}
-            onPointerUp={release}
-            onPointerCancel={release}
-            className={`flex h-5 w-5 shrink-0 touch-none select-none items-center justify-center transition-colors disabled:opacity-40 ${
+            onClick={() => toggleVoice('command')}
+            className={`flex h-4 w-4 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${
               phase === 'recording'
                 ? 'bg-primary text-primary-foreground'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            <svg viewBox="0 0 14 14" fill="none" aria-hidden className="h-3.5 w-3.5 stroke-current stroke-[1.4]">
+            <svg viewBox="0 0 14 14" fill="none" aria-hidden className="h-3 w-3 stroke-current stroke-[1.4]">
               <rect x="5" y="1.5" width="4" height="6.5" rx="2" />
               <path d="M3 6.5a4 4 0 0 0 8 0M7 10.5v2M5 12.5h4" />
             </svg>

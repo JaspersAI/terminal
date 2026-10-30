@@ -144,6 +144,7 @@ export function ElementFrame({
   const title = content?.kind === 'view' ? (views[content.view]?.title ?? content.view) : ''
   // The docked chat, the workspace's own conversation: its bar is red, apart from every loop's.
   const central = !loop && content?.kind === 'view' && content.view === CHAT_VIEW
+  const zoomable = Boolean(loop || central)
   // A piece of work's tile holds no view itself: its views are the elements inside it, and what it is, is the work.
   const frame = content?.kind === 'frame'
   const plugins = useAppState((s) => s.plugins)
@@ -173,12 +174,12 @@ export function ElementFrame({
   useEffect(() => {
     if (prevZoom.current === zoom) return
     prevZoom.current = zoom
-    if (loop && focused && !minimized && !covered) {
+    if (zoomable && focused && !minimized && !covered) {
       setSelected(true)
       setMenu(false)
       setZoomPopover(true)
     }
-  }, [zoom, loop, focused, minimized, covered])
+  }, [zoom, zoomable, focused, minimized, covered])
   // What the work is doing. A tile whose box asks for what a view waits on is asking, whatever its runs are doing.
   const doing = useLoopStatus(workspaceId, element.loop)
   const status = need ? 'asking' : doing
@@ -194,17 +195,17 @@ export function ElementFrame({
 
   const applyZoomStep = useCallback(
     (direction: 'in' | 'out' | 'reset'): void => {
-      if (!loop) return
+      if (!zoomable) return
       const next = stepTileZoom(workspaceId, element.id, direction, zoom)
       setMenu(false)
       setZoomPopover(true)
       noteZoom(direction, next, tileRef.current)
     },
-    [loop, workspaceId, element.id, zoom],
+    [zoomable, workspaceId, element.id, zoom],
   )
 
   useEffect(() => {
-    if (!loop) return
+    if (!zoomable) return
     const onPointerDown = (event: PointerEvent): void => {
       const target = event.target as Node | null
       const inside = Boolean(tileRef.current?.contains(target))
@@ -235,10 +236,10 @@ export function ElementFrame({
       document.removeEventListener('focusin', onFocusIn, true)
       window.removeEventListener('blur', onWindowBlur)
     }
-  }, [loop, zoomPopover])
+  }, [zoomable, zoomPopover])
 
   // Cmd or Ctrl and K puts the caret in the focused element's box: its line, or what it is asking.
-  // Cmd or Ctrl and +/=/-/_/0 zooms the selected, focused loop and shows its zoom amount control popover.
+  // Cmd or Ctrl and +/=/-/_/0 zooms the selected, focused loop or Docked Central and shows its zoom popover.
   useEffect(() => {
     if (!focused) return
     const down = (event: KeyboardEvent): void => {
@@ -264,7 +265,7 @@ export function ElementFrame({
         !tileRef.current?.contains(active)
       if (
         !canZoomLoop({
-          hasLoop: loop !== undefined,
+          hasLoop: zoomable,
           focused,
           selected,
           minimized,
@@ -281,7 +282,7 @@ export function ElementFrame({
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [focused, selected, minimized, covered, loop, element.id, zoomPopover, applyZoomStep])
+  }, [focused, selected, minimized, covered, zoomable, element.id, zoomPopover, applyZoomStep])
 
   return (
     <section
@@ -289,7 +290,7 @@ export function ElementFrame({
       id={`element-${element.id}`}
       data-tile-id={element.id}
       data-zoom={zoom}
-      data-loop-zoom={loop && !minimized ? zoom : undefined}
+      data-loop-zoom={zoomable && !minimized ? zoom : undefined}
       aria-label={label}
       data-mode={element.mode}
       tabIndex={-1}
@@ -309,7 +310,7 @@ export function ElementFrame({
               : focused
                 ? 1
                 : undefined,
-          ...(loop && !minimized ? { '--loop-zoom': String(zoom) } : {}),
+          ...(zoomable && !minimized ? { '--loop-zoom': String(zoom) } : {}),
         } as CSSProperties
       }
       className={`relative isolate flex min-h-0 min-w-0 flex-col outline-none ${hangs ? 'overflow-visible' : 'overflow-hidden'} bg-background ring-1 select-none ${
@@ -342,7 +343,7 @@ export function ElementFrame({
         <span className="sr-only" aria-live="polite">
           {said && said.kind !== 'conversation' ? said.text.split(' · ')[0] : ''}
         </span>
-        {loop && zoom !== ZOOM_DEFAULT && (
+        {zoomable && zoom !== ZOOM_DEFAULT && (
           <button
             ref={zoomTriggerRef}
             type="button"
@@ -356,7 +357,11 @@ export function ElementFrame({
               setMenu(false)
               setZoomPopover((open) => !open)
             }}
-            className="relative z-20 flex h-6 shrink-0 cursor-default items-center px-1.5 text-xs tabular-nums text-muted-foreground hover:text-foreground"
+            className={`relative z-20 flex h-6 shrink-0 cursor-default items-center px-1.5 text-xs tabular-nums ${
+              central
+                ? 'text-central-foreground/85 hover:text-central-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
           >
             {zoomPercent(zoom)}
           </button>
@@ -420,13 +425,13 @@ export function ElementFrame({
           </svg>
         </button>
       </header>
-      {loop && zoomPopover && !minimized && (
+      {zoomable && zoomPopover && !minimized && (
         <div
           ref={zoomPopoverRef}
           id={`loop-zoom-popover-${element.id}`}
           data-zoom-popover
           role="dialog"
-          aria-label={`Zoom controls for ${called}`}
+          aria-label={`Zoom controls for ${called || title}`}
           onPointerDown={(event) => event.stopPropagation()}
           className="absolute top-7 right-2 z-30 flex items-center gap-1.5 border border-border bg-background px-2 py-1 text-xs shadow-lg select-none"
         >
@@ -526,6 +531,13 @@ export function ElementFrame({
             focused={focused}
             working={working}
             zoom={zoom}
+            onZoomGesture={
+              zoomable && focused && selected && !minimized && !covered
+                ? (dir) => {
+                    applyZoomStep(dir)
+                  }
+                : undefined
+            }
           />
         )}
       </div>

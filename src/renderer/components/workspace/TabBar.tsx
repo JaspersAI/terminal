@@ -25,7 +25,8 @@ interface ContextMenuState {
   confirmingDelete: boolean
 }
 
-const PLUS_WIDTH_PX = 28
+const PLUS_WIDTH_PX = 24
+const HORIZONTAL_PAD_PX = 32
 const DETACH_DRAG_Y_PX = 40
 
 /**
@@ -106,10 +107,14 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
     run(() => dispatch({ type: 'tab.rename', id: tab.id, name }))
   }
 
-  const available = Math.max(200, barWidth - PLUS_WIDTH_PX - 16)
   const count = Math.max(1, workspaces.length)
+  // Exact width inside the 16px left and 16px right pane margins, minus the 24px "+" tab and 2px gaps.
+  const available = Math.max(120, barWidth - HORIZONTAL_PAD_PX - PLUS_WIDTH_PX - count * 2)
   const charLimit = tabCharLimit(available, count)
-  const perTabWidth = Math.min(tabWidthPx(charLimit), Math.floor((available - count * 2) / count))
+  const naturalWidth = tabWidthPx(charLimit)
+  const fillsBar = count * naturalWidth > available
+  const perTabWidth = fillsBar ? Math.floor(available / count) : naturalWidth
+  const remainderPx = fillsBar ? Math.max(0, available - perTabWidth * count) : 0
 
   function onTabPointerDown(event: ReactPointerEvent<HTMLDivElement>, tab: Workspace): void {
     if (event.button !== 0 || renamingId === tab.id) return
@@ -205,12 +210,13 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
       id="tab-bar"
       role="tablist"
       aria-label="Tabs"
-      className="relative flex h-6 w-full shrink-0 items-start gap-0.5 overflow-hidden border-t border-border bg-background px-2 pb-1 select-none"
+      className="relative flex h-6 w-full shrink-0 items-start gap-0.5 overflow-hidden border-t border-border bg-background px-4 pb-1 select-none"
     >
-      {workspaces.map((tab) => {
+      {workspaces.map((tab, index) => {
         const active = tab.id === currentId
         const isRenaming = renamingId === tab.id
         const swatch = tabSwatchStyle(tab.color, active, isDark)
+        const tabW = index === workspaces.length - 1 ? perTabWidth + remainderPx : perTabWidth
         return (
           <div
             key={tab.id}
@@ -221,7 +227,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
             data-tab-color={tab.color ?? undefined}
             title={tab.name}
             style={{
-              width: `${perTabWidth}px`,
+              width: `${tabW}px`,
               backgroundColor: swatch.backgroundColor,
               color: swatch.color,
               borderColor: swatch.borderColor,

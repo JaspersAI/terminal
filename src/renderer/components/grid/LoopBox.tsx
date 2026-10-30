@@ -16,7 +16,7 @@ import type { Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
 import { errorMessage } from '../../lib/errors'
 import { get, subscribe as subscribeState, useAppState } from '../../lib/state'
-import { AttachButton, AttachmentChips, useAttachments, useFileDrop } from '../composer/Attachments'
+import { AttachButton, useAttachments, useFileDrop } from '../composer/Attachments'
 import { over, type LiveExchange } from '../composer/live'
 import { pasteLinks } from '../composer/paste'
 import { QuestionField } from '../composer/QuestionField'
@@ -283,59 +283,75 @@ export function LoopBox({
           <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} />
         </div>
       ) : (
-        <form id={`loop-form-${elementId}`} onSubmit={submit} className="flex shrink-0 flex-col gap-1">
-          <div className="flex items-center gap-1">
-            <div className="flex min-h-6 min-w-0 flex-1 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground">
-              <AttachButton compact onFiles={attachments.attach} />
-              <input
-                id={`loop-input-${elementId}`}
-                name="loop-prompt"
-                aria-label={`Message ${label}`}
-                autoComplete="off"
-                value={draft}
-                placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
-                onChange={(event) =>
-                  updateTileBox(place, (b) =>
-                    b.draft === event.target.value ? b : { ...b, draft: event.target.value },
-                  )
-                }
-                onPaste={(event) => pasteLinks(event, attachments.attach)}
-                className="min-w-0 flex-1 bg-transparent px-1 py-1 text-xs outline-none"
-              />
-              {working && (
+        <form id={`loop-form-${elementId}`} onSubmit={submit} className="flex shrink-0 items-center gap-1">
+          <div
+            style={zoom !== 1 ? { height: `${1.5 * zoom}rem` } : undefined}
+            className="flex h-6 min-w-0 flex-1 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground"
+          >
+            <AttachButton compact onFiles={attachments.attach} />
+            {attachments.files.map((file) => (
+              <span
+                key={file.name}
+                data-attachment={file.name}
+                className="inline-flex h-4 max-w-28 shrink-0 items-center gap-1 border border-border bg-muted px-1 text-[10px] leading-none"
+              >
+                <span className="truncate">{file.name}</span>
                 <button
                   type="button"
-                  aria-label="Stop"
-                  data-loop-stop=""
-                  onClick={(event) => {
-                    event.preventDefault()
-                    stopNewest()
-                  }}
-                  style={zoom !== 1 ? { width: `${1.25 * zoom}rem`, height: `${1.25 * zoom}rem` } : undefined}
-                  className="flex h-5 w-5 shrink-0 items-center justify-center bg-primary text-primary-foreground"
+                  aria-label={`Remove ${file.name}`}
+                  onClick={() => attachments.remove(file.name)}
+                  className="text-muted-foreground hover:text-foreground"
                 >
-                  <span aria-hidden className="h-2 w-2 bg-current" />
+                  ×
                 </button>
-              )}
-            </div>
-            <button
-              type="button"
-              id={`loop-expand-${elementId}`}
-              data-loop-expand
-              aria-expanded={open}
-              aria-controls={`loop-box-${elementId}`}
-              aria-label={open ? 'Fold the conversation' : 'Open the conversation'}
-              title={open ? 'Collapse conversation' : 'Expand conversation'}
-              onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
-              style={zoom !== 1 ? { width: `${1.5 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
-              className="flex h-6 w-6 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
-                {open ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
-              </svg>
-            </button>
+              </span>
+            ))}
+            <input
+              id={`loop-input-${elementId}`}
+              name="loop-prompt"
+              aria-label={`Message ${label}`}
+              autoComplete="off"
+              value={draft}
+              placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
+              onChange={(event) =>
+                updateTileBox(place, (b) => (b.draft === event.target.value ? b : { ...b, draft: event.target.value }))
+              }
+              onPaste={(event) => pasteLinks(event, attachments.attach)}
+              className="h-full min-w-0 flex-1 bg-transparent px-1 text-xs leading-none outline-none"
+            />
+            {working && (
+              <button
+                type="button"
+                aria-label="Stop"
+                title="Working — click to stop"
+                data-loop-stop=""
+                onClick={(event) => {
+                  event.preventDefault()
+                  stopNewest()
+                }}
+                style={zoom !== 1 ? { width: `${1 * zoom}rem`, height: `${1 * zoom}rem` } : undefined}
+                className="progress-square flex h-4 w-4 shrink-0 items-center justify-center p-[2px]"
+              >
+                <span aria-hidden className="relative z-10 h-2.5 w-2.5 bg-background" />
+              </button>
+            )}
           </div>
-          <AttachmentChips attachments={attachments} className="px-1 pt-0.5 pb-0.5" />
+          <button
+            type="button"
+            id={`loop-expand-${elementId}`}
+            data-loop-expand
+            aria-expanded={open}
+            aria-controls={`loop-box-${elementId}`}
+            aria-label={open ? 'Fold the conversation' : 'Open the conversation'}
+            title={open ? 'Collapse conversation' : 'Expand conversation'}
+            onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
+            style={zoom !== 1 ? { width: `${1.25 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
+            className="flex h-6 w-5 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+              {open ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
+            </svg>
+          </button>
         </form>
       )}
       {open &&

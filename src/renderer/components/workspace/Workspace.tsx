@@ -47,7 +47,7 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
 
   return (
     <main id="workspace" className="flex h-screen flex-col">
-      <header className="flex min-h-8 shrink-0 items-start gap-2 border-b border-border bg-background px-3 py-1">
+      <header className="flex min-h-8 shrink-0 items-start gap-2 border-b border-border bg-background px-4 py-1">
         <Composer />
         <div className="flex h-6 shrink-0 items-center gap-1.5 self-start">
           <button

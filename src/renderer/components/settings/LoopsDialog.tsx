@@ -185,14 +185,14 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
             <h2 id="loops-title" className="text-base font-semibold">
               {mode === 'rooms' ? 'Rooms' : 'Sessions'}
             </h2>
-            <div role="group" aria-label="Log view" className="inline-flex items-center border border-border">
+            <div role="group" aria-label="Log view" className="grid grid-cols-2 border border-border">
               <button
                 type="button"
                 id="loops-tab-rooms"
                 data-log-tab="rooms"
                 aria-pressed={mode === 'rooms'}
                 onClick={() => setMode('rooms')}
-                className={`flex h-6 items-center px-2.5 text-xs transition-colors ${
+                className={`flex h-6 w-20 items-center justify-center text-xs transition-colors ${
                   mode === 'rooms'
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -206,7 +206,7 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
                 data-log-tab="sessions"
                 aria-pressed={mode === 'sessions'}
                 onClick={() => setMode('sessions')}
-                className={`flex h-6 items-center border-l border-border px-2.5 text-xs transition-colors ${
+                className={`flex h-6 w-20 items-center justify-center border-l border-border text-xs transition-colors ${
                   mode === 'sessions'
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-background text-muted-foreground hover:bg-muted hover:text-foreground'

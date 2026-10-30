@@ -9,18 +9,18 @@ const PULL = 6
 /** 1.5x of the original 56px (3.5rem) diameter = 84px. */
 const ORB_DIAMETER_PX = 84
 /** Distance past which holding and moving the pointer drags the orb across the screen. */
-const DRAG_THRESHOLD_PX = 12
+const DRAG_THRESHOLD_PX = 10
 
 /**
  * Draggable Voice Orb overlay on top of the tab surface (Regime 2.2), 1.5x larger in diameter (84px)
  * with no text underneath.
- * - Acts precisely as before for voice: press and hold to record (or hold the Space bar when no text
- *   field is focused), release to transcribe and send immediately into Central.
- * - Dragging the orb beyond 12px cancels the press and moves the orb smoothly to any spot on screen.
+ * - Press once: starts listening (`recording`).
+ * - Press again: stops listening, transcribes into the command line (`draft`), and auto-submits to Central.
+ * - Dragging the orb beyond 10px moves the orb smoothly to any spot on screen without toggling recording.
  */
 export function FloatingOrb(): ReactElement {
   const hasVoice = useAppState((s) => s.voice !== null)
-  const { phase, press, release, cancelVoice } = useRequest()
+  const { phase, toggleVoice } = useRequest()
   const [hovering, setHovering] = useState(false)
   const [pos, setPos] = useState<{ x: number; y: number }>(() => ({
     x: typeof window !== 'undefined' ? Math.max(40, Math.round(window.innerWidth / 2 - ORB_DIAMETER_PX / 2)) : 400,
@@ -49,32 +49,6 @@ export function FloatingOrb(): ReactElement {
     dragging: boolean
   } | null>(null)
 
-  // Space bar hold-to-talk when the Orb is on screen and no text control has focus, precisely as before.
-  const handlers = useRef({ press, release, hasVoice })
-  handlers.current = { press, release, hasVoice }
-  useEffect(() => {
-    const down = (event: KeyboardEvent): void => {
-      if (event.code !== 'Space' || event.repeat || inControl(event) || modalOpen()) return
-      if (!handlers.current.hasVoice) return
-      event.preventDefault()
-      handlers.current.press()
-    }
-    const up = (event: KeyboardEvent): void => {
-      if (event.code !== 'Space') return
-      if (!inControl(event)) event.preventDefault()
-      handlers.current.release()
-    }
-    const blur = (): void => handlers.current.release()
-    window.addEventListener('keydown', down)
-    window.addEventListener('keyup', up)
-    window.addEventListener('blur', blur)
-    return () => {
-      window.removeEventListener('keydown', down)
-      window.removeEventListener('keyup', up)
-      window.removeEventListener('blur', blur)
-    }
-  }, [])
-
   function follow(event: ReactPointerEvent<HTMLButtonElement>): void {
     const rect = event.currentTarget.getBoundingClientRect()
     const dx = (event.clientX - (rect.left + rect.width / 2)) / (rect.width / 2)
@@ -97,7 +71,6 @@ export function FloatingOrb(): ReactElement {
     } catch {
       // synthetic events have no capturable pointer
     }
-    if (hasVoice) press()
   }
 
   function onPointerMove(event: ReactPointerEvent<HTMLButtonElement>): void {
@@ -115,12 +88,11 @@ export function FloatingOrb(): ReactElement {
       }
       drag.dragging = true
       spring.set({ x: 0, y: 0 })
-      cancelVoice()
     }
-    const maxX = Math.max(8, window.innerWidth - ORB_DIAMETER_PX - 8)
+    const maxX = Math.max(16, window.innerWidth - ORB_DIAMETER_PX - 16)
     const maxY = Math.max(40, window.innerHeight - ORB_DIAMETER_PX - 32)
     setPos({
-      x: Math.max(8, Math.min(maxX, drag.originX + dx)),
+      x: Math.max(16, Math.min(maxX, drag.originX + dx)),
       y: Math.max(40, Math.min(maxY, drag.originY + dy)),
     })
   }
@@ -136,7 +108,7 @@ export function FloatingOrb(): ReactElement {
       // ignore
     }
     if (!drag || drag.dragging) return
-    release()
+    if (hasVoice) toggleVoice('orb')
   }
 
   const look = phase === 'recording' ? 'ring-8 ring-primary/15' : phase === 'idle' ? '' : 'animate-pulse'
@@ -152,13 +124,22 @@ export function FloatingOrb(): ReactElement {
         ref={button}
         type="button"
         id="talk"
-        aria-label="Hold to talk"
+        aria-label={phase === 'recording' ? 'Stop listening and send' : 'Press to talk'}
+        title={
+          !hasVoice
+            ? 'Add a voice provider in Settings to talk'
+            : phase === 'recording'
+              ? 'Listening — press again to send'
+              : 'Press to talk'
+        }
         disabled={phase === 'transcribing'}
         style={{ width: `${ORB_DIAMETER_PX}px`, height: `${ORB_DIAMETER_PX}px` }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishPointer}
-        onPointerCancel={finishPointer}
+        onPointerCancel={() => {
+          dragRef.current = null
+        }}
         onPointerEnter={() => setHovering(true)}
         onPointerLeave={() => {
           setHovering(false)
@@ -174,16 +155,5 @@ export function FloatingOrb(): ReactElement {
         />
       </button>
     </div>
-  )
-}
-
-function modalOpen(): boolean {
-  return document.querySelector('[aria-modal=true]') !== null
-}
-
-function inControl(event: KeyboardEvent): boolean {
-  return (
-    event.target instanceof HTMLElement &&
-    event.target.matches('input, textarea, select, button:not(#talk), [contenteditable]')
   )
 }
