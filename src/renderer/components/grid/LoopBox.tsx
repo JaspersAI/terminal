@@ -88,7 +88,7 @@ interface Props {
   loop: Loop
   /** What the tile is, for the field's label: what its work is. */
   label: string
-  /** What the user calls the loop: loop_3. */
+  /** What the tile titles the room: Room 3. */
   called: string
   /** True for a deep research loop, whose field invites follow-up questions rather than view commands. */
   chat: boolean

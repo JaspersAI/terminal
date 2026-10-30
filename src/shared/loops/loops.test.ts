@@ -13,6 +13,7 @@ import {
   VIEW_TOOLS,
   loopChat,
   loopName,
+  loopTitle,
   gone,
   isTile,
   named,
@@ -77,9 +78,11 @@ const at = (x: number, y: number, w: number, h: number): Partial<GridElement> =>
 const shape = (g: Grid) =>
   g.elements.map((e) => [e.id, e.loop ?? null, e.parent ?? null, [e.rect.x, e.rect.y, e.rect.w, e.rect.h]])
 
-test('a room is called room_ and the number its counter gave it', () => {
+test('a room is called room_ and the number its counter gave it, and titled Room N in the UI', () => {
   assert.equal(loopName('f3'), 'room_3')
   assert.equal(loopName('f12'), 'room_12')
+  assert.equal(loopTitle('f3'), 'Room 3')
+  assert.equal(loopTitle('f38'), 'Room 38')
 })
 
 test('everything on a grid is a tile but the docked chat', () => {
@@ -604,8 +607,9 @@ test('a typed message that starts with a room\u2019s @name is for that room, and
   }
   assert.deepEqual(to('@room_1 add SPY'), ['f1', 'add SPY'])
   assert.deepEqual(to('@loop_1 add SPY'), ['f1', 'add SPY'])
-  // As a person types it: capitals, no underscore or a dash, more than one space, space around it.
+  // As a person types it: capitals, a space, no underscore or a dash, more than one space, space around it.
   assert.deepEqual(to('  @ROOM12   use two years  '), ['f12', 'use two years'])
+  assert.deepEqual(to('@Room 12 use two years'), ['f12', 'use two years'])
   assert.deepEqual(to('@room-2 hi'), ['f2', 'hi'])
   // The whole number decides, never a start of it.
   assert.equal(to('@room_1x hi'), null)

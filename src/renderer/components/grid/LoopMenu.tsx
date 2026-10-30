@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react'
 import { endedAs, type Exchange } from '../../../shared/agent/transcript'
 import type { Loop } from '../../../shared/loops/loops'
-import { loopName } from '../../../shared/loops/loops'
+import { loopTitle } from '../../../shared/loops/loops'
 import { menuOf } from '../../../shared/loops/menu'
 import { useAppState } from '../../lib/state'
 import { PAGE } from '../composer/request'
@@ -111,7 +111,7 @@ export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose 
       ref={root}
       id={`loop-menu-${elementId}`}
       role="dialog"
-      aria-label={`More for ${loopName(loop.id)}`}
+      aria-label={`More for ${loopTitle(loop.id)}`}
       tabIndex={-1}
       onKeyDown={(event) => {
         if (event.key !== 'Escape') return
