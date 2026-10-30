@@ -10,7 +10,6 @@ import {
 import { usePublish } from '@jaspers-ai/sdk'
 import { askedIn } from '../../shared/agent/asking'
 import { withAttachments } from '../../shared/agent/attachments'
-import { MAIN_WINDOW } from '../../shared/grid/windows'
 import { AttachButton, useAttachments, useFileDrop } from '../components/composer/Attachments'
 import { useEarlier, useNoticeTimer } from '../components/composer/conversation'
 import { pasteLinks } from '../components/composer/paste'
@@ -20,7 +19,6 @@ import { SecretField } from '../components/composer/SecretField'
 import { completeSlash, slashMatches } from '../components/composer/slash'
 import { SlashMenu } from '../components/composer/SlashMenu'
 import { Transcript } from '../components/composer/Transcript'
-import { send } from '../components/grid/send'
 import { useAppState } from '../lib/state'
 import type { ViewProps } from './index'
 
@@ -32,9 +30,6 @@ import type { ViewProps } from './index'
  */
 export function Chat({ panel }: ViewProps): ReactElement {
   const workspaceId = panel.workspaceId
-  const elementId = useAppState(
-    (s) => s.grids[workspaceId]?.[MAIN_WINDOW]?.panels.find((p) => p.id === panel.id)?.elementId ?? null,
-  )
   const hasVoice = useAppState((s) => s.voice !== null)
   const secretRequest = useAppState((s) => askedIn(s.secretRequests))
   const question = useAppState((s) => askedIn(s.questions))
@@ -200,22 +195,13 @@ export function Chat({ panel }: ViewProps): ReactElement {
           </button>
         </div>
       </form>
-      <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
-        {(earlier.length > 0 || shown.length > 0) && (
+      {(earlier.length > 0 || shown.length > 0) && (
+        <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
           <button type="button" id="docked-chat-clear" onClick={clear} className="underline hover:text-foreground">
             Clear
           </button>
-        )}
-        <button
-          type="button"
-          id="docked-chat-undock"
-          disabled={elementId === null}
-          onClick={() => elementId !== null && send({ type: 'element.remove', workspaceId, elementId })}
-          className="underline hover:text-foreground disabled:opacity-50"
-        >
-          Undock
-        </button>
-      </p>
+        </p>
+      )}
     </div>
   )
 }
