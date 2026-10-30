@@ -237,7 +237,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
             onPointerUp={(event) => onTabPointerUp(event, tab)}
             onDoubleClick={() => startRename(tab)}
             onContextMenu={(event) => onTabContextMenu(event, tab)}
-            className="flex h-5 shrink-0 cursor-pointer items-center justify-center rounded-b-md border-x border-b px-2 text-[10px] leading-none font-medium transition-colors"
+            className="flex h-5 shrink-0 cursor-pointer items-center justify-center rounded-b-md border-x border-b px-2 font-sans text-[10px] leading-none font-normal transition-colors"
           >
             {isRenaming ? (
               <input
@@ -261,12 +261,12 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
                     commitRename(tab)
                   }
                 }}
-                className="w-full min-w-0 border-b border-current bg-background/80 px-1 text-center text-[10px] leading-none font-medium outline-none"
+                className="w-full min-w-0 border-b border-current bg-background/80 px-1 text-center font-sans text-[10px] leading-none font-normal outline-none"
               />
             ) : (
               <span
                 id={active ? 'workspace-title' : undefined}
-                className="w-full truncate text-center text-[10px] leading-none"
+                className="w-full truncate text-center font-sans text-[10px] leading-none font-normal"
               >
                 {formatTabLabel(tab.name, charLimit)}
               </span>

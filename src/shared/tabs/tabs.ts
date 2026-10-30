@@ -118,39 +118,41 @@ export function tabSwatchStyle(
   if (!color || !isTabColor(color)) {
     if (!dark) {
       return selected
-        ? { backgroundColor: '#b8b8c2', color: '#09090b', borderColor: '#71717a' }
-        : { backgroundColor: '#e4e4e7', color: '#52525b', borderColor: '#d4d4d8' }
+        ? { backgroundColor: '#c8c8d0', color: '#171717', borderColor: '#e5e5e5' }
+        : { backgroundColor: '#e4e4e7', color: '#52525b', borderColor: '#e5e5e5' }
     }
     return selected
-      ? { backgroundColor: '#52525b', color: '#fafafa', borderColor: '#a1a1aa' }
+      ? { backgroundColor: '#52525b', color: '#fafafa', borderColor: '#3f3f46' }
       : { backgroundColor: '#27272a', color: '#a1a1aa', borderColor: '#3f3f46' }
   }
   const rgb = parseHex(color)
   if (!dark) {
-    // Light theme: unselected is a cool muted tint; selected is the deep, high-contrast saturated shade with crisp white text.
+    // Light theme: darken only the fill when selected; keep the stroke/border light and unchanged.
+    const lightStroke = mixHex(rgb, [229, 229, 229], 0.35)
     return selected
       ? {
           backgroundColor: mixHex(rgb, [15, 23, 42], 0.88),
           color: '#f8fafc',
-          borderColor: mixHex(rgb, [0, 0, 0], 0.7),
+          borderColor: lightStroke,
         }
       : {
           backgroundColor: mixHex(rgb, [241, 245, 249], 0.28),
           color: '#1e293b',
-          borderColor: mixHex(rgb, [203, 213, 225], 0.5),
+          borderColor: lightStroke,
         }
   }
   // Dark theme: unselected is a deep muted tone; selected is a vivid, lighter high-contrast shade.
+  const darkStroke = mixHex(rgb, [39, 39, 42], 0.5)
   return selected
     ? {
         backgroundColor: mixHex(rgb, [255, 255, 255], 0.78),
         color: '#ffffff',
-        borderColor: mixHex(rgb, [255, 255, 255], 0.5),
+        borderColor: darkStroke,
       }
     : {
         backgroundColor: mixHex(rgb, [15, 23, 42], 0.52),
         color: '#cbd5e1',
-        borderColor: mixHex(rgb, [30, 41, 59], 0.7),
+        borderColor: darkStroke,
       }
 }
 
