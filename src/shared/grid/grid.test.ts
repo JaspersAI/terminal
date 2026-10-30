@@ -51,6 +51,7 @@ import {
   setMode,
   setPanelState,
   resolveDrag,
+  resolveDragTarget,
   setRect,
   swapElements,
   type DragHandle,
@@ -1473,4 +1474,59 @@ test('publishOutput returns the same grid and panel when an equal output object 
   )
   assert.equal(second.grid, first.grid)
   assert.equal(second.panel, first.panel)
+})
+
+test('resizing at a shared seam between tiled elements hands off to the touching neighbor when dragging into it', () => {
+  // Four quarters: e1 [0,0 8×6], e2 [8,0 8×6], e3 [0,6 8×6], e4 [8,6 8×6].
+  const grid = build({}, {}, {}, {})
+  // Grabbing e2's west edge and dragging left into e1 shrinks e1 by its east edge.
+  assert.deepEqual(resolveDragTarget(grid, 'e2', 'w', -2, 0, cell(6, 2), cell(8, 2)), {
+    elementId: 'e1',
+    handle: 'e',
+    drop: { kind: 'rect', rect: r(0, 0, 6, 6) },
+  })
+  // Grabbing e1's east edge and dragging right into e2 shrinks e2 by its west edge.
+  assert.deepEqual(resolveDragTarget(grid, 'e1', 'e', 2, 0, cell(10, 2), cell(7, 2)), {
+    elementId: 'e2',
+    handle: 'w',
+    drop: { kind: 'rect', rect: r(10, 0, 6, 6) },
+  })
+  // Dragging away from the seam resizes the grabbed element itself.
+  assert.deepEqual(resolveDragTarget(grid, 'e2', 'w', 2, 0, cell(10, 2), cell(8, 2)), {
+    elementId: 'e2',
+    handle: 'w',
+    drop: { kind: 'rect', rect: r(10, 0, 6, 6) },
+  })
+  // Grabbing e3's north edge and dragging up into e1 shrinks e1 by its south edge.
+  assert.deepEqual(resolveDragTarget(grid, 'e3', 'n', 0, -2, cell(2, 4), cell(2, 6)), {
+    elementId: 'e1',
+    handle: 's',
+    drop: { kind: 'rect', rect: r(0, 0, 8, 4) },
+  })
+  // Grabbing e1's south edge and dragging down into e3 shrinks e3 by its north edge.
+  assert.deepEqual(resolveDragTarget(grid, 'e1', 's', 0, 2, cell(2, 8), cell(2, 5)), {
+    elementId: 'e3',
+    handle: 'n',
+    drop: { kind: 'rect', rect: r(0, 8, 8, 4) },
+  })
+  // A corner handle dragged along a blocked seam axis hands off to the touching neighbor along that seam.
+  assert.deepEqual(resolveDragTarget(grid, 'e2', 'nw', -2, 0, cell(6, 0), cell(8, 0)), {
+    elementId: 'e1',
+    handle: 'ne',
+    drop: { kind: 'rect', rect: r(0, 0, 6, 6) },
+  })
+  // When two neighbors share different parts of an edge, the press cell picks the neighbor under the pointer.
+  const splitRight = build({ rect: r(0, 0, 8, 12) }, { rect: r(8, 0, 8, 6) }, { rect: r(8, 6, 8, 6) })
+  assert.deepEqual(resolveDragTarget(splitRight, 'e1', 'e', 2, 0, cell(10, 8), cell(7, 8)), {
+    elementId: 'e3',
+    handle: 'w',
+    drop: { kind: 'rect', rect: r(10, 6, 6, 6) },
+  })
+  // Expanding across free space stops against a neighbor without shrinking it.
+  const apart = build({ rect: r(0, 0, 4, 6) }, { rect: r(8, 0, 8, 6) })
+  assert.deepEqual(resolveDragTarget(apart, 'e1', 'e', 6, 0, cell(10, 2), cell(3, 2)), {
+    elementId: 'e1',
+    handle: 'e',
+    drop: { kind: 'rect', rect: r(0, 0, 8, 6) },
+  })
 })

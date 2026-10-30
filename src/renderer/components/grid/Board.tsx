@@ -110,7 +110,10 @@ export function Board({
                   key={edge}
                   aria-hidden
                   data-edge={edge}
-                  onPointerDown={(event) => grab(event, element, edge, cut)}
+                  onPointerDown={(event) => {
+                    event.stopPropagation()
+                    grab(event, element, edge, cut)
+                  }}
                   className={`absolute z-10 ${EDGES[edge]}`}
                 />
               ))}
