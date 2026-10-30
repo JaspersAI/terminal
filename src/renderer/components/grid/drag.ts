@@ -2,8 +2,9 @@ import { useCallback, useState, type PointerEvent as ReactPointerEvent, type Ref
 import {
   EMPTY_GRID,
   layoutOf,
-  resolveDrag,
+  resolveDragTarget,
   type DragHandle,
+  type DragTarget,
   type Drop,
   type Grid,
   type GridElement,
@@ -12,6 +13,7 @@ import {
 import type { Action } from '../../../shared/state'
 import { dispatch, get } from '../../lib/state'
 import { canGrab } from './edges'
+import { send } from './send'
 
 // Moving and resizing by hand. The pointer is counted in whole cells, the engine says where that
 // lands, and the element is drawn there while the drag lasts. Letting go asks main for the same
@@ -144,9 +146,9 @@ export function useDrag(
           return
         }
         const over = cellAt(e.clientX, e.clientY)
-        let drop: Drop
+        let target: DragTarget
         try {
-          drop = resolveDrag(
+          target = resolveDragTarget(
             // The one layout: what is dragged is on its cells, and stops against what else is.
             layoutOf(grid, inside),
             element.id,
@@ -154,13 +156,28 @@ export function useDrag(
             Math.round((e.clientX - start.x) / cellWidth),
             Math.round((e.clientY - start.y) / cellHeight),
             { x: clamp(over.x, 0, grid.size.cols - 1), y: clamp(over.y, 0, grid.size.rows - 1) },
+            { x: clamp(pressed.x, 0, grid.size.cols - 1), y: clamp(pressed.y, 0, grid.size.rows - 1) },
           )
         } catch {
           // The element went away under the drag, closed by the assistant.
           return finish(false)
         }
-        if (!held || (!held.away && sameDrop(held.drop, drop))) return
-        held = { ...held, away: false, drop, rects: rectsFor(grid, element.id, drop) }
+        if (
+          !held ||
+          (!held.away &&
+            held.elementId === target.elementId &&
+            held.handle === target.handle &&
+            sameDrop(held.drop, target.drop))
+        )
+          return
+        held = {
+          ...held,
+          away: false,
+          elementId: target.elementId,
+          handle: target.handle,
+          drop: target.drop,
+          rects: rectsFor(grid, target.elementId, target.drop),
+        }
         setDraft(held)
       }
       const up = (): void => finish(true)
@@ -186,6 +203,12 @@ export function useDrag(
         if (!last) return
         // Main hears how a drag it was told about ends: dropped over another window, or not.
         if (reported) window.app.drag.end(commit && last.away)
+        if (commit && !last.away) {
+          const grid = get().grids[workspaceId]?.[windowNumber] ?? EMPTY_GRID
+          if (layoutOf(grid, inside).focus[0] !== last.elementId) {
+            send({ type: 'element.focus', workspaceId, elementId: last.elementId })
+          }
+        }
         // Away, the drop is the other window's to ask for; the push takes the element from here.
         const action = commit && !last.away ? actionFor(workspaceId, windowNumber, last) : null
         if (!action) {

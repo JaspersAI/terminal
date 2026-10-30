@@ -471,6 +471,94 @@ export function resolveDrag(
   return { kind: 'rect', rect: freeOnTheWay(grid.elements, grid.size, id, start, want, move) }
 }
 
+/** What element and handle a drag by hand acts on, and where it lands. */
+export interface DragTarget {
+  elementId: string
+  handle: DragHandle
+  drop: Drop
+}
+
+/**
+ * Resolves a drag by hand, handing off a resize that is blocked at a shared seam between tiled
+ * elements to the touching neighbor across that seam when the pointer drags into it.
+ */
+export function resolveDragTarget(
+  grid: Grid,
+  id: string,
+  handle: DragHandle,
+  dx: number,
+  dy: number,
+  at: { x: number; y: number },
+  pressed: { x: number; y: number } = at,
+): DragTarget {
+  const drop = resolveDrag(grid, id, handle, dx, dy, at)
+  if (handle === 'move') return { elementId: id, handle, drop }
+  const element = find(grid.elements, id)
+  if (element.mode !== 'tiled' || drop.kind !== 'rect' || sidesApart(drop.rect, element.rect) > 0) {
+    return { elementId: id, handle, drop }
+  }
+  const { rect: start } = element
+  const tiled = grid.elements.filter((e) => e.id !== id && e.mode === 'tiled')
+
+  if ((handle.includes('w') && dx < 0) || (handle.includes('e') && dx > 0)) {
+    const west = handle.includes('w') && dx < 0
+    const candidates = tiled.filter(
+      (e) =>
+        (west ? e.rect.x + e.rect.w === start.x : e.rect.x === start.x + start.w) &&
+        e.rect.y < start.y + start.h &&
+        start.y < e.rect.y + e.rect.h,
+    )
+    const other =
+      candidates.find((e) => pressed.y >= e.rect.y && pressed.y < e.rect.y + e.rect.h) ??
+      candidates.find((e) => at.y >= e.rect.y && at.y < e.rect.y + e.rect.h) ??
+      candidates[0]
+    if (other) {
+      const ew = west ? 'e' : 'w'
+      const ns =
+        handle.includes('n') && other.rect.y === start.y
+          ? 'n'
+          : handle.includes('s') && other.rect.y + other.rect.h === start.y + start.h
+            ? 's'
+            : ''
+      const otherHandle = `${ns}${ew}` as DragHandle
+      const otherDrop = resolveDrag(grid, other.id, otherHandle, dx, dy, at)
+      if (otherDrop.kind === 'rect' && sidesApart(otherDrop.rect, other.rect) > 0) {
+        return { elementId: other.id, handle: otherHandle, drop: otherDrop }
+      }
+    }
+  }
+
+  if ((handle.includes('n') && dy < 0) || (handle.includes('s') && dy > 0)) {
+    const north = handle.includes('n') && dy < 0
+    const candidates = tiled.filter(
+      (e) =>
+        (north ? e.rect.y + e.rect.h === start.y : e.rect.y === start.y + start.h) &&
+        e.rect.x < start.x + start.w &&
+        start.x < e.rect.x + e.rect.w,
+    )
+    const other =
+      candidates.find((e) => pressed.x >= e.rect.x && pressed.x < e.rect.x + e.rect.w) ??
+      candidates.find((e) => at.x >= e.rect.x && at.x < e.rect.x + e.rect.w) ??
+      candidates[0]
+    if (other) {
+      const ns = north ? 's' : 'n'
+      const ew =
+        handle.includes('w') && other.rect.x === start.x
+          ? 'w'
+          : handle.includes('e') && other.rect.x + other.rect.w === start.x + start.w
+            ? 'e'
+            : ''
+      const otherHandle = `${ns}${ew}` as DragHandle
+      const otherDrop = resolveDrag(grid, other.id, otherHandle, dx, dy, at)
+      if (otherDrop.kind === 'rect' && sidesApart(otherDrop.rect, other.rect) > 0) {
+        return { elementId: other.id, handle: otherHandle, drop: otherDrop }
+      }
+    }
+  }
+
+  return { elementId: id, handle, drop }
+}
+
 /**
  * Where an element dragged in from another window lands: its top left at the pointer's cell less
  * where in the element it was grabbed, kept inside the grid, then the nearest free cells for that

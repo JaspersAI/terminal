@@ -52,9 +52,17 @@ test('a tiled or floating frame has all eight resize handles, and a minimized or
   assert.deepEqual(frameEdges('maximized'), [])
 })
 
-test('every resize handle shows its resize cursor and highlights on hover', () => {
+test('every resize handle shows its resize cursor and highlights on hover with an inset content box', () => {
   for (const classes of Object.values(EDGES)) {
     assert.match(classes, /\bcursor-(ns|ew|nesw|nwse)-resize\b/)
     assert.match(classes, /\bhover:bg-primary\/20\b/)
+    assert.match(classes, /\bbg-clip-content\b/)
+  }
+  assert.match(EDGES.n, /\binset-x-3\b.*\btop-0\b.*\bh-1\.5\b.*\bpt-0\.5\b/)
+  assert.match(EDGES.s, /\binset-x-3\b.*\bbottom-0\b.*\bh-1\.5\b.*\bpb-0\.5\b/)
+  assert.match(EDGES.e, /\binset-y-3\b.*\bright-0\b.*\bw-1\.5\b.*\bpr-0\.5\b/)
+  assert.match(EDGES.w, /\binset-y-3\b.*\bleft-0\b.*\bw-1\.5\b.*\bpl-0\.5\b/)
+  for (const corner of ['ne', 'sw', 'nw', 'se'] as const) {
+    assert.match(EDGES[corner], /\bsize-3\b/)
   }
 })

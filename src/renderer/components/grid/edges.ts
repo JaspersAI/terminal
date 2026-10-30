@@ -10,16 +10,20 @@ export function canGrab(mode: ElementMode, handle: DragHandle): boolean {
 /** An edge or a corner an element is resized by. */
 export type Edge = Exclude<DragHandle, 'move'>
 
-/** The strips along the edges and the squares in the corners that resize an element, inside its box. */
+/**
+ * The strips along the edges and the squares in the corners that resize an element, inside its box.
+ * Each handle reaches to the outer border so there is no dead zone on a seam, while `bg-clip-content`
+ * and a 2 px outer padding inset the hover highlight inside the element being grabbed.
+ */
 export const EDGES: Record<Edge, string> = {
-  n: 'inset-x-2.5 top-0 h-[5px] cursor-ns-resize transition-colors hover:bg-primary/20',
-  s: 'inset-x-2.5 bottom-0 h-[5px] cursor-ns-resize transition-colors hover:bg-primary/20',
-  e: 'inset-y-2.5 right-0 w-[5px] cursor-ew-resize transition-colors hover:bg-primary/20',
-  w: 'inset-y-2.5 left-0 w-[5px] cursor-ew-resize transition-colors hover:bg-primary/20',
-  ne: 'top-0 right-0 size-2.5 cursor-nesw-resize transition-colors hover:bg-primary/20',
-  sw: 'bottom-0 left-0 size-2.5 cursor-nesw-resize transition-colors hover:bg-primary/20',
-  nw: 'top-0 left-0 size-2.5 cursor-nwse-resize transition-colors hover:bg-primary/20',
-  se: 'right-0 bottom-0 size-2.5 cursor-nwse-resize transition-colors hover:bg-primary/20',
+  n: 'inset-x-3 top-0 h-1.5 pt-0.5 bg-clip-content cursor-ns-resize transition-colors hover:bg-primary/20',
+  s: 'inset-x-3 bottom-0 h-1.5 pb-0.5 bg-clip-content cursor-ns-resize transition-colors hover:bg-primary/20',
+  e: 'inset-y-3 right-0 w-1.5 pr-0.5 bg-clip-content cursor-ew-resize transition-colors hover:bg-primary/20',
+  w: 'inset-y-3 left-0 w-1.5 pl-0.5 bg-clip-content cursor-ew-resize transition-colors hover:bg-primary/20',
+  ne: 'top-0 right-0 size-3 pt-0.5 pr-0.5 bg-clip-content cursor-nesw-resize transition-colors hover:bg-primary/20',
+  sw: 'bottom-0 left-0 size-3 pb-0.5 pl-0.5 bg-clip-content cursor-nesw-resize transition-colors hover:bg-primary/20',
+  nw: 'top-0 left-0 size-3 pt-0.5 pl-0.5 bg-clip-content cursor-nwse-resize transition-colors hover:bg-primary/20',
+  se: 'right-0 bottom-0 size-3 pr-0.5 pb-0.5 bg-clip-content cursor-nwse-resize transition-colors hover:bg-primary/20',
 }
 
 /** The edges and corners a window's element is resized by in `mode`. */
