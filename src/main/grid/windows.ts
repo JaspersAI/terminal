@@ -30,6 +30,7 @@ import { getState, update } from '../state'
 // and takes its number out of `windows`, its grids staying for the next time that number opens.
 
 const windows = new Map<number, BrowserWindow>()
+const renderedWindows = new WeakSet<BrowserWindow>()
 /** The window most recently focused: where "the focused element" is read from. */
 let focused = MAIN_WINDOW
 
@@ -40,7 +41,7 @@ export function createWindow(n: number, show: boolean, at?: { x: number; y: numb
   const win = new BrowserWindow({
     width: 1400,
     height: 1000,
-    ...(n > MAIN_WINDOW ? { title: 'Terminal (copy)' } : {}),
+    title: n > MAIN_WINDOW ? 'Terminal (copy)' : 'Jaspers Terminal',
     ...at,
     backgroundColor: windowBackground(),
     // Shown below once the page has rendered; never, when the launch is to stay hidden.
@@ -148,6 +149,7 @@ const SHOW_ANYWAY_MS = 15_000
 function showWhenRendered(win: BrowserWindow): void {
   let shown = false
   const show = (): void => {
+    renderedWindows.add(win)
     if (!shown && !win.isDestroyed()) win.show()
   }
   const timer = setTimeout(show, SHOW_ANYWAY_MS)
@@ -159,6 +161,16 @@ function showWhenRendered(win: BrowserWindow): void {
   win.once('closed', () => clearTimeout(timer))
   win.webContents.ipc.on('window:rendered', (event) => {
     if (!win.isDestroyed() && !win.webContents.isDestroyed() && event.senderFrame === win.webContents.mainFrame) show()
+  })
+  // If the app bundle on disk was replaced by a new DMG install while the background tray process was
+  // still running, reading index.html from the replaced app.asar fails: relaunch into the new binary.
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return
+    console.error(`[window] main frame failed to load (${errorCode}: ${errorDescription}) at ${validatedURL}`)
+    if (app.isPackaged) {
+      app.relaunch()
+      app.exit(0)
+    }
   })
 }
 
@@ -219,10 +231,13 @@ export function openAllStored(show: boolean): void {
 
 /** Shows and focuses every window, making the main one again if something destroyed it. */
 export function showAll(): void {
-  if (!windowOf(MAIN_WINDOW)) createWindow(MAIN_WINDOW, true)
-  for (const { win } of openWindows()) {
+  const createdMain = !windowOf(MAIN_WINDOW)
+  if (createdMain) createWindow(MAIN_WINDOW, true)
+  for (const { number, win } of openWindows()) {
     if (win.isMinimized()) win.restore()
-    win.show()
+    if (renderedWindows.has(win) || !(createdMain && number === MAIN_WINDOW)) {
+      win.show()
+    }
   }
   windowOf(MAIN_WINDOW)?.focus()
 }

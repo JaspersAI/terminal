@@ -27,7 +27,8 @@ export const PAGE = 100
 /** The microphone's part of a request: nothing typed or said can be sent while it has the floor. */
 type Voice = Exclude<Phase, 'thinking'>
 
-export function firstLineOf(text: string): string {
+export function firstLineOf(text: string | null | undefined): string {
+  if (typeof text !== 'string' || !text) return ''
   for (const raw of text.split(/\r?\n/)) {
     const clean = raw.replace(/^[#>*\-\s]+/, '').trim()
     if (clean) return clean
