@@ -1,4 +1,6 @@
 import { ipcMain } from 'electron'
+import { askedIn, matchChoice } from '../../shared/agent/asking'
+import { shownQuestion } from '../../shared/agent/attachments'
 import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { taskNote } from '../../shared/agent/transcript'
 import { WELCOME_PREFACE } from '../../shared/agent/welcome'
@@ -8,7 +10,7 @@ import { addressed, LOOP_ID, loopName, named } from '../../shared/loops/loops'
 import { signsIn } from '../../shared/llm/providers'
 import type { Turn } from '../../shared/llm/llm'
 import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
-import { withoutSecretPrompts } from '../actions'
+import { answerQuestion, withoutSecretPrompts } from '../actions'
 import { recordRun } from '../data/store'
 import { getGrids } from '../grid/grid'
 import { loopsOf } from '../loops/loops'
@@ -18,7 +20,7 @@ import { expandSlash } from '../skills/skills'
 import { agentLoop } from './agent'
 import { parseAttachment } from './attachments'
 import { callOff, loopHistory, handOver, runLoop } from './loop'
-import { userRequest } from './request'
+import { NEW_THREAD, turnText, userRequest, type Added } from './request'
 import { routerTools } from './router'
 import { findTool, orchestratorTools } from './tools'
 import type { Tool, ToolContext } from './tools/types'
@@ -38,6 +40,7 @@ import {
   threadFor,
   threadReads,
 } from './utils/thread'
+import { createTurns } from './utils/turns'
 
 // The orchestrator's requests: who asks the agent loop (agent.ts), on which thread, and when. The user's
 // request continues its workspace's thread, one per workspace, so follow-up questions work and
@@ -63,6 +66,7 @@ import {
 
 /** A window's own name for a request it sent. */
 const ASK_ID = /^[\w-]{1,64}$/
+const turns = createTurns()
 
 /** What the orchestrator may call: the tool families less what drives a view, and the tools that hold loops, which only it has. */
 function tools(context: ToolContext): Tool[] {
@@ -90,16 +94,34 @@ function run(input: string, ask?: string): Promise<string> {
     handOver(ownerTab, to.loop.id, { typed: to.message })
     return Promise.resolve(`Sent to ${loopName(to.loop.id)}.`)
   }
-  return userRequest({
-    workspaceId,
-    chat: CENTRAL_CHAT,
-    input,
-    ask,
-    goesOn: centralGoesOn,
-    prompt: orchestratorPrompt(workspaceId, []),
-    tools,
-    state: () => stateNow(workspaceId),
-  })
+  const request = (): Promise<string> =>
+    userRequest({
+      workspaceId,
+      chat: CENTRAL_CHAT,
+      input,
+      ask,
+      goesOn: centralGoesOn,
+      prompt: orchestratorPrompt(workspaceId, []),
+      tools,
+      state: () => stateNow(workspaceId),
+      added: () => turns.takeWaiting<Added>(CENTRAL_CHAT),
+    })
+  // /new and /clear do not wait: they start the conversation over under whatever is still working.
+  if (expandSlash(input) === null && NEW_THREAD.test(input)) {
+    turns.clear(CENTRAL_CHAT)
+    const open = askedIn(getState().questions)
+    if (open) answerQuestion(open.id, '')
+    return request()
+  }
+  // When a question is already on screen in the global box, a request sent there answers it so the
+  // waiting run can carry on rather than waiting behind itself in `turns`.
+  const open = askedIn(state.secretRequests) === null ? askedIn(state.questions) : null
+  if (open) {
+    answerQuestion(open.id, matchChoice(open.choices, input))
+    return Promise.resolve('')
+  }
+  const says: Added = { text: turnText(input), shown: shownQuestion(input), ask }
+  return turns.take(CENTRAL_CHAT, ask, request, '', says)
 }
 
 /** What a task's run is not offered, and a task's call may not name: a key nobody is there to paste, and tasks that make tasks. */
@@ -287,7 +309,7 @@ export function registerAgentIpc(): void {
     // Named by the name its window gave it: one still waiting its turn is called off, one that has
     // begun is stopped, and no other run is touched, whatever else is working.
     if (typeof ask === 'string' && ASK_ID.test(ask)) {
-      return callOff(ask) || stopAsked(ask) || (id !== undefined && stop(id))
+      return turns.callOff(ask) || callOff(ask) || stopAsked(ask) || (id !== undefined && stop(id))
     }
     return stop(id)
   })
@@ -295,6 +317,9 @@ export function registerAgentIpc(): void {
     parseAttachment(name, bytes, { recordRun }),
   )
   ipcMain.handle('agent:clear', () => {
+    turns.clear(CENTRAL_CHAT)
+    const open = askedIn(getState().questions)
+    if (open) answerQuestion(open.id, '')
     clearChat(CENTRAL_CHAT)
   })
   ipcMain.handle('agent:sessions', () => terminalSessions())

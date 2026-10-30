@@ -4,10 +4,12 @@ import {
   afterRound,
   batches,
   callLine,
+  DEFERRED_FOR_ADDED,
   handoffReply,
   LAST_ROUND,
   MAX_ROUNDS,
   saidOf,
+  shouldDeferForAdded,
   thoughtLine,
   writingLine,
   WRITING_EVERY_MS,
@@ -165,4 +167,13 @@ test('a request gets 40 rounds of tool calls, and a message added mid-run gives 
     most: MAX_ROUNDS + MAX_ROUNDS,
     riding: 'grid',
   })
+})
+
+test('shouldDeferForAdded defers a round when any call would ask the user, hand off work, or mutate state', () => {
+  const readsCall = (one: { name: string }): boolean => reads(one.name)
+  assert.equal(shouldDeferForAdded([], readsCall), false)
+  assert.equal(shouldDeferForAdded([call('read_a'), call('read_b')], readsCall), false)
+  assert.equal(shouldDeferForAdded([call('ask_user')], readsCall), true)
+  assert.equal(shouldDeferForAdded([call('read_a'), call('create_loop')], readsCall), true)
+  assert.match(DEFERRED_FOR_ADDED, /user added to the request/)
 })

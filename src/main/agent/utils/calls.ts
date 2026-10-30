@@ -3,7 +3,7 @@ import { untilAborted } from '../../../shared/abort'
 import { restoreInput } from '../../../shared/agent/aside'
 import { capOutput } from '../../../shared/agent/history'
 import { cap } from '../../../shared/agent/prompt'
-import { batches, callLine } from '../../../shared/agent/rounds'
+import { batches, callLine, DEFERRED_FOR_ADDED } from '../../../shared/agent/rounds'
 import { messageOf } from '../../../shared/rpc'
 import type { ToolCall, ToolResult, Turn } from '../../llm/llm'
 import type { Tool, ToolContext } from '../tools/types'
@@ -24,13 +24,31 @@ export async function runCalls(
   log: (line: string) => void,
   entry: Live,
   history: Turn[] = [],
+  deferNonReads = false,
 ): Promise<ToolResult[]> {
   const readsOnly = (call: ToolCall): boolean => tools.find((t) => t.name === call.name)?.readsOnly === true
   const results: ToolResult[] = []
   for (const batch of batches(calls, readsOnly)) {
-    results.push(...(await Promise.all(batch.map((call) => execute(call, context, tools, log, entry, history)))))
+    results.push(
+      ...(await Promise.all(
+        batch.map((call) =>
+          deferNonReads && !readsOnly(call)
+            ? Promise.resolve(deferCall(call, history))
+            : execute(call, context, tools, log, entry, history),
+        ),
+      )),
+    )
   }
   return results
+}
+
+function deferCall(call: ToolCall, history: Turn[]): ToolResult {
+  try {
+    call.input = restoreInput(call.input, history)
+  } catch {
+    // Keep the call's input as written when a deferred call cannot restore a shortened reference.
+  }
+  return { callId: call.id, output: DEFERRED_FOR_ADDED, isError: false }
 }
 
 /** Runs one call against the tools this request was offered, so a task's model cannot reach one it was not. */

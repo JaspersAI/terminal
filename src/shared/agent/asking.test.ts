@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { askedIn, onScreen, samePlace, type Place } from './asking.ts'
+import { askedIn, matchChoice, onScreen, samePlace, type Place } from './asking.ts'
 
 const at = (on: string, workspaceId = 'w1'): Place => ({ workspaceId, on })
 const q = (id: string, place?: Place) => ({ id, text: id, choices: [], ...(place ? { place } : {}) })
@@ -32,4 +32,13 @@ test('a tile is its workspace’s: another workspace’s tile with the same id i
   assert.deepEqual(askedIn(asks, at('e1', 'w2')), q('q2', at('e1', 'w2')))
   assert.ok(samePlace(undefined, undefined) && samePlace(at('e1'), at('e1')))
   assert.ok(!samePlace(at('e1'), undefined) && !samePlace(at('e1', 'w1'), at('e1', 'w2')))
+})
+
+test('matchChoice resolves spoken or typed answers to offered choices ignoring case and trailing punctuation', () => {
+  assert.equal(matchChoice(['Start', 'No'], '  start. '), 'Start')
+  assert.equal(matchChoice(['Start', 'No'], 'no!'), 'No')
+  assert.equal(
+    matchChoice(['Start', 'No'], 'and focus on the biggest growing ones'),
+    'and focus on the biggest growing ones',
+  )
 })

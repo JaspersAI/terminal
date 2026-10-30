@@ -5,6 +5,7 @@ import { errorMessage } from '../../lib/errors'
 import {
   answered,
   awayOn,
+  beginAsk,
   dismissed,
   failed,
   heard,
@@ -138,8 +139,7 @@ export function useOrbOpen(): boolean {
   return useSyncExternalStore(subscribeCentral, () => getCentral().orbOpen)
 }
 
-async function reread(fresh: boolean): Promise<void> {
-  const done = over(store.live)
+async function reread(fresh: boolean, done: ReadonlySet<string> = over(store.live)): Promise<void> {
   const past = await window.app.agent.history(PAGE).catch(() => null)
   const earlier = past ? (fresh ? past : rejoin(store.earlier, past)) : store.earlier
   emitStore({ earlier, live: without(store.live, done) })
@@ -162,12 +162,13 @@ export async function askCentral(text: string, options?: { fromOrb?: boolean }):
   } else {
     orbDraftText = null
   }
-  await reread(true)
   const name = crypto.randomUUID()
+  const begun = beginAsk(store.live, name, CENTRAL_CHAT, text)
   emitStore({
     sequence: store.sequence + 1,
-    live: sent(store.live, name, CENTRAL_CHAT, text),
+    live: begun.list,
   })
+  void reread(true, begun.done)
   try {
     const reply = await window.app.agent.run(text, name)
     console.log('[agent]', reply)
@@ -317,7 +318,7 @@ export function useRequest() {
   const stop = useCallback((ask?: string): void => {
     const mine = store.live.filter((one) => one.working && one.workspaceId === CENTRAL_CHAT)
     const target = ask === undefined ? mine[mine.length - 1] : store.live.find((one) => one.ask === ask)
-    if (target?.runId) void window.app.agent.stop(target.runId)
+    if (target) void window.app.agent.stop(target.runId ?? undefined, target.ask)
   }, [])
 
   useEffect(() => {
