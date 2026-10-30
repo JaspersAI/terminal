@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { beginSourceRun, failSourceRun, shownSourceData } from '../../../packages/sdk/src/hooks.ts'
-import { asTable, extractRows, mapToolResult } from './datasets.ts'
+import { asTable, canShareInFlight, createInFlightMap, extractRows, mapToolResult } from './datasets.ts'
 
 test('an array of objects is the rows, with nothing around them', () => {
   assert.deepEqual(extractRows([{ ticker: 'AAA' }, { ticker: 'BBB' }]), {
@@ -199,4 +199,34 @@ test('while a loop agent is working, a failed source run hides its error and sta
     meta: { count: 1 },
   }
   assert.equal(shownSourceData(loaded, true), loaded)
+})
+
+test('concurrent shareable source calls for the same key share one execution, while fresh or signaled calls run independently', async () => {
+  assert.equal(canShareInFlight({ ttlMs: 60_000 }), true)
+  assert.equal(canShareInFlight({ ttlMs: 60_000, fresh: true }), false)
+  assert.equal(canShareInFlight({ ttlMs: 60_000, signal: new AbortController().signal }), false)
+  assert.equal(canShareInFlight({ ttlMs: 60_000, raw: () => undefined }), false)
+  assert.equal(canShareInFlight({ ttlMs: 0 }), false)
+
+  const inFlight = createInFlightMap<number>()
+  let calls = 0
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+
+  const exec = async (): Promise<number> => {
+    const n = ++calls
+    await gate
+    return n
+  }
+
+  const p1 = inFlight.run('k1', true, exec)
+  const p2 = inFlight.run('k1', true, exec)
+  const pFresh = inFlight.run('k1', false, exec)
+
+  release()
+  assert.deepEqual(await Promise.all([p1, p2, pFresh]), [1, 1, 2])
+  // Once settled, a later call runs anew.
+  assert.equal(await inFlight.run('k1', true, exec), 3)
 })

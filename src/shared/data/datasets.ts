@@ -81,3 +81,36 @@ function isRows(value: unknown): value is Record<string, unknown>[] {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+
+/**
+ * Whether an in-flight call for the same key can be shared by another caller: only when the source
+ * has a positive TTL and the caller is not asking for a fresh fetch, passing its own abort signal,
+ * or tapping the raw wire response.
+ */
+export function canShareInFlight(options: {
+  ttlMs: number
+  fresh?: boolean
+  signal?: AbortSignal
+  raw?: unknown
+}): boolean {
+  return options.ttlMs > 0 && !options.fresh && !options.signal && !options.raw
+}
+
+/** Deduplicates concurrent shareable calls for the same key until the in-flight promise settles. */
+export function createInFlightMap<T>(): {
+  run(key: string, share: boolean, execute: () => Promise<T>): Promise<T>
+} {
+  const pending = new Map<string, Promise<T>>()
+  return {
+    run(key, share, execute) {
+      if (!share) return execute()
+      const existing = pending.get(key)
+      if (existing) return existing
+      const promise = execute().finally(() => {
+        if (pending.get(key) === promise) pending.delete(key)
+      })
+      pending.set(key, promise)
+      return promise
+    },
+  }
+}
