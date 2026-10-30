@@ -1530,3 +1530,88 @@ test('resizing at a shared seam between tiled elements hands off to the touching
     drop: { kind: 'rect', rect: r(0, 0, 8, 6) },
   })
 })
+
+test('docking the chat on an occupied grid shrinks right-side tiles in place, or floats when a right-edge tile is already at minimum width', () => {
+  const dock = (grid: Grid) => placeView(grid, { content: view(CHAT_VIEW), size: 'tall', anchor: 'right' })
+
+  // Two half-width tiles filling the grid: the right half shrinks to 4 wide so Central docks tiled at 12,0 4×12.
+  const halves = build({ size: 'half', anchor: 'left' }, { size: 'half', anchor: 'right' })
+  const onHalves = dock(halves)
+  assert.equal(onHalves.resolved, 'exact')
+  assert.deepEqual(
+    onHalves.grid.elements.map((e) => [e.id, e.mode, e.rect]),
+    [
+      ['e1', 'tiled', r(0, 0, 8, 12)],
+      ['e2', 'tiled', r(8, 0, 4, 12)],
+      ['e3', 'tiled', r(12, 0, 4, 12)],
+    ],
+  )
+  assert.equal(chatElement(onHalves.grid)?.id, 'e3')
+  assert.equal(chatElement(removeElement(onHalves.grid, 'e3').grid), null)
+
+  // Re-docking while already docked is idempotent and focuses the existing chat element.
+  const again = dock(onHalves.grid)
+  assert.equal(again.element.id, 'e3')
+  assert.equal(again.grid.elements.length, 3)
+
+  // Four quarter tiles filling the grid: both right-hand quarters shrink to 4 wide.
+  const quarters = build({}, {}, {}, {})
+  const onQuarters = dock(quarters)
+  assert.deepEqual(
+    onQuarters.grid.elements.map((e) => [e.id, e.rect]),
+    [
+      ['e1', r(0, 0, 8, 6)],
+      ['e2', r(8, 0, 4, 6)],
+      ['e3', r(0, 6, 8, 6)],
+      ['e4', r(8, 6, 4, 6)],
+      ['e5', r(12, 0, 4, 12)],
+    ],
+  )
+
+  // 3-col layout (5, 6, 5 wide): the right tile starts at x=11, so shrinking it to 2 wide leaves 3 columns (13..15) for Central.
+  const threeCol = arrange(build({}, {}, {}), '3-col').grid
+  const onThreeCol = dock(threeCol)
+  assert.equal(onThreeCol.resolved, 'shrunk')
+  assert.deepEqual(
+    onThreeCol.grid.elements.map((e) => [e.id, e.mode, e.rect]),
+    [
+      ['e1', 'tiled', r(11, 0, 2, 12)],
+      ['e2', 'tiled', r(5, 0, 6, 12)],
+      ['e3', 'tiled', r(0, 0, 5, 12)],
+      ['e4', 'tiled', r(13, 0, 3, 12)],
+    ],
+  )
+
+  // Maximized full-grid tile: unmaximizes, shrinks to 12 wide, and docks Central tiled on the right.
+  const maxed = setMode(build({ size: 'full' }), 'e1', 'maximized').grid
+  const onMaxed = dock(maxed)
+  assert.deepEqual(
+    onMaxed.grid.elements.map((e) => [e.id, e.mode, e.rect]),
+    [
+      ['e1', 'tiled', r(0, 0, 12, 12)],
+      ['e2', 'tiled', r(12, 0, 4, 12)],
+    ],
+  )
+
+  // Minimized right-side tile with another tile filling the rows beneath it: both the minimized bar and its restoreRect shrink.
+  const minRight = put(setMode(halves, 'e2', 'minimized').grid, { rect: r(8, 1, 8, 11) }).grid
+  const onMinRight = dock(minRight)
+  const shrunkMin = onMinRight.grid.elements.find((e) => e.id === 'e2')!
+  assert.deepEqual([shrunkMin.rect, shrunkMin.restoreRect], [r(8, 0, 4, 1), r(8, 0, 4, 12)])
+  assert.deepEqual(onMinRight.grid.elements.find((e) => e.id === 'e4')?.rect, r(12, 0, 4, 12))
+
+  // Right-edge tile already at MIN_CELLS (x=14, w=2) cannot shrink in place: Central falls back to floating on the right edge.
+  const narrowRight = build({ rect: r(0, 0, 14, 12) }, { rect: r(14, 0, 2, 12) })
+  const onNarrowRight = dock(narrowRight)
+  assert.equal(onNarrowRight.element.mode, 'floating')
+  assert.deepEqual(onNarrowRight.element.rect, r(12, 0, 4, 12))
+  assert.deepEqual(
+    onNarrowRight.grid.elements.map((e) => [e.id, e.mode, e.rect]),
+    [
+      ['e1', 'tiled', r(0, 0, 14, 12)],
+      ['e2', 'tiled', r(14, 0, 2, 12)],
+      ['e3', 'floating', r(12, 0, 4, 12)],
+    ],
+  )
+  assert.equal(chatElement(removeElement(onNarrowRight.grid, 'e3').grid), null)
+})

@@ -134,6 +134,9 @@ export const EMPTY_GRID: Grid = { size: DEFAULT_SIZE, elements: [], panels: [], 
 /** The built-in chat: the assistant's conversation and its command line, docked on the grid as an element. */
 export const CHAT_VIEW = 'core/chat'
 
+/** Where the chat lands when it is docked: a column down the right, moved and resized from there by hand. */
+export const CHAT_PLACEMENT: Placement = { size: 'tall', anchor: 'right' }
+
 /**
  * The element holding the docked chat in one window's grid, or null when that window has none. A
  * window shows one or the other, never both: with a chat docked the floating composer stays away,
@@ -306,11 +309,22 @@ export function placeView(
   grid: Grid,
   request: PlaceRequest,
 ): { grid: Grid; element: GridElement; panel: Panel; resolved: Resolved } {
+  const isChat = request.content.kind === 'view' && request.content.view === CHAT_VIEW
+  if (isChat && request.replace === undefined) {
+    const existing = chatElement(grid)
+    if (existing) {
+      const panel = grid.panels.find((p) => p.elementId === existing.id)!
+      const uncovered = grid.elements.some((e) => e.id !== existing.id && e.mode === 'maximized')
+        ? { ...grid, elements: grid.elements.map((e) => (e.id === existing.id ? e : unmaximize(e))) }
+        : grid
+      return { grid: focusElement(uncovered, existing.id).grid, element: existing, panel, resolved: 'exact' }
+    }
+  }
   const old = request.replace === undefined ? null : find(grid.elements, request.replace)
   const seq = grid.seq + 1
   const id = `e${seq}`
   const panelId = `p${seq}`
-  const shown = grid.elements.map((e) => (e === old ? e : unmaximize(e)))
+  let shown = grid.elements.map((e) => (e === old ? e : unmaximize(e)))
   let element: GridElement
   let resolved: Resolved = 'exact'
   const tag = request.loop === undefined ? {} : { loop: request.loop }
@@ -319,9 +333,16 @@ export function placeView(
     element = { ...rest, id, panelId, ...tag }
   } else {
     const found = resolvePlacement(shown, grid.size, request, old?.id)
-    if (!found) throw new Error(GRID_FULL)
-    element = { id, panelId, rect: found.rect, z: topZ(shown) + 1, mode: 'tiled', ...tag }
-    resolved = found.resolved
+    if (isChat && (!found || (request.anchor === 'right' && !request.rect && found.resolved !== 'exact'))) {
+      const docked = dockOnRight(shown, grid.size, request, old?.id)
+      shown = docked.elements
+      element = { id, panelId, rect: docked.rect, z: topZ(shown) + 1, mode: docked.mode, ...tag }
+      resolved = docked.resolved
+    } else {
+      if (!found) throw new Error(GRID_FULL)
+      element = { id, panelId, rect: found.rect, z: topZ(shown) + 1, mode: 'tiled', ...tag }
+      resolved = found.resolved
+    }
   }
   const panel: Panel = {
     id: panelId,
@@ -1032,6 +1053,83 @@ export function resolvePlacement(
     if (found) return { rect: found.rect, resolved: 'shrunk' }
   }
   return null
+}
+
+/**
+ * Makes room on the right edge for the docked chat (`core/chat`): tries right-edge column widths
+ * from the requested width down to `MIN_CELLS`, shrinking overlapping non-floating elements in
+ * place so their right edge stops at `size.cols - w` while keeping every element at least
+ * `MIN_CELLS` wide. When a right-edge element is already too narrow to shrink in place, leaves
+ * existing elements untouched and places the chat floating along the right edge.
+ */
+function dockOnRight(
+  elements: GridElement[],
+  size: GridSize,
+  request: Placement,
+  ignore?: string,
+): { elements: GridElement[]; rect: Rect; mode: 'tiled' | 'floating'; resolved: Resolved } {
+  const [tallW] = namedCells('tall', 'right', size)
+  const askedW = request.rect
+    ? clamp(request.rect.w, MIN_CELLS, size.cols)
+    : request.size
+      ? sizeCells(request.size, 'right', size).w
+      : tallW
+  const wantW = request.anchor === 'right' && askedW <= Math.round(size.cols / 2) ? askedW : Math.min(askedW, tallW)
+  for (let w = wantW; w >= MIN_CELLS; w--) {
+    const cut = size.cols - w
+    if (cut < 0) continue
+    const shrunk: GridElement[] = []
+    let fits = true
+    for (const e of elements) {
+      if (e.id === ignore) {
+        shrunk.push(e)
+        continue
+      }
+      const next = shrinkElementRight(e, cut)
+      if (!next) {
+        fits = false
+        break
+      }
+      shrunk.push(next)
+    }
+    if (fits) {
+      return {
+        elements: shrunk,
+        rect: { x: cut, y: 0, w, h: size.rows },
+        mode: 'tiled',
+        resolved: w === wantW ? 'exact' : 'shrunk',
+      }
+    }
+  }
+  return {
+    elements,
+    rect: { x: size.cols - wantW, y: 0, w: wantW, h: size.rows },
+    mode: 'floating',
+    resolved: 'exact',
+  }
+}
+
+/** Shrinks a non-floating element's right edge to at most `cut`, or returns null when it would drop below `MIN_CELLS`. */
+function shrinkElementRight(element: GridElement, cut: number): GridElement | null {
+  if (footprint(element) === null) return element
+  let rect = element.rect
+  if (rect.x + rect.w > cut) {
+    const nextW = cut - rect.x
+    if (nextW < MIN_CELLS) return null
+    rect = { ...rect, w: nextW }
+  }
+  let restoreRect = element.restoreRect
+  if (restoreRect && restoreRect.x + restoreRect.w > cut) {
+    const nextW = cut - restoreRect.x
+    if (nextW < MIN_CELLS) return null
+    restoreRect = { ...restoreRect, w: nextW }
+  }
+  if (rect === element.rect && restoreRect === element.restoreRect) return element
+  return {
+    ...element,
+    rect,
+    ...(restoreRect ? { restoreRect } : {}),
+  }
 }
 
 /**
