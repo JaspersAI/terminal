@@ -537,6 +537,11 @@ function seenQuestion(id: string): void {
   if (questions.seen(id)) console.log(`[ask] ${id} drawn in its tile`)
 }
 
+/** Answers a question the assistant is waiting on, or closes it when `answer` is empty. */
+export function answerQuestion(id: string, answer: string): void {
+  questions.answer(id, answer)
+}
+
 /**
  * Asks the user something and waits. The same shape as a key being asked for: main puts the
  * question in the tree, the composer shows it where the key field appears, and the tool call sits

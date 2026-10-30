@@ -13,6 +13,18 @@ export const MAX_ROUNDS = 40
 export const LAST_ROUND =
   'That was the last round of tool calls this request gets. Answer now with what you have, and say what is left undone.'
 
+export const DEFERRED_FOR_ADDED =
+  'Skipped: the user added to the request while you were responding. Read their message below before asking a question or acting.'
+
+/**
+ * Whether a round's calls should be deferred when the user has already added a follow-up message
+ * while the model was responding: any call that does more than read (asking the user, handing work
+ * to a loop, or changing state) waits until the model has read what was added.
+ */
+export function shouldDeferForAdded<T>(calls: readonly T[], readsOnly: (call: T) => boolean): boolean {
+  return calls.some((call) => !readsOnly(call))
+}
+
 /**
  * The round limit and the state note after a round's tool calls have run. A message the user added
  * while the round was in flight joins this run instead of starting a new one, so it gets a full

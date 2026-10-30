@@ -4,6 +4,7 @@ import type { AgentEvent } from '../../../shared/agent/agent.ts'
 import {
   answered,
   awayOn,
+  beginAsk,
   dismissed,
   failed,
   heard,
@@ -311,4 +312,41 @@ test('trailOf keeps the active step or thought visible while working and folds c
 test('a sent request with attached_file blocks shows the concise attachment summary in its live question', () => {
   const list = sent([], 'a1', 'w1', 'Summarize this.\n\n<attached_file name="report.pdf">\nFull text\n</attached_file>')
   assert.equal(list[0]?.question, 'Summarize this.\n[Attached: report.pdf]')
+})
+
+test('beginAsk puts the new request on screen at once and marks only prior finished requests for removal when history arrives', () => {
+  let list = two()
+  list = answered(list, 'b', 'Second is done.')
+  const begun = beginAsk(list, 'c', 'w1', 'third')
+  assert.deepEqual(
+    begun.list.map((one) => [one.ask, one.working]),
+    [
+      ['a', true],
+      ['b', false],
+      ['c', true],
+    ],
+  )
+  assert.deepEqual([...begun.done], ['b'])
+  // When the history read finishes later, it drops `b` and keeps both working requests (`a` and `c`).
+  assert.deepEqual(
+    without(begun.list, begun.done).map((one) => one.ask),
+    ['a', 'c'],
+  )
+})
+
+test('a follow-up request steered into an active run joins its trail and drops its waiting row', () => {
+  let list = sent([], 'a', 'w1', 'Screen for software companies')
+  list = heard(list, start('run1', 'a'))
+  list = sent(list, 'b', 'w1', 'and focus on the biggest growing ones')
+  assert.equal(list.length, 2)
+
+  list = heard(list, {
+    kind: 'steered',
+    runId: 'run1',
+    text: 'and focus on the biggest growing ones',
+    ask: 'b',
+  })
+  assert.equal(list.length, 1)
+  assert.equal(list[0]?.ask, 'a')
+  assert.deepEqual(list[0]?.steps, ['Added: and focus on the biggest growing ones'])
 })

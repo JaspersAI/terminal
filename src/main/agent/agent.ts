@@ -1,6 +1,6 @@
 import { startOf } from '../../shared/agent/aside'
 import { dayOf, overBudget } from '../../shared/agent/budget'
-import { afterRound, handoffReply, MAX_ROUNDS } from '../../shared/agent/rounds'
+import { afterRound, handoffReply, MAX_ROUNDS, shouldDeferForAdded } from '../../shared/agent/rounds'
 import { cutShort, windowFull } from '../../shared/agent/stop'
 import type { Completion, Turn } from '../../shared/llm/llm'
 import { recordUsage, spentToday } from '../data/store'
@@ -244,12 +244,23 @@ async function loop({
       }
       // Kept before the calls are run: one of them may take as long as a build.
       keep?.()
+      const readsOnly = (call: { name: string }): boolean =>
+        available.find((tool) => tool.name === call.name)?.readsOnly === true
+      const earlyJoined = !signal.aborted && shouldDeferForAdded(reply.toolCalls, readsOnly) ? (added?.() ?? []) : []
       // All results from one round go back together, in one turn, with the state they left behind.
-      const results = await runCalls(reply.toolCalls, context, available, log, entry, earlierTurns)
+      const results = await runCalls(
+        reply.toolCalls,
+        context,
+        available,
+        log,
+        entry,
+        earlierTurns,
+        earlyJoined.length > 0,
+      )
       // What the user added while this round was in flight joins the thread after its results. The
       // state rides on the last turn of the round, so it is said once. A run stopped under its calls
       // takes nothing: what was added then is left for the run after it.
-      const joined = signal.aborted ? [] : (added?.() ?? [])
+      const joined = signal.aborted ? [] : [...earlyJoined, ...(added?.() ?? [])]
       const next = afterRound(round, most, limit, prompt.round(), joined.length)
       most = next.most
       history.push({ role: 'tool', results, ...(joined.length === 0 ? { context: next.riding } : {}) })

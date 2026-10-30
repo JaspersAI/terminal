@@ -73,6 +73,21 @@ export function sent(list: LiveExchange[], ask: string, workspaceId: string, que
   ]
 }
 
+/**
+ * Begins a new request on `workspaceId`: records which finished requests (`done`) a history read
+ * started now will supersede, and appends the new working request to `list` immediately so its
+ * question and trail appear on screen without waiting on the history read.
+ */
+export function beginAsk(
+  list: LiveExchange[],
+  ask: string,
+  workspaceId: string,
+  question: string,
+): { list: LiveExchange[]; done: Set<string> } {
+  const done = over(list)
+  return { list: sent(list, ask, workspaceId, question), done }
+}
+
 /** The list after something main said about a run. Another window's run, or a task's, changes nothing here. */
 export function heard(list: LiveExchange[], event: AgentEvent): LiveExchange[] {
   if (event.kind === 'start') {
@@ -85,7 +100,7 @@ export function heard(list: LiveExchange[], event: AgentEvent): LiveExchange[] {
   }
   // How a run ended comes back from the request itself.
   if (event.kind === 'done' || event.kind === 'failed' || event.kind === 'stopped') return list
-  return change(
+  const next = change(
     list,
     (one) => one.runId === event.runId,
     (one) => {
@@ -105,6 +120,9 @@ export function heard(list: LiveExchange[], event: AgentEvent): LiveExchange[] {
       return same(one, { answer: one.answer, steps, thinking })
     },
   )
+  return event.kind === 'steered' && event.ask !== undefined
+    ? next.filter((one) => !(one.ask === event.ask && one.runId === null))
+    : next
 }
 
 /**
