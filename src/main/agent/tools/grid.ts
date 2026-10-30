@@ -123,11 +123,11 @@ export function gridTools(context?: ToolContext): Tool[] {
   const tools: Tool[] = [
     {
       name: 'place_view',
-      description: `Put an installed view ${where}: the views are listed in the prompt, with the state each takes. Say what and roughly where; the grid manager picks the cells and never moves other elements to make room. Returns the element id, panel id, the rect it got, and resolved: exact, moved (same size, somewhere else), or shrunk. Fails with grid_full when not even 2×2 fits: make room as the grid rules say.`,
+      description: `Put an installed view ${where}: the views are listed in the prompt, with the state each takes. Always use a plugin's own view when one renders the source or handles the workflow (such as screener-mcp/screener for any stock screen, including ranked or top-N subsets), rather than placing a core/table over that source or its run_rows. Place only the views the user asked for — do not add unrequested charts alongside a watchlist or table, or a separate chart per symbol when one chart was asked for; pass replace (or call remove_element) when replacing existing views with one. Say what and roughly where; the grid manager picks the cells and never moves other elements to make room. Returns the element id, panel id, the rect it got, and resolved: exact, moved (same size, somewhere else), or shrunk. Fails with grid_full when not even 2×2 fits: make room as the grid rules say.`,
       parameters: {
         type: 'object',
         properties: {
-          view: { type: 'string', description: 'An installed view id, like core/table.' },
+          view: { type: 'string', description: 'An installed view id, like screener-mcp/screener or core/table.' },
           state: {
             type: 'object',
             description: 'What the view starts with, against its state schema.',

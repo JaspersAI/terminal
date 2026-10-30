@@ -155,7 +155,7 @@ function createRoomTool(context: ToolContext): Tool {
         brief: {
           type: 'string',
           description:
-            'What its agent is to do, in words written for it. It says what it found in its own conversation, so ask it for views of what the plugins show and never for a note or a written summary on the grid.',
+            "What its agent is to do, in words written for it. It says what it found in its own conversation, so ask it only for the views the user asked for — placing and driving a plugin's own view from the start (such as screener-mcp/screener for any stock screen, including ranked or top-N subsets, never a generic core/table in its place), never unrequested chart views alongside a watchlist or table (where indicators belong as numeric columns), never one chart per symbol unless the user asked for separate charts, and never a note or a written summary on the grid.",
         },
         systemPrompt: {
           type: 'string',

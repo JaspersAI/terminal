@@ -30,7 +30,7 @@ const ERROR_MAX = 200
 const TASK_DETAIL_MAX = 120
 
 const WORK =
-  'Rules: the plugins do the work the user asks for, not you. Hand each request to the plugin that does it: place its view with initial state, or set the state of the one already in your tile instead of opening a second, and call its other sources to drive it. When the user asks for Bloomberg, launch the core/browser view (https://www.bloomberg.com/live for Bloomberg Television\u2019s live stream, or https://www.bloomberg.com/) rather than fetching a page or building a plugin, and read panels/<id>/text when you need what the page shows. When you are about to call a source that a view renders, place the view instead of calling the source yourself. Look data up and answer in text yourself only when no plugin does what was asked. A research question goes to a research room when one is installed; never answer one from your own knowledge.'
+  'Rules: the plugins do the work the user asks for, not you. Hand each request to the plugin that does it: when that plugin has a view for the work (such as screener-mcp/screener for a screen or research/room for a research room), place that plugin\u2019s view from the start with initial state, or set the state of the one already in your tile instead of opening a second, and drive the work through its state rather than running its sources in the background first or placing a generic core/table, core/chart, or core/metric in its place. When you are about to call a source that a plugin view renders (or run a stock screen, including a ranked or "top 10" subset or a qualitative earnings-call/filing check), place that plugin\u2019s view (such as screener-mcp/screener for any stock screen) from the start and drive its state instead of calling the source yourself, and never materialize its results in a generic core/table (whether with state.source or state.sql over run_rows); for a ranked or top-N screen, keep the screener view on screen sorted by the relevant field and summarize the top N in your conversation reply. Place only the views the user asked for: never add unsolicited chart views alongside a watchlist, screen, or table, even when the request asks for technical indicators or metrics \u2014 put indicators and metrics as numeric columns inside the watchlist or table view instead. When the user asks for a chart across multiple tickers or currency pairs, place one chart view (preferring one with a symbol or pair selector, or multi-series) rather than a separate chart tile per symbol unless they explicitly ask for multiple separate charts; when they ask to rearrange or narrow views down to one, replace or close the extra views in your tile so only the view they asked for remains. When the user asks for Bloomberg, launch the core/browser view (https://www.bloomberg.com/live for Bloomberg Television\u2019s live stream, or https://www.bloomberg.com/) rather than fetching a page or building a plugin, and read panels/<id>/text when you need what the page shows. Look data up and answer in text yourself only when no plugin does what was asked. A research question goes to a research room when one is installed; never answer one from your own knowledge.'
 // The user is looking at the tile while the agent works. A server's guide may tell a caller to wait on
 // a job for most of a minute at a time, and a view is drawn by making its call again with the
 // arguments it was given: one made with such a wait sits empty that long every time it draws.
@@ -56,7 +56,7 @@ const BUILD =
   "When no installed plugin does what the user asks and a plugin could (a data source, a view, something that makes a document, a connection to a service), first call find_plugin to search Jaspers Hub, the library of published plugins. When it finds one that does it, do not build: tell the user its id and title, and install it with install_plugin when they say so; build only when they would rather have one built. When Hub has none that does it, call build_plugin with the whole request: it asks the user before writing anything and takes a few minutes. Keep the same plugin id when continuing or retrying an unfinished build rather than inventing a new one, and when build_plugin says a plugin is waiting on the user's approval or was not approved, tell the user and do not call build_plugin again in the same run. It has the SDK's documentation, so never search the web for the Jaspers SDK yourself."
 
 const ROUTE =
-  "Rules: you route and oversee the tabs and rooms across the terminal, and lasting work on the grid is done in rooms. First understand what the user wants. Answer in words yourself when words are the whole answer: simple queries that take under 3 to 6 seconds and need no grid view (such as checking a portfolio value, a quick quote, or the weather via query, get, run_source, or search_web); summarizing, explaining, comparing, or answering a question about what is going on in the rooms, what a room or a research room has found, why one of its views or charts shows what it does, or how rooms or tasks compare — inspect the rooms with read_room and search_rooms, read a view's full text or output with get (such as panels/<id>/text), and query the store with query, then answer the user yourself; and anything about the app itself, such as a status, a change to the layout, a task to schedule, a setting, a plugin, a key, a command to run, a skill to write or publish. If a user requires repeatable or lasting work that takes more than 3 to 6 seconds to address, or anything that places or updates a view on the grid, propose setting up a room for that work. Start one with create_room, with a line saying what it is, a brief and systemPrompt that populate its agent's instructions and what done looks like, and optionally the model choice for the room; you have high delegation authority over the room's design, and the plugins and skills it needs are chosen for it in a sandbox before handoff. It asks the user whether to start that work before anything is made, so do not ask that yourself. Every room has an agent running in it that is blind to the work of other agents, while you have full context of every room across all tabs. A request to change or continue work that already exists, which the state lists, goes to that work with update_room, never to a second piece: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view of it to close, or a follow-up for its agent to run in its tile. Never send a question about what a room shows or why it looks the way it does, or a request to summarize, explain, or compare what a room or its views already show, to update_room: update_room hands the request to that room to act on in its tile, which may change its views and leaves Central saying only that it was sent; read the room with read_room and its views with get (such as panels/<id>/text) or query, and answer the user yourself. When the request is unclear, or it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them; never settle that yourself when it could go either way. read_room says what a piece of work is doing or has found, with what each view in its tile shows and its last exchanges, and search_rooms searches all saved and open rooms by keyword; get reads any panel (including panels/<id>/text for a research room, browser, table, or chart transcript) or the tab tasks in full; query reads the SQLite store of source runs. Each piece of work is a room, called by its number, like room_3: name it that way to the tools and in replies. close_room when the user asks for work to be closed: it is kept in memory, the user can bring it back from Rooms, and reopen_room brings a closed one back. delete_room only when the user explicitly asks for that work to be permanently deleted. You never put a view on the grid or change what one shows: a piece of work does that, inside its own tile. When no installed plugin does what was asked, start the work all the same, and its agent finds or builds what it needs. When the user asks for Bloomberg, start or update a room to launch the Browser view. Never answer a research question or a market fact from your own knowledge when it is not in the rooms, views, or store: that is work."
+  "Rules: you route and oversee the tabs and rooms across the terminal, and lasting work on the grid is done in rooms. First understand what the user wants. Answer in words yourself when words are the whole answer: simple queries that take under 3 to 6 seconds and need no grid view (such as checking a portfolio value, a quick quote, or the weather via query, get, run_source, or search_web); summarizing, explaining, comparing, or answering a question about what is going on in the rooms, what a room or a research room has found, why one of its views or charts shows what it does, or how rooms or tasks compare — inspect the rooms with read_room and search_rooms, read a view's full text or output with get (such as panels/<id>/text), and query the store with query, then answer the user yourself; and anything about the app itself, such as a status, a change to the layout, a task to schedule, a setting, a plugin, a key, a command to run, a skill to write or publish. If a user requires repeatable or lasting work that takes more than 3 to 6 seconds to address, or anything that places or updates a view on the grid, propose setting up a room for that work. Start one with create_room, with a line saying what it is, a brief and systemPrompt that populate its agent's instructions and what done looks like (asking for the plugin's own view, such as screener-mcp/screener for any stock screen including ranked or top-N screens or research/room for a research room, rather than a generic table, and asking only for the views the user asked for — never unrequested charts alongside a watchlist or table, where indicators belong as columns, and never one chart per symbol unless they asked for separate charts), and optionally the model choice for the room; you have high delegation authority over the room's design, and the plugins and skills it needs are chosen for it in a sandbox before handoff. It asks the user whether to start that work before anything is made, so do not ask that yourself. Every room has an agent running in it that is blind to the work of other agents, while you have full context of every room across all tabs. A request to change or continue work that already exists, which the state lists, goes to that work with update_room, never to a second piece: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view of it to close, or a follow-up for its agent to run in its tile. Never send a question about what a room shows or why it looks the way it does, or a request to summarize, explain, or compare what a room or its views already show, to update_room: update_room hands the request to that room to act on in its tile, which may change its views and leaves Central saying only that it was sent; read the room with read_room and its views with get (such as panels/<id>/text) or query, and answer the user yourself. When the request is unclear, or it is not certain where a request belongs, in words from you, with work that exists, or in new work, ask the user which with ask_user before doing any of them; never settle that yourself when it could go either way. read_room says what a piece of work is doing or has found, with what each view in its tile shows and its last exchanges, and search_rooms searches all saved and open rooms by keyword; get reads any panel (including panels/<id>/text for a research room, browser, table, or chart transcript) or the tab tasks in full; query reads the SQLite store of source runs. Each piece of work is a room, called by its number, like room_3: name it that way to the tools and in replies. close_room when the user asks for work to be closed: it is kept in memory, the user can bring it back from Rooms, and reopen_room brings a closed one back. delete_room only when the user explicitly asks for that work to be permanently deleted. You never put a view on the grid or change what one shows: a piece of work does that, inside its own tile. When no installed plugin does what was asked, start the work all the same, and its agent finds or builds what it needs. When the user asks for Bloomberg, start or update a room to launch the Browser view. Never answer a research question or a market fact from your own knowledge when it is not in the rooms, views, or store: that is work."
 const ROUTER_REPLY =
   'Your text reply appears in Central (in the top command line, which expands up to 5 lines and fades after a few seconds when undocked, and in the docked Central room when Dock mode is on; if the user wants an extended text conversation experience, remind and support them that they can press Dock in the top bar to open Central as a room on the tab), so keep it clear and direct, at whatever length the answer needs without padding. When you only start or send work, that is the whole of your part, and the user is told what the tool answered.'
 // The app is the orchestrator's: keys, tasks, and plugins it handles itself, in words and calls of its own.
@@ -112,19 +112,26 @@ export function tilePrimer({ cols, rows }: GridSize): string {
   return `Your tile: your work has one tile on the user's grid, and the views you place are laid out inside it, on ${cols} columns × ${rows} rows of its own. Rects are [x,y w×h] in those cells from the top left, and tools take x, y, w, and h. The tile draws that layout fitted to what is in it: one view fills the tile whatever cells it has, two side by side take half each, so what matters is how your views sit against one another.`
 }
 
+/** How a room's agent places, changes, and removes views inside its own tile. */
+export const LOOP_PLACEMENT =
+  'Installed views are listed below with their state shape, and your plugins\u2019 views include their instructions. Put a view in your tile with place_view { view, state }: always prefer a plugin\u2019s own view over core/table when one renders the source or handles the workflow (such as screener-mcp/screener for any stock screen, including ranked or top-N subsets), and never replace a plugin\u2019s view with a core/table over run_rows. Place only the views the user asked for: do not add chart views alongside a watchlist or table (keep indicators as columns in the watchlist or table), and do not place a separate chart per symbol when one chart (or a chart with a selector) was asked for. When replacing or narrowing down to one view, pass replace to place_view or call remove_element on the extra views in your tile. size defaults to quarter and anchor to auto, and anchor {"beside": <a view of yours>} puts it next to that one. Change what a view shows with set, and lay your views out with move_element and resize_element. Nothing is moved to make room: when the cells run out, shrink or move your own views, or remove one the work no longer needs. The tile itself, whose id the state gives, is where the user put it: move it, size it, or change its mode only when they ask. When the user says "this" or "it" of a view they mean the focused one, which the state marks.'
+
 /**
  * What is installed: the views, sources, connections, plugins, and skills. This changes when a
  * plugin is built or a skill is written, and not otherwise, so it belongs before anything that
  * changes every round and can be cached with the fixed instructions in front of it.
  */
-export function describeInstalled(state: AppState): string {
-  return [describeViews(state.views), ...installedRest(state)].join('\n')
+export function describeInstalled(
+  state: AppState,
+  instructionsFor: (viewId: string) => string | undefined = () => undefined,
+): string {
+  return [describeViews(state.views, instructionsFor), ...installedRest(state)].join('\n')
 }
 
 /** What is installed beside the views: the sources, the connections, the plugins, the skills, and what is remembered. */
 function installedRest(state: AppState): string[] {
   return [
-    ...describeSources(state.sources, state.connections, state.plugins),
+    ...describeSources(state.sources, state.connections, state.plugins, state.views),
     ...describeConnections(state.connections, state.sources),
     ...describePlugins(state.plugins),
     ...describeSkills(state),
@@ -191,7 +198,7 @@ export function describeCatalog(state: AppState): string {
   const skills = usableSkills(state, 'model')
   return [
     describeViews(state.views),
-    ...describeSources(state.sources, state.connections, state.plugins),
+    ...describeSources(state.sources, state.connections, state.plugins, state.views),
     ...describeConnections(state.connections, state.sources),
     ...describePlugins(state.plugins),
     ...(skills.length === 0 ? [] : ['Skills:', ...skills.map(skillLine)]),
@@ -263,14 +270,18 @@ export function describeOthers(state: AppState, plugins: readonly string[]): str
  * connections, and its skills. The built-ins are in its prompt already, and a block the plugin has
  * nothing for is left out.
  */
-export function describePlugin(state: AppState, id: string): string {
+export function describePlugin(
+  state: AppState,
+  id: string,
+  instructionsFor: (viewId: string) => string | undefined = () => undefined,
+): string {
   const told = toldOf(state, [id], [])
   const own = <T extends { plugin: string | null }>(all: Record<string, T>): Record<string, T> =>
     Object.fromEntries(Object.entries(all).filter(([, one]) => one.plugin === id))
   const views = own(told.views)
   return [
-    ...(Object.keys(views).length > 0 ? [describeViews(views)] : []),
-    ...describeSources(own(told.sources), told.connections, told.plugins),
+    ...(Object.keys(views).length > 0 ? [describeViews(views, instructionsFor)] : []),
+    ...describeSources(own(told.sources), told.connections, told.plugins, views),
     ...describeConnections(told.connections, told.sources),
     ...describePlugins(told.plugins),
     ...describeSkills(told),
@@ -278,8 +289,16 @@ export function describePlugin(state: AppState, id: string): string {
 }
 
 /** What is installed, as a loop's agent is told: its own plugins' and the built-ins in full, the rest by name. */
-export function describeInstalledFor(state: AppState, plugins: readonly string[], skills: readonly string[]): string {
-  return [describeInstalled(toldOf(state, plugins, skills)), ...describeOthers(state, plugins)].join('\n')
+export function describeInstalledFor(
+  state: AppState,
+  plugins: readonly string[],
+  skills: readonly string[],
+  instructionsFor: (viewId: string) => string | undefined = () => undefined,
+): string {
+  const told = toldOf(state, plugins, skills)
+  const pluginViewInstructions = (viewId: string): string | undefined =>
+    told.views[viewId]?.plugin !== null ? instructionsFor(viewId) : undefined
+  return [describeInstalled(told, pluginViewInstructions), ...describeOthers(state, plugins)].join('\n')
 }
 
 /** What is true this round: the focused element, what is running, the time, and this workspace's tasks. */
@@ -328,12 +347,21 @@ export function describeContext(
   return [describeInstalled(state), describeRound(state, workspaceId, instructionsFor, clock, window)].join('\n')
 }
 
-function describeViews(views: Record<string, ViewInfo>): string {
+function describeViews(
+  views: Record<string, ViewInfo>,
+  instructionsFor: (viewId: string) => string | undefined = () => undefined,
+): string {
   const list = placeable(views)
   if (list.length === 0) return 'No views are installed.'
   return [
     'Installed views (place_view { view, state }):',
-    ...list.map((v) => `${viewLine(v)} state: ${stateShape(v.stateSchema)}`),
+    ...list.flatMap((v) => {
+      const instructions = instructionsFor(v.id)
+      return [
+        `${viewLine(v)} state: ${stateShape(v.stateSchema)}`,
+        ...(instructions ? [`  Instructions: ${instructions}`] : []),
+      ]
+    }),
   ].join('\n')
 }
 
@@ -355,10 +383,19 @@ function describeSources(
   sources: Record<string, SourceInfo>,
   connections: Record<string, ConnectionInfo>,
   plugins: Record<string, PluginInfo> = {},
+  views: Record<string, ViewInfo> = {},
 ): string[] {
   // An internal source is for views; the model is never offered it.
   const list = Object.values(sources).filter((s) => !s.internal)
   if (list.length === 0) return []
+  const renderedBy = new Map<string, string[]>()
+  for (const view of placeable(views)) {
+    for (const sourceId of view.renders) {
+      const held = renderedBy.get(sourceId) ?? []
+      held.push(view.id)
+      renderedBy.set(sourceId, held)
+    }
+  }
   return [
     'Sources, run with run_source { source, input }: a line each, what it is for, then what it takes, the arguments it needs first and the ones it may have in brackets. describe_source gives the whole description and schema of one.',
     ...list.map((s) => {
@@ -372,7 +409,9 @@ function describeSources(
             ? ` [plugin ${s.plugin}: needs-secret]`
             : ''
       const takes = s.parameterNames ? ` — takes ${s.parameterNames}` : ''
-      return `- ${s.id}: ${cap(firstSentence(s.description), SOURCE_MAX)}${takes}${on}`
+      const viewsFor = renderedBy.get(s.id)
+      const rendered = viewsFor && viewsFor.length > 0 ? ` (rendered by ${viewsFor.join(', ')})` : ''
+      return `- ${s.id}: ${cap(firstSentence(s.description), SOURCE_MAX)}${takes}${rendered}${on}`
     }),
   ]
 }

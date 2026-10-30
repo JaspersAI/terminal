@@ -36,7 +36,7 @@ export const SETUP_DEFINITION: ToolDefinition = {
 
 /** The setup call's system prompt: what it is for, then everything installed. */
 export function setupSystem(catalog: string): string {
-  return `You set up a new piece of work inside Jaspers Terminal, a financial research app. Each piece of work has a tile on the user's grid and an agent of its own, which places the installed plugins' views and calls their sources. You are given what the work is and what its agent is to do; choose the installed plugins and skills its agent is told of in full, and answer only by calling ${SETUP_TOOL}. Choose by what each plugin's views and sources do, never by its name alone. What is installed:\n\n${catalog}`
+  return `You set up a new piece of work inside Jaspers Terminal, a financial research app. Each piece of work has a tile on the user's grid and an agent of its own, which places the installed plugins' views and calls their sources. You are given what the work is and what its agent is to do; choose the installed plugins and skills its agent is told of in full, and answer only by calling ${SETUP_TOOL}. Choose by what each plugin's views and sources do, never by its name alone. Do not choose a chart-only plugin when the user asked for a watchlist, screen, or table without charts, even if they asked for technical indicators that a chart view can plot as studies. What is installed:\n\n${catalog}`
 }
 
 /** What the setup call is asked: the work as the orchestrator described it, and the user's own words. */
