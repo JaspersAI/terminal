@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createLimiter, isOverflow, isRetryable, retryAfter, retryLine, retryWait, RETRIES_MAX } from './limits.ts'
+import {
+  createLimiter,
+  isOverflow,
+  isRetryable,
+  isSilentStream,
+  retryAfter,
+  retryLine,
+  retryWait,
+  RETRIES_MAX,
+} from './limits.ts'
 
 test('a limiter runs everything, never more than its limit at once, and passes failures through', async () => {
   const limit = createLimiter(2)
@@ -53,6 +62,20 @@ test('rate limits, server errors, timeouts, and dropped connections are worth on
 test('a provider that says it is overloaded part way through a stream is worth another try', () => {
   assert.equal(isRetryable('Overloaded'), true)
   assert.equal(isRetryable('Anthropic: overloaded_error'), true)
+})
+
+test('a stream that went silent is told apart from other retryable failures', () => {
+  assert.equal(isSilentStream('Jaspers: nothing arrived for 90 s'), true)
+  assert.equal(isSilentStream('Anthropic: nothing arrived for 300 s'), true)
+  for (const message of [
+    'Jaspers returned 524: timed out',
+    'Anthropic returned 408: request timeout',
+    'Anthropic returned 429: rate limited',
+    'Ollama: fetch failed (ECONNRESET)',
+    'OpenAI: Request timed out',
+  ]) {
+    assert.equal(isSilentStream(message), false, message)
+  }
 })
 
 test('each try waits about twice as long as the last, never past a minute, and then there are no more', () => {

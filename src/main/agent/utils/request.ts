@@ -1,6 +1,6 @@
 import { sleep } from '../../../shared/abort'
 import { saidOf } from '../../../shared/agent/rounds'
-import { isRetryable, retryLine, retryWait } from '../../../shared/llm/limits'
+import { isRetryable, isSilentStream, retryLine, retryWait } from '../../../shared/llm/limits'
 import type { Completion, Effort, ToolDefinition, Turn } from '../../../shared/llm/llm'
 import { ProviderError } from '../../llm/http'
 import { complete } from '../../llm/llm'
@@ -33,6 +33,12 @@ export interface RoundRequest {
   maxTokens?: number
   timeoutMs?: number
   effort?: Effort
+  /**
+   * Whether the caller mends a stream that went silent by restating the turn with a smaller-step note:
+   * the request then throws a silent-stream error on the first timeout instead of repeating the
+   * identical prompt in place.
+   */
+  restateOnSilent?: boolean
 }
 
 /**
@@ -56,6 +62,7 @@ export async function request({
   maxTokens,
   timeoutMs,
   effort = EFFORT,
+  restateOnSilent = false,
 }: RoundRequest): Promise<Completion> {
   const signal = entry.controller.signal
   const says = saidOf(entry.origin, shown)
@@ -101,6 +108,7 @@ export async function request({
         retryAfterMs: err instanceof ProviderError ? err.retryAfterMs : null,
       })
       if (signal.aborted) throw err
+      if (restateOnSilent && isSilentStream(message)) throw err
       const wait = isRetryable(message)
         ? retryWait(attempt, err instanceof ProviderError ? err.retryAfterMs : null)
         : null

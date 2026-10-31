@@ -29,6 +29,15 @@ export function isRetryable(message: string): boolean {
 }
 
 /**
+ * Whether a failure is a stream that went silent (`nothing arrived for … s`). A provider that holds
+ * tool-call arguments back until the call is whole can go silent while the model writes an oversized
+ * call, so repeating the identical prompt in place stalls the same way.
+ */
+export function isSilentStream(message: string): boolean {
+  return /nothing arrived for \d+ s/i.test(message)
+}
+
+/**
  * What a run says when its provider failed in a way that passes and it is about to ask again: what
  * the provider said, and how long the wait is. Never a wait of no seconds.
  */
