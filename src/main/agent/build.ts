@@ -152,12 +152,17 @@ export async function runBuild(request: string, rawId: string, parent: ToolConte
     if (parent.loop !== undefined) usePlugin(parent.workspaceId, parent.loop, id)
   }
   emit({ kind: 'status', runId: parent.runId, line: `Building ${id}` })
+  const round = (): string =>
+    builderRound(
+      describeFolder(listFilesSync(session.folder)),
+      pluginLine(getState().plugins[id], id, session.folder.live),
+    )
   // Whether the builder used every round it gets: its end was then not its own choice.
   let ranOut = false
   let text: string
   let builtPlugin = getState().plugins[id]
   try {
-    history.push({ role: 'user', text: request })
+    history.push({ role: 'user', text: request, context: round() })
     keep()
     text = await agentLoop({
       label: `build ${id} `,
@@ -177,11 +182,7 @@ export async function runBuild(request: string, rawId: string, parent: ToolConte
             built,
             memories,
           }),
-        round: () =>
-          builderRound(
-            describeFolder(listFilesSync(session.folder)),
-            pluginLine(getState().plugins[id], id, session.folder.live),
-          ),
+        round,
       },
       tools: () => [
         ...builderTools(session, context),

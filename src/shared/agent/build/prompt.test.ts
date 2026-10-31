@@ -89,6 +89,10 @@ test('the procedure asks for approval first, writes complete files in a single p
   assert.match(fixed!, /each write_file and edit_file save automatically rebuilds/)
   assert.match(fixed!, /edit_file replaces one passage of a file and leaves the rest as it is/)
   assert.match(fixed!, /destructured in its runtime parameter list/)
+  // Writes one code or view file per round and splits views into small files rather than stalling on one huge call.
+  assert.match(fixed!, /one code or view file per round/)
+  assert.match(fixed!, /split view subcomponents, data helpers, and constants into separate files/)
+  assert.match(fixed!, /writing a file whole again only when it is short and most of it changes/)
   // Shell-prepared files are read through ctx.files with shell: paths.
   assert.match(fixed!, /ctx\.files/)
   assert.match(fixed!, /shell:/)
