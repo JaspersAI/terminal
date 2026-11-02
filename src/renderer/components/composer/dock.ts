@@ -7,8 +7,8 @@ import { dispatch, useAppState } from '../../lib/state'
 // and persists it: a window that had the chat docked opens with it docked.
 
 /**
- * Puts the chat on one window's grid, which takes the overlay's place there. When the right edge is
- * already occupied, main shrinks the tiles there to make room, or floats the chat over the right
+ * Puts the chat on one window's grid, which takes the overlay's place there. When the grid has no
+ * free space, main shrinks the right-edge tiles to make room, or floats the chat over the right
  * edge when a tile there is already at minimum width.
  */
 export function dockChat(workspaceId: string, window: number): Promise<void> {

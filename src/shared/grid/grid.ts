@@ -332,8 +332,10 @@ export function placeView(
     const { loop: _was, ...rest } = old
     element = { ...rest, id, panelId, ...tag }
   } else {
-    const found = resolvePlacement(shown, grid.size, request, old?.id)
-    if (isChat && (!found || (request.anchor === 'right' && !request.rect && found.resolved !== 'exact'))) {
+    const found = isChat
+      ? resolveChatPlacement(shown, grid.size, request, old?.id)
+      : resolvePlacement(shown, grid.size, request, old?.id)
+    if (isChat && !found) {
       const docked = dockOnRight(shown, grid.size, request, old?.id)
       shown = docked.elements
       element = { id, panelId, rect: docked.rect, z: topZ(shown) + 1, mode: docked.mode, ...tag }
@@ -1056,11 +1058,65 @@ export function resolvePlacement(
 }
 
 /**
- * Makes room on the right edge for the docked chat (`core/chat`): tries right-edge column widths
- * from the requested width down to `MIN_CELLS`, shrinking overlapping non-floating elements in
- * place so their right edge stops at `size.cols - w` while keeping every element at least
- * `MIN_CELLS` wide. When a right-edge element is already too narrow to shrink in place, leaves
- * existing elements untouched and places the chat floating along the right edge.
+ * Resolves a placement for the docked chat (`core/chat`) into free cells: first tries the full
+ * requested size (`exact` or `moved`), and when no free spot holds the full size, fits the largest
+ * available free rectangle up to the requested width and height (`shrunk`). Returns null when the
+ * grid has no free space of at least 2×2 cells.
+ */
+function resolveChatPlacement(
+  elements: GridElement[],
+  size: GridSize,
+  placement: Placement,
+  ignore?: string,
+): { rect: Rect; resolved: Resolved } | null {
+  const cells = occupancy(elements, size, ignore)
+  let want: Cells
+  let scoreFor: (cells: Cells) => Score
+  if (placement.rect) {
+    const asked = checkRect(placement.rect, size)
+    if (isFree(cells, size, asked)) return { rect: asked, resolved: 'exact' }
+    want = { w: asked.w, h: asked.h }
+    scoreFor = () => (x, y) => (Math.abs(x - asked.x) + Math.abs(y - asked.y)) * EXACT
+  } else {
+    const target = resolveAnchor(elements, placement.anchor ?? 'auto')
+    want = sizeCells(placement.size ?? 'quarter', target, size)
+    scoreFor = (cells) => scorer(target, cells, size)
+  }
+  const best = nearest(cells, size, want, scoreFor(want))
+  if (best) return { rect: best.rect, resolved: best.cost < EXACT ? 'exact' : 'moved' }
+  let bestShrunk: { rect: Rect; cost: number } | null = null
+  for (const free of freeRects(elements, size, ignore)) {
+    const w = Math.min(want.w, free.w)
+    const h = Math.min(want.h, free.h)
+    const score = scoreFor({ w, h })
+    let inFree: { rect: Rect; cost: number } | null = null
+    for (let y = free.y; y + h <= free.y + free.h; y++) {
+      for (let x = free.x; x + w <= free.x + free.w; x++) {
+        const cost = score(x, y)
+        if (!inFree || cost < inFree.cost) inFree = { rect: { x, y, w, h }, cost }
+      }
+    }
+    if (inFree && (!bestShrunk || betterShrunk(inFree, bestShrunk))) bestShrunk = inFree
+  }
+  return bestShrunk ? { rect: bestShrunk.rect, resolved: 'shrunk' } : null
+}
+
+function betterShrunk(a: { rect: Rect; cost: number }, b: { rect: Rect; cost: number }): boolean {
+  const areaDiff = a.rect.w * a.rect.h - b.rect.w * b.rect.h
+  if (areaDiff !== 0) return areaDiff > 0
+  if (a.rect.w !== b.rect.w) return a.rect.w > b.rect.w
+  if (a.cost !== b.cost) return a.cost < b.cost
+  if (a.rect.y !== b.rect.y) return a.rect.y < b.rect.y
+  return a.rect.x < b.rect.x
+}
+
+/**
+ * Makes room on the right edge for the docked chat (`core/chat`) when the grid has no free space:
+ * tries right-edge column widths from the requested width down to `MIN_CELLS`, shrinking
+ * overlapping non-floating elements in place so their right edge stops at `size.cols - w` while
+ * keeping every element at least `MIN_CELLS` wide. When a right-edge element is already too narrow
+ * to shrink in place, leaves existing elements untouched and places the chat floating along the
+ * right edge.
  */
 function dockOnRight(
   elements: GridElement[],

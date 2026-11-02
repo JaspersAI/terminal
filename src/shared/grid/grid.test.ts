@@ -1615,3 +1615,63 @@ test('docking the chat on an occupied grid shrinks right-side tiles in place, or
   )
   assert.equal(chatElement(removeElement(onNarrowRight.grid, 'e3').grid), null)
 })
+
+test('docking the chat uses available free space before shrinking or floating over right-edge tiles', () => {
+  const dock = (grid: Grid) => placeView(grid, { content: view(CHAT_VIEW), size: 'tall', anchor: 'right' })
+
+  // Right column [12,0 4×12] is occupied, but [8,0 4×12] beside it is free: Central docks in [8,0 4×12] without shrinking e2.
+  const middleFree = build({ rect: r(0, 0, 8, 12) }, { rect: r(12, 0, 4, 12) })
+  const onMiddleFree = dock(middleFree)
+  assert.equal(onMiddleFree.resolved, 'moved')
+  assert.deepEqual(
+    onMiddleFree.grid.elements.map((e) => [e.id, e.mode, e.rect]),
+    [
+      ['e1', 'tiled', r(0, 0, 8, 12)],
+      ['e2', 'tiled', r(12, 0, 4, 12)],
+      ['e3', 'tiled', r(8, 0, 4, 12)],
+    ],
+  )
+
+  // On a 16×24 grid where columns 8..11 have a 4×14 free slot above a minimized bar and lower tile while 12..15 are full,
+  // Central fills the 4×14 free slot [8,0 4×14] and leaves the right-edge tiles at width 4.
+  let tall24: Grid = { ...EMPTY_GRID, size: { cols: 16, rows: 24 } }
+  for (const rect of [r(0, 0, 8, 24), r(8, 14, 4, 6), r(8, 16, 4, 8), r(12, 0, 4, 13), r(12, 13, 4, 11)]) {
+    if (rect.y === 14) {
+      tall24 = setMode(put(tall24, { rect: r(8, 0, 4, 6) }).grid, 'e2', 'minimized').grid
+      tall24 = setRect(tall24, 'e2', r(8, 14, 4, 1)).grid
+    } else {
+      tall24 = put(tall24, { rect }).grid
+    }
+  }
+  const onTall24 = dock(tall24)
+  assert.equal(onTall24.resolved, 'shrunk')
+  assert.deepEqual(onTall24.element.rect, r(8, 0, 4, 14))
+  assert.equal(onTall24.element.mode, 'tiled')
+  assert.deepEqual(onTall24.grid.elements.find((e) => e.id === 'e4')?.rect, r(12, 0, 4, 13))
+  assert.deepEqual(onTall24.grid.elements.find((e) => e.id === 'e5')?.rect, r(12, 13, 4, 11))
+
+  // Three quarters occupied and bottom-right [8,6 8×6] free: Central takes [12,6 4×6] on the right edge without shrinking e2.
+  const bottomRightFree = build({ size: 'half', anchor: 'left' }, { rect: r(8, 0, 8, 6) })
+  const onBottomRight = dock(bottomRightFree)
+  assert.equal(onBottomRight.resolved, 'shrunk')
+  assert.deepEqual(
+    onBottomRight.grid.elements.map((e) => [e.id, e.mode, e.rect]),
+    [
+      ['e1', 'tiled', r(0, 0, 8, 12)],
+      ['e2', 'tiled', r(8, 0, 8, 6)],
+      ['e3', 'tiled', r(12, 6, 4, 6)],
+    ],
+  )
+
+  // A 3-column free strip on the right edge [13,0 3×12] is filled directly without shrinking [0,0 13×12].
+  const threeWideFree = build({ rect: r(0, 0, 13, 12) })
+  const onThreeWideFree = dock(threeWideFree)
+  assert.equal(onThreeWideFree.resolved, 'shrunk')
+  assert.deepEqual(
+    onThreeWideFree.grid.elements.map((e) => [e.id, e.mode, e.rect]),
+    [
+      ['e1', 'tiled', r(0, 0, 13, 12)],
+      ['e2', 'tiled', r(13, 0, 3, 12)],
+    ],
+  )
+})
