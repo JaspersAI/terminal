@@ -48,6 +48,30 @@ export function refreshOnce(fetchFn: FetchLike): FetchLike {
   }
 }
 
+/**
+ * Wraps the fetch handed to `StreamableHTTPClientTransport` so standalone `GET` SSE streams are
+ * declined with 405 on Jaspers-backed connections and on stateless servers (those that returned no
+ * `mcp-session-id` on `initialize`). The SDK opens a background `GET` stream after `initialized` and
+ * reconnects it whenever the stream closes or the machine wakes from sleep, which would otherwise
+ * poll stateless servers and rotate Jaspers refresh tokens while idle; 405 is the MCP Streamable
+ * HTTP signal that no standalone `GET` stream is offered.
+ */
+export function streamableHttpFetch(fetchFn: FetchLike, opts: { viaJaspers?: boolean } = {}): FetchLike {
+  return async (url, init) => {
+    const method = (init?.method ?? 'GET').toUpperCase()
+    if (method === 'GET' && (opts.viaJaspers || !hasSessionId(init?.headers))) {
+      return new Response(null, { status: 405 })
+    }
+    return fetchFn(url, init)
+  }
+}
+
+function hasSessionId(headers: HeadersInit | undefined): boolean {
+  if (!headers) return false
+  const value = new Headers(headers).get('mcp-session-id')
+  return typeof value === 'string' && value.trim().length > 0
+}
+
 /** The refresh token a request presents, or null when it is not a refresh. The SDK sends a token request as a form. */
 function refreshTokenOf(init: RequestInit | undefined): string | null {
   if (init?.method !== 'POST' || !(init.body instanceof URLSearchParams)) return null

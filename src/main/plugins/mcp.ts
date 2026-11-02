@@ -30,9 +30,10 @@ import { messageOf } from '../../shared/rpc'
 import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { getConnection, missingOf, secretValues, setInfo, statusFor } from './connections'
 import { oauthProvider } from './oauth'
-import { refreshOnce } from './oauth-refresh'
+import { refreshOnce, streamableHttpFetch } from './oauth-refresh'
 import { accountAddress, asAccount, callAsAccount, signedIn } from '../jaspers/jaspers'
 import { RefusedError, SignedOutError } from '../jaspers/session'
+import { WAKE_GRACE_MS } from '../../shared/tasks/tasks'
 import { getState } from '../state'
 
 // One MCP client per connection, and what it knows published into the tree. Everything that could
@@ -67,6 +68,9 @@ const connecting = new Map<string, Promise<void>>()
 /** A connection that failed tries again on its own, waiting longer each time, so a server that was down comes back without anyone pressing Reconnect. */
 const RETRY_MS = [15_000, 30_000, 60_000, 120_000, 300_000]
 const retries = new Map<string, NodeJS.Timeout>()
+const pendingRetries = new Map<string, number>()
+let wakeGrace: NodeJS.Timeout | null = null
+let sleeping = false
 /** The fetch of every OAuth connection of its own. One, so a refresh under way is found by whichever client asks: the one just built, or one still finishing a call. */
 const oauthFetch = refreshOnce(fetch)
 /** The servers that sign their users in through Jaspers, by address, once each has said so. Not knowing is not kept: a server that could not be asked is asked again next time. */
@@ -189,11 +193,47 @@ async function connectOne(id: string, retry = 0): Promise<void> {
 /** A connection that failed in a way that may pass: said, and tried again on its own, each time after a longer wait. */
 function failed(id: string, message: string, retry: number): void {
   setInfo(id, { status: 'error', error: message, tools: [] })
+  pendingRetries.set(id, retry + 1)
+  if (sleeping || wakeGrace) return
+  armRetry(id, retry)
+}
+
+function armRetry(id: string, retry: number): void {
   const wait = RETRY_MS[Math.min(retry, RETRY_MS.length - 1)]!
   retries.set(
     id,
-    setTimeout(() => void connect(id, retry + 1).catch(() => undefined), wait),
+    setTimeout(() => {
+      retries.delete(id)
+      pendingRetries.delete(id)
+      void connect(id, retry + 1).catch(() => undefined)
+    }, wait),
   )
+}
+
+/** Disarms pending connection retry timers while the machine sleeps so none fire before the network is back. */
+export function suspendRetries(): void {
+  sleeping = true
+  if (wakeGrace) clearTimeout(wakeGrace)
+  wakeGrace = null
+  for (const timer of retries.values()) clearTimeout(timer)
+  retries.clear()
+}
+
+/** Re-arms pending connection retries after the post-wake grace window so the network has settled. */
+export function wakeRetries(): void {
+  sleeping = false
+  if (wakeGrace) clearTimeout(wakeGrace)
+  for (const timer of retries.values()) clearTimeout(timer)
+  retries.clear()
+  if (pendingRetries.size === 0) return
+  wakeGrace = setTimeout(() => {
+    wakeGrace = null
+    const due = [...pendingRetries.entries()]
+    pendingRetries.clear()
+    for (const [id, nextRetry] of due) {
+      void connect(id, nextRetry).catch(() => undefined)
+    }
+  }, WAKE_GRACE_MS)
 }
 
 /**
@@ -270,6 +310,7 @@ function cancelRetry(id: string): void {
   const timer = retries.get(id)
   if (timer) clearTimeout(timer)
   retries.delete(id)
+  pendingRetries.delete(id)
 }
 
 export async function disconnect(id: string): Promise<void> {
@@ -299,7 +340,9 @@ export async function forget(id: string): Promise<void> {
 /** Stdio children die with the app, so this runs on will-quit before anything else. */
 export function closeAll(): void {
   connecting.clear()
-  for (const id of retries.keys()) cancelRetry(id)
+  if (wakeGrace) clearTimeout(wakeGrace)
+  wakeGrace = null
+  for (const id of [...retries.keys(), ...pendingRetries.keys()]) cancelRetry(id)
   for (const [id, live] of clients) {
     clients.delete(id)
     void live.client.close().catch(() => undefined)
@@ -545,10 +588,11 @@ function build(
   }
   // A server that signs its users in through Jaspers is sent to as the account, with no flow of
   // the connection's own; one that signs them in itself gets the connection's OAuth.
+  const baseFetch = connection.auth === 'oauth' ? (viaJaspers ? asAccount : oauthFetch) : fetch
   return new StreamableHTTPClientTransport(new URL(connection.url!), {
     requestInit: { headers: connection.headers },
     authProvider: connection.auth === 'oauth' && !viaJaspers ? oauthProvider(id) : undefined,
-    fetch: connection.auth === 'oauth' ? (viaJaspers ? asAccount : oauthFetch) : undefined,
+    fetch: streamableHttpFetch(baseFetch, { viaJaspers }),
   })
 }
 

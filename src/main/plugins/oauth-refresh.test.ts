@@ -1,6 +1,8 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { refreshOnce } from './oauth-refresh.ts'
+import { refreshOnce, streamableHttpFetch } from './oauth-refresh.ts'
 
 const TOKEN_URL = 'https://auth.example/oauth/token'
 
@@ -193,4 +195,83 @@ test('anything that is not a refresh goes straight through, and its response com
     sent.map((init) => ({ url: 'https://mcp.example/mcp', init })),
   )
   answers.forEach((answer, i) => assert.equal(answer, made[i]))
+})
+
+test('streamableHttpFetch declines standalone GET SSE streams for Jaspers and stateless connections while keeping POST, DELETE, and stateful GET streams', async () => {
+  const seen: { method: string; sessionId: string | null }[] = []
+  const upstream = async (_url: string | URL, init?: RequestInit): Promise<Response> => {
+    const method = (init?.method ?? 'GET').toUpperCase()
+    const headers = new Headers(init?.headers)
+    seen.push({ method, sessionId: headers.get('mcp-session-id') })
+    if (method === 'GET') {
+      return new Response(': keepalive\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }
+    const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as { id?: number; method?: string }) : {}
+    if (body.method === 'initialize') {
+      return Response.json({
+        jsonrpc: '2.0',
+        id: body.id,
+        result: {
+          protocolVersion: '2025-03-26',
+          capabilities: { tools: {} },
+          serverInfo: { name: 'screener-mcp', version: '1.0.0' },
+        },
+      })
+    }
+    if (body.method === 'notifications/initialized') {
+      return new Response(null, { status: 202 })
+    }
+    if (body.method === 'tools/list') {
+      return Response.json({
+        jsonrpc: '2.0',
+        id: body.id,
+        result: { tools: [{ name: 'screen_companies', description: 'Screen', inputSchema: { type: 'object' } }] },
+      })
+    }
+    return new Response(null, { status: 200 })
+  }
+
+  // Connecting a StreamableHTTPClientTransport over a Jaspers-backed stateless server makes only POST requests
+  // and never opens a background GET SSE stream that would poll or refresh tokens on idle/wake.
+  const transport = new StreamableHTTPClientTransport(new URL('https://screener.example/mcp'), {
+    fetch: streamableHttpFetch(upstream, { viaJaspers: true }),
+  })
+  const client = new Client({ name: 'test', version: '1.0.0' })
+  await client.connect(transport)
+  const listed = await client.listTools()
+  await client.close()
+
+  assert.equal(listed.tools.length, 1)
+  assert.deepEqual(
+    seen.map((call) => call.method),
+    ['POST', 'POST', 'POST'],
+  )
+
+  // Even when a Jaspers server returns an mcp-session-id, standalone GET SSE streams are declined with 405.
+  seen.length = 0
+  const jaspersGet = await streamableHttpFetch(upstream, { viaJaspers: true })('https://screener.example/mcp', {
+    method: 'GET',
+    headers: { Accept: 'text/event-stream', 'mcp-session-id': 's1' },
+  })
+  assert.equal(jaspersGet.status, 405)
+  assert.equal(seen.length, 0)
+
+  // Non-Jaspers stateless GET (no mcp-session-id) is declined with 405; stateful GET (with mcp-session-id) passes through.
+  const statelessGet = await streamableHttpFetch(upstream, { viaJaspers: false })('https://mcp.example/mcp', {
+    method: 'GET',
+    headers: { Accept: 'text/event-stream' },
+  })
+  assert.equal(statelessGet.status, 405)
+  assert.equal(seen.length, 0)
+
+  const statefulGet = await streamableHttpFetch(upstream, { viaJaspers: false })('https://mcp.example/mcp', {
+    method: 'GET',
+    headers: { Accept: 'text/event-stream', 'mcp-session-id': 'session-42' },
+  })
+  assert.equal(statefulGet.status, 200)
+  await statefulGet.body?.cancel()
+  assert.deepEqual(seen, [{ method: 'GET', sessionId: 'session-42' }])
 })

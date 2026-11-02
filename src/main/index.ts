@@ -5,7 +5,7 @@ import { allScreensWithNotice, askForMissingSecret, dispatch, oneScreenOrNotice 
 import { watchLoops } from './agent/loop'
 import { registerAgentIpc, runTask, runTaskCall, taskSaid } from './agent/orchestrator'
 import { registerWelcomeIpc } from './agent/welcome'
-import { closeAll, followSignIn, onMissingSecret } from './plugins/mcp'
+import { closeAll, followSignIn, onMissingSecret, suspendRetries, wakeRetries } from './plugins/mcp'
 import { registerInstallIpc } from './plugins/install'
 import { registerHubIpc } from './hub/hub-ipc'
 import { registerSkillEditorIpc } from './skills/skill-editor'
@@ -203,10 +203,21 @@ app.whenReady().then(async () => {
 
   const reopen = (): void => {
     void refreshTerms()
-    void checkSignIn()
     showAll()
   }
-  startBackground({ showWindow: reopen, windowInFront: anyInFront, suspendTasks, wakeTasks, installUpdate })
+  startBackground({
+    showWindow: reopen,
+    windowInFront: anyInFront,
+    suspendTasks: () => {
+      suspendTasks()
+      suspendRetries()
+    },
+    wakeTasks: () => {
+      wakeTasks()
+      wakeRetries()
+    },
+    installUpdate,
+  })
   // Eye, if the user has it on: a frame of the app's own windows every minute, and a line of
   // telemetry for what the app did. It records into a folder on this machine, and the uploader
   // sends each piece to Jaspers as soon as it is whole. Started here rather than with a window, so
