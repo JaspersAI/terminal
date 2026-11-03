@@ -1,4 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactElement, type RefObject } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement,
+  type RefObject,
+} from 'react'
+import { stepChoice, submittedAnswer } from '../../../shared/agent/asking'
 import type { Question } from '../../../shared/state'
 import { errorMessage } from '../../lib/errors'
 import { dispatch } from '../../lib/state'
@@ -41,14 +50,19 @@ const TILE = 'relative shrink-0 bg-background'
  */
 export function QuestionField({ question, box, shown = true, compact = false }: Props): ReactElement {
   const [value, setValue] = useState('')
+  const [activeChoice, setActiveChoice] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   // The tile it is asked in, by its element's id: a box draws only its own workspace's tiles.
   const on = question.place?.on
   const id = (name: string): string => (on ? `${name}-${on}` : name)
+  const hasTyped = value.trim() !== ''
+  const selectedChoice =
+    question.choices.length > 0 && !hasTyped ? Math.min(Math.max(0, activeChoice), question.choices.length - 1) : -1
 
   useEffect(() => {
+    setActiveChoice(0)
     if (!on) input.current?.focus()
   }, [question.id, on])
 
@@ -83,8 +97,21 @@ export function QuestionField({ question, box, shown = true, compact = false }: 
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    if (!value.trim()) return
-    answer(value)
+    const chosen = submittedAnswer(question.choices, activeChoice, value)
+    if (!chosen) return
+    answer(chosen)
+  }
+
+  function onInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
+    const next = stepChoice(question.choices, activeChoice, value, event.key, {
+      shift: event.shiftKey,
+      meta: event.metaKey,
+      ctrl: event.ctrlKey,
+      alt: event.altKey,
+    })
+    if (next === null) return
+    event.preventDefault()
+    setActiveChoice(next)
   }
 
   if (compact) {
@@ -103,17 +130,27 @@ export function QuestionField({ question, box, shown = true, compact = false }: 
           >
             {oneLineText}
           </label>
-          {question.choices.map((choice) => (
-            <button
-              key={choice}
-              type="button"
-              disabled={busy}
-              onClick={() => answer(choice)}
-              className="flex h-4 shrink-0 items-center border border-border bg-muted/60 px-1.5 text-[11px] leading-none text-foreground transition-colors hover:bg-primary hover:text-primary-foreground disabled:opacity-50"
-            >
-              {choice}
-            </button>
-          ))}
+          {question.choices.map((choice, index) => {
+            const isSelected = index === selectedChoice
+            return (
+              <button
+                key={choice}
+                type="button"
+                disabled={busy}
+                aria-pressed={isSelected}
+                data-selected={isSelected || undefined}
+                onPointerEnter={() => setActiveChoice(index)}
+                onClick={() => answer(choice)}
+                className={`flex h-4 shrink-0 items-center border px-1.5 text-[11px] leading-none transition-colors disabled:opacity-50 ${
+                  isSelected
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-muted/60 text-foreground hover:bg-primary hover:text-primary-foreground'
+                }`}
+              >
+                {choice}
+              </button>
+            )
+          })}
           <input
             ref={input}
             id={id('question-input')}
@@ -121,6 +158,7 @@ export function QuestionField({ question, box, shown = true, compact = false }: 
             value={value}
             autoComplete="off"
             placeholder={question.choices.length > 0 ? 'or type answer…' : 'type answer…'}
+            onKeyDown={onInputKeyDown}
             onChange={(event) => setValue(event.target.value)}
             className="h-full min-w-16 flex-1 bg-transparent px-1 text-xs leading-none outline-none"
           />
@@ -164,17 +202,25 @@ export function QuestionField({ question, box, shown = true, compact = false }: 
         )}
         {question.choices.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-2">
-            {question.choices.map((choice) => (
-              <button
-                key={choice}
-                type="button"
-                disabled={busy}
-                onClick={() => answer(choice)}
-                className="border border-border px-2.5 py-1 text-sm hover:bg-muted disabled:opacity-50"
-              >
-                {choice}
-              </button>
-            ))}
+            {question.choices.map((choice, index) => {
+              const isSelected = index === selectedChoice
+              return (
+                <button
+                  key={choice}
+                  type="button"
+                  disabled={busy}
+                  aria-pressed={isSelected}
+                  data-selected={isSelected || undefined}
+                  onPointerEnter={() => setActiveChoice(index)}
+                  onClick={() => answer(choice)}
+                  className={`border px-2.5 py-1 text-sm transition-colors disabled:opacity-50 ${
+                    isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted'
+                  }`}
+                >
+                  {choice}
+                </button>
+              )
+            })}
           </div>
         )}
         <div className="mt-1.5 flex gap-2">
@@ -185,12 +231,13 @@ export function QuestionField({ question, box, shown = true, compact = false }: 
             value={value}
             autoComplete="off"
             placeholder={question.choices.length > 0 ? 'or say it yourself' : 'your answer'}
+            onKeyDown={onInputKeyDown}
             onChange={(event) => setValue(event.target.value)}
             className="min-w-0 flex-1 border border-border bg-background px-2 py-1 text-sm outline-none focus:border-foreground"
           />
           <button
             type="submit"
-            disabled={busy || !value.trim()}
+            disabled={busy || (question.choices.length === 0 && !value.trim())}
             className="bg-primary px-3 py-1 text-sm font-medium text-primary-foreground disabled:opacity-50"
           >
             Send

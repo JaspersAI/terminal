@@ -61,3 +61,38 @@ export function matchChoice(choices: readonly string[], answer: string): string 
   )
   return matched ?? trimmed
 }
+
+/**
+ * The next choice index when a key shifts the active choice while the question's text input has no
+ * typed draft, or null when the key is not a choice step.
+ */
+export function stepChoice(
+  choices: readonly string[],
+  active: number,
+  draft: string,
+  key: string,
+  modifiers?: { shift?: boolean; meta?: boolean; ctrl?: boolean; alt?: boolean },
+): number | null {
+  if (choices.length <= 1 || draft.trim() !== '') return null
+  if (modifiers?.meta || modifiers?.ctrl || modifiers?.alt) return null
+  const current = Math.min(Math.max(0, active), choices.length - 1)
+  if (key === 'ArrowRight' || key === 'ArrowDown' || (key === 'Tab' && !modifiers?.shift)) {
+    return (current + 1) % choices.length
+  }
+  if (key === 'ArrowLeft' || key === 'ArrowUp' || (key === 'Tab' && modifiers?.shift)) {
+    return (current + choices.length - 1) % choices.length
+  }
+  return null
+}
+
+/**
+ * What submitting a question field sends: the matched or trimmed draft when the user typed something,
+ * else the active choice when choices are offered, or null when nothing is chosen or typed.
+ */
+export function submittedAnswer(choices: readonly string[], active: number, draft: string): string | null {
+  const trimmed = draft.trim()
+  if (trimmed) return matchChoice(choices, trimmed)
+  if (choices.length === 0) return null
+  const current = Math.min(Math.max(0, active), choices.length - 1)
+  return choices[current] ?? null
+}
