@@ -426,4 +426,20 @@ test('Jaspers sign-in is asked on the main window after terms and onboarding whe
     needsJaspersSignIn({ ...base, connections: { 'research/mcp': { status: 'needs-sign-in' } } }, 1, true),
     false,
   )
+
+  // Explicitly dismissing the prompt ("Not now" or Escape) unblocks the workspace even with Jaspers configured.
+  assert.equal(needsJaspersSignIn(withLlm, 1, { dismissed: true }), false)
+
+  // An involuntary background sign-out during an already-signed-in session does not block an active dashboard,
+  // while an explicit sign-out in Settings (reason: null) still prompts.
+  const backgroundSignedOut = {
+    ...withLlm,
+    jaspers: {
+      signedIn: false,
+      reason: 'Jaspers signed you out: refresh token is no longer valid. Sign in again.',
+    },
+  }
+  assert.equal(needsJaspersSignIn(backgroundSignedOut, 1, { wasSignedIn: true }), false)
+  assert.equal(needsJaspersSignIn(backgroundSignedOut, 1, { wasSignedIn: false }), true)
+  assert.equal(needsJaspersSignIn(withLlm, 1, { wasSignedIn: true }), true)
 })

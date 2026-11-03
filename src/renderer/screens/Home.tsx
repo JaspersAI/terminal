@@ -21,6 +21,7 @@ interface Props {
 export function Home({ welcome }: Props): ReactElement {
   const [settings, setSettings] = useState(false)
   const [loops, setLoops] = useState(false)
+  const [openedSettingsFromPrompt, setOpenedSettingsFromPrompt] = useState(false)
   const [dismissedSignIn, setDismissedSignIn] = useState(false)
   useEffect(
     () =>
@@ -32,10 +33,21 @@ export function Home({ welcome }: Props): ReactElement {
   )
   const termsAccepted = useAppState((s) => s.termsAccepted)
   const signedIn = useAppState((s) => s.jaspers.signedIn)
+  const [wasSignedIn, setWasSignedIn] = useState(signedIn)
   useEffect(() => {
-    if (signedIn) setDismissedSignIn(false)
+    if (signedIn) {
+      setOpenedSettingsFromPrompt(false)
+      setDismissedSignIn(false)
+      setWasSignedIn(true)
+    }
   }, [signedIn])
-  const askSignIn = useAppState((s) => needsJaspersSignIn(s, window.app.windowNumber, dismissedSignIn))
+  const askSignIn = useAppState((s) =>
+    needsJaspersSignIn(s, window.app.windowNumber, {
+      openedSettings: openedSettingsFromPrompt,
+      dismissed: dismissedSignIn,
+      wasSignedIn,
+    }),
+  )
   const askEye = useAppState(
     (s) => window.app.windowNumber === MAIN_WINDOW && s.termsAccepted && !askSignIn && !s.eye.asked,
   )
@@ -60,8 +72,9 @@ export function Home({ welcome }: Props): ReactElement {
       {loops && <LoopsDialog onClose={() => setLoops(false)} />}
       {!settings && !loops && askSignIn && (
         <SignInPrompt
+          onDismiss={() => setDismissedSignIn(true)}
           onOpenSettings={() => {
-            setDismissedSignIn(true)
+            setOpenedSettingsFromPrompt(true)
             setLoops(false)
             setSettings(true)
           }}

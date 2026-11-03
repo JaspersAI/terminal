@@ -172,11 +172,32 @@ export function usesJaspersAccount(state: Omit<JaspersUsageState, 'termsAccepted
  * and switches their language model to another provider, the prompt clears so optional Jaspers
  * connections do not block the workspace.
  */
-export function needsJaspersSignIn(state: JaspersUsageState, windowNumber: number, dismissed = false): boolean {
+export interface JaspersSignInPromptOptions {
+  /** The user opened Settings from the prompt to switch providers. */
+  openedSettings?: boolean
+  /** The user dismissed the prompt (Not now / Escape) to use the workspace as-is. */
+  dismissed?: boolean
+  /** The session was already signed in before this signed-out state: an involuntary background sign-out does not block an active workspace. */
+  wasSignedIn?: boolean
+}
+
+export function needsJaspersSignIn(
+  state: JaspersUsageState,
+  windowNumber: number,
+  options: boolean | JaspersSignInPromptOptions = false,
+): boolean {
   if (windowNumber !== 1 || !state.termsAccepted || state.onboardingComplete !== true || state.jaspers.signedIn) {
     return false
   }
-  if (dismissed && state.llm !== null && state.llm !== undefined && state.llm.providerId !== 'jaspers') {
+  const {
+    openedSettings = false,
+    dismissed = false,
+    wasSignedIn = false,
+  } = typeof options === 'boolean' ? { openedSettings: options } : options
+  if (dismissed) return false
+  const hasReason = typeof state.jaspers.reason === 'string' && state.jaspers.reason.trim().length > 0
+  if (wasSignedIn && hasReason) return false
+  if (openedSettings && state.llm !== null && state.llm !== undefined && state.llm.providerId !== 'jaspers') {
     return false
   }
   return usesJaspersAccount(state)

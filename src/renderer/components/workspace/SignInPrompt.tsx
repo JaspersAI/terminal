@@ -5,15 +5,17 @@ import { BUTTON } from '../settings/Row'
 
 interface Props {
   onOpenSettings: () => void
+  onDismiss: () => void
 }
 
 /**
  * Shown on the main window after the Terms of Use are accepted when a user whose setup uses a
  * Jaspers account is signed out (after an update, an expired refresh token, or a keychain change).
  * Signing in with Jaspers restores the model, voice, web search, and account-backed plugins and
- * closes this modal; Open Settings lets the user switch to another language model provider instead.
+ * closes this modal; Open Settings lets the user switch to another language model provider instead,
+ * and Not now lets them use their workspace as it is.
  */
-export function SignInPrompt({ onOpenSettings }: Props): ReactElement {
+export function SignInPrompt({ onOpenSettings, onDismiss }: Props): ReactElement {
   const reason = useAppState((s) => s.jaspers.reason)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -35,6 +37,7 @@ export function SignInPrompt({ onOpenSettings }: Props): ReactElement {
       onKeyDown={(event) => {
         if (event.key !== 'Escape') return
         event.stopPropagation()
+        if (!busy) onDismiss()
       }}
       className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim p-4"
     >
@@ -61,6 +64,15 @@ export function SignInPrompt({ onOpenSettings }: Props): ReactElement {
         )}
         {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">
+          <button
+            id="jaspers-sign-in-prompt-dismiss"
+            type="button"
+            disabled={busy}
+            onClick={onDismiss}
+            className={BUTTON}
+          >
+            Not now
+          </button>
           <button type="button" onClick={onOpenSettings} className={BUTTON}>
             Open Settings
           </button>

@@ -418,6 +418,10 @@ export function save(next: MainState, prev: MainState): void {
   for (const id of Object.keys(prev.grids)) {
     if (!Object.hasOwn(next.grids, id)) deletedWorkspaces.add(id)
   }
+  if (next.jaspers !== prev.jaspers || next.oauth !== prev.oauth) {
+    flush()
+    return
+  }
   timer ??= setTimeout(flush, SAVE_DELAY_MS)
 }
 
