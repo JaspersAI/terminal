@@ -146,6 +146,44 @@ export function shownSourceData(
   }
 }
 
+/**
+ * Whether a change in a registry (`connections` or `sources`) can resolve a failed source run:
+ * a connection becoming ready (or listing a different tool set while ready), or the source itself
+ * becoming registered. Transitions into `connecting` or `error`, or changes to unrelated sources,
+ * do not trigger a retry.
+ */
+export function shouldRetrySourceRun(
+  registry: 'connections' | 'sources',
+  previous: unknown,
+  next: unknown,
+  source: string,
+): boolean {
+  if (registry === 'connections') {
+    if (!isRecord(next)) return false
+    const prevMap = isRecord(previous) ? previous : {}
+    for (const [id, raw] of Object.entries(next)) {
+      if (!isRecord(raw) || raw['status'] !== 'ready') continue
+      const prev = prevMap[id]
+      if (!isRecord(prev) || prev['status'] !== 'ready') return true
+      if (stableStringify(prev['tools']) !== stableStringify(raw['tools'])) return true
+    }
+    return false
+  }
+  if (!source || !isRecord(next) || !(source in next)) return false
+  if (!isRecord(previous) || !(source in previous)) return true
+  const prevSource = previous[source]
+  const nextSource = next[source]
+  return (
+    isRecord(prevSource) &&
+    isRecord(nextSource) &&
+    (prevSource['connection'] !== nextSource['connection'] || prevSource['tool'] !== nextSource['tool'])
+  )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 /** Whatever a store path holds, kept up to date. Undefined until the first value arrives. */
 export function useData(path: string): unknown
 /** A source run, again whenever `args` change by value, and again, fresh, when the view's panel is refreshed. An empty source is idle, for a view still waiting for its state. */
@@ -169,6 +207,8 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   const fresh = useRef(false)
   const failed = useRef(false)
   const lastQuery = useRef<string | null>(null)
+  const targetRef = useRef(target)
+  targetRef.current = target
 
   useEffect(() => {
     if (isSource) return
@@ -224,15 +264,19 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   // build it after it opens.
   useEffect(() => {
     if (!isSource) return
-    const again = (registry: string): (() => void) => {
+    const again = (registry: 'connections' | 'sources'): (() => void) => {
       let seen = false
-      return bridge.subscribe(registry, () => {
+      let previous: unknown = undefined
+      return bridge.subscribe(registry, (next) => {
         // The first delivery is the current value, not a change.
         if (!seen) {
           seen = true
+          previous = next
           return
         }
-        if (failed.current) {
+        const prev = previous
+        previous = next
+        if (failed.current && shouldRetrySourceRun(registry, prev, next, targetRef.current)) {
           fresh.current = true
           setNonce((n) => n + 1)
         }

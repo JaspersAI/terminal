@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { beginSourceRun, failSourceRun, shownSourceData } from '../../../packages/sdk/src/hooks.ts'
+import {
+  beginSourceRun,
+  failSourceRun,
+  shouldRetrySourceRun,
+  shownSourceData,
+} from '../../../packages/sdk/src/hooks.ts'
 import { asTable, canShareInFlight, createInFlightMap, extractRows, mapToolResult } from './datasets.ts'
 
 test('an array of objects is the rows, with nothing around them', () => {
@@ -229,4 +234,67 @@ test('concurrent shareable source calls for the same key share one execution, wh
   assert.deepEqual(await Promise.all([p1, p2, pFresh]), [1, 1, 2])
   // Once settled, a later call runs anew.
   assert.equal(await inFlight.run('k1', true, exec), 3)
+})
+
+test('shouldRetrySourceRun retries a failed source only when a connection becomes ready or the source itself is registered', () => {
+  const ready = {
+    'research/jaspers': { status: 'ready', tools: ['search_filings'] },
+    'screener-mcp/jaspers': { status: 'ready', tools: ['screen_companies', 'get_qualitative_screen'] },
+  }
+  const researchConnecting = {
+    ...ready,
+    'research/jaspers': { status: 'connecting', tools: [] },
+  }
+  const researchError = {
+    ...ready,
+    'research/jaspers': { status: 'error', error: 'fetch failed', tools: [] },
+  }
+  const bothError = {
+    'research/jaspers': { status: 'error', error: 'fetch failed', tools: [] },
+    'screener-mcp/jaspers': { status: 'error', error: 'fetch failed', tools: [] },
+  }
+
+  // Transitions into connecting or error do not retry failed sources.
+  assert.equal(shouldRetrySourceRun('connections', ready, researchConnecting, 'filings-feed/filings'), false)
+  assert.equal(shouldRetrySourceRun('connections', researchConnecting, researchError, 'filings-feed/filings'), false)
+  assert.equal(shouldRetrySourceRun('connections', researchError, researchConnecting, 'filings-feed/filings'), false)
+  assert.equal(shouldRetrySourceRun('connections', researchError, bothError, 'filings-feed/filings'), false)
+
+  // A connection transitioning to ready (or gaining tools while ready) retries.
+  assert.equal(shouldRetrySourceRun('connections', bothError, researchError, 'screener-mcp/qualitative'), true)
+  assert.equal(shouldRetrySourceRun('connections', researchError, ready, 'filings-feed/filings'), true)
+  assert.equal(
+    shouldRetrySourceRun(
+      'connections',
+      ready,
+      { ...ready, 'research/jaspers': { status: 'ready', tools: ['search_filings', 'get_company'] } },
+      'filings-feed/filings',
+    ),
+    true,
+  )
+  assert.equal(shouldRetrySourceRun('connections', ready, { ...ready }, 'filings-feed/filings'), false)
+
+  // Sources registry: only retries when the target source itself is registered or re-bound, never when tool parameterNames drop on error.
+  const sourcesBefore = {
+    'screener-mcp/qualitative': {
+      id: 'screener-mcp/qualitative',
+      connection: 'screener-mcp/jaspers',
+      tool: 'get_qualitative_screen',
+      parameterNames: ['run_id', 'wait_seconds'],
+    },
+  }
+  const sourcesAfterDisconnect = {
+    'screener-mcp/qualitative': {
+      id: 'screener-mcp/qualitative',
+      connection: 'screener-mcp/jaspers',
+      tool: 'get_qualitative_screen',
+      parameterNames: [],
+    },
+  }
+  assert.equal(
+    shouldRetrySourceRun('sources', sourcesBefore, sourcesAfterDisconnect, 'screener-mcp/qualitative'),
+    false,
+  )
+  assert.equal(shouldRetrySourceRun('sources', {}, sourcesBefore, 'screener-mcp/qualitative'), true)
+  assert.equal(shouldRetrySourceRun('sources', {}, sourcesBefore, 'filings-feed/filings'), false)
 })
