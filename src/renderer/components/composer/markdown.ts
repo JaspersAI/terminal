@@ -1309,3 +1309,56 @@ export function hasRichNoteContent(source: string): boolean {
   const blocks = parseMarkdown(source)
   return blocks.some((block) => block.kind !== 'paragraph' || block.children.some((node) => node.kind !== 'text'))
 }
+
+export type MathSegment =
+  { kind: 'text'; text: string } | { kind: 'math'; tex: string; display: boolean; math: MathNode[] }
+
+const MATH_SEGMENTS = new RegExp(
+  [
+    /\\\(([^\n]+?)\\\)/, // parenMath
+    /\\\[([\s\S]+?)\\\]/, // bracketMath
+    /(\\\$)/, // escapedDollar
+    /(?<!\\)\$\$(?!\s)([\s\S]+?)(?<!\s|\\)\$\$(?!\$)/, // displayMath
+    /(?<![\\$\dA-Za-z])\$(?![\s$])(?![0-9][\d,.]*[KMBTkmbt%]?(?![ \t]*[=<>+\-*/\\^_])(?:[\s,.;:!?)\]]|$))((?:\\\$|[^$\n])+?)(?<![\s\\(])\$(?![\dA-Za-z$\\{])/, // inlineMath
+  ]
+    .map((part) => part.source)
+    .join('|'),
+  'g',
+)
+
+/** Splits a prose string into plain text and inline or display LaTeX math segments, keeping currency intact. */
+export function mathSegments(source: string): MathSegment[] {
+  const out: MathSegment[] = []
+  const pushText = (value: string): void => {
+    if (!value) return
+    const prev = out[out.length - 1]
+    if (prev?.kind === 'text') prev.text += value
+    else out.push({ kind: 'text', text: value })
+  }
+  let at = 0
+  for (const match of source.matchAll(MATH_SEGMENTS)) {
+    const index = match.index ?? 0
+    pushText(source.slice(at, index))
+    at = index + match[0].length
+    const [whole, parenMath, bracketMath, escapedDollar, displayMath, inlineMath] = match
+    if (escapedDollar !== undefined) {
+      pushText('$')
+    } else if (parenMath !== undefined) {
+      const tex = parenMath.trim()
+      out.push({ kind: 'math', tex, display: false, math: parseMath(tex) })
+    } else if (bracketMath !== undefined) {
+      const tex = bracketMath.trim()
+      out.push({ kind: 'math', tex, display: true, math: parseMath(tex) })
+    } else if (displayMath !== undefined) {
+      const tex = displayMath.trim()
+      out.push({ kind: 'math', tex, display: true, math: parseMath(tex) })
+    } else if (inlineMath !== undefined) {
+      const tex = inlineMath.trim()
+      out.push({ kind: 'math', tex, display: false, math: parseMath(tex) })
+    } else {
+      pushText(whole)
+    }
+  }
+  pushText(source.slice(at))
+  return out
+}
