@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { citedIds, parseInline, parseMarkdown, type Block, type Inline } from './markdown.ts'
+import { citedIds, parseInline, parseMarkdown, parseMath, type Block, type Inline } from './markdown.ts'
 
 const text = (value: string): Inline => ({ kind: 'text', text: value })
 const strong = (...children: Inline[]): Inline => ({ kind: 'strong', children })
@@ -342,4 +342,120 @@ test('the ids a reply cites come in the order it first cites each, wherever in t
     '`[^code]`',
   ].join('\n')
   assert.deepEqual(citedIds(parseMarkdown(reply)), ['h1', 'a1', 'd1', 'n1', 't1', 'q1'])
+})
+
+test('inline and display LaTeX math expressions parse into math nodes with structured MathNode trees', () => {
+  const source = [
+    'The model projects expected point differential ($\\Delta \\text{Spread}_{\\text{DET}}$) via $\\Phi$ with $\\sigma = 13.45\\text{ points}$ and \\(\\alpha + \\beta\\):',
+    '',
+    '$$P(\\text{DET Win}) = \\Phi\\left(\\frac{\\Delta \\text{Spread}_{\\text{DET}}}{\\sigma}\\right) = \\Phi\\left(\\frac{+0.31}{13.45}\\right) = \\Phi(+0.0230) \\approx 50.92\\%$$',
+    '',
+    '\\[',
+    '\\sqrt[3]{x^2 + 1} = \\sum_{i=1}^{n} w_i',
+    '\\]',
+  ].join('\n')
+  const blocks = parseMarkdown(source)
+  assert.equal(blocks.length, 3)
+  assert.equal(blocks[0]?.kind, 'paragraph')
+  const inlines = blocks[0]?.kind === 'paragraph' ? blocks[0].children : []
+  const mathInlines = inlines.filter((node) => node.kind === 'math')
+  assert.deepEqual(
+    mathInlines.map((node) => (node.kind === 'math' ? node.tex : '')),
+    ['\\Delta \\text{Spread}_{\\text{DET}}', '\\Phi', '\\sigma = 13.45\\text{ points}', '\\alpha + \\beta'],
+  )
+  assert.deepEqual(parseMath('\\Delta \\text{Spread}_{\\text{DET}}'), [
+    { kind: 'symbol', text: 'Δ' },
+    {
+      kind: 'scripts',
+      base: [{ kind: 'text', text: 'Spread', style: 'normal' }],
+      sub: [{ kind: 'text', text: 'DET', style: 'normal' }],
+    },
+  ])
+  assert.equal(blocks[1]?.kind, 'math')
+  if (blocks[1]?.kind === 'math') {
+    assert.ok(blocks[1].tex.startsWith('P(\\text{DET Win}) = \\Phi\\left('))
+    assert.ok(blocks[1].math.some((node) => node.kind === 'delimited'))
+    assert.ok(blocks[1].math.some((node) => node.kind === 'symbol' && node.text === '≈'))
+  }
+  assert.equal(blocks[2]?.kind, 'math')
+  if (blocks[2]?.kind === 'math') {
+    assert.equal(blocks[2].tex, '\\sqrt[3]{x^2 + 1} = \\sum_{i=1}^{n} w_i')
+    assert.ok(blocks[2].math.some((node) => node.kind === 'sqrt'))
+    assert.ok(blocks[2].math.some((node) => node.kind === 'scripts' && node.limits === true))
+  }
+})
+
+test('ordinary currency figures, ranges, tickers, and code never misparse as LaTeX math', () => {
+  const prose =
+    'Guidance rose from $1.8B to $2.0B ($10-$20 per share, or $2.715 vs $3.82), while \\$2.71 and `$\\alpha$` stay literal and $\\sigma = 1.2$ renders as math.'
+  const parsed = parseInline(prose)
+  assert.deepEqual(parsed, [
+    text('Guidance rose from $1.8B to $2.0B ($10-$20 per share, or $2.715 vs $3.82), while $2.71 and '),
+    { kind: 'code', text: '$\\alpha$' },
+    text(' stay literal and '),
+    {
+      kind: 'math',
+      tex: '\\sigma = 1.2',
+      math: [
+        { kind: 'symbol', text: 'σ' },
+        { kind: 'symbol', text: '=' },
+        { kind: 'text', text: '1.2' },
+      ],
+    },
+    text(' renders as math.'),
+  ])
+})
+
+test('parseMath handles fractions, binomials, accents, fonts, matrices, and malformed LaTeX safely', () => {
+  assert.deepEqual(parseMath('\\frac{a + 1}{b - 1} + \\binom{n}{k}'), [
+    {
+      kind: 'frac',
+      num: [
+        { kind: 'text', text: 'a' },
+        { kind: 'symbol', text: '+' },
+        { kind: 'text', text: '1' },
+      ],
+      den: [
+        { kind: 'text', text: 'b' },
+        { kind: 'symbol', text: '−' },
+        { kind: 'text', text: '1' },
+      ],
+    },
+    { kind: 'symbol', text: '+' },
+    {
+      kind: 'delimited',
+      left: '(',
+      right: ')',
+      body: [
+        {
+          kind: 'matrix',
+          open: '',
+          close: '',
+          rows: [[[{ kind: 'text', text: 'n' }]], [[{ kind: 'text', text: 'k' }]]],
+        },
+      ],
+    },
+  ])
+  assert.deepEqual(parseMath('\\hat{y} = \\mathbb{E}[\\mathbf{X}]'), [
+    { kind: 'accent', accent: '^', over: true, body: [{ kind: 'text', text: 'y' }] },
+    { kind: 'symbol', text: '=' },
+    { kind: 'text', text: '𝔼', style: 'bb' },
+    { kind: 'symbol', text: '[' },
+    { kind: 'text', text: 'X', style: 'bold' },
+    { kind: 'symbol', text: ']' },
+  ])
+  const matrix = parseMath('\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}')
+  assert.deepEqual(matrix, [
+    {
+      kind: 'matrix',
+      open: '(',
+      close: ')',
+      rows: [
+        [[{ kind: 'text', text: 'a' }], [{ kind: 'text', text: 'b' }]],
+        [[{ kind: 'text', text: 'c' }], [{ kind: 'text', text: 'd' }]],
+      ],
+    },
+  ])
+  // Unclosed braces or missing arguments degrade gracefully without throwing.
+  assert.doesNotThrow(() => parseMath('\\frac{1}{ + \\left( x_'))
 })

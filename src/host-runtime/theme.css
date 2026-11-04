@@ -47,3 +47,239 @@
     --jaspers-negative: #f87171;
   }
 }
+
+.jp-math {
+  font-family: var(--jaspers-font-prose);
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.jp-math-inline {
+  display: inline-flex;
+  align-items: baseline;
+  vertical-align: baseline;
+}
+
+.jp-math-block {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow-x: auto;
+  padding: 0.35rem 0;
+  width: 100%;
+  font-size: 1.05em;
+}
+
+.jp-math-row {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.jp-math-var {
+  font-style: italic;
+}
+
+.jp-math-normal {
+  font-style: normal;
+}
+
+.jp-math-bold {
+  font-weight: 700;
+  font-style: normal;
+}
+
+.jp-math-italic {
+  font-style: italic;
+}
+
+.jp-math-mono {
+  font-family: var(--jaspers-font-mono);
+  font-style: normal;
+  font-size: 0.9em;
+}
+
+.jp-math-cal {
+  font-style: italic;
+}
+
+.jp-math-sym {
+  font-style: normal;
+  padding: 0 0.12em;
+}
+
+.jp-math-sym-tight {
+  font-style: normal;
+}
+
+.jp-math-space-thin {
+  display: inline-block;
+  width: 0.17em;
+}
+
+.jp-math-space-medium {
+  display: inline-block;
+  width: 0.28em;
+}
+
+.jp-math-space-thick {
+  display: inline-block;
+  width: 0.45em;
+}
+
+.jp-math-space-quad {
+  display: inline-block;
+  width: 1em;
+}
+
+.jp-math-frac {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: middle;
+  margin: 0 0.15em;
+  font-size: 0.9em;
+  line-height: 1.1;
+}
+
+.jp-math-frac-num {
+  padding: 0 0.2em 0.08em;
+  border-bottom: 1px solid currentColor;
+  width: 100%;
+  text-align: center;
+}
+
+.jp-math-frac-den {
+  padding: 0.08em 0.2em 0;
+  width: 100%;
+  text-align: center;
+}
+
+.jp-math-scripts {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.jp-math-scripts-stack {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  margin-left: 0.05em;
+  font-size: 0.72em;
+  line-height: 1.05;
+}
+
+.jp-math-sup {
+  font-size: 0.75em;
+  line-height: 1;
+  vertical-align: super;
+  margin-left: 0.04em;
+}
+
+.jp-math-sub {
+  font-size: 0.75em;
+  line-height: 1;
+  vertical-align: sub;
+  margin-left: 0.04em;
+}
+
+.jp-math-limits {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: middle;
+  margin: 0 0.12em;
+  line-height: 1.05;
+}
+
+.jp-math-limit {
+  font-size: 0.7em;
+  line-height: 1;
+}
+
+.jp-math-op {
+  font-size: 1.15em;
+  line-height: 1;
+  font-style: normal;
+}
+
+.jp-math-sqrt {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+  margin: 0 0.08em;
+}
+
+.jp-math-sqrt-index {
+  font-size: 0.65em;
+  align-self: flex-start;
+  margin-right: -0.1em;
+  margin-top: -0.1em;
+}
+
+.jp-math-sqrt-sign {
+  font-style: normal;
+  font-size: 1.05em;
+  line-height: 1;
+  padding-right: 0.03em;
+}
+
+.jp-math-sqrt-body {
+  border-top: 1px solid currentColor;
+  padding: 0.04em 0.12em 0;
+}
+
+.jp-math-delim {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.jp-math-delim-char {
+  font-style: normal;
+  font-size: 1.12em;
+  line-height: 1;
+  padding: 0 0.04em;
+}
+
+.jp-math-accent {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  vertical-align: baseline;
+  line-height: 1;
+}
+
+.jp-math-accent-mark {
+  font-size: 0.75em;
+  line-height: 0.7;
+  font-style: normal;
+}
+
+.jp-math-overline {
+  border-top: 1px solid currentColor;
+  padding-top: 0.04em;
+}
+
+.jp-math-underline {
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 0.04em;
+}
+
+.jp-math-matrix {
+  display: inline-table;
+  border-collapse: collapse;
+  vertical-align: middle;
+  margin: 0 0.1em;
+}
+
+.jp-math-matrix td {
+  padding: 0.08em 0.3em;
+  text-align: center;
+  white-space: nowrap;
+  border: 0;
+}
+
+.jp-math-matrix-left td {
+  text-align: left;
+}
