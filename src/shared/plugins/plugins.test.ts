@@ -450,24 +450,27 @@ test('classifyPluginWatchPath routes code and skill changes while ignoring neste
 })
 
 test('samePluginBuild and sameHostBuild detect unchanged build outputs and host specs', () => {
-  const built = { dir: '/plugins/fred', code: 'module.exports = 1', bundle: 'export default 1' }
+  const built = { dir: '/plugins/fred', code: 'module.exports = 1', bundle: 'export default 1', shell: false }
   assert.equal(samePluginBuild(undefined, built), false)
   assert.equal(samePluginBuild(built, { ...built }), true)
   assert.equal(samePluginBuild(built, { ...built, code: 'module.exports = 2' }), false)
   assert.equal(samePluginBuild(built, { ...built, bundle: 'export default 2' }), false)
   assert.equal(samePluginBuild(built, { ...built, dir: '/plugins/other' }), false)
+  assert.equal(samePluginBuild(built, { ...built, shell: true }), false)
 
   const host = {
     code: 'module.exports = 1',
     dir: '/plugins/fred',
     capabilities: ['files', 'llm'] as const,
     eager: true,
+    shell: false,
   }
   assert.equal(sameHostBuild(undefined, host), false)
   assert.equal(sameHostBuild(host, { ...host, capabilities: ['files', 'llm'] }), true)
   assert.equal(sameHostBuild(host, { ...host, capabilities: ['files'] }), false)
   assert.equal(sameHostBuild(host, { ...host, eager: false }), false)
   assert.equal(sameHostBuild(host, { ...host, code: 'module.exports = 2' }), false)
+  assert.equal(sameHostBuild(host, { ...host, shell: true }), false)
 })
 
 test('isReloadAbort matches host reload shutdown errors and ignores other failures', () => {
