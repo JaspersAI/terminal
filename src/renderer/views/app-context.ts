@@ -71,3 +71,8 @@ export function appContainerDimensions(width: number, height: number, zoom: numb
     height: Math.round(height / z),
   }
 }
+
+/** Whether a failed MCP App panel open should retry when its connection's readiness changes. */
+export function shouldRetryAppOpen(wasReady: boolean, ready: boolean, openedKind: string): boolean {
+  return !wasReady && ready && openedKind === 'failed'
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { appContainerDimensions, appFrameStyle, hostStyles } from './app-context.ts'
+import { appContainerDimensions, appFrameStyle, hostStyles, shouldRetryAppOpen } from './app-context.ts'
 
 /** The app's own variables, as a page's host would read them off the document. */
 const THEME: Record<string, string> = {
@@ -62,4 +62,14 @@ test('MCP App frames scale with transform and inverse dimensions when zoomed, an
   })
   assert.deepEqual(appContainerDimensions(400, 300, 1), { width: 400, height: 300 })
   assert.deepEqual(appContainerDimensions(400, 300, 0.8), { width: 500, height: 375 })
+})
+
+test('shouldRetryAppOpen retries a failed open only when the connection transitions from not ready to ready', () => {
+  assert.equal(shouldRetryAppOpen(false, true, 'failed'), true)
+  // Failing while already ready must not loop.
+  assert.equal(shouldRetryAppOpen(true, true, 'failed'), false)
+  // Going offline or already showing a page does not retry.
+  assert.equal(shouldRetryAppOpen(true, false, 'failed'), false)
+  assert.equal(shouldRetryAppOpen(false, true, 'page'), false)
+  assert.equal(shouldRetryAppOpen(false, true, 'loading'), false)
 })
