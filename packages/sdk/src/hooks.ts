@@ -157,8 +157,13 @@ export function shouldRetrySourceRun(
   previous: unknown,
   next: unknown,
   source: string,
+  args?: unknown,
+  sources?: unknown,
 ): boolean {
   if (registry === 'connections') {
+    if (sources !== undefined || args !== undefined) {
+      return shouldRetryOnConnections(source, args, sources, previous, next)
+    }
     if (!isRecord(next)) return false
     const prevMap = isRecord(previous) ? previous : {}
     for (const [id, raw] of Object.entries(next)) {
@@ -169,21 +174,124 @@ export function shouldRetrySourceRun(
     }
     return false
   }
-  if (!source || !isRecord(next) || !(source in next)) return false
-  if (!isRecord(previous) || !(source in previous)) return true
-  const prevSource = previous[source]
-  const nextSource = next[source]
-  return (
-    isRecord(prevSource) &&
-    isRecord(nextSource) &&
-    (prevSource['connection'] !== nextSource['connection'] || prevSource['tool'] !== nextSource['tool'])
-  )
+  return shouldRetryOnSources(source, previous, next)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function relevantSourceSpecs(
+  target: string,
+  sources: unknown,
+): Record<string, { plugin: unknown; connection: unknown; tool: unknown; internal: boolean }> {
+  const clean = target.trim()
+  if (!clean || !isRecord(sources)) return {}
+  if (isRecord(sources[clean])) {
+    const entry = sources[clean]
+    return {
+      [clean]: {
+        plugin: entry['plugin'] ?? null,
+        connection: entry['connection'] ?? null,
+        tool: entry['tool'] ?? null,
+        internal: entry['internal'] === true,
+      },
+    }
+  }
+  const parts = clean.split('/').filter(Boolean)
+  const plugin = parts[0] ?? ''
+  const connPrefix = parts.length === 3 ? `${parts[0]}/${parts[1]}` : null
+  const out: Record<string, { plugin: unknown; connection: unknown; tool: unknown; internal: boolean }> = {}
+  for (const [id, raw] of Object.entries(sources)) {
+    if (!isRecord(raw)) continue
+    if (
+      raw['plugin'] === plugin ||
+      id.startsWith(`${plugin}/`) ||
+      (connPrefix !== null && raw['connection'] === connPrefix)
+    ) {
+      out[id] = {
+        plugin: raw['plugin'] ?? null,
+        connection: raw['connection'] ?? null,
+        tool: raw['tool'] ?? null,
+        internal: raw['internal'] === true,
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * Whether a change to the `sources` registry should retry a failed `useData` call for `target`:
+ * only when a source entry relevant to `target` is newly registered or its registration changes,
+ * ignoring unrelated plugins and prompt-only metadata updates.
+ */
+export function shouldRetryOnSources(target: string, prev: unknown, next: unknown): boolean {
+  const nextRel = relevantSourceSpecs(target, next)
+  if (Object.keys(nextRel).length === 0) return false
+  const prevRel = relevantSourceSpecs(target, prev)
+  return stableStringify(prevRel) !== stableStringify(nextRel)
+}
+
+/**
+ * Whether a change to the `connections` registry should retry a failed `useData` call for `target`:
+ * only when a connection that `target` can run on becomes `ready` or updates its `tools` while `ready`.
+ */
+export function shouldRetryOnConnections(
+  target: string,
+  args: unknown,
+  sources: unknown,
+  prev: unknown,
+  next: unknown,
+): boolean {
+  const clean = target.trim()
+  if (!clean || !isRecord(next)) return false
+  const parts = clean.split('/').filter(Boolean)
+  const plugin = parts[0] ?? ''
+  const connPrefix = parts.length === 3 ? `${parts[0]}/${parts[1]}` : null
+
+  const matchesConnection = (id: string, conn: Record<string, unknown>): boolean => {
+    if (clean === 'core/mcp') {
+      const requested = isRecord(args) && typeof args['connection'] === 'string' ? args['connection'].trim() : ''
+      return !requested || id === requested || id.endsWith(`/${requested}`)
+    }
+    if (isRecord(sources) && isRecord(sources[clean])) {
+      const entry = sources[clean]
+      const declaredConn =
+        typeof entry['connection'] === 'string' && entry['connection'] !== '' ? entry['connection'] : null
+      if (declaredConn !== null) return id === declaredConn
+      const sourcePlugin = typeof entry['plugin'] === 'string' && entry['plugin'] !== '' ? entry['plugin'] : plugin
+      return conn['plugin'] === sourcePlugin || id.startsWith(`${sourcePlugin}/`)
+    }
+    if (isRecord(sources) && parts.length === 2) {
+      for (const raw of Object.values(sources)) {
+        if (
+          isRecord(raw) &&
+          raw['plugin'] === plugin &&
+          raw['tool'] === parts[1] &&
+          typeof raw['connection'] === 'string' &&
+          raw['connection'] !== ''
+        ) {
+          if (id === raw['connection']) return true
+        }
+      }
+    }
+    return (connPrefix !== null && id === connPrefix) || conn['plugin'] === plugin || id.startsWith(`${plugin}/`)
+  }
+
+  for (const [id, rawNext] of Object.entries(next)) {
+    if (!isRecord(rawNext) || rawNext['status'] !== 'ready') continue
+    if (!matchesConnection(id, rawNext)) continue
+    const rawPrev = isRecord(prev) && isRecord(prev[id]) ? prev[id] : null
+    if (
+      !rawPrev ||
+      rawPrev['status'] !== 'ready' ||
+      stableStringify(rawPrev['tools']) !== stableStringify(rawNext['tools'])
+    ) {
+      return true
+    }
+  }
+  return false
+}
 /** Whatever a store path holds, kept up to date. Undefined until the first value arrives. */
 export function useData(path: string): unknown
 /** A source run, again whenever `args` change by value, and again, fresh, when the view's panel is refreshed. An empty source is idle, for a view still waiting for its state. */
@@ -207,8 +315,12 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   const fresh = useRef(false)
   const failed = useRef(false)
   const lastQuery = useRef<string | null>(null)
-  const targetRef = useRef(target)
-  targetRef.current = target
+  const latestTarget = useRef(target)
+  latestTarget.current = target
+  const latestArgs = useRef(args)
+  latestArgs.current = args
+  const latestSources = useRef<unknown>(undefined)
+  const latestConnections = useRef<unknown>(undefined)
 
   useEffect(() => {
     if (isSource) return
@@ -264,26 +376,41 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   // build it after it opens.
   useEffect(() => {
     if (!isSource) return
-    const again = (registry: 'connections' | 'sources'): (() => void) => {
-      let seen = false
-      let previous: unknown = undefined
-      return bridge.subscribe(registry, (next) => {
-        // The first delivery is the current value, not a change.
-        if (!seen) {
-          seen = true
-          previous = next
-          return
-        }
-        const prev = previous
-        previous = next
-        if (failed.current && shouldRetrySourceRun(registry, prev, next, targetRef.current)) {
-          fresh.current = true
-          setNonce((n) => n + 1)
-        }
-      })
+    let seenSources = false
+    let seenConnections = false
+    const offSources = bridge.subscribe('sources', (next) => {
+      const prev = latestSources.current
+      latestSources.current = next
+      if (!seenSources) {
+        seenSources = true
+        return
+      }
+      if (failed.current && shouldRetryOnSources(latestTarget.current, prev, next)) {
+        failed.current = false
+        fresh.current = true
+        setNonce((n) => n + 1)
+      }
+    })
+    const offConnections = bridge.subscribe('connections', (next) => {
+      const prev = latestConnections.current
+      latestConnections.current = next
+      if (!seenConnections) {
+        seenConnections = true
+        return
+      }
+      if (
+        failed.current &&
+        shouldRetryOnConnections(latestTarget.current, latestArgs.current, latestSources.current, prev, next)
+      ) {
+        failed.current = false
+        fresh.current = true
+        setNonce((n) => n + 1)
+      }
+    })
+    return () => {
+      offSources()
+      offConnections()
     }
-    const offs = [again('connections'), again('sources')]
-    return () => offs.forEach((off) => off())
   }, [bridge, isSource])
 
   // A refresh of the panel (refresh_element, a task on it) runs the source again, fresh. The first

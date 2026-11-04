@@ -3,6 +3,8 @@ import { test } from 'node:test'
 import {
   beginSourceRun,
   failSourceRun,
+  shouldRetryOnConnections,
+  shouldRetryOnSources,
   shouldRetrySourceRun,
   shownSourceData,
 } from '../../../packages/sdk/src/hooks.ts'
@@ -297,4 +299,145 @@ test('shouldRetrySourceRun retries a failed source only when a connection become
   )
   assert.equal(shouldRetrySourceRun('sources', {}, sourcesBefore, 'screener-mcp/qualitative'), true)
   assert.equal(shouldRetrySourceRun('sources', {}, sourcesBefore, 'filings-feed/filings'), false)
+})
+
+test('failed source calls retry only when their own source or connection becomes ready, ignoring unrelated plugins', () => {
+  const fredSources = {
+    'fred/info': {
+      id: 'fred/info',
+      plugin: 'fred',
+      connection: null,
+      tool: null,
+      internal: false,
+      description: 'Series metadata',
+      parameterNames: 'series',
+    },
+    'fred/observations': {
+      id: 'fred/observations',
+      plugin: 'fred',
+      connection: null,
+      tool: null,
+      internal: false,
+      description: 'Series observations',
+      parameterNames: 'series',
+    },
+  }
+
+  // Before fred is registered, unrelated plugins registering do not trigger a retry for fred/info.
+  const onlyBls = {
+    'bls/series': {
+      id: 'bls/series',
+      plugin: 'bls',
+      connection: null,
+      tool: null,
+      internal: false,
+      description: 'BLS series',
+      parameterNames: 'series',
+    },
+  }
+  assert.equal(shouldRetryOnSources('fred/info', {}, onlyBls), false)
+
+  // Once fred registers fred/info, a failed fred/info call retries.
+  const withFred = { ...onlyBls, ...fredSources }
+  assert.equal(shouldRetryOnSources('fred/info', onlyBls, withFred), true)
+
+  // Subsequent unrelated plugins registering (yfinance, screener-mcp, research) do not re-trigger fred/info.
+  const withYfinance = {
+    ...withFred,
+    'yfinance/quote': {
+      id: 'yfinance/quote',
+      plugin: 'yfinance',
+      connection: 'yfinance/server',
+      tool: 'get_quote',
+      internal: false,
+      description: '',
+      parameterNames: 'no arguments',
+    },
+    'charts/history': {
+      id: 'charts/history',
+      plugin: 'charts',
+      connection: 'yfinance/server',
+      tool: 'get_price_history',
+      internal: false,
+      description: 'History',
+      parameterNames: 'no arguments',
+    },
+  }
+  assert.equal(shouldRetryOnSources('fred/info', withFred, withYfinance), false)
+
+  // Prompt metadata updates (description / parameterNames) when a connection connects do not trigger a duplicate source retry.
+  const withYfinanceDescribed = {
+    ...withYfinance,
+    'yfinance/quote': {
+      ...withYfinance['yfinance/quote'],
+      description: 'Live quotes',
+      parameterNames: 'symbols',
+    },
+  }
+  assert.equal(shouldRetryOnSources('yfinance/quote', withYfinance, withYfinanceDescribed), false)
+
+  // Unrelated connections connecting or becoming ready never re-trigger fred/info (which has no connections).
+  const connConnecting = {
+    'yfinance/server': { id: 'yfinance/server', plugin: 'yfinance', status: 'connecting', tools: [] },
+    'screener-mcp/jaspers': { id: 'screener-mcp/jaspers', plugin: 'screener-mcp', status: 'connecting', tools: [] },
+  }
+  const connScreenerReady = {
+    ...connConnecting,
+    'screener-mcp/jaspers': {
+      id: 'screener-mcp/jaspers',
+      plugin: 'screener-mcp',
+      status: 'ready',
+      tools: [{ name: 'screen_companies', description: 'Screen', inputSchema: {} }],
+    },
+  }
+  assert.equal(
+    shouldRetryOnConnections('fred/info', { series: 'DGS10' }, withYfinance, connConnecting, connScreenerReady),
+    false,
+  )
+
+  // charts/history (which runs on yfinance/server) ignores screener-mcp/jaspers becoming ready,
+  // and retries once yfinance/server becomes ready.
+  assert.equal(
+    shouldRetryOnConnections('charts/history', { symbol: 'ITW' }, withYfinance, connConnecting, connScreenerReady),
+    false,
+  )
+  const connYfinanceReady = {
+    ...connScreenerReady,
+    'yfinance/server': {
+      id: 'yfinance/server',
+      plugin: 'yfinance',
+      status: 'ready',
+      tools: [{ name: 'get_price_history', description: 'History', inputSchema: {} }],
+    },
+  }
+  assert.equal(
+    shouldRetryOnConnections('charts/history', { symbol: 'ITW' }, withYfinance, connScreenerReady, connYfinanceReady),
+    true,
+  )
+  assert.equal(
+    shouldRetryOnConnections('fred/info', { series: 'DGS10' }, withYfinance, connScreenerReady, connYfinanceReady),
+    false,
+  )
+
+  // core/mcp only retries when the targeted connection becomes ready.
+  assert.equal(
+    shouldRetryOnConnections(
+      'core/mcp',
+      { connection: 'yfinance/server', tool: 'get_quote', args: {} },
+      withYfinance,
+      connConnecting,
+      connScreenerReady,
+    ),
+    false,
+  )
+  assert.equal(
+    shouldRetryOnConnections(
+      'core/mcp',
+      { connection: 'yfinance/server', tool: 'get_quote', args: {} },
+      withYfinance,
+      connScreenerReady,
+      connYfinanceReady,
+    ),
+    true,
+  )
 })
