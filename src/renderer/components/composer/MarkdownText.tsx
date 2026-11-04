@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { settled, type Citation } from '../../../shared/agent/citations'
-import { citedIds, parseMarkdown, type Block, type Inline, type List } from './markdown'
+import { citedIds, parseMarkdown, type Block, type Inline, type List, type MathNode } from './markdown'
 
 /** Space above a block; none above the first, so the box's padding is the only space at its top. */
 const FLOW = 'mt-3 first:mt-0'
@@ -150,6 +150,12 @@ function renderBlock(block: Block, key: number, marks: Marks): ReactNode {
       )
     case 'rule':
       return <hr key={key} className="my-4 border-border first:mt-0" />
+    case 'math':
+      return (
+        <div key={key} data-math-block="" aria-label={block.tex} className={`${FLOW} jp-math jp-math-block`}>
+          <span className="jp-math-row">{renderMathNodes(block.math)}</span>
+        </div>
+      )
   }
 }
 
@@ -215,6 +221,167 @@ function renderInline(nodes: Inline[], marks: Marks): ReactNode[] {
           </sup>
         )
       }
+      case 'math':
+        return (
+          <span
+            key={i}
+            data-math={node.display ? 'block' : 'inline'}
+            aria-label={node.tex}
+            className={`jp-math ${node.display ? 'jp-math-block my-2' : 'jp-math-inline'}`}
+          >
+            <span className="jp-math-row">{renderMathNodes(node.math)}</span>
+          </span>
+        )
+    }
+  })
+}
+
+const TIGHT_SYMBOLS = new Set([
+  '(',
+  ')',
+  '[',
+  ']',
+  '{',
+  '}',
+  ',',
+  ';',
+  ':',
+  '!',
+  '?',
+  '%',
+  '′',
+  '°',
+  '|',
+  '‖',
+  '/',
+  '⟨',
+  '⟩',
+  '⌊',
+  '⌋',
+  '⌈',
+  '⌉',
+  '\u00a0',
+])
+
+export function renderMathNodes(nodes: MathNode[]): ReactNode[] {
+  return nodes.map((node, i) => {
+    switch (node.kind) {
+      case 'text': {
+        const numeric = /^\d+(?:\.\d+)?$/.test(node.text)
+        const cls =
+          node.style === 'bold'
+            ? 'jp-math-bold'
+            : node.style === 'italic'
+              ? 'jp-math-italic'
+              : node.style === 'mono'
+                ? 'jp-math-mono'
+                : node.style === 'cal'
+                  ? 'jp-math-cal'
+                  : node.style === 'normal' || node.style === 'bb' || numeric
+                    ? 'jp-math-normal'
+                    : 'jp-math-var'
+        return (
+          <span key={i} className={cls}>
+            {node.text}
+          </span>
+        )
+      }
+      case 'symbol': {
+        const tight = TIGHT_SYMBOLS.has(node.text) || /^[α-ωΑ-Ω∂∇∞ℓℏℜℑ℘ℵ∅]$/.test(node.text)
+        return (
+          <span key={i} className={tight ? 'jp-math-sym-tight' : 'jp-math-sym'}>
+            {node.text}
+          </span>
+        )
+      }
+      case 'space':
+        return <span key={i} className={`jp-math-space-${node.size}`} />
+      case 'frac':
+        return (
+          <span key={i} className="jp-math-frac">
+            <span className="jp-math-frac-num">{renderMathNodes(node.num)}</span>
+            <span className="jp-math-frac-den">{renderMathNodes(node.den)}</span>
+          </span>
+        )
+      case 'sqrt':
+        return (
+          <span key={i} className="jp-math-sqrt">
+            {node.index && <sup className="jp-math-sqrt-index">{renderMathNodes(node.index)}</sup>}
+            <span className="jp-math-sqrt-sign" aria-hidden>
+              √
+            </span>
+            <span className="jp-math-sqrt-body">{renderMathNodes(node.body)}</span>
+          </span>
+        )
+      case 'scripts':
+        if (node.limits) {
+          return (
+            <span key={i} className="jp-math-limits">
+              {node.sup && <span className="jp-math-limit">{renderMathNodes(node.sup)}</span>}
+              <span className="jp-math-op">{renderMathNodes(node.base)}</span>
+              {node.sub && <span className="jp-math-limit">{renderMathNodes(node.sub)}</span>}
+            </span>
+          )
+        }
+        if (node.sub && node.sup) {
+          return (
+            <span key={i} className="jp-math-scripts">
+              <span>{renderMathNodes(node.base)}</span>
+              <span className="jp-math-scripts-stack">
+                <span>{renderMathNodes(node.sup)}</span>
+                <span>{renderMathNodes(node.sub)}</span>
+              </span>
+            </span>
+          )
+        }
+        return (
+          <span key={i} className="jp-math-scripts">
+            <span>{renderMathNodes(node.base)}</span>
+            {node.sup && <sup className="jp-math-sup">{renderMathNodes(node.sup)}</sup>}
+            {node.sub && <sub className="jp-math-sub">{renderMathNodes(node.sub)}</sub>}
+          </span>
+        )
+      case 'delimited':
+        return (
+          <span key={i} className="jp-math-delim">
+            {node.left && <span className="jp-math-delim-char">{node.left}</span>}
+            <span className="jp-math-row">{renderMathNodes(node.body)}</span>
+            {node.right && <span className="jp-math-delim-char">{node.right}</span>}
+          </span>
+        )
+      case 'accent':
+        if (node.accent === 'bar') {
+          return (
+            <span key={i} className={node.over ? 'jp-math-overline' : 'jp-math-underline'}>
+              {renderMathNodes(node.body)}
+            </span>
+          )
+        }
+        return (
+          <span key={i} className="jp-math-accent">
+            {node.over && <span className="jp-math-accent-mark">{node.accent}</span>}
+            <span>{renderMathNodes(node.body)}</span>
+            {!node.over && <span className="jp-math-accent-mark">{node.accent}</span>}
+          </span>
+        )
+      case 'matrix':
+        return (
+          <span key={i} className="jp-math-delim">
+            {node.open && <span className="jp-math-delim-char">{node.open}</span>}
+            <table className={`jp-math-matrix ${node.align === 'left' ? 'jp-math-matrix-left' : ''}`}>
+              <tbody>
+                {node.rows.map((row, r) => (
+                  <tr key={r}>
+                    {row.map((cell, c) => (
+                      <td key={c}>{renderMathNodes(cell)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {node.close && <span className="jp-math-delim-char">{node.close}</span>}
+          </span>
+        )
     }
   })
 }
