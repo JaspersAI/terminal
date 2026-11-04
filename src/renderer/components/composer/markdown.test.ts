@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { citedIds, parseInline, parseMarkdown, parseMath, type Block, type Inline } from './markdown.ts'
+import {
+  citedIds,
+  hasRichNoteContent,
+  parseInline,
+  parseMarkdown,
+  parseMath,
+  type Block,
+  type Inline,
+} from './markdown.ts'
 
 const text = (value: string): Inline => ({ kind: 'text', text: value })
 const strong = (...children: Inline[]): Inline => ({ kind: 'strong', children })
@@ -458,4 +466,14 @@ test('parseMath handles fractions, binomials, accents, fonts, matrices, and malf
   ])
   // Unclosed braces or missing arguments degrade gracefully without throwing.
   assert.doesNotThrow(() => parseMath('\\frac{1}{ + \\left( x_'))
+})
+
+test('hasRichNoteContent distinguishes plain or currency notes from Markdown and LaTeX math notes', () => {
+  assert.equal(hasRichNoteContent(''), false)
+  assert.equal(hasRichNoteContent('The packaged app, opened by the smoke test.'), false)
+  assert.equal(hasRichNoteContent('Guidance is $1.8B to $2.0B, or $2.715 per share.\n\nSecond paragraph.'), false)
+  assert.equal(hasRichNoteContent('Inline math $\\Delta \\text{Spread}_{\\text{DET}}$ in a note.'), true)
+  assert.equal(hasRichNoteContent('Display math:\n\n$$P(\\text{DET Win}) = \\Phi(z)$$'), true)
+  assert.equal(hasRichNoteContent('## Quantitative Methodology\n\n- Factor weights'), true)
+  assert.equal(hasRichNoteContent('**Bold** summary'), true)
 })

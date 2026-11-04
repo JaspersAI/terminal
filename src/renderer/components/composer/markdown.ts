@@ -1302,3 +1302,10 @@ function decodeLatexText(raw: string): string {
     .replace(/\\(?:;|quad|qquad| )/g, ' ')
     .replace(/~/g, '\u00a0')
 }
+
+/** Whether a note holds Markdown formatting or LaTeX math rather than plain paragraphs of text. */
+export function hasRichNoteContent(source: string): boolean {
+  if (!source.trim()) return false
+  const blocks = parseMarkdown(source)
+  return blocks.some((block) => block.kind !== 'paragraph' || block.children.some((node) => node.kind !== 'text'))
+}
