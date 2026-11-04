@@ -102,7 +102,11 @@ export function App({ panel }: ViewProps): ReactElement {
     return () => {
       current = false
     }
-  }, [panel.workspaceId, panel.id, connection, tool, argsKey, refreshedAt, ready, allowed])
+  }, [panel.workspaceId, panel.id, connection, tool, argsKey, refreshedAt, allowed])
+
+  useEffect(() => {
+    if (ready && opened.kind === 'failed') setAllowed((n) => n + 1)
+  }, [ready, opened.kind])
 
   const page = opened.kind === 'page' ? opened : null
   usePublish(panel, {

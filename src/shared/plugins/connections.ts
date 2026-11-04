@@ -210,6 +210,34 @@ export function isStaleHttpSession(err: unknown, connection: Connection): boolea
   return STALE_HTTP_SESSION.test(err.message)
 }
 
+/**
+ * Whether a connection attempt should publish `status: 'connecting'` before the handshake finishes.
+ * A ready connection stays ready while reconnecting transparently, and an errored connection stays in
+ * error during automatic retries (`retry > 0`) so failed probes do not cycle status between `error`
+ * and `connecting`.
+ */
+export function shouldPublishConnecting(status: ConnectionInfo['status'] | undefined, retry: number): boolean {
+  return status !== 'ready' && (retry === 0 || status !== 'error')
+}
+
+/**
+ * Whether an on-demand call or page read on an errored connection may trigger a new reconnect
+ * attempt now: only when awake, outside the post-wake grace window, on a retryable failure
+ * (`nextRetry !== undefined`), and after the minimum retry cooldown has elapsed since `lastFailedAt`.
+ */
+export function shouldReconnectOnCall(state: {
+  sleeping: boolean
+  inWakeGrace: boolean
+  nextRetry: number | undefined
+  lastFailedAt: number | null
+  now: number
+  cooldownMs: number
+}): boolean {
+  if (state.sleeping || state.inWakeGrace) return false
+  if (state.nextRetry === undefined) return false
+  return state.lastFailedAt === null || state.now - state.lastFailedAt >= state.cooldownMs
+}
+
 function texts(connection: Connection): string[] {
   return [
     ...(connection.url ? [connection.url] : []),

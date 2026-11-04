@@ -94,6 +94,7 @@ app.whenReady().then(async () => {
     runCall: runTaskCall,
     runAsk: runTask,
     intoChat: taskSaid,
+    onWake: wakeRetries,
   })
   registerConnectionIpc()
   registerAppsIpc()
