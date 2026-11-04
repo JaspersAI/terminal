@@ -205,37 +205,46 @@ export function isWakeLag(expectedAt: number | null, now: number): boolean {
   return expectedAt !== null && now - expectedAt >= WAKE_GRACE_MS
 }
 
+/**
+ * How far ahead of a `refresh_element` task a non-refresh task on the same workspace holds the
+ * refresh back, so a refresh scheduled in the same turn (a split-second earlier) waits for the
+ * data task to run and finish first.
+ */
+const REFRESH_COALESCE_MS = 2_000
+
 function isRefreshCall(task: Pick<Task, 'call'>): boolean {
   return task.call?.tool === 'refresh_element'
 }
 
+function holdsBackRefresh(refreshTask: Task, tasks: readonly Task[], now?: number): boolean {
+  return tasks.some((other) => {
+    if (other.workspaceId !== refreshTask.workspaceId || isRefreshCall(other)) return false
+    if (other.running) return true
+    if (now !== undefined && isDue(other, now)) return true
+    if (!isPending(other)) return false
+    const windowMs = other.every === null || other.every > REFRESH_COALESCE_MS ? REFRESH_COALESCE_MS : 0
+    return other.nextAt! <= refreshTask.nextAt! + windowMs
+  })
+}
+
 /**
  * The tasks due to start now. A `refresh_element` call on a workspace waits while another task on
- * that workspace is running or also due, so panels refresh after the workspace's data tasks settle.
+ * that workspace is running, also due, or about to run within `REFRESH_COALESCE_MS`, so panels
+ * refresh after the workspace's data tasks settle.
  */
 export function dueTasks(tasks: Task[], now: number): Task[] {
-  const busyWorkspaces = new Set<string>()
-  for (const task of tasks) {
-    if (!isRefreshCall(task) && (task.running || isDue(task, now))) {
-      busyWorkspaces.add(task.workspaceId)
-    }
-  }
-  return tasks.filter((t) => isDue(t, now) && (!isRefreshCall(t) || !busyWorkspaces.has(t.workspaceId)))
+  return tasks.filter((t) => isDue(t, now) && (!isRefreshCall(t) || !holdsBackRefresh(t, tasks, now)))
 }
 
 /**
  * The next time any pending task is due, or null. A running task waits for its run to end, and a
- * panel refresh waits while another task on its workspace is running.
+ * panel refresh waits while another task on its workspace is running or imminent.
  */
 export function earliestNext(tasks: Task[]): number | null {
-  const runningWorkspaces = new Set<string>()
-  for (const task of tasks) {
-    if (task.running && !isRefreshCall(task)) runningWorkspaces.add(task.workspaceId)
-  }
   let earliest: number | null = null
   for (const task of tasks) {
     if (!isPending(task) || task.running) continue
-    if (isRefreshCall(task) && runningWorkspaces.has(task.workspaceId)) continue
+    if (isRefreshCall(task) && holdsBackRefresh(task, tasks)) continue
     if (earliest === null || task.nextAt! < earliest) earliest = task.nextAt!
   }
   return earliest

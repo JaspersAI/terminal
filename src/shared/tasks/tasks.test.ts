@@ -174,6 +174,34 @@ test('a refresh_element task waits while another task on its workspace is due or
     dueTasks(afterFetch, T0 + 500).map((t) => t.id),
     ['t3', 't4'],
   )
+
+  // When a refresh_element task's nextAt lands a split-second before a data task on the same workspace,
+  // it waits for the data task to run and finish rather than reading stale store rows first.
+  const slightlyLaterFetch = task({
+    id: 't1',
+    workspaceId: 'ws-1',
+    every: 60 * S,
+    executeAt: T0 + 400,
+    nextAt: T0 + 400,
+    call: { tool: 'run_source', input: { source: 'yfinance/quote' } },
+  })
+  const slightlyEarlierRefresh = [slightlyLaterFetch, refresh8, refresh10]
+  assert.equal(earliestNext(slightlyEarlierRefresh), T0 + 400)
+  assert.deepEqual(dueTasks(slightlyEarlierRefresh, T0), [])
+  assert.deepEqual(
+    dueTasks(slightlyEarlierRefresh, T0 + 400).map((t) => t.id),
+    ['t1'],
+  )
+  const afterSlightlyLaterFetch = [
+    afterRun({ ...slightlyLaterFetch, running: true }, { at: T0 + 400, ok: true, result: 'ok', ms: 300 }),
+    refresh8,
+    refresh10,
+  ]
+  assert.equal(earliestNext(afterSlightlyLaterFetch), T0)
+  assert.deepEqual(
+    dueTasks(afterSlightlyLaterFetch, T0 + 700).map((t) => t.id),
+    ['t3', 't4'],
+  )
 })
 
 test('isWakeLag detects a timer firing after an OS sleep or event-loop lag spike', () => {
