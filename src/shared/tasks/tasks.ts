@@ -13,6 +13,10 @@ export const TASK_INSTRUCTIONS_MAX = 1000
 export const STARTUP_GRACE_MS = 15_000
 /** After sleep the network takes a few seconds to come back; overdue tasks wait this long on wake. */
 export const WAKE_GRACE_MS = 5_000
+/** How long post-wake readiness polling waits for network and DNS connectivity before letting tasks run anyway. */
+export const WAKE_MAX_MS = 5 * 60_000
+/** Consecutive offline DNS/network retries allowed for a task before the error is recorded as a normal failure. */
+export const OFFLINE_RETRIES_MAX = 3
 /** A task days out re-arms every minute rather than overflowing a timeout. */
 export const TIMER_MAX_MS = 60_000
 /** A model name, which is whatever the provider calls one. */
@@ -203,6 +207,60 @@ export function isDue(task: Task, now: number): boolean {
 /** Whether a timer fired late enough past its deadline that the machine slept before resume arrived. */
 export function isWakeLag(expectedAt: number | null, now: number): boolean {
   return expectedAt !== null && now - expectedAt >= WAKE_GRACE_MS
+}
+
+/** Whether post-wake recovery should keep waiting for network and DNS connectivity before arming tasks. */
+export function shouldWaitForNetwork(online: boolean, waitedMs: number): boolean {
+  return !online && waitedMs < WAKE_MAX_MS
+}
+
+/** Whether `os.networkInterfaces()` reports at least one non-loopback, non-link-local IPv4 or IPv6 address. */
+export function hasRoutableInterface(
+  interfaces: Readonly<Record<string, readonly ({ internal: boolean; address: string } | undefined)[] | undefined>>,
+): boolean {
+  for (const list of Object.values(interfaces)) {
+    if (!list) continue
+    for (const entry of list) {
+      if (!entry || entry.internal) continue
+      const address = entry.address.trim().toLowerCase()
+      if (!address || address.startsWith('169.254.') || address.startsWith('fe80:')) continue
+      return true
+    }
+  }
+  return false
+}
+
+/** Whether a failure message came from an offline network stack or unavailable DNS resolver rather than a server refusal. */
+export function isOfflineError(message: string): boolean {
+  if (/returned [45]\d\d\b/.test(message)) return false
+  return /\b(ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ENETDOWN|ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_NAME_NOT_RESOLVED|ERR_ADDRESS_UNREACHABLE)\b/.test(
+    message,
+  )
+}
+
+/** Extracts a settled panel error from a `refresh_element` call's JSON answer, or null when the call succeeded. */
+export function callError(call: TaskCall | null, result: string): string | null {
+  if (!call || call.tool !== 'refresh_element') return null
+  try {
+    const parsed: unknown = JSON.parse(result)
+    if (typeof parsed === 'object' && parsed !== null && 'error' in parsed) {
+      const error = (parsed as { error?: unknown }).error
+      if (typeof error === 'string' && error.trim()) return error.trim()
+    }
+  } catch {
+    // Not JSON; leave as is.
+  }
+  return null
+}
+
+/** Whether a failed run should be deferred back into wake recovery instead of recorded as a task failure. */
+export function shouldDeferOfflineRun(ok: boolean, result: string, retries: number): boolean {
+  return !ok && retries < OFFLINE_RETRIES_MAX && isOfflineError(result)
+}
+
+/** A task whose run was aborted by an offline network stack: no longer running, with its due slot and history intact. */
+export function afterOfflineRun(task: Task): Task {
+  return { ...task, running: false }
 }
 
 function isRefreshCall(task: Pick<Task, 'call'>): boolean {

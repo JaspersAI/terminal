@@ -23,7 +23,7 @@ export function createLimiter(max: number): <T>(run: () => Promise<T>) => Promis
 export function isRetryable(message: string): boolean {
   if (/returned (408|429|5\d\d)\b/.test(message)) return true
   if (/returned 4\d\d\b/.test(message)) return false
-  return /fetch failed|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|overloaded|nothing arrived for \d+ s|aborted due to timeout|timed out|\bterminated\b|other side closed|premature close/i.test(
+  return /fetch failed|ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ENETDOWN|ERR_INTERNET_DISCONNECTED|socket hang up|overloaded|nothing arrived for \d+ s|aborted due to timeout|timed out|\bterminated\b|other side closed|premature close/i.test(
     message,
   )
 }

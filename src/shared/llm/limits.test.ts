@@ -34,6 +34,13 @@ test('rate limits, server errors, timeouts, and dropped connections are worth on
     'OpenAI: Request timed out',
     'Jaspers: terminated (other side closed)',
     'Custom: premature close',
+    'Jaspers: fetch failed (getaddrinfo ENOTFOUND account.jsprai.com)',
+    'getaddrinfo ENOTFOUND account.jsprai.com',
+    'getaddrinfo EAI_AGAIN api.anthropic.com',
+    'connect ENETUNREACH 2606:4700::1:443',
+    'connect EHOSTUNREACH 198.51.100.1:443',
+    'connect ENETDOWN 198.51.100.1:443',
+    'net::ERR_INTERNET_DISCONNECTED',
   ]) {
     assert.equal(isRetryable(message), true, message)
   }

@@ -2,12 +2,19 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { ORCHESTRATOR_TOOLS } from '../loops/loops.ts'
 import {
+  afterOfflineRun,
   afterRun,
+  callError,
   checkCommands,
   checkTaskInput,
+  hasRoutableInterface,
+  isOfflineError,
   missingInRun,
   needsShellInRun,
+  OFFLINE_RETRIES_MAX,
   SHELL_TOOL,
+  shouldDeferOfflineRun,
+  shouldWaitForNetwork,
   TASK_EXCLUDED_TOOLS,
   TASK_MODEL_MAX,
   TASK_PRO_MODE_OFF,
@@ -28,6 +35,7 @@ import {
   shortLocal,
   taskStatus,
   WAKE_GRACE_MS,
+  WAKE_MAX_MS,
   type Task,
 } from './tasks.ts'
 
@@ -461,4 +469,129 @@ test('a task that runs every few minutes tells a failure at its second in a row,
   // Fifteen minutes is still soon enough to wait for; more is not.
   assert.equal(runNotice('t1', task({ every: 15 * 60 * S, lastRun: fine }), run), null)
   assert.equal(runNotice('t1', task({ every: 16 * 60 * S, lastRun: fine }), run), 't1 failed: fetch failed')
+})
+
+test('shouldWaitForNetwork holds post-wake recovery while offline up to WAKE_MAX_MS', () => {
+  assert.equal(WAKE_MAX_MS, 5 * MIN)
+  assert.equal(shouldWaitForNetwork(false, WAKE_GRACE_MS), true)
+  assert.equal(shouldWaitForNetwork(false, 184 * S), true)
+  assert.equal(shouldWaitForNetwork(false, WAKE_MAX_MS - 1), true)
+  assert.equal(shouldWaitForNetwork(false, WAKE_MAX_MS), false)
+  assert.equal(shouldWaitForNetwork(true, WAKE_GRACE_MS), false)
+})
+
+test('hasRoutableInterface distinguishes loopback and link-local addresses from routable IPv4 and IPv6 interfaces', () => {
+  assert.equal(hasRoutableInterface({}), false)
+  assert.equal(
+    hasRoutableInterface({
+      lo0: [
+        { internal: true, address: '127.0.0.1' },
+        { internal: true, address: '::1' },
+      ],
+      en0: [
+        { internal: false, address: '169.254.12.34' },
+        { internal: false, address: 'fe80::1ff:fe23:4567:890a' },
+      ],
+    }),
+    false,
+  )
+  assert.equal(
+    hasRoutableInterface({
+      lo0: [{ internal: true, address: '127.0.0.1' }],
+      en0: [{ internal: false, address: '192.168.1.42' }],
+    }),
+    true,
+  )
+  assert.equal(
+    hasRoutableInterface({
+      en0: [{ internal: false, address: '2601:640:4000::1234' }],
+    }),
+    true,
+  )
+})
+
+test('isOfflineError matches OS DNS and network-down errors and ignores HTTP refusals and local ECONNREFUSED', () => {
+  for (const msg of [
+    'getaddrinfo ENOTFOUND query1.finance.yahoo.com',
+    'The market data service could not be reached for the quote for FLWS: getaddrinfo ENOTFOUND query1.finance.yahoo.com',
+    'Jaspers: fetch failed (getaddrinfo ENOTFOUND account.jsprai.com)',
+    'fetch failed (ENOTFOUND data.alpaca.markets)',
+    'getaddrinfo EAI_AGAIN paper-api.alpaca.markets',
+    'connect ENETUNREACH 2606:4700::1:443',
+    'connect EHOSTUNREACH 198.51.100.1:443',
+    'connect ENETDOWN 198.51.100.1:443',
+    'net::ERR_INTERNET_DISCONNECTED',
+    'net::ERR_NETWORK_CHANGED',
+    'net::ERR_NAME_NOT_RESOLVED',
+    'net::ERR_ADDRESS_UNREACHABLE',
+  ]) {
+    assert.equal(isOfflineError(msg), true, msg)
+  }
+  for (const msg of [
+    'connect ECONNREFUSED 127.0.0.1:11434',
+    'Anthropic returned 401: invalid x-api-key',
+    'Jaspers returned 503: ENOTFOUND upstream',
+    'Unknown source yfinance/quote.',
+  ]) {
+    assert.equal(isOfflineError(msg), false, msg)
+  }
+})
+
+test('callError extracts a settled panel error from a refresh_element call result', () => {
+  const refresh = { tool: 'refresh_element', input: { elementId: 'e13' } }
+  const source = { tool: 'run_source', input: { source: 'yfinance/quote' } }
+  assert.equal(callError(refresh, '{"refreshed":"e13","at":1000}'), null)
+  assert.equal(
+    callError(
+      refresh,
+      '{"refreshed":"e13","at":1000,"error":"The market data service could not be reached: getaddrinfo ENOTFOUND query1.finance.yahoo.com"}',
+    ),
+    'The market data service could not be reached: getaddrinfo ENOTFOUND query1.finance.yahoo.com',
+  )
+  assert.equal(callError(source, '{"error":"getaddrinfo ENOTFOUND query1.finance.yahoo.com"}'), null)
+  assert.equal(callError(null, '{"error":"getaddrinfo ENOTFOUND query1.finance.yahoo.com"}'), null)
+})
+
+test('afterOfflineRun and shouldDeferOfflineRun keep the scheduled slot and hold workspace refresh tasks until data tasks succeed', () => {
+  assert.equal(OFFLINE_RETRIES_MAX, 3)
+  assert.equal(shouldDeferOfflineRun(false, 'getaddrinfo ENOTFOUND query1.finance.yahoo.com', 0), true)
+  assert.equal(shouldDeferOfflineRun(false, 'getaddrinfo ENOTFOUND query1.finance.yahoo.com', 2), true)
+  assert.equal(
+    shouldDeferOfflineRun(false, 'getaddrinfo ENOTFOUND query1.finance.yahoo.com', OFFLINE_RETRIES_MAX),
+    false,
+  )
+  assert.equal(shouldDeferOfflineRun(true, 'ok', 0), false)
+  assert.equal(shouldDeferOfflineRun(false, 'Anthropic returned 401: invalid key', 0), false)
+
+  const fine = { at: T0 - MIN, ok: true, result: 'ok', ms: 100 }
+  const fetchTask = task({
+    id: 't1',
+    workspaceId: 'ws-1',
+    call: { tool: 'run_source', input: { source: 'yfinance/quote' } },
+    every: 15 * MIN,
+    runs: 4,
+    lastRun: fine,
+    history: [fine],
+    nextAt: T0,
+    running: true,
+  })
+  const refreshTask = task({
+    id: 't2',
+    workspaceId: 'ws-1',
+    call: { tool: 'refresh_element', input: { elementId: 'e15' } },
+    nextAt: T0,
+  })
+
+  const deferred = afterOfflineRun(fetchTask)
+  assert.equal(deferred.running, false)
+  assert.equal(deferred.nextAt, T0)
+  assert.equal(deferred.runs, 4)
+  assert.equal(deferred.lastRun, fine)
+  assert.deepEqual(deferred.history, [fine])
+
+  // Because fetchTask kept nextAt: T0, dueTasks still prioritizes fetchTask over refreshTask on ws-1 when connectivity returns.
+  assert.deepEqual(
+    dueTasks([deferred, refreshTask], T0 + 10 * S).map((t) => t.id),
+    ['t1'],
+  )
 })
