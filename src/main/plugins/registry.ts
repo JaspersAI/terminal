@@ -10,6 +10,7 @@ import {
 import { CHAT_VIEW } from '../../shared/grid/grid'
 import type { ConnectionInfo, PluginInfo, SourceInfo, ViewInfo } from '../../shared/state'
 import { prepareMcpArguments, readMcpCall } from '../../shared/data/arguments'
+import { stableStringify } from '../../shared/data/hash'
 import {
   parameterNames,
   resolveConnectionSource,
@@ -488,7 +489,17 @@ function dropSources(plugin: string | null): void {
 }
 
 function project(): void {
-  update((state) => ({ ...state, views: viewInfos(), sources: sourceInfos() }))
+  update((state) => {
+    const nextViews = viewInfos()
+    const nextSources = sourceInfos()
+    if (
+      stableStringify(state.views) === stableStringify(nextViews) &&
+      stableStringify(state.sources) === stableStringify(nextSources)
+    ) {
+      return state
+    }
+    return { ...state, views: nextViews, sources: nextSources }
+  })
 }
 
 /** Reads current connections, returning an empty map before application state is available. */

@@ -77,7 +77,11 @@ export function setInfo(id: string, patch: Partial<ConnectionInfo>): void {
   update((state) => {
     const previous = state.connections[id]
     if (!previous) return state
-    const next = { ...previous, ...patch }
+    const tools =
+      patch.tools !== undefined && patch.tools.length === 0 && previous.tools.length === 0
+        ? previous.tools
+        : (patch.tools ?? previous.tools)
+    const next = { ...previous, ...patch, tools }
     if (stableStringify(previous) === stableStringify(next)) return state
     return { ...state, connections: { ...state.connections, [id]: next } }
   })

@@ -24,6 +24,8 @@ import {
   offeredTools,
   offersTool,
   resolveSecrets,
+  shouldPublishConnecting,
+  shouldReconnectOnCall,
   type Connection,
 } from '../../shared/plugins/connections'
 import { messageOf } from '../../shared/rpc'
@@ -69,6 +71,7 @@ const connecting = new Map<string, Promise<void>>()
 const RETRY_MS = [15_000, 30_000, 60_000, 120_000, 300_000]
 const retries = new Map<string, NodeJS.Timeout>()
 const pendingRetries = new Map<string, number>()
+const failedAt = new Map<string, number>()
 let wakeGrace: NodeJS.Timeout | null = null
 let sleeping = false
 /** The fetch of every OAuth connection of its own. One, so a refresh under way is found by whichever client asks: the one just built, or one still finishing a call. */
@@ -90,14 +93,33 @@ export function connect(id: string, retry = 0): Promise<void> {
 
 /**
  * Re-establishes a connection when no attempt is already under way and the stale client (if named)
- * has not already been replaced by another caller's reconnect.
+ * has not already been replaced by another caller's reconnect. When called for an already-errored
+ * connection (`stale` omitted), respects the sleep/wake grace window and the retry cooldown so
+ * bursts of calls while offline do not cycle status or reset backoff.
  */
 function reconnect(id: string, stale?: Live): Promise<void> {
   const inflight = connecting.get(id)
   if (inflight) return inflight
   const current = clients.get(id)
-  if (stale ? current !== stale : current !== undefined) return Promise.resolve()
-  return connect(id)
+  if (stale) {
+    if (current !== stale) return Promise.resolve()
+    return connect(id, pendingRetries.get(id) ?? 0)
+  }
+  if (current !== undefined) return Promise.resolve()
+  const nextRetry = pendingRetries.get(id)
+  if (
+    !shouldReconnectOnCall({
+      sleeping,
+      inWakeGrace: wakeGrace !== null,
+      nextRetry,
+      lastFailedAt: failedAt.get(id) ?? null,
+      now: Date.now(),
+      cooldownMs: RETRY_MS[0]!,
+    })
+  ) {
+    return Promise.resolve()
+  }
+  return connect(id, nextRetry!)
 }
 
 async function connectOne(id: string, retry = 0): Promise<void> {
@@ -106,6 +128,7 @@ async function connectOne(id: string, retry = 0): Promise<void> {
   const { spec, plugin, dir } = entry
   const attempt = (attempts.get(id) ?? 0) + 1
   attempts.set(id, attempt)
+  if (retry === 0) failedAt.delete(id)
   cancelRetry(id)
   await disconnect(id)
   const values = secretValues(plugin)
@@ -113,10 +136,11 @@ async function connectOne(id: string, retry = 0): Promise<void> {
   const missing = missingOf(spec, values)
   const resolved = resolveSecrets(spec, values)
   if (status !== 'connecting' || 'missing' in resolved) {
+    failedAt.delete(id)
     setInfo(id, { status, error: null, tools: [], instructions: null, missing })
     return
   }
-  if (getState().connections[id]?.status !== 'ready') {
+  if (shouldPublishConnecting(getState().connections[id]?.status, retry)) {
     setInfo(id, { status: 'connecting', error: null, missing })
   }
   let viaJaspers: boolean
@@ -130,6 +154,7 @@ async function connectOne(id: string, retry = 0): Promise<void> {
   if (attempts.get(id) !== attempt) return
   const waiting = waitingOn(id, spec, viaJaspers)
   if (waiting) {
+    failedAt.delete(id)
     setInfo(id, { status: waiting, error: null, tools: [], instructions: null })
     return
   }
@@ -170,6 +195,7 @@ async function connectOne(id: string, retry = 0): Promise<void> {
     if (offered.missing.length > 0) console.warn(`[mcp ${id}] tools: the server lists no ${offered.missing.join(', ')}`)
     const { tree, all } = readTools(offered.tools)
     clients.set(id, { client, transport, tools: all, viaJaspers })
+    failedAt.delete(id)
     setInfo(id, {
       status: 'ready',
       error: null,
@@ -181,18 +207,25 @@ async function connectOne(id: string, retry = 0): Promise<void> {
     if (attempts.get(id) !== attempt) return
     const message = redact(messageOf(err), values)
     const unauthorized = err instanceof UnauthorizedError || /401|unauthoriz/i.test(message)
-    if (err instanceof SignedOutError) setInfo(id, { status: 'needs-sign-in', error: null, tools: [] })
-    else if (spec.auth === 'oauth' && !viaJaspers && unauthorized)
+    if (err instanceof SignedOutError) {
+      failedAt.delete(id)
+      setInfo(id, { status: 'needs-sign-in', error: null, tools: [] })
+    } else if (spec.auth === 'oauth' && !viaJaspers && unauthorized) {
+      failedAt.delete(id)
       setInfo(id, { status: 'needs-auth', error: null, tools: [] })
+    }
     // The account's standing at the server, in the server's words, which no retry changes: Reconnect once it has.
-    else if (err instanceof RefusedError) setInfo(id, { status: 'error', error: message, tools: [] })
-    else failed(id, message, retry)
+    else if (err instanceof RefusedError) {
+      failedAt.delete(id)
+      setInfo(id, { status: 'error', error: message, tools: [] })
+    } else failed(id, message, retry)
   }
 }
 
 /** A connection that failed in a way that may pass: said, and tried again on its own, each time after a longer wait. */
 function failed(id: string, message: string, retry: number): void {
   setInfo(id, { status: 'error', error: message, tools: [] })
+  failedAt.set(id, Date.now())
   pendingRetries.set(id, retry + 1)
   if (sleeping || wakeGrace) return
   armRetry(id, retry)
@@ -225,7 +258,6 @@ export function wakeRetries(): void {
   if (wakeGrace) clearTimeout(wakeGrace)
   for (const timer of retries.values()) clearTimeout(timer)
   retries.clear()
-  if (pendingRetries.size === 0) return
   wakeGrace = setTimeout(() => {
     wakeGrace = null
     const due = [...pendingRetries.entries()]
@@ -234,6 +266,7 @@ export function wakeRetries(): void {
       void connect(id, nextRetry).catch(() => undefined)
     }
   }, WAKE_GRACE_MS)
+  wakeGrace.unref?.()
 }
 
 /**
@@ -333,6 +366,7 @@ export async function disconnect(id: string): Promise<void> {
  */
 export async function forget(id: string): Promise<void> {
   connecting.delete(id)
+  failedAt.delete(id)
   attempts.set(id, (attempts.get(id) ?? 0) + 1)
   await disconnect(id)
 }
@@ -340,6 +374,7 @@ export async function forget(id: string): Promise<void> {
 /** Stdio children die with the app, so this runs on will-quit before anything else. */
 export function closeAll(): void {
   connecting.clear()
+  failedAt.clear()
   if (wakeGrace) clearTimeout(wakeGrace)
   wakeGrace = null
   for (const id of [...retries.keys(), ...pendingRetries.keys()]) cancelRetry(id)

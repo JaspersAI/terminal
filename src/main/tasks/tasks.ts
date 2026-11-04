@@ -42,6 +42,8 @@ export interface SchedulerDeps {
   runAsk(task: TaskRequest): Promise<string>
   /** A reply, into the task's workspace's conversation. Resolves whether it went in. */
   intoChat(workspaceId: string, task: string, reply: string): Promise<boolean>
+  /** Called when a timer fires late enough past its deadline that the machine woke before resume arrived. */
+  onWake?: () => void
   now?: () => number
 }
 
@@ -234,6 +236,7 @@ function tick(): void {
   expectedAt = null
   if (!started) return
   if (isWakeLag(dueAt, now())) {
+    deps?.onWake?.()
     wakeTasks()
     return
   }

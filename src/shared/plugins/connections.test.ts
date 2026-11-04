@@ -9,6 +9,8 @@ import {
   resolveSecrets,
   secretProgress,
   secretRefs,
+  shouldPublishConnecting,
+  shouldReconnectOnCall,
   withConnectionUrl,
 } from './connections.ts'
 import type { ConnectionInfo } from '../state.ts'
@@ -352,4 +354,35 @@ test('isStaleHttpSession detects expired or broken Streamable HTTP sessions whil
   assert.equal(isStaleHttpSession(new Error('Unknown ticker symbol'), http), false)
   assert.equal(isStaleHttpSession(httpError(404, 'Session not found'), stdio), false)
   assert.equal(isStaleHttpSession(new TypeError('fetch failed'), stdio), false)
+})
+
+test('shouldPublishConnecting keeps ready connections ready and errored connections in error during background retries', () => {
+  assert.equal(shouldPublishConnecting(undefined, 0), true)
+  assert.equal(shouldPublishConnecting('connecting', 0), true)
+  assert.equal(shouldPublishConnecting('needs-secret', 0), true)
+  assert.equal(shouldPublishConnecting('needs-sign-in', 0), true)
+  assert.equal(shouldPublishConnecting('error', 0), true)
+  assert.equal(shouldPublishConnecting('ready', 0), false)
+  assert.equal(shouldPublishConnecting('ready', 1), false)
+  assert.equal(shouldPublishConnecting('error', 1), false)
+  assert.equal(shouldPublishConnecting('error', 3), false)
+})
+
+test('shouldReconnectOnCall backs off while sleeping, in wake grace, on non-retryable errors, or inside the retry cooldown', () => {
+  const base = {
+    sleeping: false,
+    inWakeGrace: false,
+    nextRetry: 1 as number | undefined,
+    lastFailedAt: 100_000 as number | null,
+    now: 120_000,
+    cooldownMs: 15_000,
+  }
+  assert.equal(shouldReconnectOnCall(base), true)
+  assert.equal(shouldReconnectOnCall({ ...base, sleeping: true }), false)
+  assert.equal(shouldReconnectOnCall({ ...base, inWakeGrace: true }), false)
+  assert.equal(shouldReconnectOnCall({ ...base, nextRetry: undefined }), false)
+  assert.equal(shouldReconnectOnCall({ ...base, now: 100_500 }), false)
+  assert.equal(shouldReconnectOnCall({ ...base, now: 114_999 }), false)
+  assert.equal(shouldReconnectOnCall({ ...base, now: 115_000 }), true)
+  assert.equal(shouldReconnectOnCall({ ...base, lastFailedAt: null, now: 100_000 }), true)
 })
