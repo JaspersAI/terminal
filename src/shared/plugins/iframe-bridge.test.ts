@@ -140,3 +140,108 @@ test('after panel state is loaded, usePanelState and useData read keys synchrono
     assert.equal((bridge.peek?.('workspaces/ws1/panels/p83/state') as Record<string, unknown>)['interval'], '1h')
   })
 })
+
+test('in-flight panel.setState writes are preserved when earlier store.changed notifications arrive on /state or seeded subpaths', async () => {
+  await withWindow(async (host) => {
+    const initialState: Record<string, unknown> = { ask: 'Find latest SpaceX earnings' }
+    const subs = new Map<string, number>()
+    let nextSub = 1
+    const pendingSetStateReplies: (() => void)[] = []
+
+    host.onPost = (raw) => {
+      const req = raw as { id: number; method: string; params: Record<string, unknown> }
+      if (req.method === 'store.get' && req.params['path'] === 'workspaces/ws1/panels/p3/state') {
+        host.sendToFrame({ id: req.id, result: initialState })
+        return
+      }
+      if (req.method === 'store.subscribe') {
+        const subId = nextSub++
+        const path = String(req.params['path'])
+        subs.set(path, subId)
+        host.sendToFrame({ id: req.id, result: subId })
+        return
+      }
+      if (req.method === 'panel.setState') {
+        pendingSetStateReplies.push(() => host.sendToFrame({ id: req.id, result: null }))
+      }
+    }
+
+    const bridge = createIframeBridge()
+    const panel: PanelRef = { id: 'p3', workspaceId: 'ws1' }
+    await bridge.get('workspaces/ws1/panels/p3/state')
+
+    const seenStates: unknown[] = []
+    const seenConversations: unknown[] = []
+    bridge.subscribe('workspaces/ws1/panels/p3/state', (v) => seenStates.push(v))
+    bridge.subscribe('workspaces/ws1/panels/p3/state/conversation', (v) => seenConversations.push(v))
+    bridge.subscribe('workspaces/ws1/panels/p3/state/folded', () => {})
+
+    // Flush the store.subscribe replies so the listeners are registered.
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    // Mount writes folded=false, then open-conversation resolves with cmw1nq89oys and writes conversation.
+    const foldedWrite = bridge.setState(panel, ['folded'], false)
+    const convWrite = bridge.setState(panel, ['conversation'], 'cmw1nq89oys')
+
+    assert.equal(bridge.peek?.('workspaces/ws1/panels/p3/state/conversation'), 'cmw1nq89oys')
+
+    // Host delivers initial seeded undefined for /state/conversation and the /state push from folded=false
+    // before the conversation setState round-trip completes.
+    host.sendToFrame({
+      method: 'store.changed',
+      params: { subId: subs.get('workspaces/ws1/panels/p3/state/conversation'), value: undefined },
+    })
+    host.sendToFrame({
+      method: 'store.changed',
+      params: {
+        subId: subs.get('workspaces/ws1/panels/p3/state'),
+        value: { ask: 'Find latest SpaceX earnings', folded: false },
+      },
+    })
+
+    // The in-flight conversation id must not revert to undefined in peek or in the /state delivery.
+    assert.equal(bridge.peek?.('workspaces/ws1/panels/p3/state/conversation'), 'cmw1nq89oys')
+    assert.deepEqual(seenStates.at(-1), {
+      ask: 'Find latest SpaceX earnings',
+      folded: false,
+      conversation: 'cmw1nq89oys',
+    })
+
+    function AgentsProbe({ panel: p }: { panel: PanelRef }) {
+      const state = useData(`workspaces/${p.workspaceId}/panels/${p.id}/state`) as
+        { conversation?: string; folded?: boolean; ask?: string } | undefined
+      const [conversation] = usePanelState<string | undefined>(p, 'conversation', state?.conversation)
+      const [folded] = usePanelState(p, 'folded', state?.folded ?? false)
+      const [ask] = usePanelState<string | undefined>(p, 'ask', state?.ask)
+      return createElement('div', null, `${String(conversation)}:${String(folded)}:${String(ask)}`)
+    }
+
+    const html = renderToStaticMarkup(
+      createElement(
+        BridgeProvider,
+        { value: bridge },
+        createElement(PanelProvider, { value: panel }, createElement(AgentsProbe, { panel })),
+      ),
+    )
+    assert.equal(html, '<div>cmw1nq89oys:false:Find latest SpaceX earnings</div>')
+
+    // Host now delivers the /state and /state/conversation updates for conversation='cmw1nq89oys' and resolves both writes.
+    pendingSetStateReplies.shift()?.()
+    host.sendToFrame({
+      method: 'store.changed',
+      params: { subId: subs.get('workspaces/ws1/panels/p3/state/conversation'), value: 'cmw1nq89oys' },
+    })
+    host.sendToFrame({
+      method: 'store.changed',
+      params: {
+        subId: subs.get('workspaces/ws1/panels/p3/state'),
+        value: { ask: 'Find latest SpaceX earnings', folded: false, conversation: 'cmw1nq89oys' },
+      },
+    })
+    pendingSetStateReplies.shift()?.()
+    await Promise.all([foldedWrite, convWrite])
+
+    assert.equal(bridge.peek?.('workspaces/ws1/panels/p3/state/conversation'), 'cmw1nq89oys')
+    assert.equal(seenConversations.includes('cmw1nq89oys'), true)
+  })
+})

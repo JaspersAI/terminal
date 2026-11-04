@@ -18,24 +18,39 @@ export function usePanelState<T>(panel: PanelRef, key: string, init: T): [T, (ne
   const bridge = useBridge()
   const ref = usePanelRef(panel)
   const path = `workspaces/${ref.workspaceId}/panels/${ref.id}/state/${key}`
-  const [snapshot, setSnapshot] = useState<{ path: string; value: T | undefined }>(() => ({
+  const [snapshot, setSnapshot] = useState<{ path: string; value: T | undefined; written?: boolean }>(() => ({
     path,
     value: bridge.peek?.(path) as T | undefined,
   }))
   const initial = useRef(init)
+  const written = useRef(false)
   useEffect(() => {
     let first = true
+    written.current = false
     return bridge.subscribe(path, (next) => {
-      setSnapshot({ path, value: next as T | undefined })
+      if (next !== undefined) written.current = false
+      setSnapshot({ path, value: next as T | undefined, written: written.current && next === undefined })
       // Only the first read decides whether the key was there, so only it may write the default in.
       if (first) {
         first = false
-        if (next === undefined) void bridge.setState(ref, [key], initial.current)
+        if (!written.current && next === undefined && initial.current !== undefined) {
+          void bridge.setState(ref, [key], initial.current)
+        }
       }
     })
   }, [bridge, ref, path, key])
-  const set = useMemo(() => (next: T) => void bridge.setState(ref, [key], next), [bridge, ref, key])
+  const set = useMemo(
+    () => (next: T) => {
+      written.current = true
+      setSnapshot({ path, value: next, written: true })
+      void bridge.setState(ref, [key], next)
+    },
+    [bridge, ref, path, key],
+  )
   const fromState = snapshot.path === path ? snapshot.value : undefined
+  if (snapshot.path === path && snapshot.written && fromState === undefined) {
+    return [undefined as T, set]
+  }
   const current = fromState !== undefined ? fromState : (bridge.peek?.(path) as T | undefined)
   return [current === undefined ? init : current, set]
 }

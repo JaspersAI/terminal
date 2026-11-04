@@ -26,20 +26,67 @@ function setInRecord(
   return { ...record, [head]: setInRecord(current, rest, value) }
 }
 
+function getInRecord(value: unknown, path: readonly string[]): unknown {
+  let current = value
+  for (const key of path) {
+    if (!isRecord(current)) return undefined
+    current = current[key]
+  }
+  return current
+}
+
 function sameCachedValue(a: unknown, b: unknown): boolean {
   return a === b || (a !== undefined && b !== undefined && stableStringify(a) === stableStringify(b))
+}
+
+interface PendingStateWrite {
+  id: number
+  statePath: string
+  keys: readonly string[]
+  value: unknown
 }
 
 /** A view talking to the app it is framed by. One per iframe, built once by boot. */
 export function createIframeBridge(): Bridge {
   const host = window.parent
   let nextId = 1
+  let nextWriteId = 1
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
   const listeners = new Map<
     number,
     { path: string; listener: (value: unknown) => void; seeded: boolean; lastValue: unknown }
   >()
   const cache = new Map<string, unknown>()
+  const pendingWrites: PendingStateWrite[] = []
+
+  function applyPendingWrites(path: string, value: unknown): unknown {
+    if (path.endsWith('/state')) {
+      const writes = pendingWrites.filter((w) => w.statePath === path)
+      if (writes.length === 0) return value
+      let current = value
+      for (const w of writes) {
+        if (w.keys.length === 0) current = w.value
+        else if (isRecord(current)) current = setInRecord(current, w.keys, w.value)
+      }
+      return current
+    }
+    const idx = path.indexOf('/state/')
+    if (idx === -1) return value
+    const statePath = path.slice(0, idx + '/state'.length)
+    const writes = pendingWrites.filter((w) => w.statePath === statePath)
+    if (writes.length === 0) return value
+    const targetKeys = path
+      .slice(idx + '/state/'.length)
+      .split('/')
+      .filter(Boolean)
+    const base = isRecord(cache.get(statePath)) ? (cache.get(statePath) as Record<string, unknown>) : {}
+    let root: unknown = setInRecord(base, targetKeys, value)
+    for (const w of writes) {
+      if (w.keys.length === 0) root = w.value
+      else if (isRecord(root)) root = setInRecord(root, w.keys, w.value)
+    }
+    return getInRecord(root, targetKeys)
+  }
 
   function writeCache(path: string, value: unknown): void {
     if (path.endsWith('/state')) {
@@ -80,12 +127,7 @@ export function createIframeBridge(): Bridge {
       .slice(idx + '/state/'.length)
       .split('/')
       .filter(Boolean)
-    let current: unknown = cache.get(base)
-    for (const key of keys) {
-      if (!isRecord(current)) return undefined
-      current = current[key]
-    }
-    return current
+    return getInRecord(cache.get(base), keys)
   }
 
   window.addEventListener('message', (event: MessageEvent) => {
@@ -105,13 +147,14 @@ export function createIframeBridge(): Bridge {
       const params = message.params as { subId: number; value: unknown }
       const entry = listeners.get(params.subId)
       if (!entry) return
-      writeCache(entry.path, params.value)
+      const nextValue = applyPendingWrites(entry.path, params.value)
+      writeCache(entry.path, nextValue)
       if (entry.seeded) {
         entry.seeded = false
-        if (sameCachedValue(params.value, entry.lastValue)) return
+        if (sameCachedValue(nextValue, entry.lastValue)) return
       }
-      entry.lastValue = params.value
-      entry.listener(params.value)
+      entry.lastValue = nextValue
+      entry.listener(nextValue)
     }
   })
 
@@ -161,10 +204,16 @@ export function createIframeBridge(): Bridge {
     },
 
     async setState(panel: PanelRef, path: string[], value: unknown) {
-      if (path.length > 0) {
-        writeCache(`workspaces/${panel.workspaceId}/panels/${panel.id}/state/${path.join('/')}`, value)
+      const statePath = `workspaces/${panel.workspaceId}/panels/${panel.id}/state`
+      const writeId = nextWriteId++
+      pendingWrites.push({ id: writeId, statePath, keys: path, value })
+      writeCache(path.length > 0 ? `${statePath}/${path.join('/')}` : statePath, value)
+      try {
+        await call('panel.setState', { panelId: panel.id, path, value })
+      } finally {
+        const idx = pendingWrites.findIndex((w) => w.id === writeId)
+        if (idx !== -1) pendingWrites.splice(idx, 1)
       }
-      await call('panel.setState', { panelId: panel.id, path, value })
     },
 
     async publish(panel: PanelRef, output: Record<string, unknown>) {
