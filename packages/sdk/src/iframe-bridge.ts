@@ -21,7 +21,13 @@ function setInRecord(
   if (path.length === 0) return record
   const [head, ...rest] = path
   if (!head) return record
-  if (rest.length === 0) return { ...record, [head]: value }
+  if (rest.length === 0) {
+    if (value === undefined) {
+      const { [head]: _, ...without } = record
+      return without
+    }
+    return { ...record, [head]: value }
+  }
   const current = isRecord(record[head]) ? (record[head] as Record<string, unknown>) : {}
   return { ...record, [head]: setInRecord(current, rest, value) }
 }
@@ -34,12 +40,49 @@ function sameCachedValue(a: unknown, b: unknown): boolean {
 export function createIframeBridge(): Bridge {
   const host = window.parent
   let nextId = 1
+  let nextWriteId = 1
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
   const listeners = new Map<
     number,
     { path: string; listener: (value: unknown) => void; seeded: boolean; lastValue: unknown }
   >()
   const cache = new Map<string, unknown>()
+  const inFlightWrites = new Map<number, { base: string; keyPath: string; keys: string[]; value: unknown }>()
+
+  function applyInFlight(path: string, value: unknown): { value: unknown; staleKey: boolean } {
+    if (path.endsWith('/state') && isRecord(value)) {
+      let next: Record<string, unknown> = value
+      for (const write of inFlightWrites.values()) {
+        if (write.base === path) {
+          next = setInRecord(next, write.keys, write.value)
+        }
+      }
+      return { value: next, staleKey: false }
+    }
+    const idx = path.indexOf('/state/')
+    if (idx !== -1) {
+      const base = path.slice(0, idx + '/state'.length)
+      let matched: { value: unknown } | null = null
+      let next = value
+      for (const write of inFlightWrites.values()) {
+        if (write.base !== base) continue
+        if (write.keyPath === path) {
+          matched = write
+        } else if (write.keyPath.startsWith(`${path}/`) && isRecord(next)) {
+          const rest = write.keyPath
+            .slice(path.length + 1)
+            .split('/')
+            .filter(Boolean)
+          next = setInRecord(next, rest, write.value)
+        }
+      }
+      if (matched !== null) {
+        return { value: matched.value, staleKey: !sameCachedValue(value, matched.value) }
+      }
+      return { value: next, staleKey: false }
+    }
+    return { value, staleKey: false }
+  }
 
   function writeCache(path: string, value: unknown): void {
     if (path.endsWith('/state')) {
@@ -49,6 +92,11 @@ export function createIframeBridge(): Bridge {
       }
     }
     cache.set(path, value)
+    if (path.endsWith('/state')) {
+      for (const write of inFlightWrites.values()) {
+        if (write.base === path) cache.set(write.keyPath, write.value)
+      }
+    }
     const idx = path.indexOf('/state/')
     if (idx !== -1) {
       const base = path.slice(0, idx + '/state'.length)
@@ -105,21 +153,32 @@ export function createIframeBridge(): Bridge {
       const params = message.params as { subId: number; value: unknown }
       const entry = listeners.get(params.subId)
       if (!entry) return
-      writeCache(entry.path, params.value)
+      const applied = applyInFlight(entry.path, params.value)
+      if (applied.staleKey) {
+        entry.seeded = false
+        return
+      }
+      writeCache(entry.path, applied.value)
       if (entry.seeded) {
         entry.seeded = false
-        if (sameCachedValue(params.value, entry.lastValue)) return
+        if (sameCachedValue(applied.value, entry.lastValue)) return
       }
-      entry.lastValue = params.value
-      entry.listener(params.value)
+      entry.lastValue = applied.value
+      entry.listener(applied.value)
     }
   })
 
-  function call(method: BridgeMethod, params: unknown): Promise<unknown> {
+  function call(method: BridgeMethod, params: unknown, onResult?: (result: unknown) => void): Promise<unknown> {
     const id = nextId++
     const request: BridgeRequest = { id, method, params }
     return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject })
+      pending.set(id, {
+        resolve: (value) => {
+          onResult?.(value)
+          resolve(value)
+        },
+        reject,
+      })
       host.postMessage(request, '*')
     })
   }
@@ -143,13 +202,14 @@ export function createIframeBridge(): Bridge {
       const seeded = hasCached(path)
       const initial = seeded ? readCached(path) : undefined
       if (seeded) listener(initial)
-      void call('store.subscribe', { path }).then((id) => {
+      const lastValue = seeded ? readCached(path) : undefined
+      void call('store.subscribe', { path }, (id) => {
         if (!live) {
           void call('store.unsubscribe', { subId: id })
           return
         }
         subId = id as number
-        listeners.set(subId, { path, listener, seeded, lastValue: initial })
+        listeners.set(subId, { path, listener, seeded, lastValue })
       })
       return () => {
         live = false
@@ -161,10 +221,20 @@ export function createIframeBridge(): Bridge {
     },
 
     async setState(panel: PanelRef, path: string[], value: unknown) {
-      if (path.length > 0) {
-        writeCache(`workspaces/${panel.workspaceId}/panels/${panel.id}/state/${path.join('/')}`, value)
+      const base = `workspaces/${panel.workspaceId}/panels/${panel.id}/state`
+      const keys = path.filter(Boolean)
+      let writeId: number | null = null
+      if (keys.length > 0) {
+        const keyPath = `${base}/${keys.join('/')}`
+        writeId = nextWriteId++
+        inFlightWrites.set(writeId, { base, keyPath, keys, value })
+        writeCache(keyPath, value)
       }
-      await call('panel.setState', { panelId: panel.id, path, value })
+      try {
+        await call('panel.setState', { panelId: panel.id, path, value })
+      } finally {
+        if (writeId !== null) inFlightWrites.delete(writeId)
+      }
     },
 
     async publish(panel: PanelRef, output: Record<string, unknown>) {

@@ -616,6 +616,8 @@ test('a loop whose conversation is folded is told it has one, folded behind its 
 test('the rules say what calling a tool marked (has a view) does, to the agent that shows it and to the one that does not', () => {
   assert.match(LOOP_RULES, /marked \(has a view\) puts its server's own view of the answer on the grid/)
   assert.match(LOOP_RULES, /do not place a table or a document for the same result/)
+  assert.match(LOOP_RULES, /agents\/chat/)
+  assert.match(ROUTER_RULES, /agents\/chat/)
   // Central answers fast queries in chat and never places views on the grid.
   assert.doesNotMatch(ROUTER_RULES, /has a view/)
   assert.match(ROUTER_RULES, /3 to 6 seconds/)
