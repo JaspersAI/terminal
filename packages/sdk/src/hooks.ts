@@ -30,11 +30,19 @@ export function usePanelState<T>(panel: PanelRef, key: string, init: T): [T, (ne
       // Only the first read decides whether the key was there, so only it may write the default in.
       if (first) {
         first = false
-        if (next === undefined) void bridge.setState(ref, [key], initial.current)
+        if (next === undefined && initial.current !== undefined) {
+          void bridge.setState(ref, [key], initial.current)
+        }
       }
     })
   }, [bridge, ref, path, key])
-  const set = useMemo(() => (next: T) => void bridge.setState(ref, [key], next), [bridge, ref, key])
+  const set = useMemo(
+    () => (next: T) => {
+      setSnapshot({ path, value: next })
+      void bridge.setState(ref, [key], next)
+    },
+    [bridge, ref, path, key],
+  )
   const fromState = snapshot.path === path ? snapshot.value : undefined
   const current = fromState !== undefined ? fromState : (bridge.peek?.(path) as T | undefined)
   return [current === undefined ? init : current, set]

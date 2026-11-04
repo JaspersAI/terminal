@@ -140,3 +140,95 @@ test('after panel state is loaded, usePanelState and useData read keys synchrono
     assert.equal((bridge.peek?.('workspaces/ws1/panels/p83/state') as Record<string, unknown>)['interval'], '1h')
   })
 })
+
+test('in-flight panel.setState writes are preserved when earlier store.changed notifications arrive for /state or /state/<key>', async () => {
+  await withWindow(async (host) => {
+    let hostState: Record<string, unknown> = {
+      ask: 'Summarize the latest quarterly filing.',
+    }
+    let nextSub = 1
+    const subPaths = new Map<number, string>()
+    const pendingSetStates: Array<() => void> = []
+
+    const pushStateToSubs = () => {
+      for (const [subId, path] of subPaths) {
+        if (path === 'workspaces/ws1/panels/p3/state') {
+          host.sendToFrame({ method: 'store.changed', params: { subId, value: { ...hostState } } })
+        } else if (path.startsWith('workspaces/ws1/panels/p3/state/')) {
+          const key = path.slice('workspaces/ws1/panels/p3/state/'.length)
+          host.sendToFrame({ method: 'store.changed', params: { subId, value: hostState[key] } })
+        }
+      }
+    }
+
+    host.onPost = (raw) => {
+      const req = raw as { id: number; method: string; params: Record<string, unknown> }
+      if (req.method === 'store.get' && req.params['path'] === 'workspaces/ws1/panels/p3/state') {
+        host.sendToFrame({ id: req.id, result: { ...hostState } })
+        return
+      }
+      if (req.method === 'store.subscribe') {
+        const subId = nextSub++
+        const path = String(req.params['path'])
+        subPaths.set(subId, path)
+        host.sendToFrame({ id: req.id, result: subId })
+        if (path === 'workspaces/ws1/panels/p3/state') {
+          host.sendToFrame({ method: 'store.changed', params: { subId, value: { ...hostState } } })
+        } else if (path.startsWith('workspaces/ws1/panels/p3/state/')) {
+          const key = path.slice('workspaces/ws1/panels/p3/state/'.length)
+          host.sendToFrame({ method: 'store.changed', params: { subId, value: hostState[key] } })
+        }
+        return
+      }
+      if (req.method === 'panel.setState') {
+        const path = req.params['path'] as string[]
+        const value = req.params['value']
+        pendingSetStates.push(() => {
+          const key = path[0]!
+          if (value === undefined) delete hostState[key]
+          else hostState = { ...hostState, [key]: value }
+          pushStateToSubs()
+          host.sendToFrame({ id: req.id, result: null })
+        })
+      }
+    }
+
+    const bridge = createIframeBridge()
+    await bridge.get('workspaces/ws1/panels/p3/state')
+    const panel: PanelRef = { id: 'p3', workspaceId: 'ws1' }
+
+    const conversationValues: unknown[] = []
+    const foldedValues: unknown[] = []
+    const stateValues: unknown[] = []
+
+    // 1. Subscribe to conversation (undefined) and folded (undefined -> writes false), then /state.
+    bridge.subscribe('workspaces/ws1/panels/p3/state/conversation', (v) => conversationValues.push(v))
+    bridge.subscribe('workspaces/ws1/panels/p3/state/folded', (v) => {
+      foldedValues.push(v)
+      if (v === undefined) void bridge.setState(panel, ['folded'], false)
+    })
+    bridge.subscribe('workspaces/ws1/panels/p3/state', (v) => stateValues.push(v))
+
+    // 2. Open conversation finishes and sets conversation while folded: false is still in flight to main.
+    const setConvPromise = bridge.setState(panel, ['conversation'], 'cmw1nq89oys')
+    assert.equal(bridge.peek?.('workspaces/ws1/panels/p3/state/conversation'), 'cmw1nq89oys')
+
+    // 3. Now main finishes the first setState (folded: false) and pushes /state without conversation.
+    pendingSetStates.shift()?.()
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    // In-flight conversation write must not be wiped from peek or delivered as undefined!
+    assert.equal(bridge.peek?.('workspaces/ws1/panels/p3/state/conversation'), 'cmw1nq89oys')
+    assert.equal(
+      (bridge.peek?.('workspaces/ws1/panels/p3/state') as Record<string, unknown>)['conversation'],
+      'cmw1nq89oys',
+    )
+    assert.equal((stateValues.at(-1) as Record<string, unknown>)['conversation'], 'cmw1nq89oys')
+
+    // 4. Now main finishes the second setState (conversation: 'cmw1nq89oys').
+    pendingSetStates.shift()?.()
+    await setConvPromise
+    assert.equal(bridge.peek?.('workspaces/ws1/panels/p3/state/conversation'), 'cmw1nq89oys')
+    assert.deepEqual(conversationValues, [undefined, 'cmw1nq89oys'])
+  })
+})
