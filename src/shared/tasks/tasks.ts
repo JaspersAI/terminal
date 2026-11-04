@@ -214,6 +214,21 @@ export function shouldWaitForNetwork(online: boolean, waitedMs: number): boolean
   return !online && waitedMs < WAKE_MAX_MS
 }
 
+/**
+ * What a grace timer does when it fires: restart wake recovery if the machine slept again during the
+ * timer (`isWakeLag`), keep waiting while offline under `WAKE_MAX_MS`, or proceed once ready.
+ */
+export function shouldWakeDuringGrace(
+  dueAt: number | null,
+  now: number,
+  online: boolean,
+  waitedMs: number,
+): 'restart' | 'wait' | 'ready' {
+  if (isWakeLag(dueAt, now)) return 'restart'
+  if (shouldWaitForNetwork(online, waitedMs)) return 'wait'
+  return 'ready'
+}
+
 /** Whether `os.networkInterfaces()` reports at least one non-loopback, non-link-local IPv4 or IPv6 address. */
 export function hasRoutableInterface(
   interfaces: Readonly<Record<string, readonly ({ internal: boolean; address: string } | undefined)[] | undefined>>,
@@ -261,6 +276,30 @@ export function shouldDeferOfflineRun(ok: boolean, result: string, retries: numb
 /** A task whose run was aborted by an offline network stack: no longer running, with its due slot and history intact. */
 export function afterOfflineRun(task: Task): Task {
   return { ...task, running: false }
+}
+
+/**
+ * Resolves a late `source:run` offline error that arrived shortly after a `refresh_element` task settled:
+ * restores the pre-run state and increments retries up to `OFFLINE_RETRIES_MAX`, or records a failed run past it.
+ */
+export function settleRefreshOfflineError(
+  snapshot: { before: Task; at: number; retries: number },
+  message: string,
+  now: number,
+): { kind: 'defer'; task: Task; retries: number } | { kind: 'fail'; task: Task; run: TaskRun } {
+  if (shouldDeferOfflineRun(false, message, snapshot.retries)) {
+    return { kind: 'defer', task: afterOfflineRun(snapshot.before), retries: snapshot.retries + 1 }
+  }
+  const run: TaskRun = { at: snapshot.at, ok: false, result: message, ms: Math.max(0, now - snapshot.at) }
+  return { kind: 'fail', task: afterRun(snapshot.before, run), run }
+}
+
+/**
+ * The baseline text a watch compares its call result against: a baseline stashed from an earlier run
+ * whose `runAsk` was deferred while offline takes precedence over the snapshot written to the store.
+ */
+export function watchBaseline(stashed: string | undefined, previousText: string | undefined): string | null {
+  return stashed ?? previousText ?? null
 }
 
 function isRefreshCall(task: Pick<Task, 'call'>): boolean {

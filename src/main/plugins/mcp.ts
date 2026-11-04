@@ -33,7 +33,7 @@ import { oauthProvider } from './oauth'
 import { refreshOnce, streamableHttpFetch } from './oauth-refresh'
 import { accountAddress, asAccount, callAsAccount, signedIn } from '../jaspers/jaspers'
 import { RefusedError, SignedOutError } from '../jaspers/session'
-import { shouldWaitForNetwork, WAKE_GRACE_MS } from '../../shared/tasks/tasks'
+import { isWakeLag, shouldWakeDuringGrace, WAKE_GRACE_MS } from '../../shared/tasks/tasks'
 import { isNetworkOnline } from '../tasks/tasks'
 import { getState } from '../state'
 
@@ -238,14 +238,25 @@ export function wakeRetries(): void {
   const beganAt = Date.now()
   waking = true
   const poll = (): void => {
+    const dueAt = Date.now() + WAKE_GRACE_MS
     wakeGrace = setTimeout(() => {
       wakeGrace = null
       if (seq !== wakeSeq) return
+      if (isWakeLag(dueAt, Date.now())) {
+        wakeRetries()
+        return
+      }
+      const checkDueAt = Date.now() + 3_000
       void isNetworkOnline()
         .catch(() => false)
         .then((online) => {
           if (seq !== wakeSeq) return
-          if (shouldWaitForNetwork(online, Date.now() - beganAt)) {
+          const step = shouldWakeDuringGrace(checkDueAt, Date.now(), online, Date.now() - beganAt)
+          if (step === 'restart') {
+            wakeRetries()
+            return
+          }
+          if (step === 'wait') {
             poll()
             return
           }

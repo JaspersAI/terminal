@@ -12,9 +12,11 @@ import {
   missingInRun,
   needsShellInRun,
   OFFLINE_RETRIES_MAX,
+  settleRefreshOfflineError,
   SHELL_TOOL,
   shouldDeferOfflineRun,
   shouldWaitForNetwork,
+  shouldWakeDuringGrace,
   TASK_EXCLUDED_TOOLS,
   TASK_MODEL_MAX,
   TASK_PRO_MODE_OFF,
@@ -36,6 +38,7 @@ import {
   taskStatus,
   WAKE_GRACE_MS,
   WAKE_MAX_MS,
+  watchBaseline,
   type Task,
 } from './tasks.ts'
 
@@ -594,4 +597,52 @@ test('afterOfflineRun and shouldDeferOfflineRun keep the scheduled slot and hold
     dueTasks([deferred, refreshTask], T0 + 10 * S).map((t) => t.id),
     ['t1'],
   )
+})
+
+test('settleRefreshOfflineError restores pre-run state up to OFFLINE_RETRIES_MAX and records a failure past it', () => {
+  const fine = { at: T0 - MIN, ok: true, result: '{"refreshed":"e13"}', ms: 50 }
+  const before = task({
+    id: 't13',
+    every: 30 * MIN,
+    runs: 2,
+    lastRun: fine,
+    history: [fine],
+    nextAt: T0,
+    running: true,
+  })
+  const err = 'getaddrinfo ENOTFOUND query1.finance.yahoo.com'
+
+  const first = settleRefreshOfflineError({ before, at: T0, retries: 0 }, err, T0 + 400)
+  assert.equal(first.kind, 'defer')
+  assert.equal(first.retries, 1)
+  assert.equal(first.task.running, false)
+  assert.equal(first.task.nextAt, T0)
+  assert.equal(first.task.runs, 2)
+  assert.equal(first.task.lastRun, fine)
+
+  const exhausted = settleRefreshOfflineError({ before, at: T0, retries: OFFLINE_RETRIES_MAX }, err, T0 + 400)
+  assert.equal(exhausted.kind, 'fail')
+  assert.equal(exhausted.task.running, false)
+  assert.equal(exhausted.task.runs, 3)
+  assert.equal(exhausted.task.lastRun?.ok, false)
+  assert.equal(exhausted.task.lastRun?.result, err)
+  assert.equal(runNotice('t13', before, { ok: false, result: err, changed: false }), `t13 failed: ${err}`)
+})
+
+test('shouldWakeDuringGrace restarts wake recovery when a grace timer itself fires after a sleep lag spike', () => {
+  // Machine slept again for 10 minutes while waiting on a 5s grace timer, exceeding WAKE_MAX_MS from the first wake.
+  assert.equal(shouldWakeDuringGrace(T0 + WAKE_GRACE_MS, T0 + 10 * MIN, false, 10 * MIN), 'restart')
+  // Startup grace (where network check was not yet armed) also restarts into wake recovery if the machine slept during it.
+  assert.equal(shouldWakeDuringGrace(T0 + 15 * S, T0 + 2 * MIN, true, 0), 'restart')
+  // Normal grace timer firing on time while offline waits until WAKE_MAX_MS.
+  assert.equal(shouldWakeDuringGrace(T0 + WAKE_GRACE_MS, T0 + WAKE_GRACE_MS + 20, false, WAKE_GRACE_MS), 'wait')
+  assert.equal(shouldWakeDuringGrace(T0 + WAKE_GRACE_MS, T0 + WAKE_GRACE_MS + 20, false, WAKE_MAX_MS), 'ready')
+  assert.equal(shouldWakeDuringGrace(T0 + WAKE_GRACE_MS, T0 + WAKE_GRACE_MS + 20, true, WAKE_GRACE_MS), 'ready')
+})
+
+test('watchBaseline preserves the pre-deferral baseline across an offline runAsk retry', () => {
+  assert.equal(watchBaseline(undefined, undefined), null)
+  assert.equal(watchBaseline(undefined, 'price: 100'), 'price: 100')
+  // Once stashed before a deferred runAsk, the stashed baseline wins over the newly stored watch text.
+  assert.equal(watchBaseline('price: 100', 'price: 105'), 'price: 100')
 })

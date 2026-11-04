@@ -16,12 +16,14 @@ import {
   OFFLINE_RETRIES_MAX,
   pruneFinished,
   runNotice,
+  settleRefreshOfflineError,
   shouldDeferOfflineRun,
-  shouldWaitForNetwork,
+  shouldWakeDuringGrace,
   STARTUP_GRACE_MS,
   TASKS_MAX,
   TIMER_MAX_MS,
   WAKE_GRACE_MS,
+  watchBaseline,
   type Task,
   type TaskCall,
   type TaskInput,
@@ -72,6 +74,16 @@ let stopListening: (() => void) | null = null
 let stopSourceErrors: (() => void) | null = null
 /** Consecutive post-wake offline retries by task id, cleared once a run completes or reaches the cap. */
 const offlineRetries = new Map<string, number>()
+/** Pre-run snapshots of scheduled `refresh_element` runs, so a late `source:run` offline failure can defer or fail the run cleanly. */
+const recentRefreshes = new Map<string, { before: Task; at: number; retries: number }>()
+/** Stashed watch baseline text when a watch's `runAsk` is deferred while offline, so the retry compares against the pre-change text. */
+const pendingWatchBaselines = new Map<string, string>()
+
+function clearTaskState(id: string): void {
+  offlineRetries.delete(id)
+  recentRefreshes.delete(id)
+  pendingWatchBaselines.delete(id)
+}
 
 const CHECK = { toolExists: (name: string): boolean => deps?.toolExists(name) ?? false }
 
@@ -122,20 +134,31 @@ function startAfterGrace(ms: number, checkNetwork: boolean): void {
   const seq = wakeSeq
   const beganAt = now()
   const poll = (delay: number): void => {
+    const dueAt = now() + delay
     grace = setTimeout(() => {
       grace = null
       if (seq !== wakeSeq) return
+      if (isWakeLag(dueAt, now())) {
+        wakeTasks()
+        return
+      }
       if (!checkNetwork) {
         started = true
         arm()
         return
       }
+      const checkDueAt = now() + DNS_TIMEOUT_MS
       const check = deps?.isOnline ?? isNetworkOnline
       void check()
         .catch(() => false)
         .then((online) => {
           if (seq !== wakeSeq) return
-          if (shouldWaitForNetwork(online, now() - beganAt)) {
+          const step = shouldWakeDuringGrace(checkDueAt, now(), online, now() - beganAt)
+          if (step === 'restart') {
+            wakeTasks()
+            return
+          }
+          if (step === 'wait') {
             poll(WAKE_GRACE_MS)
             return
           }
@@ -151,6 +174,8 @@ function startAfterGrace(ms: number, checkNetwork: boolean): void {
 export function startTasks(next: SchedulerDeps): void {
   deps = next
   offlineRetries.clear()
+  recentRefreshes.clear()
+  pendingWatchBaselines.clear()
   stopListening?.()
   stopListening = subscribe((after, before) => {
     if (started && after.tasks !== before.tasks) arm()
@@ -159,22 +184,34 @@ export function startTasks(next: SchedulerDeps): void {
   stopSourceErrors = onSourceError((workspaceId, message) => {
     if (!workspaceId || !isOfflineError(message)) return
     const currentNow = now()
-    const stale = getState().tasks.filter(
-      (t) =>
-        t.workspaceId === workspaceId &&
-        t.call?.tool === 'refresh_element' &&
-        !t.running &&
-        t.lastRun !== null &&
-        t.lastRun.ok &&
-        currentNow - t.lastRun.at < WAKE_GRACE_MS &&
-        (offlineRetries.get(t.id) ?? 0) < OFFLINE_RETRIES_MAX,
-    )
-    if (stale.length === 0) return
-    for (const t of stale) {
-      offlineRetries.set(t.id, (offlineRetries.get(t.id) ?? 0) + 1)
-      replace({ ...t, nextAt: t.lastRun!.at })
+    let shouldWake = false
+    for (const t of getState().tasks) {
+      if (t.workspaceId !== workspaceId || t.call?.tool !== 'refresh_element' || t.running) continue
+      const snapshot = recentRefreshes.get(t.id)
+      if (!snapshot || currentNow - snapshot.at >= WAKE_GRACE_MS) continue
+      recentRefreshes.delete(t.id)
+      const outcome = settleRefreshOfflineError(snapshot, message, currentNow)
+      if (outcome.kind === 'defer') {
+        offlineRetries.set(t.id, outcome.retries)
+        replace(outcome.task)
+        shouldWake = true
+      } else {
+        offlineRetries.delete(t.id)
+        replace(outcome.task)
+        const notice = runNotice(
+          taskLabel(snapshot.before),
+          {
+            call: snapshot.before.call,
+            every: snapshot.before.every,
+            lastRun: snapshot.before.lastRun,
+            history: snapshot.before.history,
+          },
+          { ok: false, result: message, changed: false },
+        )
+        if (notice) addNotice('tasks', notice)
+      }
     }
-    wakeTasks()
+    if (shouldWake) wakeTasks()
   })
   startAfterGrace(STARTUP_GRACE_MS, false)
 }
@@ -202,6 +239,8 @@ export function stopTasks(): void {
   stopSourceErrors?.()
   stopSourceErrors = null
   offlineRetries.clear()
+  recentRefreshes.clear()
+  pendingWatchBaselines.clear()
   suspendTasks()
 }
 
@@ -263,7 +302,7 @@ export function updateTask(id: string, patch: TaskPatch, at = now(), workspaceId
   )
   const next: Task = { ...merged, ...checked }
   const task: Task = { ...next, nextAt: computeNext(next, at) }
-  offlineRetries.delete(id)
+  clearTaskState(id)
   replace(task)
   return task
 }
@@ -290,14 +329,14 @@ export function allowTaskCommand(id: string, command: string): void {
 export function setTaskEnabled(id: string, enabled: boolean, at = now()): Task {
   const current = getTask(id)
   const task: Task = { ...current, enabled, nextAt: enabled ? computeNext(current, at) : current.nextAt }
-  offlineRetries.delete(id)
+  clearTaskState(id)
   replace(task)
   return task
 }
 
 export function cancelTask(id: string, workspaceId?: string): void {
   getTask(id, workspaceId)
-  offlineRetries.delete(id)
+  clearTaskState(id)
   update((state) => ({ ...state, tasks: state.tasks.filter((t) => t.id !== id) }))
 }
 
@@ -394,15 +433,23 @@ async function execute(task: Task, scheduled = true): Promise<void> {
   // interval is the call itself.
   let found: Delta | null = null
   if (ok && isWatch(current)) {
-    found = await compare(current.id, result)
+    const compared = await compare(current.id, result)
+    found = compared.delta
     if (!found.changed) {
       const ms = now() - at
       console.log(`[tasks] ${current.id} watch: unchanged (${ms} ms)`)
-      offlineRetries.delete(current.id)
+      const retries = offlineRetries.get(current.id) ?? 0
+      clearTaskState(current.id)
       const still = getState().tasks.find((t) => t.id === current.id)
-      if (still) replace(afterRun(still, { at, ok: true, result: 'unchanged', ms }))
+      if (still) {
+        if (scheduled && current.call?.tool === 'refresh_element') {
+          recentRefreshes.set(current.id, { before: afterOfflineRun(still), at, retries })
+        }
+        replace(afterRun(still, { at, ok: true, result: 'unchanged', ms }))
+      }
       return
     }
+    if (compared.baseline !== null) pendingWatchBaselines.set(current.id, compared.baseline)
     console.log(`[tasks] ${current.id} watch: changed`)
     // Something moved, so the instructions get their turn, with the change in front of them.
     try {
@@ -425,6 +472,7 @@ async function execute(task: Task, scheduled = true): Promise<void> {
   const retries = offlineRetries.get(current.id) ?? 0
   if (scheduled && shouldDeferOfflineRun(ok, result, retries)) {
     offlineRetries.set(current.id, retries + 1)
+    recentRefreshes.delete(current.id)
     console.log(
       `[tasks] ${current.id} deferred (network offline, retry ${retries + 1}/${OFFLINE_RETRIES_MAX}): ${result}`,
     )
@@ -432,7 +480,10 @@ async function execute(task: Task, scheduled = true): Promise<void> {
     wakeTasks()
     return
   }
-  offlineRetries.delete(current.id)
+  clearTaskState(current.id)
+  if (scheduled && ok && current.call?.tool === 'refresh_element') {
+    recentRefreshes.set(current.id, { before: afterOfflineRun(before), at, retries })
+  }
   console.log(`[tasks] ${current.id} run: ${ok ? 'ok' : `failed: ${result}`} (${ms} ms)`)
   replace(afterRun(before, { at, ok, result, ms }))
   const notice = runNotice(
@@ -454,10 +505,12 @@ async function execute(task: Task, scheduled = true): Promise<void> {
  * happened belongs, and the first run has nothing to compare with, so it is never a change: a watch
  * does not announce itself the moment it is made.
  */
-async function compare(task: string, result: string): Promise<Delta> {
+async function compare(task: string, result: string): Promise<{ delta: Delta; baseline: string | null }> {
+  const stashed = pendingWatchBaselines.get(task)
   const seen = await watch({ task, at: now(), text: result })
-  if (!seen.previous) return { changed: false, added: [], removed: [], text: '' }
-  return delta(seen.previous.text, result)
+  const baseline = watchBaseline(stashed, seen.previous?.text)
+  if (baseline === null) return { delta: { changed: false, added: [], removed: [], text: '' }, baseline: null }
+  return { delta: delta(baseline, result), baseline }
 }
 
 /** "t3", or "t3 on Research" when there is more than one workspace to tell apart. */
