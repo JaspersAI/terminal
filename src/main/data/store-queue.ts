@@ -1,5 +1,5 @@
 import { untilAborted } from '../../shared/abort.ts'
-import type { RunRecord } from '../../shared/data/store.ts'
+import { sqlMatchesSource, type RunRecord } from '../../shared/data/store.ts'
 
 // Schedules background `record` and `usage.record` writes to the store process one at a time,
 // yielding between each item so interactive requests (conversation threads, chat history, inbox,
@@ -23,9 +23,6 @@ export interface StoreQueue {
   flushForQuery(sql: string): Promise<void>
   clear(): void
 }
-
-const HAS_SOURCE_COLUMN = /\bsource\b/i
-const QUOTED_SOURCE_ID = /['"][a-z0-9_-]+\/[a-z0-9_-]+['"]/i
 
 function isDatasetRun(run: RunRecord): boolean {
   return (run.rows?.length ?? 0) > 0 && !run.error
@@ -135,8 +132,7 @@ export function createStoreQueue({ ready, sendRecord, sendUsage, onError }: Stor
 
     async flushForQuery(sql: string): Promise<void> {
       if (closed) return
-      const filterBySource = HAS_SOURCE_COLUMN.test(sql) && QUOTED_SOURCE_ID.test(sql)
-      const matches = (run: RunRecord): boolean => !filterBySource || sql.includes(run.source)
+      const matches = (run: RunRecord): boolean => sqlMatchesSource(sql, run.source)
       while (!closed) {
         const index = pendingRecords.findIndex(matches)
         if (index !== -1) {

@@ -8,8 +8,10 @@ import {
   shownRows,
   shownText,
   sqlAfterFailure,
+  sqlAfterResult,
   type Rows,
 } from './cells.ts'
+import { sqlMatchesSource } from '../../shared/data/store.ts'
 
 test('a cell is written grouped, unless its column says otherwise', () => {
   assert.equal(cellText(1234567), '1,234,567')
@@ -134,4 +136,64 @@ test('shownRows hides a query error and stays loading while the loop agent is wo
     truncated: false,
   }
   assert.equal(shownRows(loaded, true), loaded)
+})
+
+test('sqlAfterResult maps rows, preserves loaded rows on an empty refresh of the same SQL, and clears on a changed SQL query', () => {
+  const initial = sqlAfterResult(
+    { rows: [], columns: [], loading: true, error: null, text: null, truncated: false },
+    {
+      columns: ['symbol', 'price'],
+      rows: [
+        ['FLWS', 2.83],
+        ['BRCB', 8.47],
+      ],
+      truncated: false,
+    },
+    false,
+  )
+  assert.deepEqual(initial, {
+    rows: [
+      { symbol: 'FLWS', price: 2.83 },
+      { symbol: 'BRCB', price: 8.47 },
+    ],
+    columns: ['symbol', 'price'],
+    loading: false,
+    error: null,
+    text: null,
+    truncated: false,
+  })
+
+  // A refresh of the same SQL query that transiently returns 0 rows keeps the loaded rows on screen.
+  const refreshedEmpty = sqlAfterResult(
+    { ...initial, loading: true },
+    { columns: [], rows: [], truncated: false },
+    true,
+  )
+  assert.deepEqual(refreshedEmpty, initial)
+
+  // A changed SQL query that returns 0 rows clears the previous rows.
+  const changedEmpty = sqlAfterResult({ ...initial, loading: true }, { columns: [], rows: [], truncated: false }, false)
+  assert.deepEqual(changedEmpty, {
+    rows: [],
+    columns: [],
+    loading: false,
+    error: null,
+    text: null,
+    truncated: false,
+  })
+})
+
+test('sqlMatchesSource matches quoted source filters and falls back to all sources for unfiltered queries', () => {
+  const quoteSql = "select * from runs r join run_rows d on d.run_id = r.id where r.source = 'yfinance/quote'"
+  assert.equal(sqlMatchesSource(quoteSql, 'yfinance/quote'), true)
+  assert.equal(sqlMatchesSource(quoteSql, 'alpaca/news'), false)
+
+  const multiSql = "select * from runs where source in ('yfinance/quote', 'yfinance/history') order by fetched_at desc"
+  assert.equal(sqlMatchesSource(multiSql, 'yfinance/quote'), true)
+  assert.equal(sqlMatchesSource(multiSql, 'yfinance/history'), true)
+  assert.equal(sqlMatchesSource(multiSql, 'fmp/news'), false)
+
+  const unfiltered = 'select close/open from run_rows'
+  assert.equal(sqlMatchesSource(unfiltered, 'yfinance/quote'), true)
+  assert.equal(sqlMatchesSource(unfiltered, 'alpaca/news'), true)
 })

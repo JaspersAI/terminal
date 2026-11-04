@@ -67,6 +67,30 @@ export function beginSqlRun(previous: Rows): Rows {
 }
 
 /**
+ * The state of a SQL query when it resolves. A refresh of the same SQL query (`sameSql === true`)
+ * that transiently yields zero rows keeps already-loaded rows on screen rather than blanking the
+ * view during a temporary source outage; a changed SQL query replaces them with what the new query
+ * returned.
+ */
+export function sqlAfterResult(
+  previous: Rows,
+  result: { columns: string[]; rows: unknown[][]; truncated: boolean },
+  sameSql: boolean = true,
+): Rows {
+  if (sameSql && result.rows.length === 0 && previous.rows.length > 0) {
+    return { ...previous, loading: false, error: null }
+  }
+  return {
+    rows: result.rows.map((row) => Object.fromEntries(result.columns.map((column, i) => [column, row[i]]))),
+    columns: result.columns,
+    loading: false,
+    error: null,
+    text: null,
+    truncated: result.truncated,
+  }
+}
+
+/**
  * The state of a SQL query when it fails. A panel that already had rows loaded keeps showing those
  * rows rather than dropping the view's columns and series on a transient refresh or timeout error.
  */

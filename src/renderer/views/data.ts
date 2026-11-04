@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useBridge, useData, usePanel, type SourceData } from '@jaspers-ai/sdk'
-import { beginSqlRun, EMPTY_ROWS as EMPTY, sqlAfterFailure, type Rows } from './cells'
+import { sqlMatchesSource } from '../../shared/data/store'
+import { beginSqlRun, EMPTY_ROWS as EMPTY, sqlAfterFailure, sqlAfterResult, type Rows } from './cells'
 
 // How a generic view gets its rows. Two ways in, one shape out: a source by registry id, which is
 // what a plugin's data is reached by, or SQL over the store, which is the only way to see further
@@ -23,6 +24,7 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
   const fromSource: SourceData = useData(source ?? '', args ?? {})
   const [fromSql, setFromSql] = useState<Rows>(EMPTY)
   const [sqlNonce, setSqlNonce] = useState(0)
+  const lastSql = useRef<string | null>(null)
 
   useEffect(() => {
     if (!panel || !sql || source) return
@@ -38,11 +40,23 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
   }, [bridge, panel, sql, source])
 
   useEffect(() => {
+    if (!sql || source || typeof window === 'undefined' || !window.app?.store?.onRecorded) return
+    return window.app.store.onRecorded((recordedSource) => {
+      if (sqlMatchesSource(sql, recordedSource)) {
+        setSqlNonce((n) => n + 1)
+      }
+    })
+  }, [sql, source])
+
+  useEffect(() => {
     if (!sql || source) {
+      lastSql.current = null
       setFromSql(EMPTY)
       return
     }
     let live = true
+    const sameSql = lastSql.current === sql
+    lastSql.current = sql
     setFromSql(beginSqlRun)
     const read = bridge.query
     if (!read) {
@@ -52,14 +66,7 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
     void read(sql, limit)
       .then((result) => {
         if (!live) return
-        setFromSql({
-          rows: result.rows.map((row) => Object.fromEntries(result.columns.map((column, i) => [column, row[i]]))),
-          columns: result.columns,
-          loading: false,
-          error: null,
-          text: null,
-          truncated: result.truncated,
-        })
+        setFromSql((previous) => sqlAfterResult(previous, result, sameSql))
       })
       .catch((error: unknown) => {
         if (!live) return

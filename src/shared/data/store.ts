@@ -47,6 +47,19 @@ export const QUERY_LIMIT_MAX = 2000
 /** The most exchanges of a chat one read answers with. A reader asks again for the ones before them. */
 export const EXCHANGES_MAX = 1000
 
+const HAS_SOURCE_COLUMN = /\bsource\b/i
+const QUOTED_SOURCE_ID = /['"][a-z0-9_-]+\/[a-z0-9_-]+['"]/i
+
+/**
+ * Whether a SQL query over the store could read rows from `source`. When the query filters on the
+ * `source` column with quoted `<plugin>/<name>` literals, only those sources match; otherwise any
+ * recorded source could affect the result.
+ */
+export function sqlMatchesSource(sql: string, source: string): boolean {
+  const filterBySource = HAS_SOURCE_COLUMN.test(sql) && QUOTED_SOURCE_ID.test(sql)
+  return !filterBySource || sql.includes(source)
+}
+
 /**
  * Whether a statement may run. The connection is read only and refuses a write on its own; this is
  * the second lock, so that a model cannot read its way around the store with `pragma` or `attach`,
