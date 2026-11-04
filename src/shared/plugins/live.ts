@@ -12,6 +12,50 @@ const SEGMENT = /^[A-Za-z0-9._-]+$/
 export const RESEARCH_PLUGIN = 'research'
 export const RESEARCH_ROOM_VIEW = 'research/room'
 export const RESEARCH_THREAD_SOURCE = 'research/thread'
+export const AGENTS_CHAT_VIEW = 'agents/chat'
+export const AGENTS_POST_SOURCE = 'agents/post'
+
+/**
+ * Normalizes a `set` state write on an `agents/chat` panel: preserves an already-open
+ * `conversation` (and `folded`) when replacing the whole state object, and when a conversation is
+ * already open and `agents/post` is available, extracts a non-empty `ask` string to post directly
+ * to that conversation while clearing `ask` from the stored state.
+ */
+export function agentsChatStateWrite(
+  content: PanelContent,
+  currentState: Record<string, unknown>,
+  path: readonly string[],
+  value: unknown,
+  canPost = true,
+): { value: unknown; post: { conversation: string; text: string } | null } {
+  if (content.kind !== 'view' || content.view !== AGENTS_CHAT_VIEW) {
+    return { value, post: null }
+  }
+  const existingConv = typeof currentState['conversation'] === 'string' ? currentState['conversation'].trim() : ''
+  if (path.length === 0 && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const record = { ...(value as Record<string, unknown>) }
+    if (existingConv && record['conversation'] === undefined) {
+      record['conversation'] = existingConv
+    }
+    if (typeof currentState['folded'] === 'boolean' && record['folded'] === undefined) {
+      record['folded'] = currentState['folded']
+    }
+    const conversation = typeof record['conversation'] === 'string' ? record['conversation'].trim() : ''
+    const ask = typeof record['ask'] === 'string' ? record['ask'].trim() : ''
+    if (canPost && conversation && ask) {
+      delete record['ask']
+      return { value: record, post: { conversation, text: ask } }
+    }
+    return { value: record, post: null }
+  }
+  if (path.length === 1 && path[0] === 'ask' && typeof value === 'string') {
+    const ask = value.trim()
+    if (canPost && existingConv && ask) {
+      return { value: undefined, post: { conversation: existingConv, text: ask } }
+    }
+  }
+  return { value, post: null }
+}
 
 export function checkLiveKey(key: unknown): string {
   if (

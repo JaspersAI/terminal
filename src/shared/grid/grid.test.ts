@@ -556,6 +556,24 @@ test('panelTargetsSettled watches a view panel or a frame’s child views until 
   assert.deepEqual(panelTargetsSettled(published, 'p1', before), { settled: true, error: null })
   const emptyFrame = placeFrame(EMPTY_GRID, { content: { kind: 'frame' } }).grid
   assert.deepEqual(panelTargetsSettled(emptyFrame, 'p1', new Map()), { settled: true, error: null })
+
+  const { grid: agentsGrid } = placeFramed(EMPTY_GRID, {
+    content: view('agents/chat'),
+    state: { ask: 'Find latest SpaceX earnings' },
+    loop: 'f1',
+  })
+  const agentsPublishedBeforeAskPosted = publishOutput(
+    agentsGrid,
+    'e2',
+    { agents: ['fundamentals-analyst'], messages: 0 },
+    'Agents: @fundamentals-analyst · 0 messages',
+  ).grid
+  assert.deepEqual(panelTargetsSettled(agentsPublishedBeforeAskPosted, 'p2', before), {
+    settled: false,
+    error: null,
+  })
+  const agentsAskCleared = setPanelState(agentsPublishedBeforeAskPosted, 'p2', ['ask'], undefined).grid
+  assert.deepEqual(panelTargetsSettled(agentsAskCleared, 'p2', before), { settled: true, error: null })
 })
 
 test('setIn writes deep without touching what it was given', () => {

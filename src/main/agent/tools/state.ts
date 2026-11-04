@@ -11,7 +11,14 @@ import {
 import { coerceViewState, schemaAt } from '../../../shared/agent/view-state'
 import { panelOf, type Panel } from '../../../shared/grid/grid'
 import { loopName } from '../../../shared/loops/loops'
-import { RESEARCH_PLUGIN, RESEARCH_THREAD_SOURCE, researchLiveText, researchRoomOf } from '../../../shared/plugins/live'
+import {
+  AGENTS_POST_SOURCE,
+  RESEARCH_PLUGIN,
+  RESEARCH_THREAD_SOURCE,
+  agentsChatStateWrite,
+  researchLiveText,
+  researchRoomOf,
+} from '../../../shared/plugins/live'
 import { publishTextChecked, setPanelStateChecked, settlePanel } from '../../actions'
 import { runSource } from '../../data/sources'
 import { ownTile } from '../../loops/loops'
@@ -157,13 +164,34 @@ export const stateTools: Tool[] = [
       const workspace = path.workspaceId ?? workspaceId
       // What the view's schema asks for at this path, where the model wrote it another way; the
       // whole resulting state is still checked, so anything else comes back as the error it is.
-      const value = coerceViewState(schemaAt(stateSchemaAt(workspace, path.panelId), path.rest), input.value)
+      const coerced = coerceViewState(schemaAt(stateSchemaAt(workspace, path.panelId), path.rest), input.value)
+      const currentPanel = currentPanelAt(workspace, path.panelId)
+      const { value, post } = currentPanel
+        ? agentsChatStateWrite(
+            currentPanel.content,
+            currentPanel.state,
+            path.rest,
+            coerced,
+            Boolean(getSource(AGENTS_POST_SOURCE)),
+          )
+        : { value: coerced, post: null }
       const panel = setPanelStateChecked(workspace, path.panelId, path.rest, value)
+      if (post) {
+        await runSource(AGENTS_POST_SOURCE, post, { workspaceId: workspace, signal: context.signal })
+      }
       const settled = (await settlePanel(workspace, panel.id, context.signal)) ?? panel
       return showPathValue(formatPath(path), 'state', settled.state, STATE_MAX, settled.error ?? null)
     },
   },
 ]
+
+function currentPanelAt(workspaceId: string, panelId: string): Panel | undefined {
+  try {
+    return panelOf(findElement(workspaceId, panelId).grid, panelId)
+  } catch {
+    return undefined
+  }
+}
 
 /** The state schema of the view in a panel, or undefined for a text panel or a missing plugin. */
 function stateSchemaAt(workspaceId: string, panelId: string): Record<string, unknown> | undefined {

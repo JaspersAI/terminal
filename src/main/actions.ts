@@ -1089,7 +1089,7 @@ export function failPanelChecked(workspaceId: string, panelId: string, error: st
 }
 
 /** How long a tool that placed or updated a view waits for its frame to report an immediate mount error or output. */
-const PANEL_SETTLE_MS = 250
+const PANEL_SETTLE_MS = 500
 
 /**
  * Gives an open window a moment to mount or re-render a view panel (or the views inside a refreshed

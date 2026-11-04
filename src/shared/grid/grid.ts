@@ -970,7 +970,16 @@ export function panelTargetsSettled(
   if (targets.length === 0) return { settled: true, error: null }
   const failed = targets.find((p) => Boolean(p.error))
   if (failed?.error) return { settled: true, error: failed.error }
-  const allPublished = targets.every((p) => p.output !== beforeOutputs.get(p.id))
+  const allPublished = targets.every(
+    (p) =>
+      p.output !== beforeOutputs.get(p.id) &&
+      !(
+        p.content.kind === 'view' &&
+        p.content.view === 'agents/chat' &&
+        typeof p.state['ask'] === 'string' &&
+        p.state['ask'].trim().length > 0
+      ),
+  )
   return { settled: allPublished, error: null }
 }
 

@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { checkLiveKey, checkLiveValue, liveKeyOf, researchLiveText, researchRoomOf } from './live.ts'
+import {
+  agentsChatStateWrite,
+  checkLiveKey,
+  checkLiveValue,
+  liveKeyOf,
+  researchLiveText,
+  researchRoomOf,
+} from './live.ts'
 
 test('a key is names joined by slashes', () => {
   assert.equal(checkLiveKey('rooms/flws-credit-7k2p/m/000001'), 'rooms/flws-credit-7k2p/m/000001')
@@ -56,6 +63,35 @@ test('researchRoomOf reads the active room id of a research/room panel from its 
     }),
     null,
   )
+})
+
+test('agentsChatStateWrite preserves an open conversation and extracts ask to post when updating an agents/chat panel', () => {
+  assert.deepEqual(
+    agentsChatStateWrite({ kind: 'view', view: 'agents/chat' }, { conversation: 'cmw1nq89oys', folded: false }, [], {
+      ask: '  Find latest SpaceX earnings  ',
+    }),
+    {
+      value: { conversation: 'cmw1nq89oys', folded: false },
+      post: { conversation: 'cmw1nq89oys', text: 'Find latest SpaceX earnings' },
+    },
+  )
+  assert.deepEqual(
+    agentsChatStateWrite(
+      { kind: 'view', view: 'agents/chat' },
+      { conversation: 'cmw1nq89oys', folded: false },
+      ['ask'],
+      'Follow-up question',
+    ),
+    {
+      value: undefined,
+      post: { conversation: 'cmw1nq89oys', text: 'Follow-up question' },
+    },
+  )
+  // Without an open conversation yet, ask stays in state for the view to post on mount.
+  assert.deepEqual(agentsChatStateWrite({ kind: 'view', view: 'agents/chat' }, {}, ['ask'], 'Initial question'), {
+    value: 'Initial question',
+    post: null,
+  })
 })
 
 test('researchLiveText formats a research room thread from its live room and message values, stripping cite tags to markers', () => {

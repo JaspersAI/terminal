@@ -1207,8 +1207,11 @@ test('the rules and source catalog direct screening and rendered sources to the 
   )
 
   assert.match(ROUTER_RULES, /plugin's own view.*rather than a generic/i)
+  assert.match(ROUTER_RULES, /agents\/chat with initial ask state for research agents/)
+  assert.match(LOOP_PLACEMENT, /agents\/chat with initial ask state for research agents/)
   for (const rules of [LOOP_RULES, loopRules(false)]) {
     assert.match(rules, /screener-mcp\/screener/)
+    assert.match(rules, /agents\/chat with initial ask state for research agents/)
     assert.match(rules, /never.*core\/table.*run_rows/i)
     assert.match(rules, /top 10/i)
   }
