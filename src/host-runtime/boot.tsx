@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BridgeProvider, PanelProvider, type Bridge, type PanelRef } from '@jaspers-ai/sdk'
 import { createIframeBridge, WorkingProvider } from '@jaspers-ai/sdk/host'
 import { clampZoom, ZOOM_DEFAULT } from '../shared/grid/grid'
-import { mathSegments, type MathNode } from '../renderer/components/composer/markdown'
+import { mathSegments, mathSymbolClass, mathTextClass, type MathNode } from '../renderer/components/composer/markdown'
 import { watchDocumentUse } from '../renderer/lib/eye'
 
 // What runs in the iframe: the query says which view of which panel this frame is, the plugin's own
@@ -208,32 +208,6 @@ function applyDocumentZoom(raw: unknown): void {
 }
 
 const SKIP_MATH_PARENTS = 'code, pre, textarea, input, script, style, .jp-math'
-const TIGHT_DOM_SYMBOLS = new Set([
-  '(',
-  ')',
-  '[',
-  ']',
-  '{',
-  '}',
-  ',',
-  ';',
-  ':',
-  '!',
-  '?',
-  '%',
-  '′',
-  '°',
-  '|',
-  '‖',
-  '/',
-  '⟨',
-  '⟩',
-  '⌊',
-  '⌋',
-  '⌈',
-  '⌉',
-  '\u00a0',
-])
 
 /** Upgrades inline and display LaTeX math inside plugin markdown containers (`.md-doc`, `.ag-md`, `.rs-md`). */
 function watchPluginMath(root: HTMLElement): void {
@@ -323,26 +297,13 @@ function buildMathDomNode(node: MathNode): HTMLElement {
   switch (node.kind) {
     case 'text': {
       const span = document.createElement('span')
-      const numeric = /^\d+(?:\.\d+)?$/.test(node.text)
-      span.className =
-        node.style === 'bold'
-          ? 'jp-math-bold'
-          : node.style === 'italic'
-            ? 'jp-math-italic'
-            : node.style === 'mono'
-              ? 'jp-math-mono'
-              : node.style === 'cal'
-                ? 'jp-math-cal'
-                : node.style === 'normal' || node.style === 'bb' || numeric
-                  ? 'jp-math-normal'
-                  : 'jp-math-var'
+      span.className = mathTextClass(node.text, node.style)
       span.textContent = node.text
       return span
     }
     case 'symbol': {
       const span = document.createElement('span')
-      const tight = TIGHT_DOM_SYMBOLS.has(node.text) || /^[α-ωΑ-Ω∂∇∞ℓℏℜℑ℘ℵ∅]$/.test(node.text)
-      span.className = tight ? 'jp-math-sym-tight' : 'jp-math-sym'
+      span.className = mathSymbolClass(node.text)
       span.textContent = node.text
       return span
     }

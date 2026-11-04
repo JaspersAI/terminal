@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { settled, type Citation } from '../../../shared/agent/citations'
-import { citedIds, parseMarkdown, type Block, type Inline, type List, type MathNode } from './markdown'
+import {
+  citedIds,
+  mathSymbolClass,
+  mathTextClass,
+  parseMarkdown,
+  type Block,
+  type Inline,
+  type List,
+  type MathNode,
+} from './markdown'
 
 /** Space above a block; none above the first, so the box's padding is the only space at its top. */
 const FLOW = 'mt-3 first:mt-0'
@@ -236,64 +245,21 @@ function renderInline(nodes: Inline[], marks: Marks): ReactNode[] {
   })
 }
 
-const TIGHT_SYMBOLS = new Set([
-  '(',
-  ')',
-  '[',
-  ']',
-  '{',
-  '}',
-  ',',
-  ';',
-  ':',
-  '!',
-  '?',
-  '%',
-  '′',
-  '°',
-  '|',
-  '‖',
-  '/',
-  '⟨',
-  '⟩',
-  '⌊',
-  '⌋',
-  '⌈',
-  '⌉',
-  '\u00a0',
-])
-
-export function renderMathNodes(nodes: MathNode[]): ReactNode[] {
+function renderMathNodes(nodes: MathNode[]): ReactNode[] {
   return nodes.map((node, i) => {
     switch (node.kind) {
-      case 'text': {
-        const numeric = /^\d+(?:\.\d+)?$/.test(node.text)
-        const cls =
-          node.style === 'bold'
-            ? 'jp-math-bold'
-            : node.style === 'italic'
-              ? 'jp-math-italic'
-              : node.style === 'mono'
-                ? 'jp-math-mono'
-                : node.style === 'cal'
-                  ? 'jp-math-cal'
-                  : node.style === 'normal' || node.style === 'bb' || numeric
-                    ? 'jp-math-normal'
-                    : 'jp-math-var'
+      case 'text':
         return (
-          <span key={i} className={cls}>
+          <span key={i} className={mathTextClass(node.text, node.style)}>
             {node.text}
           </span>
         )
-      }
-      case 'symbol': {
-        const tight = TIGHT_SYMBOLS.has(node.text) || /^[α-ωΑ-Ω∂∇∞ℓℏℜℑ℘ℵ∅]$/.test(node.text)
+      case 'symbol':
         return (
-          <span key={i} className={tight ? 'jp-math-sym-tight' : 'jp-math-sym'}>
+          <span key={i} className={mathSymbolClass(node.text)}>
             {node.text}
           </span>
         )
-      }
       case 'space':
         return <span key={i} className={`jp-math-space-${node.size}`} />
       case 'frac':
