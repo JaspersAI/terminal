@@ -27,7 +27,7 @@ import { BUTTON } from '../components/settings/Row'
 import { useColorScheme } from '../lib/color-scheme'
 import { errorMessage } from '../lib/errors'
 import { dispatch, get, useAppState } from '../lib/state'
-import { appContainerDimensions, appFrameStyle, hostStyles } from './app-context'
+import { appContainerDimensions, appFrameStyle, hostStyles, shouldRetryAppOpen } from './app-context'
 import { pageTeller } from './app-tell'
 import type { ViewProps } from './index'
 
@@ -104,8 +104,11 @@ export function App({ panel }: ViewProps): ReactElement {
     }
   }, [panel.workspaceId, panel.id, connection, tool, argsKey, refreshedAt, allowed])
 
+  const wasReady = useRef(ready)
   useEffect(() => {
-    if (ready && opened.kind === 'failed') setAllowed((n) => n + 1)
+    const retry = shouldRetryAppOpen(wasReady.current, ready, opened.kind)
+    wasReady.current = ready
+    if (retry) setAllowed((n) => n + 1)
   }, [ready, opened.kind])
 
   const page = opened.kind === 'page' ? opened : null
