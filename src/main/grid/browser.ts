@@ -13,9 +13,11 @@ import {
   browserRequestHeaders,
   browserUserAgent,
   browserUserAgentForUrl,
+  formatBrowserPageText,
   isBlankBrowserPopupUrl,
   isBrowserUrl,
   type BrowserBounds,
+  type BrowserPageLink,
 } from '../../shared/grid/browser'
 import { PANEL_TEXT_MAX, panelOf, stepZoom, tileZoom } from '../../shared/grid/grid'
 import { publishChecked, publishTextChecked, setPanelStateChecked } from '../actions'
@@ -119,6 +121,31 @@ const BACKGROUND_MEDIA_SCRIPT = (backgrounded: boolean): string => `
       try { void media.play()?.catch(() => {}); } catch {}
     }
   }
+})()
+`
+
+const READ_PAGE_SCRIPT = `
+(() => {
+  if (typeof document === 'undefined' || !document.body) return { text: '', links: [] };
+  const text = document.body.innerText || '';
+  const links = [];
+  for (const el of document.querySelectorAll('a[href]')) {
+    if (!(el instanceof HTMLAnchorElement)) continue;
+    const rawHref = (el.getAttribute('href') || '').trim();
+    if (!rawHref || rawHref.startsWith('#') || /^(?:javascript|mailto|tel|data|blob|file|about):/i.test(rawHref)) continue;
+    const url = el.href;
+    if (!url || (!url.startsWith('https://') && !url.startsWith('http://'))) continue;
+    if (el.getClientRects().length === 0) continue;
+    const style = typeof window !== 'undefined' && window.getComputedStyle ? window.getComputedStyle(el) : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden')) continue;
+    const imgAlt = el.querySelector('img[alt]')?.getAttribute('alt') || '';
+    const label = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || imgAlt || '')
+      .replace(/\\s+/g, ' ')
+      .trim();
+    if (!label) continue;
+    links.push({ text: label, url });
+  }
+  return { text, links };
 })()
 `
 
@@ -599,11 +626,17 @@ function createNativeView(
     readPageText: async () => {
       if (webContents.isDestroyed()) return null
       try {
-        const text: unknown = await webContents.executeJavaScript(
-          'typeof document !== "undefined" && document.body ? document.body.innerText : ""',
-          false,
-        )
-        return typeof text === 'string' && text.trim() !== '' ? text.trim().slice(0, PANEL_TEXT_MAX) : null
+        const raw: unknown = await webContents.executeJavaScript(READ_PAGE_SCRIPT, false)
+        const pageUrl = webContents.isDestroyed() ? '' : webContents.getURL()
+        if (typeof raw === 'string') {
+          return formatBrowserPageText(raw, [], pageUrl, PANEL_TEXT_MAX)
+        }
+        if (typeof raw === 'object' && raw !== null) {
+          const record = raw as { text?: unknown; links?: unknown }
+          const links = Array.isArray(record.links) ? (record.links as BrowserPageLink[]) : []
+          return formatBrowserPageText(record.text, links, pageUrl, PANEL_TEXT_MAX)
+        }
+        return null
       } catch {
         return null
       }
