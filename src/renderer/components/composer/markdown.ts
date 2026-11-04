@@ -75,6 +75,8 @@ const OPEN_DOLLAR_BLOCK = /^ {0,3}\$\$[ \t]*(.*)$/
 const CLOSE_DOLLAR_BLOCK = /^(.*)\$\$[ \t]*$/
 const OPEN_BRACKET_BLOCK = /^ {0,3}\\\[[ \t]*(.*)$/
 const CLOSE_BRACKET_BLOCK = /^(.*)\\\][ \t]*$/
+const INLINE_MATH =
+  /(?<![\\$\dA-Za-z])\$(?![\s$])(?![0-9][\d,.]*[KMBTkmbt%]?(?![ \t]*[=<>+\-*/\\^_])(?:[\s,.;:!?)\]]|$))((?:\\\$|[^$\n])+?)(?<![\s\\(])\$(?![\dA-Za-z$\\{])/
 
 /**
  * The marks inside a block, tried left to right; at one position the first that matches wins. Each
@@ -91,7 +93,7 @@ const INLINE = new RegExp(
     /(?<!\\)\$\$(?!\s)((?:\\\$|[^$\n])+?)(?<!\s|\\)\$\$(?!\$)/, // displayMath: $$...$$ on one line
     // inlineMath: $...$ with non-space boundaries, never starting on a plain currency figure and never
     // closing before a digit, letter, $, \, or {.
-    /(?<![\\$\dA-Za-z])\$(?![\s$])(?![0-9][\d,.]*[KMBTkmbt%]?(?![ \t]*[=<>+\-*/\\^_])(?:[\s,.;:!?)\]]|$))((?:\\\$|[^$\n])+?)(?<![\s\\(])\$(?![\dA-Za-z$\\{])/,
+    INLINE_MATH,
     // cite: a source's mark. It takes the space before it, so the mark sits against the claim, and a
     // mark that points at nothing leaves no gap where it was.
     new RegExp(`[ \\t]*\\[\\^(${CITATION_ID})\\]`),
@@ -928,8 +930,10 @@ export function parseMath(tex: string, depth = 0): MathNode[] {
           push({ kind: 'symbol', text: '\n' })
         } else if (nextCh === ',') {
           push({ kind: 'space', size: 'thin' })
-        } else if (nextCh === ':' || nextCh === ';' || nextCh === ' ') {
+        } else if (nextCh === ':' || nextCh === ' ') {
           push({ kind: 'space', size: 'medium' })
+        } else if (nextCh === ';') {
+          push({ kind: 'space', size: 'thick' })
         } else if (nextCh === '!') {
           // negative thin space: ignore
         } else if (nextCh === '|') {
@@ -951,8 +955,12 @@ export function parseMath(tex: string, depth = 0): MathNode[] {
         push({ kind: 'space', size: 'thin' })
         continue
       }
-      if (cmd === 'enspace' || cmd === 'medspace' || cmd === 'thickspace') {
+      if (cmd === 'enspace' || cmd === 'medspace') {
         push({ kind: 'space', size: 'medium' })
+        continue
+      }
+      if (cmd === 'thickspace') {
+        push({ kind: 'space', size: 'thick' })
         continue
       }
       if (cmd === 'frac' || cmd === 'dfrac' || cmd === 'tfrac' || cmd === 'cfrac') {
@@ -1319,12 +1327,58 @@ const MATH_SEGMENTS = new RegExp(
     /\\\[([\s\S]+?)\\\]/, // bracketMath
     /(\\\$)/, // escapedDollar
     /(?<!\\)\$\$(?!\s)([\s\S]+?)(?<!\s|\\)\$\$(?!\$)/, // displayMath
-    /(?<![\\$\dA-Za-z])\$(?![\s$])(?![0-9][\d,.]*[KMBTkmbt%]?(?![ \t]*[=<>+\-*/\\^_])(?:[\s,.;:!?)\]]|$))((?:\\\$|[^$\n])+?)(?<![\s\\(])\$(?![\dA-Za-z$\\{])/, // inlineMath
+    INLINE_MATH, // inlineMath
   ]
     .map((part) => part.source)
     .join('|'),
   'g',
 )
+
+const TIGHT_MATH_SYMBOLS = new Set([
+  '(',
+  ')',
+  '[',
+  ']',
+  '{',
+  '}',
+  ',',
+  ';',
+  ':',
+  '!',
+  '?',
+  '%',
+  '′',
+  '°',
+  '|',
+  '‖',
+  '/',
+  '⟨',
+  '⟩',
+  '⌊',
+  '⌋',
+  '⌈',
+  '⌉',
+  '\u00a0',
+])
+
+export function mathTextClass(text: string, style?: MathTextStyle): string {
+  const numeric = /^\d+(?:\.\d+)?$/.test(text)
+  return style === 'bold'
+    ? 'jp-math-bold'
+    : style === 'italic'
+      ? 'jp-math-italic'
+      : style === 'mono'
+        ? 'jp-math-mono'
+        : style === 'cal'
+          ? 'jp-math-cal'
+          : style === 'normal' || style === 'bb' || numeric
+            ? 'jp-math-normal'
+            : 'jp-math-var'
+}
+
+export function mathSymbolClass(text: string): string {
+  return TIGHT_MATH_SYMBOLS.has(text) || /^[α-ωΑ-Ω∂∇∞ℓℏℜℑ℘ℵ∅]$/.test(text) ? 'jp-math-sym-tight' : 'jp-math-sym'
+}
 
 /** Splits a prose string into plain text and inline or display LaTeX math segments, keeping currency intact. */
 export function mathSegments(source: string): MathSegment[] {
