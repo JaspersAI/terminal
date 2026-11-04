@@ -42,7 +42,14 @@ const cache = new Map<string, string>()
 /** Every stored result by id, and when it may go. */
 const expires = new Map<string, number>()
 const inFlight = createInFlightMap<{ result: RunResult & { text: string }; citations: unknown }>()
+const errorListeners = new Set<(workspaceId: string | null, message: string) => void>()
 let seq = 0
+
+/** Hears every source run that failed, with the workspace it was run for and the error message. */
+export function onSourceError(listener: (workspaceId: string | null, message: string) => void): () => void {
+  errorListeners.add(listener)
+  return () => errorListeners.delete(listener)
+}
 
 export interface RunOptions {
   /** Skip a dataset still good for these arguments and fetch again; the new one takes its place for everyone. */
@@ -119,6 +126,7 @@ export async function runSource(
           error: message,
         }),
       )
+      for (const listener of errorListeners) listener(workspaceId, message)
       throw error instanceof Error && error.message === message ? error : new Error(message, { cause: error })
     }
 

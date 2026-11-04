@@ -1,14 +1,23 @@
+import dns from 'node:dns/promises'
+import os from 'node:os'
 import {
-  isWatch,
+  afterOfflineRun,
   afterRun,
+  callError,
   checkTaskInput,
   computeNext,
   dueTasks,
   earliestNext,
+  hasRoutableInterface,
+  isOfflineError,
   isPending,
   isWakeLag,
+  isWatch,
+  OFFLINE_RETRIES_MAX,
   pruneFinished,
   runNotice,
+  shouldDeferOfflineRun,
+  shouldWaitForNetwork,
   STARTUP_GRACE_MS,
   TASKS_MAX,
   TIMER_MAX_MS,
@@ -22,8 +31,10 @@ import { delta, type Delta } from '../../shared/tasks/delta'
 import { TASK_COMMANDS_MAX } from '../../shared/app/pro-mode'
 import type { TaskRequest } from '../agent/orchestrator'
 import { addNotice } from '../app/notices'
-import { getState, subscribe, update } from '../state'
+import { onSourceError } from '../data/sources'
 import { watch } from '../data/store'
+import { accountAddress } from '../jaspers/jaspers'
+import { getState, subscribe, update } from '../state'
 
 // Tasks in main: the mutations every door goes through, the renderer's actions and the
 // orchestrator's tools alike, and the scheduler that runs them. A task belongs to a workspace: the
@@ -42,17 +53,25 @@ export interface SchedulerDeps {
   runAsk(task: TaskRequest): Promise<string>
   /** A reply, into the task's workspace's conversation. Resolves whether it went in. */
   intoChat(workspaceId: string, task: string, reply: string): Promise<boolean>
+  /** Whether the host's network stack and DNS resolver are back online after sleep. */
+  isOnline?: () => Promise<boolean>
   now?: () => number
 }
+
+const DNS_TIMEOUT_MS = 3_000
 
 let deps: SchedulerDeps | null = null
 let timer: NodeJS.Timeout | null = null
 let grace: NodeJS.Timeout | null = null
 let started = false
+let wakeSeq = 0
 let expectedAt: number | null = null
 /** The task and time the timer was last armed for, so the log says so once rather than on every change. */
 let armedFor: string | null = null
 let stopListening: (() => void) | null = null
+let stopSourceErrors: (() => void) | null = null
+/** Consecutive post-wake offline retries by task id, cleared once a run completes or reaches the cap. */
+const offlineRetries = new Map<string, number>()
 
 const CHECK = { toolExists: (name: string): boolean => deps?.toolExists(name) ?? false }
 
@@ -60,27 +79,109 @@ function now(): number {
   return deps?.now?.() ?? Date.now()
 }
 
-function startAfterGrace(ms: number): void {
+function probeHost(): string {
+  try {
+    const baseUrl = getState().llm?.baseUrl
+    if (baseUrl) {
+      const host = new URL(baseUrl).hostname.toLowerCase()
+      if (host && host !== 'localhost' && host !== '127.0.0.1' && host !== '::1' && host !== '[::1]') {
+        return host
+      }
+    }
+  } catch {
+    // Fall back to Account host.
+  }
+  try {
+    return new URL(accountAddress()).hostname
+  } catch {
+    return 'account.jsprai.com'
+  }
+}
+
+/** Whether the OS has a routable interface and its DNS resolver can resolve the configured provider or Account host. */
+export async function isNetworkOnline(): Promise<boolean> {
+  if (!hasRoutableInterface(os.networkInterfaces())) return false
+  let timeout: NodeJS.Timeout | undefined
+  try {
+    await Promise.race([
+      dns.lookup(probeHost()),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('DNS lookup timed out')), DNS_TIMEOUT_MS)
+      }),
+    ])
+    return true
+  } catch {
+    return false
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+function startAfterGrace(ms: number, checkNetwork: boolean): void {
   suspendTasks()
-  grace = setTimeout(() => {
-    grace = null
-    started = true
-    arm()
-  }, ms)
+  const seq = wakeSeq
+  const beganAt = now()
+  const poll = (delay: number): void => {
+    grace = setTimeout(() => {
+      grace = null
+      if (seq !== wakeSeq) return
+      if (!checkNetwork) {
+        started = true
+        arm()
+        return
+      }
+      const check = deps?.isOnline ?? isNetworkOnline
+      void check()
+        .catch(() => false)
+        .then((online) => {
+          if (seq !== wakeSeq) return
+          if (shouldWaitForNetwork(online, now() - beganAt)) {
+            poll(WAKE_GRACE_MS)
+            return
+          }
+          started = true
+          arm()
+        })
+    }, delay)
+  }
+  poll(ms)
 }
 
 /** Wires the dependencies and, after the startup grace, arms the timer; from then on every change to the tasks re-arms it. */
 export function startTasks(next: SchedulerDeps): void {
   deps = next
+  offlineRetries.clear()
   stopListening?.()
   stopListening = subscribe((after, before) => {
     if (started && after.tasks !== before.tasks) arm()
   })
-  startAfterGrace(STARTUP_GRACE_MS)
+  stopSourceErrors?.()
+  stopSourceErrors = onSourceError((workspaceId, message) => {
+    if (!workspaceId || !isOfflineError(message)) return
+    const currentNow = now()
+    const stale = getState().tasks.filter(
+      (t) =>
+        t.workspaceId === workspaceId &&
+        t.call?.tool === 'refresh_element' &&
+        !t.running &&
+        t.lastRun !== null &&
+        t.lastRun.ok &&
+        currentNow - t.lastRun.at < WAKE_GRACE_MS &&
+        (offlineRetries.get(t.id) ?? 0) < OFFLINE_RETRIES_MAX,
+    )
+    if (stale.length === 0) return
+    for (const t of stale) {
+      offlineRetries.set(t.id, (offlineRetries.get(t.id) ?? 0) + 1)
+      replace({ ...t, nextAt: t.lastRun!.at })
+    }
+    wakeTasks()
+  })
+  startAfterGrace(STARTUP_GRACE_MS, false)
 }
 
 /** While the machine sleeps: disarm until wake, so an overdue timer does not fire before the network is back. */
 export function suspendTasks(): void {
+  wakeSeq++
   started = false
   if (grace) clearTimeout(grace)
   if (timer) clearTimeout(timer)
@@ -93,11 +194,14 @@ export function suspendTasks(): void {
 /** After sleep: wait the grace window for connections and the network to settle, then arm from the clock as it is now. */
 export function wakeTasks(): void {
   if (!deps) return
-  startAfterGrace(WAKE_GRACE_MS)
+  startAfterGrace(WAKE_GRACE_MS, true)
 }
 
 /** On quit: nothing more is started. A run in flight is lost, and its task runs at the next launch. */
 export function stopTasks(): void {
+  stopSourceErrors?.()
+  stopSourceErrors = null
+  offlineRetries.clear()
   suspendTasks()
 }
 
@@ -159,6 +263,7 @@ export function updateTask(id: string, patch: TaskPatch, at = now(), workspaceId
   )
   const next: Task = { ...merged, ...checked }
   const task: Task = { ...next, nextAt: computeNext(next, at) }
+  offlineRetries.delete(id)
   replace(task)
   return task
 }
@@ -185,12 +290,14 @@ export function allowTaskCommand(id: string, command: string): void {
 export function setTaskEnabled(id: string, enabled: boolean, at = now()): Task {
   const current = getTask(id)
   const task: Task = { ...current, enabled, nextAt: enabled ? computeNext(current, at) : current.nextAt }
+  offlineRetries.delete(id)
   replace(task)
   return task
 }
 
 export function cancelTask(id: string, workspaceId?: string): void {
   getTask(id, workspaceId)
+  offlineRetries.delete(id)
   update((state) => ({ ...state, tasks: state.tasks.filter((t) => t.id !== id) }))
 }
 
@@ -198,7 +305,7 @@ export function cancelTask(id: string, workspaceId?: string): void {
 export function runTaskNow(id: string): void {
   const task = getTask(id)
   if (task.running) throw new Error(`${id} is running.`)
-  void execute(task)
+  void execute(task, false)
 }
 
 function replace(task: Task): void {
@@ -206,6 +313,12 @@ function replace(task: Task): void {
 }
 
 function arm(): void {
+  if (!started) return
+  const currentNow = now()
+  if (isWakeLag(expectedAt, currentNow)) {
+    wakeTasks()
+    return
+  }
   if (timer) clearTimeout(timer)
   timer = null
   expectedAt = null
@@ -215,7 +328,6 @@ function arm(): void {
     armedFor = null
     return
   }
-  const currentNow = now()
   const wait = Math.max(0, at - currentNow)
   const soonest = tasks.find((t) => isPending(t) && !t.running && t.nextAt === at)
   const label = `${soonest?.id ?? '?'}@${at}`
@@ -237,7 +349,7 @@ function tick(): void {
     wakeTasks()
     return
   }
-  for (const task of dueTasks(getState().tasks, now())) void execute(task)
+  for (const task of dueTasks(getState().tasks, now())) void execute(task, true)
   arm()
 }
 
@@ -247,7 +359,7 @@ function tick(): void {
  * and is dropped if the task was removed. Whether it becomes a notice is `runNotice`'s to say; a
  * reply is said in the chat as well.
  */
-async function execute(task: Task): Promise<void> {
+async function execute(task: Task, scheduled = true): Promise<void> {
   const run = deps
   if (!run) return
   const current = getState().tasks.find((t) => t.id === task.id)
@@ -270,6 +382,13 @@ async function execute(task: Task): Promise<void> {
     ok = false
     result = err instanceof Error ? err.message : String(err)
   }
+  if (ok) {
+    const refreshErr = callError(current.call, result)
+    if (refreshErr) {
+      ok = false
+      result = refreshErr
+    }
+  }
   // A watch compares what the call answered with what it answered last time. A run that found
   // nothing finishes here: no model is woken, no notice is shown, and the whole cost of a quiet
   // interval is the call itself.
@@ -279,6 +398,7 @@ async function execute(task: Task): Promise<void> {
     if (!found.changed) {
       const ms = now() - at
       console.log(`[tasks] ${current.id} watch: unchanged (${ms} ms)`)
+      offlineRetries.delete(current.id)
       const still = getState().tasks.find((t) => t.id === current.id)
       if (still) replace(afterRun(still, { at, ok: true, result: 'unchanged', ms }))
       return
@@ -300,9 +420,20 @@ async function execute(task: Task): Promise<void> {
   }
 
   const ms = now() - at
-  console.log(`[tasks] ${current.id} run: ${ok ? 'ok' : `failed: ${result}`} (${ms} ms)`)
   const before = getState().tasks.find((t) => t.id === current.id)
   if (!before) return
+  const retries = offlineRetries.get(current.id) ?? 0
+  if (scheduled && shouldDeferOfflineRun(ok, result, retries)) {
+    offlineRetries.set(current.id, retries + 1)
+    console.log(
+      `[tasks] ${current.id} deferred (network offline, retry ${retries + 1}/${OFFLINE_RETRIES_MAX}): ${result}`,
+    )
+    replace(afterOfflineRun(before))
+    wakeTasks()
+    return
+  }
+  offlineRetries.delete(current.id)
+  console.log(`[tasks] ${current.id} run: ${ok ? 'ok' : `failed: ${result}`} (${ms} ms)`)
   replace(afterRun(before, { at, ok, result, ms }))
   const notice = runNotice(
     taskLabel(current),

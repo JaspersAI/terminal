@@ -33,7 +33,8 @@ import { oauthProvider } from './oauth'
 import { refreshOnce, streamableHttpFetch } from './oauth-refresh'
 import { accountAddress, asAccount, callAsAccount, signedIn } from '../jaspers/jaspers'
 import { RefusedError, SignedOutError } from '../jaspers/session'
-import { WAKE_GRACE_MS } from '../../shared/tasks/tasks'
+import { shouldWaitForNetwork, WAKE_GRACE_MS } from '../../shared/tasks/tasks'
+import { isNetworkOnline } from '../tasks/tasks'
 import { getState } from '../state'
 
 // One MCP client per connection, and what it knows published into the tree. Everything that could
@@ -70,7 +71,9 @@ const RETRY_MS = [15_000, 30_000, 60_000, 120_000, 300_000]
 const retries = new Map<string, NodeJS.Timeout>()
 const pendingRetries = new Map<string, number>()
 let wakeGrace: NodeJS.Timeout | null = null
+let wakeSeq = 0
 let sleeping = false
+let waking = false
 /** The fetch of every OAuth connection of its own. One, so a refresh under way is found by whichever client asks: the one just built, or one still finishing a call. */
 const oauthFetch = refreshOnce(fetch)
 /** The servers that sign their users in through Jaspers, by address, once each has said so. Not knowing is not kept: a server that could not be asked is asked again next time. */
@@ -194,7 +197,7 @@ async function connectOne(id: string, retry = 0): Promise<void> {
 function failed(id: string, message: string, retry: number): void {
   setInfo(id, { status: 'error', error: message, tools: [] })
   pendingRetries.set(id, retry + 1)
-  if (sleeping || wakeGrace) return
+  if (sleeping || waking || wakeGrace) return
   armRetry(id, retry)
 }
 
@@ -212,7 +215,9 @@ function armRetry(id: string, retry: number): void {
 
 /** Disarms pending connection retry timers while the machine sleeps so none fire before the network is back. */
 export function suspendRetries(): void {
+  wakeSeq++
   sleeping = true
+  waking = false
   if (wakeGrace) clearTimeout(wakeGrace)
   wakeGrace = null
   for (const timer of retries.values()) clearTimeout(timer)
@@ -221,19 +226,39 @@ export function suspendRetries(): void {
 
 /** Re-arms pending connection retries after the post-wake grace window so the network has settled. */
 export function wakeRetries(): void {
+  wakeSeq++
   sleeping = false
+  waking = false
   if (wakeGrace) clearTimeout(wakeGrace)
+  wakeGrace = null
   for (const timer of retries.values()) clearTimeout(timer)
   retries.clear()
   if (pendingRetries.size === 0) return
-  wakeGrace = setTimeout(() => {
-    wakeGrace = null
-    const due = [...pendingRetries.entries()]
-    pendingRetries.clear()
-    for (const [id, nextRetry] of due) {
-      void connect(id, nextRetry).catch(() => undefined)
-    }
-  }, WAKE_GRACE_MS)
+  const seq = wakeSeq
+  const beganAt = Date.now()
+  waking = true
+  const poll = (): void => {
+    wakeGrace = setTimeout(() => {
+      wakeGrace = null
+      if (seq !== wakeSeq) return
+      void isNetworkOnline()
+        .catch(() => false)
+        .then((online) => {
+          if (seq !== wakeSeq) return
+          if (shouldWaitForNetwork(online, Date.now() - beganAt)) {
+            poll()
+            return
+          }
+          waking = false
+          const due = [...pendingRetries.entries()]
+          pendingRetries.clear()
+          for (const [id, nextRetry] of due) {
+            void connect(id, nextRetry).catch(() => undefined)
+          }
+        })
+    }, WAKE_GRACE_MS)
+  }
+  poll()
 }
 
 /**
@@ -339,6 +364,8 @@ export async function forget(id: string): Promise<void> {
 
 /** Stdio children die with the app, so this runs on will-quit before anything else. */
 export function closeAll(): void {
+  wakeSeq++
+  waking = false
   connecting.clear()
   if (wakeGrace) clearTimeout(wakeGrace)
   wakeGrace = null

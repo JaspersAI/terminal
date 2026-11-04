@@ -2,6 +2,7 @@ import { sleep } from '../../../shared/abort'
 import { saidOf } from '../../../shared/agent/rounds'
 import { isRetryable, retryLine, retryWait } from '../../../shared/llm/limits'
 import type { Completion, Effort, ToolDefinition, Turn } from '../../../shared/llm/llm'
+import { isOfflineError } from '../../../shared/tasks/tasks'
 import { ProviderError } from '../../llm/http'
 import { complete } from '../../llm/llm'
 import type { ProviderConfig } from '../../secrets'
@@ -100,7 +101,7 @@ export async function request({
         message,
         retryAfterMs: err instanceof ProviderError ? err.retryAfterMs : null,
       })
-      if (signal.aborted) throw err
+      if (signal.aborted || (entry.origin === 'task' && isOfflineError(message))) throw err
       const wait = isRetryable(message)
         ? retryWait(attempt, err instanceof ProviderError ? err.retryAfterMs : null)
         : null

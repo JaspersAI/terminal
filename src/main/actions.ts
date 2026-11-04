@@ -54,6 +54,7 @@ import { createQuestions, type Asking } from './agent/utils/questions'
 import { knownSecrets } from './agent/utils/settings'
 import { readProMode } from '../shared/app/pro-mode'
 import { addNotice, setUnread } from './app/notices'
+import { onSourceError } from './data/sources'
 import { markRead } from './data/store'
 import { parseClockRule } from '../shared/tasks/clock-rule'
 import {
@@ -1106,9 +1107,11 @@ export function settlePanel(workspaceId: string, panelId: string, signal?: Abort
   }
   const beforeOutputs = new Map(targets.map((p) => [p.id, p.output]))
   return new Promise((resolve) => {
+    let sourceError: string | null = null
     const finish = (): void => {
       clearTimeout(timer)
       stop()
+      stopSourceErrors()
       signal?.removeEventListener('abort', finish)
       const now = readPanel(workspaceId, panelId)
       if (!now) {
@@ -1116,11 +1119,18 @@ export function settlePanel(workspaceId: string, panelId: string, signal?: Abort
         return
       }
       const { error } = panelTargetsSettled(now.grid, panelId, beforeOutputs)
-      resolve(error ? { ...now.panel, error } : now.panel)
+      const failed = error ?? sourceError
+      resolve(failed ? { ...now.panel, error: failed } : now.panel)
     }
     const stop = subscribe(() => {
       const now = readPanel(workspaceId, panelId)
       if (!now || panelTargetsSettled(now.grid, panelId, beforeOutputs).settled) finish()
+    })
+    const stopSourceErrors = onSourceError((wsId, message) => {
+      if (wsId === workspaceId && !sourceError) {
+        sourceError = message
+        finish()
+      }
     })
     const timer = setTimeout(finish, PANEL_SETTLE_MS)
     signal?.addEventListener('abort', finish, { once: true })
