@@ -184,7 +184,8 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
           result = await runSource(source.id, args, {
             workspaceId,
             signal: callSignal,
-            ...(page ? { fresh: true, raw: (raw: unknown) => (answer = raw) } : {}),
+            ...(page || unread ? { fresh: true } : {}),
+            ...(page ? { raw: (raw: unknown) => (answer = raw) } : {}),
           })
         } catch (err) {
           if (fastCap?.aborted && !signal?.aborted) {
