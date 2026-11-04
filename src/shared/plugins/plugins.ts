@@ -312,15 +312,17 @@ export interface BuiltPluginOutput {
   dir: string
   code: string
   bundle: string
+  shell?: boolean
 }
 
-/** Whether two built plugin outputs have the exact same folder, CJS definitions, and browser bundle. */
+/** Whether two built plugin outputs have the exact same folder, CJS definitions, browser bundle, and shell approval. */
 export function samePluginBuild(previous: BuiltPluginOutput | undefined, next: BuiltPluginOutput): boolean {
   return (
     previous !== undefined &&
     previous.dir === next.dir &&
     previous.code === next.code &&
-    previous.bundle === next.bundle
+    previous.bundle === next.bundle &&
+    (previous.shell ?? false) === (next.shell ?? false)
   )
 }
 
@@ -329,15 +331,17 @@ export interface HostBuildSpec {
   dir: string
   capabilities: readonly Capability[]
   eager: boolean
+  shell?: boolean
 }
 
-/** Whether two plugin host builds have the same code, folder, capabilities, and eager start flag. */
+/** Whether two plugin host builds have the same code, folder, capabilities, eager start flag, and shell approval. */
 export function sameHostBuild(previous: HostBuildSpec | undefined, next: HostBuildSpec): boolean {
   return (
     previous !== undefined &&
     previous.code === next.code &&
     previous.dir === next.dir &&
     previous.eager === next.eager &&
+    (previous.shell ?? false) === (next.shell ?? false) &&
     previous.capabilities.length === next.capabilities.length &&
     previous.capabilities.every((c, i) => c === next.capabilities[i])
   )

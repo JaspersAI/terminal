@@ -52,6 +52,8 @@ export interface HostBuild {
   capabilities: Capability[]
   /** The plugin defines start: its host starts with the build, comes back when it dies, and never stops for being idle. */
   eager: boolean
+  /** Whether the plugin is approved to read the shared shell folder (`~/Jaspers/shell`). */
+  shell?: boolean
 }
 
 interface Host {
@@ -87,8 +89,9 @@ const autoRestartedAt = new Map<string, number>()
 let quitting = false
 
 /** A build landed: its host replaces whatever host the plugin had, now or on the first run that needs one. */
-export async function startHost(id: string, build: HostBuild): Promise<void> {
+export async function startHost(id: string, input: HostBuild): Promise<void> {
   cancelRestart(id)
+  const build: HostBuild = { ...input, shell: input.shell ?? hasShellApproval(input.dir) }
   const previous = builds.get(id)
   builds.set(id, build)
   if (sameHostBuild(previous, build) && !stopping.has(id)) {
@@ -221,7 +224,7 @@ function spawn(id: string, build: HostBuild): Host {
   const files = createFiles({
     dataRoot: path.join(jaspersHome(), id),
     pluginRoot: build.dir,
-    shellRoot: hasShellApproval(build.dir) ? path.join(jaspersHome(), 'shell') : null,
+    shellRoot: (build.shell ?? hasShellApproval(build.dir)) ? path.join(jaspersHome(), 'shell') : null,
     openPath: (file) => shell.openPath(file),
     showItemInFolder: (file) => shell.showItemInFolder(file),
   })
