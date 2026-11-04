@@ -667,7 +667,7 @@ export function setProvider(kind: ProviderKind, raw: ProviderInput): void {
  * Signs in with Jaspers, then sets Jaspers up as the provider for every kind the user has none for:
  * the model, voice, and web search in one step for a new user, and nothing for a user whose
  * providers are already chosen, whose choices stay. During setup it also installs the Jaspers
- * Screener and Jaspers Research, in the background, as setup's sign-in box says it will.
+ * Screener and the Research Agents, in the background, as setup's sign-in box says it will.
  */
 export async function signInWithJaspers(): Promise<void> {
   await signIn()

@@ -60,7 +60,7 @@ function fake(over: Partial<DefaultInstallDeps> = {}): { deps: DefaultInstallDep
 }
 
 /** Research here already, so only the Screener is at stake: what holds one of them holds the other. */
-const researchHere = (id: string): boolean => id === 'research'
+const agentsHere = (id: string): boolean => id === 'agents'
 
 test("the Screener and Research, Jaspers' own and reviewed, are staged and committed one after the other, each marked as installing while it is, and nothing is said", async () => {
   const { deps, done } = fake()
@@ -71,16 +71,16 @@ test("the Screener and Research, Jaspers' own and reviewed, are staged and commi
     'stage jaspers/screener-mcp',
     'commit screener-mcp',
     'installing null',
-    'installing research',
-    'item jaspers/research',
-    'stage jaspers/research',
-    'commit research',
+    'installing agents',
+    'item jaspers/agents',
+    'stage jaspers/agents',
+    'commit agents',
     'installing null',
   ])
 })
 
 test('one already here, from anywhere, is left as it is, and the other still installs', async () => {
-  const screenerOnly = fake({ installed: researchHere })
+  const screenerOnly = fake({ installed: agentsHere })
   await installDefaults(screenerOnly.deps)
   assert.deepEqual(screenerOnly.done, [
     'installing screener-mcp',
@@ -92,10 +92,10 @@ test('one already here, from anywhere, is left as it is, and the other still ins
   const researchOnly = fake({ installed: (id) => id === 'screener-mcp' })
   await installDefaults(researchOnly.deps)
   assert.deepEqual(researchOnly.done, [
-    'installing research',
-    'item jaspers/research',
-    'stage jaspers/research',
-    'commit research',
+    'installing agents',
+    'item jaspers/agents',
+    'stage jaspers/agents',
+    'commit agents',
     'installing null',
   ])
   // Both here: nothing is asked or said.
@@ -113,14 +113,14 @@ test('one that cannot be installed is a notice that names it, and does not stop 
     'installing screener-mcp',
     "notice The Jaspers Screener could not be installed: it is not Jaspers' own on Hub. Install it from the list.",
     'installing null',
-    'installing research',
-    'stage jaspers/research',
-    'commit research',
+    'installing agents',
+    'stage jaspers/agents',
+    'commit agents',
     'installing null',
   ])
   const other = fake({
     stage: async (_handle, name) => {
-      if (name === 'research') throw new Error('Hub could not be reached: no answer in 15 seconds.')
+      if (name === 'agents') throw new Error('Hub could not be reached: no answer in 15 seconds.')
       return staged(name)
     },
   })
@@ -130,16 +130,16 @@ test('one that cannot be installed is a notice that names it, and does not stop 
     'item jaspers/screener-mcp',
     'commit screener-mcp',
     'installing null',
-    'installing research',
-    'item jaspers/research',
-    'notice Jaspers Research could not be installed: Hub could not be reached: no answer in 15 seconds. Install it from the list.',
+    'installing agents',
+    'item jaspers/agents',
+    'notice The Research Agents could not be installed: Hub could not be reached: no answer in 15 seconds. Install it from the list.',
     'installing null',
   ])
 })
 
 test("one on Hub that is not Jaspers' own is not installed, and the notice says why", async () => {
   const { deps, done } = fake({
-    installed: researchHere,
+    installed: agentsHere,
     item: async (_handle, name) => ({ ...approved(name), official: false }),
   })
   await installDefaults(deps)
@@ -152,7 +152,7 @@ test("one on Hub that is not Jaspers' own is not installed, and the notice says 
 
 test('one whose version on Hub is not reviewed is not installed, and the notice says why', async () => {
   const { deps, done } = fake({
-    installed: researchHere,
+    installed: agentsHere,
     item: async (_handle, name) => ({ ...approved(name), shown: { version: '5.1.0', state: 'pending' } }),
   })
   await installDefaults(deps)
@@ -165,7 +165,7 @@ test('one whose version on Hub is not reviewed is not installed, and the notice 
 
 test('an archive Hub served as not reviewed after all is dropped, not committed', async () => {
   const { deps, done } = fake({
-    installed: researchHere,
+    installed: agentsHere,
     stage: async (_handle, name) =>
       staged(name, { handle: 'jaspers', official: true, reviewed: false, page: approved(name).page }),
   })
@@ -183,7 +183,7 @@ test('a stage that fails, such as an archive whose hash is not the one Hub sent,
   const words =
     'The archive from Jaspers Hub is not the one Hub described (its SHA-256 differs). Nothing was installed.'
   const { deps, done } = fake({
-    installed: researchHere,
+    installed: agentsHere,
     stage: async () => {
       throw new Error(words)
     },
@@ -199,7 +199,7 @@ test('a stage that fails, such as an archive whose hash is not the one Hub sent,
 
 test('a Hub that cannot be reached, or does not have one, is said the same way', async () => {
   const unreachable = fake({
-    installed: researchHere,
+    installed: agentsHere,
     item: async () => {
       throw new Error('Hub could not be reached: no answer in 15 seconds.')
     },
@@ -214,14 +214,14 @@ test('a Hub that cannot be reached, or does not have one, is said the same way',
   await installDefaults(missing.deps)
   assert.ok(
     missing.done.includes(
-      'notice Jaspers Research could not be installed: it is not on Jaspers Hub. Install it from the list.',
+      'notice The Research Agents could not be installed: it is not on Jaspers Hub. Install it from the list.',
     ),
   )
 })
 
 test('one that arrived some other way while it was staged stays, and the staged one is dropped', async () => {
   let checks = 0
-  const { deps, done } = fake({ installed: (id) => researchHere(id) || checks++ > 0 })
+  const { deps, done } = fake({ installed: (id) => agentsHere(id) || checks++ > 0 })
   await installDefaults(deps)
   assert.deepEqual(done, [
     'installing screener-mcp',

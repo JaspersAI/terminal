@@ -261,7 +261,7 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
 
 /**
  * Sign in with Jaspers, first on the language model step: one press for the model, voice, web
- * search, and the Jaspers Screener and Jaspers Research. Main sets the three providers up as the
+ * search, and the Jaspers Screener and the Research Agents. Main sets the three providers up as the
  * sign-in lands and installs the two plugins in the background, so the step after it is Plugins;
  * Back from there lands here signed in, with the way on.
  */
@@ -350,7 +350,7 @@ function PluginsStep({ index, onBack }: { index: number; onBack: () => void }): 
           title="Plugins"
           blurb={
             signedIn
-              ? 'The Jaspers Screener and Jaspers Research come with your Jaspers sign-in. Nothing else is installed until you press Install. Settings > Plugins keeps this list for later.'
+              ? 'The Jaspers Screener and the Research Agents come with your Jaspers sign-in. Nothing else is installed until you press Install. Settings > Plugins keeps this list for later.'
               : 'Nothing is installed until you press Install. Settings > Plugins keeps this list for later.'
           }
         />

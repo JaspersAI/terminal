@@ -1,7 +1,7 @@
 import type { HubItemInfo } from '../../shared/hub/hub.ts'
 import type { Staged } from './install-stage.ts'
 
-// What a Jaspers sign-up comes with, the Jaspers Screener and Jaspers Research: setup's Sign in with
+// What a Jaspers sign-up comes with, the Jaspers Screener and the Research Agents: setup's Sign in with
 // Jaspers says they come with it, so once the sign-in lands, each is installed from Hub with no
 // second prompt. They are the installs nobody is asked about, so each is held to more than one that
 // is asked: only Jaspers' own, a version Hub reviewed, an archive with the hash Hub sent, and only
@@ -20,7 +20,7 @@ interface Default {
 /** What a Jaspers sign-up comes with, in the order it installs. */
 const DEFAULTS: Default[] = [
   { handle: 'jaspers', name: 'screener-mcp', called: 'The Jaspers Screener' },
-  { handle: 'jaspers', name: 'research', called: 'Jaspers Research' },
+  { handle: 'jaspers', name: 'agents', called: 'The Research Agents' },
 ]
 const NOT_REVIEWED = 'its version on Hub is not reviewed.'
 
