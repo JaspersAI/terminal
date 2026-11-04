@@ -230,7 +230,7 @@ const DATA_STATE = {
 }
 
 const DATA_INSTRUCTIONS =
-  'Set state.source to a source id and state.args to its arguments, or set state.sql to a SELECT over the store (the query tool describes it) and leave source null. Never both.'
+  'Set state.source to a source id and state.args to its arguments, or set state.sql to a SELECT over the store (the query tool describes it; filter row_count > 0 when selecting dataset runs from runs) and leave source null. Never both.'
 
 const TABLE: ViewDef = {
   id: 'core/table',
