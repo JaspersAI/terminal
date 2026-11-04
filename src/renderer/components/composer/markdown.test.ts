@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   citedIds,
   hasRichNoteContent,
+  mathSegments,
   parseInline,
   parseMarkdown,
   parseMath,
@@ -476,4 +477,23 @@ test('hasRichNoteContent distinguishes plain or currency notes from Markdown and
   assert.equal(hasRichNoteContent('Display math:\n\n$$P(\\text{DET Win}) = \\Phi(z)$$'), true)
   assert.equal(hasRichNoteContent('## Quantitative Methodology\n\n- Factor weights'), true)
   assert.equal(hasRichNoteContent('**Bold** summary'), true)
+})
+
+test('mathSegments splits prose strings into text and inline/display math segments while keeping currency intact', () => {
+  const prose =
+    'Spread ($\\Delta \\text{Spread}_{\\text{DET}}$) at $2.715 ($1.8B to $2.0B): $$P(\\text{DET Win}) = \\Phi(+0.0230) \\approx 50.92%$$'
+  const segments = mathSegments(prose)
+  assert.equal(segments.length, 4)
+  assert.deepEqual(segments[0], { kind: 'text', text: 'Spread (' })
+  assert.equal(segments[1]?.kind, 'math')
+  if (segments[1]?.kind === 'math') {
+    assert.equal(segments[1].display, false)
+    assert.equal(segments[1].tex, '\\Delta \\text{Spread}_{\\text{DET}}')
+  }
+  assert.deepEqual(segments[2], { kind: 'text', text: ') at $2.715 ($1.8B to $2.0B): ' })
+  assert.equal(segments[3]?.kind, 'math')
+  if (segments[3]?.kind === 'math') {
+    assert.equal(segments[3].display, true)
+    assert.equal(segments[3].tex, 'P(\\text{DET Win}) = \\Phi(+0.0230) \\approx 50.92%')
+  }
 })
