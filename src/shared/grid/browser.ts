@@ -373,6 +373,85 @@ export function shortAddress(url: string): string {
   }
 }
 
+export interface BrowserPageLink {
+  text?: unknown
+  url?: unknown
+}
+
+export const MAX_BROWSER_LINKS = 150
+export const MAX_BROWSER_LINK_TEXT = 160
+
+/**
+ * Formats a browser page's visible text together with its deduplicated navigable links so the
+ * assistant can read headlines and follow links via `state.url`.
+ */
+export function formatBrowserPageText(
+  rawText: unknown,
+  rawLinks: readonly BrowserPageLink[] = [],
+  pageUrl?: unknown,
+  maxChars = 200_000,
+): string | null {
+  const body = typeof rawText === 'string' ? rawText.trim() : ''
+  const currentUrl = typeof pageUrl === 'string' ? normalizeBrowserUrl(pageUrl) : null
+  const currentWithoutHash = currentUrl ? stripUrlHash(currentUrl) : null
+
+  const byUrl = new Map<string, string>()
+  for (const item of rawLinks) {
+    if (!isRecord(item)) continue
+    const rawLabel = typeof item['text'] === 'string' ? item['text'].replace(/\s+/g, ' ').trim() : ''
+    if (!rawLabel) continue
+    const resolvedUrl = resolveBrowserLinkUrl(item['url'], currentUrl)
+    if (!resolvedUrl) continue
+    if (currentUrl && resolvedUrl === currentUrl) continue
+    if (currentWithoutHash && resolvedUrl.includes('#') && stripUrlHash(resolvedUrl) === currentWithoutHash) continue
+
+    const label =
+      rawLabel.length > MAX_BROWSER_LINK_TEXT ? `${rawLabel.slice(0, MAX_BROWSER_LINK_TEXT).trimEnd()}…` : rawLabel
+    const existing = byUrl.get(resolvedUrl)
+    if (existing === undefined) {
+      if (byUrl.size >= MAX_BROWSER_LINKS) continue
+      byUrl.set(resolvedUrl, label)
+    } else if (existing.length < 25 && label.length > existing.length) {
+      byUrl.set(resolvedUrl, label)
+    }
+  }
+
+  const linksBlock =
+    byUrl.size > 0
+      ? ['Links:', ...Array.from(byUrl.entries(), ([url, label]) => `- [${label}](${url})`)].join('\n')
+      : ''
+
+  if (!body && !linksBlock) return null
+  if (!linksBlock) return body.slice(0, maxChars)
+  if (!body) return linksBlock.slice(0, maxChars)
+  const combined = `${body}\n\n${linksBlock}`
+  return combined.length <= maxChars ? combined : combined.slice(0, maxChars)
+}
+
+function resolveBrowserLinkUrl(rawUrl: unknown, baseUrl: string | null): string | null {
+  if (typeof rawUrl !== 'string') return null
+  const trimmed = rawUrl.trim()
+  if (!trimmed || trimmed.startsWith('#') || /^(?:javascript|mailto|tel|data|blob|file|about):/i.test(trimmed)) {
+    return null
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return normalizeBrowserUrl(trimmed)
+  }
+  if (baseUrl) {
+    try {
+      return normalizeBrowserUrl(new URL(trimmed, baseUrl).toString())
+    } catch {
+      return null
+    }
+  }
+  return normalizeBrowserUrl(trimmed)
+}
+
+function stripUrlHash(url: string): string {
+  const hashIndex = url.indexOf('#')
+  return hashIndex >= 0 ? url.slice(0, hashIndex) : url
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }

@@ -430,7 +430,7 @@ const BROWSER: ViewDef = {
     tabCount: z.number().optional(),
     error: z.string().nullable(),
   }),
-  instructions: `${BROWSER_PLUGIN_DESCRIPTION} A web browser on the grid, for Bloomberg, live streams, and sites that need a sign-in or refuse to be framed. Launch this view whenever the user asks for Bloomberg (use https://www.bloomberg.com/live for Bloomberg Television's live stream, or ${DEFAULT_BROWSER_URL} by default). Additional windows open as switchable tabs inside the same view, so reuse an existing core/browser view in your tile rather than placing a second one. Set state.url to navigate; refresh_element reloads the page. output has the active url, title, loading, canGoBack, canGoForward, theater, tabCount, and error, and the page text is published to panels/<id>/text.`,
+  instructions: `${BROWSER_PLUGIN_DESCRIPTION} A web browser on the grid, for Bloomberg, live streams, and sites that need a sign-in or refuse to be framed. Launch this view whenever the user asks for Bloomberg (use https://www.bloomberg.com/live for Bloomberg Television's live stream, or ${DEFAULT_BROWSER_URL} by default). Additional windows open as switchable tabs inside the same view, so reuse an existing core/browser view in your tile rather than placing a second one. Set state.url to navigate (including following any link URL listed in panels/<id>/text); refresh_element reloads the page. output has the active url, title, loading, canGoBack, canGoForward, theater, tabCount, and error, and the page text and its links are published to panels/<id>/text.`,
   summarize: browserSummary,
 }
 

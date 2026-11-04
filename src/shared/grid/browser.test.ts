@@ -14,6 +14,7 @@ import {
   browserUserAgentForUrl,
   clipBounds,
   DEFAULT_BROWSER_URL,
+  formatBrowserPageText,
   googleAuthUserAgent,
   isBlankBrowserPopupUrl,
   isBrowserUrl,
@@ -358,5 +359,40 @@ test('browserSummary describes empty, loading, failed, and loaded browser panels
       { url: 'https://www.bloomberg.com/live', title: '', loading: false, error: 'ERR_NAME_NOT_RESOLVED' },
     ),
     'www.bloomberg.com/live, failed',
+  )
+})
+
+test('formatBrowserPageText combines visible page text with deduplicated resolved http(s) links and skips self/hash/script links', () => {
+  assert.equal(formatBrowserPageText('   ', []), null)
+  assert.equal(formatBrowserPageText('Plain article body without links.', []), 'Plain article body without links.')
+
+  const formatted = formatBrowserPageText(
+    'Top Stories\nDebt Limit, Tariffs Top List of Likely Deals in Trump’s New Era',
+    [
+      { text: 'Skip to content', url: '#main-content' },
+      { text: 'Home', url: 'https://www.bloomberg.com/' },
+      { text: 'Jump to markets', url: 'https://www.bloomberg.com/#markets' },
+      { text: 'Share', url: 'javascript:void(0)' },
+      { text: 'Email', url: 'mailto:tips@bloomberg.net' },
+      { text: 'Politics', url: '/news/articles/2026-11-04/debt-limit-tariffs-top-list' },
+      {
+        text: '  Debt Limit, Tariffs Top List of Likely Deals in Trump’s New Era \n ',
+        url: 'https://www.bloomberg.com/news/articles/2026-11-04/debt-limit-tariffs-top-list',
+      },
+      { text: '2 min read', url: 'https://www.bloomberg.com/news/articles/2026-11-04/debt-limit-tariffs-top-list' },
+      { text: 'Markets Live', url: '/markets' },
+    ],
+    'https://www.bloomberg.com/',
+  )
+
+  assert.equal(
+    formatted,
+    [
+      'Top Stories\nDebt Limit, Tariffs Top List of Likely Deals in Trump’s New Era',
+      '',
+      'Links:',
+      '- [Debt Limit, Tariffs Top List of Likely Deals in Trump’s New Era](https://www.bloomberg.com/news/articles/2026-11-04/debt-limit-tariffs-top-list)',
+      '- [Markets Live](https://www.bloomberg.com/markets)',
+    ].join('\n'),
   )
 })
