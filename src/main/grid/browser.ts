@@ -773,3 +773,12 @@ export function registerBrowserIpc(): void {
 export function closeAllBrowsers(): void {
   activeManager?.closeAll()
 }
+
+export async function syncBrowserPanelText(
+  workspaceId: string,
+  panelId: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  if (!activeManager) return null
+  return activeManager.syncPanelText(workspaceId, panelId, signal)
+}

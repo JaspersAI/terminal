@@ -80,6 +80,14 @@ export interface BrowserManagerDeps {
   publishPanel?(workspaceId: string, panelId: string, snapshot: BrowserSnapshot): void
   /** How long a backgrounded tab or inactive-workspace browser view waits before discarding its native view. */
   idleSuspendMs?: number
+  /** Delays after a load or in-page navigation at which page text is re-read to capture async client-side hydration. */
+  hydrationDelaysMs?: readonly number[]
+  /** How long `syncPanelText` waits for an active main-frame load to finish. */
+  settleTimeoutMs?: number
+  /** Post-load window during which `syncPanelText` polls for async auth/subscriber DOM hydration. */
+  hydrationWindowMs?: number
+  /** Poll interval within `hydrationWindowMs` when waiting for DOM text hydration to stabilize. */
+  hydrationPollMs?: number
 }
 
 export interface BrowserManager {
@@ -97,6 +105,7 @@ export interface BrowserManager {
     rawAction: unknown,
     rawUrl?: unknown,
   ): Promise<BrowserSnapshot>
+  syncPanelText(rawWorkspaceId: unknown, rawPanelId: unknown, signal?: AbortSignal): Promise<string | null>
   detach(callerWindow: number | null, rawWorkspaceId: unknown, rawPanelId: unknown): void
   sweep(state?: BrowserManagerState): void
   windowClosed(windowNumber: number): void
@@ -116,6 +125,10 @@ interface TabEntry {
   error: string | null
   text: string | null
   loadSeq: number
+  loadedAt: number | null
+  initialLoadText: string | null
+  hydrationTimers: ReturnType<typeof setTimeout>[]
+  loadWaiters: Set<() => void>
   backgrounded: boolean
   suspended: boolean
   suspendTimer: ReturnType<typeof setTimeout> | null
@@ -131,6 +144,9 @@ interface Entry {
   nextTabSeq: number
   /** The last `panel.state.url` applied from the state tree, so in-page clicks are not overwritten on sync. */
   stateUrl: string
+  /** The last `panel.state` reference seen on sync/sweep, so an explicit `set` to the same `state.url` after an in-page navigation still loads `state.url`. */
+  stateRef: Record<string, unknown> | null
+  suppressStateLoad: boolean
   refreshedAt: number | null
   bounds: BrowserBounds | null
   boundsWindow: number | null
@@ -155,12 +171,21 @@ const ACTIONS = new Set<BrowserAction>([
 const ERR_ABORTED = -3
 /** Background tabs and inactive-workspace browser views discard their native WebContentsView after 5 minutes idle. */
 export const DEFAULT_IDLE_SUSPEND_MS = 5 * 60_000
+export const DEFAULT_HYDRATION_DELAYS_MS: readonly number[] = [350, 1_000, 2_200]
+export const DEFAULT_SETTLE_TIMEOUT_MS = 4_000
+export const DEFAULT_HYDRATION_WINDOW_MS = 1_500
+export const DEFAULT_HYDRATION_POLL_MS = 250
+const SUBSTANTIAL_HYDRATION_CHARS = 2_000
 
 const entryKey = (workspaceId: string, panelId: string): string => `${workspaceId}\n${panelId}`
 
 export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   const entries = new Map<string, Entry>()
   const idleSuspendMs = deps.idleSuspendMs ?? DEFAULT_IDLE_SUSPEND_MS
+  const hydrationDelaysMs = deps.hydrationDelaysMs ?? DEFAULT_HYDRATION_DELAYS_MS
+  const settleTimeoutMs = deps.settleTimeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS
+  const hydrationWindowMs = deps.hydrationWindowMs ?? DEFAULT_HYDRATION_WINDOW_MS
+  const hydrationPollMs = Math.max(10, deps.hydrationPollMs ?? DEFAULT_HYDRATION_POLL_MS)
 
   function emptySnapshot(workspaceId: string, panelId: string): BrowserSnapshot {
     return {
@@ -257,6 +282,19 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     }
   }
 
+  function clearHydrationTimers(tab: TabEntry): void {
+    if (tab.hydrationTimers.length === 0) return
+    for (const timer of tab.hydrationTimers) clearTimeout(timer)
+    tab.hydrationTimers = []
+  }
+
+  function notifyLoadWaiters(tab: TabEntry): void {
+    if (tab.loadWaiters.size === 0) return
+    const waiters = [...tab.loadWaiters]
+    tab.loadWaiters.clear()
+    for (const wake of waiters) wake()
+  }
+
   function detachFromWindow(entry: Entry): void {
     for (const tab of entry.tabs) {
       if (!tab.suspended) tab.view.setVisible(false)
@@ -272,6 +310,8 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     if (tab.destroyed) return
     tab.destroyed = true
     clearSuspendTimer(tab)
+    clearHydrationTimers(tab)
+    notifyLoadWaiters(tab)
     if (!tab.suspended) {
       tab.view.setVisible(false)
       if (entry.attachedView === tab.view && entry.attachedWindow !== null) {
@@ -302,6 +342,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
 
   function suspendTab(entry: Entry, tab: TabEntry): void {
     clearSuspendTimer(tab)
+    clearHydrationTimers(tab)
     if (!canSuspendTab(entry, tab)) return
     const liveUrl = tab.view.getURL()
     if (isBrowserUrl(liveUrl)) tab.url = liveUrl
@@ -310,6 +351,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     tab.canGoBack = tab.view.canGoBack()
     tab.canGoForward = tab.view.canGoForward()
     tab.loading = false
+    notifyLoadWaiters(tab)
     tab.view.setVisible(false)
     if (entry.attachedView === tab.view && entry.attachedWindow !== null) {
       deps.getWindow(entry.attachedWindow)?.detach(tab.view)
@@ -361,28 +403,63 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     }
   }
 
-  function readTabText(entry: Entry, tab: TabEntry): void {
-    if (tab.destroyed || tab.suspended || entry.destroyed || tab.loading || tab.error !== null) return
+  async function readTabTextNow(entry: Entry, tab: TabEntry): Promise<string | null> {
+    if (tab.destroyed || tab.suspended || entry.destroyed || tab.loading || tab.error !== null) return tab.text
     const loadId = tab.loadSeq
     const currentView = tab.view
-    void currentView
-      .readPageText()
-      .then((text) => {
+    try {
+      const text = await currentView.readPageText()
+      if (
+        tab.destroyed ||
+        tab.suspended ||
+        tab.view !== currentView ||
+        entry.destroyed ||
+        tab.loadSeq !== loadId ||
+        tab.error !== null
+      ) {
+        return tab.text
+      }
+      if (tab.initialLoadText === null && text !== null) {
+        tab.initialLoadText = text
+      }
+      if (tab.text !== text) {
+        tab.text = text
+        pushSnapshot(entry)
+      }
+      return tab.text
+    } catch {
+      return tab.text
+    }
+  }
+
+  function readTabText(entry: Entry, tab: TabEntry): void {
+    void readTabTextNow(entry, tab)
+  }
+
+  function scheduleHydrationReads(entry: Entry, tab: TabEntry): void {
+    clearHydrationTimers(tab)
+    if (hydrationDelaysMs.length === 0) return
+    const loadId = tab.loadSeq
+    for (const delay of hydrationDelaysMs) {
+      if (delay <= 0) continue
+      const timer = setTimeout(() => {
+        tab.hydrationTimers = tab.hydrationTimers.filter((one) => one !== timer)
         if (
           tab.destroyed ||
           tab.suspended ||
-          tab.view !== currentView ||
           entry.destroyed ||
-          tab.loadSeq !== loadId ||
+          tab.loading ||
           tab.error !== null ||
-          tab.text === text
+          tab.loadSeq !== loadId ||
+          activeTab(entry) !== tab
         ) {
           return
         }
-        tab.text = text
-        pushSnapshot(entry)
-      })
-      .catch(() => undefined)
+        readTabText(entry, tab)
+      }, delay)
+      timer.unref?.()
+      tab.hydrationTimers.push(timer)
+    }
   }
 
   function positionEntry(entry: Entry, state: BrowserManagerState): void {
@@ -461,12 +538,17 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     view = customCreateView({
       onDidStartLoading() {
         if (!isCurrent()) return
+        clearHydrationTimers(tab)
         tab.loading = true
+        tab.loadedAt = null
+        tab.initialLoadText = null
         pushSnapshot(entry)
       },
       onDidStopLoading() {
         if (!isCurrent()) return
         tab.loading = false
+        tab.loadedAt = Date.now()
+        notifyLoadWaiters(tab)
         if (tab.error !== null) {
           pushSnapshot(entry)
           return
@@ -481,6 +563,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         pushSnapshot(entry)
         if (activeTab(entry) === tab) {
           readTabText(entry, tab)
+          scheduleHydrationReads(entry, tab)
         }
       },
       onDidNavigate(url) {
@@ -496,11 +579,21 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (liveTitle) tab.title = liveTitle
         positionEntry(entry, deps.getState())
         pushSnapshot(entry)
+        if (!tab.loading && !tab.view.isLoading() && tab.error === null && activeTab(entry) === tab) {
+          tab.loadSeq++
+          tab.loadedAt = Date.now()
+          tab.initialLoadText = null
+          readTabText(entry, tab)
+          scheduleHydrationReads(entry, tab)
+        }
       },
       onDidFailLoad(errorCode, errorDescription, isMainFrame) {
         if (!isCurrent() || !isMainFrame || errorCode === ERR_ABORTED) return
+        clearHydrationTimers(tab)
         tab.loading = false
+        tab.loadedAt = null
         tab.error = errorDescription || `Load failed (${errorCode}).`
+        notifyLoadWaiters(tab)
         positionEntry(entry, deps.getState())
         pushSnapshot(entry)
       },
@@ -570,6 +663,10 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       error: null,
       text: null,
       loadSeq: 0,
+      loadedAt: null,
+      initialLoadText: null,
+      hydrationTimers: [],
+      loadWaiters: new Set(),
       backgrounded: false,
       suspended: false,
       suspendTimer: null,
@@ -577,6 +674,16 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     }
     tab.view = bindTabView(entry, tab, customCreateView)
     return tab
+  }
+
+  function updatePanelUrl(entry: Entry, target: string): void {
+    entry.stateUrl = target
+    entry.suppressStateLoad = true
+    try {
+      deps.setPanelUrl(entry.workspaceId, entry.panelId, target)
+    } finally {
+      entry.suppressStateLoad = false
+    }
   }
 
   function closeTabById(entry: Entry, targetId: string, replaceSingleTab: boolean): void {
@@ -590,8 +697,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         entry.tabs.push(replacement)
         entry.activeTabId = replacement.id
       }
-      entry.stateUrl = DEFAULT_BROWSER_URL
-      deps.setPanelUrl(entry.workspaceId, entry.panelId, DEFAULT_BROWSER_URL)
+      updatePanelUrl(entry, DEFAULT_BROWSER_URL)
       loadTabAddress(entry, entry.tabs[0]!, DEFAULT_BROWSER_URL)
       return
     }
@@ -618,6 +724,8 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       activeTabId: '',
       nextTabSeq: 0,
       stateUrl: '',
+      stateRef: null,
+      suppressStateLoad: false,
       refreshedAt: panel.refreshedAt,
       bounds: null,
       boundsWindow: null,
@@ -641,6 +749,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     options?: { preserveTitle?: string; preserveText?: string | null },
   ): void {
     clearSuspendTimer(tab)
+    clearHydrationTimers(tab)
     if (tab.suspended) {
       tab.suspended = false
       tab.backgrounded = false
@@ -650,6 +759,8 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     tab.url = url
     tab.title = options?.preserveTitle ?? ''
     tab.text = options?.preserveText ?? null
+    tab.loadedAt = null
+    tab.initialLoadText = null
     tab.error = null
     tab.loading = true
     tab.theater = isVideoPageUrl(url)
@@ -668,7 +779,9 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       )
         return
       tab.loading = false
+      tab.loadedAt = null
       tab.error = err instanceof Error ? err.message : String(err)
+      notifyLoadWaiters(tab)
       positionEntry(entry, deps.getState())
       pushSnapshot(entry)
     })
@@ -685,6 +798,10 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       loadTabAddress(entry, tab, targetUrl)
       return
     }
+    clearHydrationTimers(tab)
+    tab.loadSeq++
+    tab.loadedAt = null
+    tab.initialLoadText = null
     tab.error = null
     tab.loading = true
     positionEntry(entry, deps.getState())
@@ -693,8 +810,14 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   }
 
   function applyPanelState(entry: Entry, panel: Panel, stateUrl: string): void {
+    if (entry.suppressStateLoad) {
+      entry.stateRef = panel.state
+      return
+    }
     const active = activeTab(entry)
-    if (stateUrl !== entry.stateUrl) {
+    const explicitStateWrite = entry.stateRef !== null && panel.state !== entry.stateRef
+    entry.stateRef = panel.state
+    if (stateUrl !== entry.stateUrl || explicitStateWrite) {
       entry.stateUrl = stateUrl
       entry.refreshedAt = panel.refreshedAt
       loadTabAddress(entry, active, stateUrl)
@@ -768,8 +891,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (normalized === null) throw new Error('Enter an https:// or http:// address.')
         const target = normalized || DEFAULT_BROWSER_URL
         const entry = ensureEntry(workspaceId, panel)
-        entry.stateUrl = target
-        deps.setPanelUrl(workspaceId, panel.id, target)
+        updatePanelUrl(entry, target)
         loadTabAddress(entry, activeTab(entry), target)
         return snapshotOf(entry)
       }
@@ -841,6 +963,108 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       positionEntry(entry, deps.getState())
       pushSnapshot(entry)
       return snapshotOf(entry)
+    },
+
+    async syncPanelText(rawWorkspaceId, rawPanelId, signal) {
+      const state = deps.getState()
+      if (typeof rawWorkspaceId !== 'string' || typeof rawPanelId !== 'string' || rawPanelId === '') return null
+      const standing = browserStanding(state.grids[rawWorkspaceId], rawPanelId)
+      const grid = standing ? state.grids[rawWorkspaceId]?.[standing.window] : undefined
+      if (!standing || !grid) return null
+      let panel: Panel
+      try {
+        panel = panelOf(grid, rawPanelId)
+      } catch {
+        return null
+      }
+      if (panel.content.kind !== 'view' || panel.content.view !== BROWSER_VIEW) return null
+      const entry = entries.get(entryKey(rawWorkspaceId, panel.id))
+      if (!entry || entry.destroyed) return panel.text ?? null
+      const stateUrl = readBrowserState(panel.state).url
+      if (stateUrl) applyPanelState(entry, panel, stateUrl)
+
+      let tab = activeTab(entry)
+      if (tab.destroyed || tab.suspended || entry.destroyed || signal?.aborted) return tab.text
+
+      if ((tab.loading || tab.view.isLoading()) && settleTimeoutMs > 0) {
+        await waitForTabLoad(tab, settleTimeoutMs, signal)
+      }
+      tab = activeTab(entry)
+      if (
+        tab.destroyed ||
+        tab.suspended ||
+        entry.destroyed ||
+        tab.loading ||
+        tab.view.isLoading() ||
+        tab.error !== null ||
+        signal?.aborted
+      ) {
+        return tab.text
+      }
+
+      const firstText = await readTabTextNow(entry, tab)
+      const baselineText = tab.initialLoadText ?? firstText
+
+      if (hydrationWindowMs > 0 && tab.loadedAt !== null) {
+        const deadline = tab.loadedAt + hydrationWindowMs
+        let lastText = firstText
+        let changedFromBaseline = firstText !== null && baselineText !== null && firstText !== baselineText
+        while (
+          !signal?.aborted &&
+          !tab.destroyed &&
+          !tab.suspended &&
+          !entry.destroyed &&
+          !tab.loading &&
+          !tab.view.isLoading() &&
+          tab.error === null &&
+          activeTab(entry) === tab
+        ) {
+          const now = Date.now()
+          if (now >= deadline) break
+          await sleepOrAbort(Math.min(hydrationPollMs, deadline - now), signal)
+          if (
+            signal?.aborted ||
+            tab.destroyed ||
+            tab.suspended ||
+            entry.destroyed ||
+            tab.loading ||
+            tab.view.isLoading() ||
+            tab.error !== null ||
+            activeTab(entry) !== tab
+          ) {
+            break
+          }
+          const nextText = await readTabTextNow(entry, tab)
+          if (nextText !== lastText) {
+            changedFromBaseline = true
+            lastText = nextText
+            if (Date.now() >= deadline && !signal?.aborted) {
+              await sleepOrAbort(hydrationPollMs, signal)
+              if (
+                !signal?.aborted &&
+                !tab.destroyed &&
+                !tab.suspended &&
+                !entry.destroyed &&
+                !tab.loading &&
+                tab.error === null &&
+                activeTab(entry) === tab
+              ) {
+                lastText = await readTabTextNow(entry, tab)
+              }
+              break
+            }
+          } else if (
+            changedFromBaseline &&
+            nextText !== null &&
+            nextText.length >= SUBSTANTIAL_HYDRATION_CHARS &&
+            nextText.length >= (baselineText?.length ?? 0) * 1.5
+          ) {
+            break
+          }
+        }
+      }
+
+      return tab.text
     },
 
     detach(callerWindow, rawWorkspaceId, rawPanelId) {
@@ -1052,4 +1276,35 @@ function isAbortedLoad(err: unknown): boolean {
     record.code === 'ERR_ABORTED' ||
     (typeof record.message === 'string' && record.message.includes('ERR_ABORTED'))
   )
+}
+
+function waitForTabLoad(tab: TabEntry, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  if (!tab.loading && !tab.view.isLoading()) return Promise.resolve()
+  if (signal?.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer)
+      tab.loadWaiters.delete(finish)
+      signal?.removeEventListener('abort', finish)
+      resolve()
+    }
+    tab.loadWaiters.add(finish)
+    const timer = setTimeout(finish, timeoutMs)
+    timer.unref?.()
+    signal?.addEventListener('abort', finish, { once: true })
+  })
+}
+
+function sleepOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal?.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, ms)
+    timer.unref?.()
+    signal?.addEventListener('abort', finish, { once: true })
+  })
 }

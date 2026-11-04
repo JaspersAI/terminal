@@ -9,7 +9,7 @@ import { getState, toPublic } from '../../state'
 import { statusNow } from '../utils/status'
 import { exchanges } from '../utils/thread'
 import { asPathString, optional } from './input'
-import { syncResearchPanelText } from './state'
+import { syncBrowserPanel, syncResearchPanelText } from './state'
 import type { Tool, ToolContext } from './types'
 
 // The tools that are about rooms themselves: Central reading or searching rooms across all tabs, and
@@ -88,6 +88,7 @@ const readRoom: Tool = {
       if (grid) {
         for (const panel of layoutOf(grid, frame.element.id).panels) {
           await syncResearchPanelText(ownerTabId, panel, signal)
+          await syncBrowserPanel(ownerTabId, panel, signal)
         }
       }
     }

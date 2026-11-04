@@ -46,7 +46,15 @@ interface FakeView extends ManagedBrowserView {
   readPageTextCalls: number
 }
 
-function createHarness(options: { idleSuspendMs?: number } = {}) {
+function createHarness(
+  options: {
+    idleSuspendMs?: number
+    hydrationDelaysMs?: readonly number[]
+    settleTimeoutMs?: number
+    hydrationWindowMs?: number
+    hydrationPollMs?: number
+  } = {},
+) {
   const placed = placeFramed(EMPTY_GRID, {
     content: { kind: 'view', view: BROWSER_VIEW },
     state: { url: 'https://www.bloomberg.com/live' },
@@ -68,6 +76,7 @@ function createHarness(options: { idleSuspendMs?: number } = {}) {
     [2, { width: 1200, height: 900 }],
   ])
   const sent: { window: number; snapshot: BrowserSnapshot }[] = []
+  const published: { workspaceId: string; panelId: string; snapshot: BrowserSnapshot }[] = []
   const focused: { workspaceId: string; elementId: string }[] = []
   const zoomed: { workspaceId: string; elementId: string; direction: 'in' | 'out' | 'reset' }[] = []
 
@@ -174,6 +183,13 @@ function createHarness(options: { idleSuspendMs?: number } = {}) {
       return view
     },
     idleSuspendMs: options.idleSuspendMs,
+    hydrationDelaysMs: options.hydrationDelaysMs,
+    settleTimeoutMs: options.settleTimeoutMs,
+    hydrationWindowMs: options.hydrationWindowMs,
+    hydrationPollMs: options.hydrationPollMs,
+    publishPanel: (workspaceId, panelId, snapshot) => {
+      published.push({ workspaceId, panelId, snapshot })
+    },
     setPanelUrl: (workspaceId, panelId, url) => {
       const grid = state.grids[workspaceId]![1]!
       const updated = setPanelState(grid, panelId, ['url'], url).grid
@@ -200,6 +216,7 @@ function createHarness(options: { idleSuspendMs?: number } = {}) {
     attached,
     viewports,
     sent,
+    published,
     focused,
     zoomed,
     getState: () => state,
@@ -714,5 +731,70 @@ test('backgrounds inactive tabs and workspaces, suspends idle background WebCont
   await manager.navigate(1, 'ws-1', placed.panel.id, 'select-tab', secondTabId)
   assert.equal(views.length, 5)
   assert.equal(views[4]!.getURL(), 'https://www.bloomberg.com/')
+  manager.closeAll()
+})
+
+test('re-reads page text after async client-side hydration, settles syncPanelText across load and hydration, and navigates when state.url is set again after in-page click', async () => {
+  const { manager, placed, views, published, getState, updateGrid } = createHarness({
+    hydrationDelaysMs: [30, 80],
+    settleTimeoutMs: 500,
+    hydrationWindowMs: 120,
+    hydrationPollMs: 25,
+  })
+  await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  const view = views[0]!
+
+  // Simulate an article navigation where initial SSR HTML only has a short preview at did-stop-loading,
+  // and client-side subscriber hydration injects the full 14k-character article 40ms later.
+  const ssrPreview = 'Top two free paragraphs before subscriber cookie hydration (1,303 chars).'
+  const fullSubscriberArticle = `${ssrPreview}\n\n${'Full subscriber article body paragraph. '.repeat(350)}`
+  view.loadURL = async (url: string) => {
+    view.history = [...view.history.slice(0, view.index + 1), url]
+    view.index = view.history.length - 1
+    view.loading = true
+    view.pageText = ssrPreview
+    view.events.onDidStartLoading()
+    view.events.onDidNavigate(url)
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    view.loading = false
+    view.events.onDidStopLoading()
+    setTimeout(() => {
+      view.pageText = fullSubscriberArticle
+    }, 35)
+  }
+
+  const articleUrl = 'https://www.bloomberg.com/news/articles/2026-11-04/debt-limit-tariffs-top-list'
+  updateGrid('ws-1', setPanelState(getState().grids['ws-1']![1]!, placed.panel.id, ['url'], articleUrl).grid)
+  manager.sweep()
+
+  // Immediately calling syncPanelText (as set/get do) waits for both the load and the post-load subscriber hydration.
+  const settledText = await manager.syncPanelText('ws-1', placed.element.id)
+  assert.equal(settledText, fullSubscriberArticle)
+  assert.equal(published.at(-1)?.snapshot.text, fullSubscriberArticle)
+
+  // User clicks an in-page link to another page while panel.state.url still holds articleUrl.
+  view.history.push('https://www.bloomberg.com/markets')
+  view.index = view.history.length - 1
+  view.pageText = 'Bloomberg Markets front page'
+  view.events.onDidNavigate('https://www.bloomberg.com/markets')
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(published.at(-1)?.snapshot.text, 'Bloomberg Markets front page')
+
+  // Assistant explicitly writes state.url back to articleUrl: even though state.url already equaled articleUrl,
+  // the explicit setPanelState write navigates the browser back to articleUrl.
+  updateGrid('ws-1', setPanelState(getState().grids['ws-1']![1]!, placed.panel.id, ['url'], articleUrl).grid)
+  manager.sweep()
+  assert.equal(view.getURL(), articleUrl)
+  const rehydratedText = await manager.syncPanelText('ws-1', placed.panel.id)
+  assert.equal(rehydratedText, fullSubscriberArticle)
+
+  // Passive navigation without syncPanelText also updates panel.text once hydrationDelaysMs fire.
+  const passiveUrl = 'https://www.bloomberg.com/news/articles/2026-11-04/passive-hydration-story'
+  updateGrid('ws-1', setPanelState(getState().grids['ws-1']![1]!, placed.panel.id, ['url'], passiveUrl).grid)
+  manager.sweep()
+  await new Promise((resolve) => setTimeout(resolve, 110))
+  assert.equal(published.at(-1)?.snapshot.url, passiveUrl)
+  assert.equal(published.at(-1)?.snapshot.text, fullSubscriberArticle)
+
   manager.closeAll()
 })

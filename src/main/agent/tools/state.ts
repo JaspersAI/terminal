@@ -9,12 +9,14 @@ import {
   type StorePath,
 } from '../../../shared/paths'
 import { coerceViewState, schemaAt } from '../../../shared/agent/view-state'
+import { BROWSER_VIEW } from '../../../shared/grid/browser'
 import { panelOf, type Panel } from '../../../shared/grid/grid'
 import { loopName } from '../../../shared/loops/loops'
 import { RESEARCH_PLUGIN, RESEARCH_THREAD_SOURCE, researchLiveText, researchRoomOf } from '../../../shared/plugins/live'
 import { publishTextChecked, setPanelStateChecked, settlePanel } from '../../actions'
 import { runSource } from '../../data/sources'
 import { ownTile } from '../../loops/loops'
+import { syncBrowserPanelText } from '../../grid/browser'
 import { findElement } from '../../grid/grid'
 import { getLive } from '../../plugins/live'
 import { getSource } from '../../plugins/registry'
@@ -64,6 +66,19 @@ export async function syncResearchPanelText(workspaceId: string, panel: Panel, s
   }
 }
 
+/**
+ * Ensures a `core/browser` panel's `text` and `output` reflect the live page (waiting for an
+ * in-flight navigation and post-load DOM hydration when needed) before `get` or `read_room` reads it.
+ */
+export async function syncBrowserPanel(workspaceId: string, panel: Panel, signal?: AbortSignal): Promise<void> {
+  if (panel.content.kind !== 'view' || panel.content.view !== BROWSER_VIEW) return
+  try {
+    await syncBrowserPanelText(workspaceId, panel.id, signal)
+  } catch {
+    // Leave panel.text as it is when the browser cannot be read.
+  }
+}
+
 async function syncPathPanels(workspaceId: string, path: StorePath, signal?: AbortSignal): Promise<void> {
   if (path.kind !== 'panel' && path.kind !== 'panelEntry' && path.kind !== 'panels') return
   const targetWorkspace = path.workspaceId ?? workspaceId
@@ -71,13 +86,17 @@ async function syncPathPanels(workspaceId: string, path: StorePath, signal?: Abo
   if (!grids) return
   if (path.kind === 'panels') {
     for (const grid of Object.values(grids)) {
-      for (const panel of grid.panels) await syncResearchPanelText(targetWorkspace, panel, signal)
+      for (const panel of grid.panels) {
+        await syncResearchPanelText(targetWorkspace, panel, signal)
+        await syncBrowserPanel(targetWorkspace, panel, signal)
+      }
     }
     return
   }
   try {
     const { panel } = panelIn(grids, path.panelId)
     await syncResearchPanelText(targetWorkspace, panel, signal)
+    await syncBrowserPanel(targetWorkspace, panel, signal)
   } catch {
     // Unknown panel: readPath will throw its standard error.
   }

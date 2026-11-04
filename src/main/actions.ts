@@ -79,7 +79,9 @@ import { connectionsOf } from './plugins/connections'
 import { secretProgress, secretRefs, type SecretProgress } from '../shared/plugins/connections'
 import { unsetRequiredSecret } from '../shared/plugins/plugins'
 import { isOpenWindow, MAIN_WINDOW, WINDOWS_MAX, withWindows } from '../shared/grid/windows'
+import { BROWSER_VIEW } from '../shared/grid/browser'
 import { findRoomTab, loopsOf, tidied, touchLoop, withLoops } from './loops/loops'
+import { syncBrowserPanelText } from './grid/browser'
 import {
   changeGrid,
   changeGridOf,
@@ -1097,34 +1099,43 @@ const PANEL_SETTLE_MS = 250
  * the panel when the tool answers and the round's `workspace_state` is built. Returns at once when
  * no window is showing the workspace.
  */
-export function settlePanel(workspaceId: string, panelId: string, signal?: AbortSignal): Promise<Panel | null> {
+export async function settlePanel(workspaceId: string, panelId: string, signal?: AbortSignal): Promise<Panel | null> {
   const initial = readPanel(workspaceId, panelId)
-  if (!initial) return Promise.resolve(null)
+  if (!initial) return null
   const targets = watchedViewPanels(initial.grid, panelId)
   if (targets.length === 0 || workspaceId !== getState().currentWorkspaceId || !windowOf(initial.window)) {
-    return Promise.resolve(initial.panel)
+    return initial.panel
   }
   const beforeOutputs = new Map(targets.map((p) => [p.id, p.output]))
-  return new Promise((resolve) => {
-    const finish = (): void => {
-      clearTimeout(timer)
-      stop()
-      signal?.removeEventListener('abort', finish)
-      const now = readPanel(workspaceId, panelId)
-      if (!now) {
-        resolve(initial.panel)
-        return
+  const needsMountSettle = targets.some(
+    (p) => !(p.content.kind === 'view' && p.content.view === BROWSER_VIEW && p.output !== null),
+  )
+  if (needsMountSettle) {
+    await new Promise<void>((resolve) => {
+      const finish = (): void => {
+        clearTimeout(timer)
+        stop()
+        signal?.removeEventListener('abort', finish)
+        resolve()
       }
-      const { error } = panelTargetsSettled(now.grid, panelId, beforeOutputs)
-      resolve(error ? { ...now.panel, error } : now.panel)
-    }
-    const stop = subscribe(() => {
-      const now = readPanel(workspaceId, panelId)
-      if (!now || panelTargetsSettled(now.grid, panelId, beforeOutputs).settled) finish()
+      const stop = subscribe(() => {
+        const now = readPanel(workspaceId, panelId)
+        if (!now || panelTargetsSettled(now.grid, panelId, beforeOutputs).settled) finish()
+      })
+      const timer = setTimeout(finish, PANEL_SETTLE_MS)
+      signal?.addEventListener('abort', finish, { once: true })
     })
-    const timer = setTimeout(finish, PANEL_SETTLE_MS)
-    signal?.addEventListener('abort', finish, { once: true })
-  })
+  }
+  for (const target of targets) {
+    if (signal?.aborted) break
+    if (target.content.kind === 'view' && target.content.view === BROWSER_VIEW) {
+      await syncBrowserPanelText(workspaceId, target.id, signal)
+    }
+  }
+  const now = readPanel(workspaceId, panelId)
+  if (!now) return initial.panel
+  const { error } = panelTargetsSettled(now.grid, panelId, beforeOutputs)
+  return error ? { ...now.panel, error } : now.panel
 }
 
 function readPanel(workspaceId: string, panelId: string): { window: number; grid: Grid; panel: Panel } | null {
