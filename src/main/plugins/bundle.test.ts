@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import vm from 'node:vm'
 import { test } from 'node:test'
-import { bundlePlugin } from './bundle.ts'
+import { bundlePlugin, pluginCodeStamp } from './bundle.ts'
 
 const FAKE_LIGHTWEIGHT_CHARTS = `
 function ensureDefined(value) {
@@ -457,6 +457,36 @@ test('bundling a lightweight-charts plugin guards against Value is null on null 
     assert.equal(result.checks.length, 1)
     assert.equal(result.detachedPaneIndex, -1)
     assert.equal(result.clearedCrosshair, 1)
+  } finally {
+    await fsp.rm(root, { recursive: true, force: true })
+  }
+})
+
+test('pluginCodeStamp tracks code file edits while ignoring dotfiles, virtualenvs, node_modules, and skills', async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'jaspers-plugin-stamp-'))
+  try {
+    const dir = path.join(root, 'research')
+    await fsp.mkdir(path.join(dir, 'skills', 'guide'), { recursive: true })
+    await fsp.mkdir(path.join(dir, '.venv', 'lib'), { recursive: true })
+    await fsp.mkdir(path.join(dir, 'node_modules', 'pkg'), { recursive: true })
+    await fsp.mkdir(path.join(dir, '__pycache__'), { recursive: true })
+    await fsp.writeFile(path.join(dir, 'plugin.tsx'), 'export default { id: "research" }\n')
+
+    const initial = pluginCodeStamp(dir)
+    assert.notEqual(initial, '')
+
+    // Writing to .install.json, .venv, __pycache__, node_modules, or skills does not change the code stamp.
+    await fsp.writeFile(path.join(dir, '.install.json'), '{"version":"4.1.1"}')
+    await fsp.writeFile(path.join(dir, '.venv', 'lib', 'mod.py'), 'x = 1')
+    await fsp.writeFile(path.join(dir, '__pycache__', 'mod.pyc'), 'bin')
+    await fsp.writeFile(path.join(dir, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1')
+    await fsp.writeFile(path.join(dir, 'skills', 'guide', 'SKILL.md'), '# Guide')
+    assert.equal(pluginCodeStamp(dir), initial)
+
+    // Editing or adding a source file changes the stamp.
+    await fsp.writeFile(path.join(dir, 'rooms.ts'), 'export const x = 2\n')
+    const afterAdd = pluginCodeStamp(dir)
+    assert.notEqual(afterAdd, initial)
   } finally {
     await fsp.rm(root, { recursive: true, force: true })
   }

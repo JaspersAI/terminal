@@ -2,6 +2,7 @@ import { shell, utilityProcess, type UtilityProcess } from 'electron'
 import path from 'node:path'
 import type { Capability } from '@jaspers-ai/sdk/define'
 import { parsePath, readPath } from '../../shared/paths'
+import { isReloadAbort, pluginHostEnv, sameHostBuild } from '../../shared/plugins/plugins'
 import { createRpc, messageOf, type Rpc } from '../../shared/rpc'
 import { createFiles, type FilesService } from './capabilities/files'
 import { createLlm } from './capabilities/llm'
@@ -88,8 +89,22 @@ let quitting = false
 /** A build landed: its host replaces whatever host the plugin had, now or on the first run that needs one. */
 export async function startHost(id: string, build: HostBuild): Promise<void> {
   cancelRestart(id)
+  const previous = builds.get(id)
   builds.set(id, build)
-  await stopAndWait(id, 'plugin reloaded')
+  if (sameHostBuild(previous, build) && !stopping.has(id)) {
+    const current = hosts.get(id)
+    if (current && !current.stopping) return
+    if (build.eager) {
+      spawn(id, build)
+      return
+    }
+    spawnedAt.delete(id)
+    if (getState().plugins[id]?.host !== 'idle') setPluginInfo(id, { host: 'idle' })
+    return
+  }
+  if (hosts.has(id) || stopping.has(id)) {
+    await stopAndWait(id, 'plugin reloaded')
+  }
   // A newer build, or the plugin's removal, arrived while the old host was stopping: that one decides.
   if (builds.get(id) !== build || hosts.has(id)) return
   if (build.eager) {
@@ -98,38 +113,45 @@ export async function startHost(id: string, build: HostBuild): Promise<void> {
   }
   // Stopped on purpose, so the next run need not wait out the respawn guard.
   spawnedAt.delete(id)
-  setPluginInfo(id, { host: 'idle' })
+  if (getState().plugins[id]?.host !== 'idle') setPluginInfo(id, { host: 'idle' })
 }
 
 /** The plugin is gone, or has no code of its own to run any more. */
 export async function removeHost(id: string, reason: string): Promise<void> {
   cancelRestart(id)
   builds.delete(id)
-  await stopAndWait(id, reason)
-  if (!builds.has(id)) setPluginInfo(id, { host: 'none' })
+  if (hosts.has(id) || stopping.has(id)) {
+    await stopAndWait(id, reason)
+  } else {
+    spawnedAt.delete(id)
+  }
+  if (!builds.has(id) && getState().plugins[id]?.host !== 'none') setPluginInfo(id, { host: 'none' })
 }
 
 /** Runs one of a plugin's function sources in its host, in the workspace that called it, starting the host again if it died. */
 export async function runInHost(id: string, name: string, args: unknown, workspaceId: string | null): Promise<unknown> {
-  const host = await hostFor(id)
-  host.running++
-  host.usedAt = Date.now()
-  try {
-    await host.ready
-    // The plugin's declared secrets ride with each run, for ${secret:KEY} in its fetches; the values
-    // stay in the plugin's own process, which is where an MCP server's env already puts them.
-    return await host.rpc.request(
-      'source.run',
-      { name, args, workspaceId, secrets: secretValues(id) },
-      AbortSignal.timeout(SOURCE_MS),
-    )
-  } catch (err) {
-    if (err instanceof Error && err.name === 'TimeoutError')
-      throw new Error(`${id}/${name} took longer than ${SOURCE_MS / 60_000} minutes.`)
-    throw err
-  } finally {
-    host.running--
+  for (let attempt = 0; ; attempt++) {
+    const host = await hostFor(id)
+    host.running++
     host.usedAt = Date.now()
+    try {
+      await host.ready
+      // The plugin's declared secrets ride with each run, for ${secret:KEY} in its fetches; the values
+      // stay in the plugin's own process, which is where an MCP server's env already puts them.
+      return await host.rpc.request(
+        'source.run',
+        { name, args, workspaceId, secrets: secretValues(id) },
+        AbortSignal.timeout(SOURCE_MS),
+      )
+    } catch (err) {
+      if (attempt === 0 && isReloadAbort(err) && builds.has(id) && !quitting) continue
+      if (err instanceof Error && err.name === 'TimeoutError')
+        throw new Error(`${id}/${name} took longer than ${SOURCE_MS / 60_000} minutes.`)
+      throw err
+    } finally {
+      host.running--
+      host.usedAt = Date.now()
+    }
   }
 }
 
@@ -161,7 +183,7 @@ export function killAllHosts(): void {
 }
 
 async function hostFor(id: string): Promise<Host> {
-  await stopping.get(id)
+  while (stopping.has(id)) await stopping.get(id)
   const running = hosts.get(id)
   if (running) return running
   const build = builds.get(id)
@@ -184,18 +206,7 @@ function spawn(id: string, build: HostBuild): Host {
     // None of main's environment: whatever keys a shell exported stay out of plugin code's reach.
     // Windows names the same things otherwise, and without SystemRoot Winsock cannot resolve a host
     // name: every fetch fails with getaddrinfo EAI_FAIL.
-    env: pick(process.env, [
-      'PATH',
-      'HOME',
-      'TMPDIR',
-      'LANG',
-      'USER',
-      'SystemRoot',
-      'USERPROFILE',
-      'TEMP',
-      'TMP',
-      'USERNAME',
-    ]),
+    env: pluginHostEnv(process.env),
   })
   lines(child.stdout, (line) => console.log(`[plugin ${id}] ${line}`))
   lines(child.stderr, (line) => console.warn(`[plugin ${id}] ${line}`))
@@ -268,7 +279,8 @@ function spawn(id: string, build: HostBuild): Host {
 
 /** Stops the plugin's host, and holds calls that need one until it has gone. */
 async function stopAndWait(id: string, reason: string): Promise<void> {
-  const done = stopHost(id, reason)
+  const prev = stopping.get(id)
+  const done = prev ? prev.then(() => stopHost(id, reason)) : stopHost(id, reason)
   stopping.set(id, done)
   try {
     await done
@@ -279,9 +291,15 @@ async function stopAndWait(id: string, reason: string): Promise<void> {
 
 async function stopHost(id: string, reason: string): Promise<void> {
   const host = hosts.get(id)
-  if (!host) return
+  if (!host) {
+    spawnedAt.delete(id)
+    return
+  }
   hosts.delete(id)
   host.stopping = true
+  // Stopped on purpose, so a call waiting on stopping.get(id) starts the next host at once
+  // rather than hitting the crash respawn guard before startHost resumes.
+  spawnedAt.delete(id)
   await Promise.race([host.rpc.request('shutdown', { reason }).catch(() => undefined), delay(SHUTDOWN_MS)])
   // A newer host may have started while this one took its time; the plugin's values are that one's now.
   teardown(host, reason, !hosts.has(id))
@@ -498,15 +516,6 @@ function lines(stream: NodeJS.ReadableStream | null, write: (line: string) => vo
     rest = parts.pop() ?? ''
     for (const line of parts) if (line.trim()) write(line)
   })
-}
-
-function pick(env: NodeJS.ProcessEnv, keys: string[]): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const key of keys) {
-    const value = env[key]
-    if (value !== undefined) out[key] = value
-  }
-  return out
 }
 
 function delay(ms: number): Promise<void> {

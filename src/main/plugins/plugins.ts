@@ -1,11 +1,16 @@
 import { app } from 'electron'
 import type * as esbuild from 'esbuild'
-import { bundlePlugin } from './bundle'
+import { bundlePlugin, pluginCodeStamp } from './bundle'
 import { checkEnvelope, readBuildRecordFile } from './build-record'
 import fs from 'node:fs'
 import path from 'node:path'
 import { describeSource } from '../../shared/plugins/install'
-import { classifyPluginWatchPath, type ValidatedPlugin } from '../../shared/plugins/plugins'
+import {
+  classifyPluginWatchPath,
+  createPluginBuildQueue,
+  samePluginBuild,
+  type ValidatedPlugin,
+} from '../../shared/plugins/plugins'
 import { evaluatePlugin } from './plugin-eval'
 import { removeHost, startHost } from './plugin-host'
 import type { PluginInfo } from '../../shared/state'
@@ -41,10 +46,10 @@ const watchers: fs.FSWatcher[] = []
 const timers = new Map<string, NodeJS.Timeout>()
 /** Plugins with a change outside skills/ since their last rescan: those rebuild, the rest only read their skills. */
 const codeChanged = new Set<string>()
-/** One build at a time per plugin, so two saves in a row cannot register out of order. */
-const queue = new Map<string, Promise<void>>()
+/** One build at a time per plugin, coalescing concurrent watcher rescans while preserving explicit rebuilds. */
+const buildQueue = createPluginBuildQueue({ build, remove })
 /** Last good build output per plugin so unchanged watcher rescans do not bump version or restart hosts. */
-const lastBuilt = new Map<string, { dir: string; code: string; bundle: string }>()
+const lastBuilt = new Map<string, { dir: string; code: string; bundle: string; stamp: string }>()
 let checkingUpdates: Promise<void> | null = null
 let updatesStarted = false
 
@@ -72,13 +77,18 @@ export function bundlePath(id: string): string {
  * registered before and says why, since a half-written file is the usual reason to be here.
  */
 function load(id: string, dir: string, fromWatch = false): Promise<void> {
-  const next = (queue.get(id) ?? Promise.resolve()).then(() => build(id, dir, fromWatch))
-  queue.set(id, next)
-  return next
+  return buildQueue.load(id, dir, fromWatch)
 }
 
 async function build(id: string, dir: string, fromWatch = false): Promise<void> {
-  const wasReady = fromWatch && getState().plugins[id]?.status === 'ready'
+  const previousBuilt = lastBuilt.get(id)
+  const isReady = getState().plugins[id]?.status === 'ready'
+  const stamp = pluginCodeStamp(dir)
+  if (fromWatch && isReady && previousBuilt && previousBuilt.dir === dir && previousBuilt.stamp === stamp) {
+    registerPluginSkills(id, dir)
+    return
+  }
+  const wasReady = fromWatch && isReady
   if (!wasReady) begin(id, dir)
   registerPluginSkills(id, dir)
   try {
@@ -90,14 +100,8 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
     } catch {
       // Bundle file was not readable; proceed with registration.
     }
-    const previousBuilt = lastBuilt.get(id)
-    if (
-      wasReady &&
-      previousBuilt &&
-      previousBuilt.dir === dir &&
-      previousBuilt.code === code &&
-      previousBuilt.bundle === bundle
-    ) {
+    if (getState().plugins[id]?.status === 'ready' && samePluginBuild(previousBuilt, { dir, code, bundle })) {
+      lastBuilt.set(id, { dir, code, bundle, stamp })
       return
     }
     const validated = evaluatePlugin(code, id)
@@ -105,13 +109,21 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
     // error, and the last good registration stays, as after any failed build.
     const refused = checkEnvelope(validated, dir)
     if (refused) throw new Error(refused)
-    lastBuilt.set(id, { dir, code, bundle })
+    lastBuilt.set(id, { dir, code, bundle, stamp })
     // Its connections first, so a source's line in the prompt finds the connection it runs on.
     registerConnections(id, dir, validated.connections)
     registerPlugin(id, validated.sources, viewDefs(validated))
-    const version = (getState().plugins[id]?.version ?? 0) + 1
+    const currentPlugin = getState().plugins[id]
+    const version = (currentPlugin?.version ?? 0) + 1
     const values = secretValues(id)
-    const nextProvenance = provenance(dir, getState().plugins[id]?.install?.available ?? null)
+    const nextProvenance = provenance(dir, currentPlugin?.install?.available ?? null)
+    const host = validated.hasBackend
+      ? currentPlugin?.host && currentPlugin.host !== 'none'
+        ? currentPlugin.host
+        : validated.start !== null
+          ? 'starting'
+          : 'idle'
+      : 'none'
     setPluginInfo(id, {
       ...nextProvenance,
       dir,
@@ -129,6 +141,7 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
         ...(optional ? { optional } : {}),
       })),
       connections: Object.keys(validated.connections).map((name) => `${id}/${name}`),
+      host,
     })
     console.log(`plugins: ${id} ready (v${version})`)
     // Code the plugin runs after registration runs in its own process, on this build: from now when
@@ -220,11 +233,7 @@ function rescan(id: string, fromWatch = false): void {
   const dir = discover().get(id)
   if (dir) void load(id, dir, fromWatch)
   // Behind any build still running, so a build that finishes late cannot bring a removed plugin back.
-  else if (getState().plugins[id])
-    queue.set(
-      id,
-      (queue.get(id) ?? Promise.resolve()).then(() => remove(id)),
-    )
+  else if (getState().plugins[id]) void buildQueue.remove(id)
 }
 
 /** Only a plugin's skills/ changed: read its skills again and leave its build alone. */

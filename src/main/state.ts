@@ -141,16 +141,35 @@ export function getState(): MainState {
   return current
 }
 
+const pendingUpdates: Array<(state: MainState) => MainState> = []
+let notifying = false
+
 /**
  * Applies one change. Subscribers hear about it only when `mutate` returned a different object,
- * and a `mutate` that throws leaves the tree as it was.
+ * and a `mutate` that throws leaves the tree as it was. Nested updates triggered by a subscriber
+ * run immediately after the current notification pass so every listener sees changes in order.
  */
 export function update(mutate: (state: MainState) => MainState): void {
-  const prev = getState()
-  const next = mutate(prev)
-  if (next === prev) return
-  current = next
-  for (const listener of listeners) listener(next, prev)
+  if (notifying) {
+    pendingUpdates.push(mutate)
+    return
+  }
+  notifying = true
+  try {
+    let step: ((state: MainState) => MainState) | undefined = mutate
+    while (step) {
+      const prev = getState()
+      const next = step(prev)
+      if (next !== prev) {
+        current = next
+        for (const listener of [...listeners]) listener(next, prev)
+      }
+      step = pendingUpdates.shift()
+    }
+  } finally {
+    pendingUpdates.length = 0
+    notifying = false
+  }
 }
 
 export function subscribe(listener: Listener): () => void {
