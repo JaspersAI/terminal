@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   classifyPluginWatchPath,
+  createPluginBuildQueue,
+  isReloadAbort,
+  pluginHostEnv,
   qualifyConnection,
+  sameHostBuild,
+  samePluginBuild,
   unsetRequiredSecret,
   validatePluginDefinition,
   viewPolicy,
@@ -442,4 +447,116 @@ test('classifyPluginWatchPath routes code and skill changes while ignoring neste
   ]) {
     assert.equal(classifyPluginWatchPath(ignored), null, ignored)
   }
+})
+
+test('samePluginBuild and sameHostBuild detect unchanged build outputs and host specs', () => {
+  const built = { dir: '/plugins/fred', code: 'module.exports = 1', bundle: 'export default 1' }
+  assert.equal(samePluginBuild(undefined, built), false)
+  assert.equal(samePluginBuild(built, { ...built }), true)
+  assert.equal(samePluginBuild(built, { ...built, code: 'module.exports = 2' }), false)
+  assert.equal(samePluginBuild(built, { ...built, bundle: 'export default 2' }), false)
+  assert.equal(samePluginBuild(built, { ...built, dir: '/plugins/other' }), false)
+
+  const host = {
+    code: 'module.exports = 1',
+    dir: '/plugins/fred',
+    capabilities: ['files', 'llm'] as const,
+    eager: true,
+  }
+  assert.equal(sameHostBuild(undefined, host), false)
+  assert.equal(sameHostBuild(host, { ...host, capabilities: ['files', 'llm'] }), true)
+  assert.equal(sameHostBuild(host, { ...host, capabilities: ['files'] }), false)
+  assert.equal(sameHostBuild(host, { ...host, eager: false }), false)
+  assert.equal(sameHostBuild(host, { ...host, code: 'module.exports = 2' }), false)
+})
+
+test('isReloadAbort matches host reload shutdown errors and ignores other failures', () => {
+  assert.equal(isReloadAbort(new Error('plugin reloaded')), true)
+  assert.equal(isReloadAbort(new Error('plugin host did not start: plugin reloaded')), true)
+  assert.equal(isReloadAbort('plugin reloaded'), true)
+  assert.equal(isReloadAbort(new Error('plugin removed')), false)
+  assert.equal(isReloadAbort(new Error('fetch failed')), false)
+})
+
+test('pluginHostEnv preserves Windows and Unix system variables case-insensitively while stripping secrets', () => {
+  const env = pluginHostEnv({
+    Path: 'C:\\Windows\\System32',
+    SYSTEMROOT: 'C:\\Windows',
+    SystemDrive: 'C:',
+    Windir: 'C:\\Windows',
+    ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+    USERPROFILE: 'C:\\Users\\alice',
+    APPDATA: 'C:\\Users\\alice\\AppData\\Roaming',
+    LOCALAPPDATA: 'C:\\Users\\alice\\AppData\\Local',
+    ProgramData: 'C:\\ProgramData',
+    TEMP: 'C:\\Users\\alice\\AppData\\Local\\Temp',
+    TMP: 'C:\\Users\\alice\\AppData\\Local\\Temp',
+    USERNAME: 'alice',
+    OPENAI_API_KEY: 'sk-secret',
+    FRED_API_KEY: 'fred-secret',
+  })
+  assert.deepEqual(env, {
+    PATH: 'C:\\Windows\\System32',
+    SystemRoot: 'C:\\Windows',
+    SystemDrive: 'C:',
+    windir: 'C:\\Windows',
+    ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+    USERPROFILE: 'C:\\Users\\alice',
+    APPDATA: 'C:\\Users\\alice\\AppData\\Roaming',
+    LOCALAPPDATA: 'C:\\Users\\alice\\AppData\\Local',
+    ProgramData: 'C:\\ProgramData',
+    TEMP: 'C:\\Users\\alice\\AppData\\Local\\Temp',
+    TMP: 'C:\\Users\\alice\\AppData\\Local\\Temp',
+    USERNAME: 'alice',
+  })
+})
+
+test('createPluginBuildQueue coalesces concurrent watcher rescans while preserving explicit rebuilds and removals', async () => {
+  const events: string[] = []
+  let releaseFirst!: () => void
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+
+  const queue = createPluginBuildQueue({
+    build: async (id, dir, fromWatch) => {
+      events.push(`build:${id}:${dir}:${fromWatch ? 'watch' : 'explicit'}`)
+      if (events.length === 1) await firstGate
+    },
+    remove: async (id) => {
+      events.push(`remove:${id}`)
+    },
+  })
+
+  const p1 = queue.load('research', '/plugins/research', false)
+  // Six watcher rescans arrive while the initial startup build is in flight: they coalesce into one follow-up build.
+  for (let i = 0; i < 6; i++) {
+    void queue.load('research', '/plugins/research', true)
+  }
+  releaseFirst()
+  await p1
+  assert.deepEqual(events, ['build:research:/plugins/research:explicit', 'build:research:/plugins/research:watch'])
+
+  // An explicit rebuild arriving alongside watcher rescans keeps fromWatch=false.
+  events.length = 0
+  let releaseSecond!: () => void
+  const secondGate = new Promise<void>((resolve) => {
+    releaseSecond = resolve
+  })
+  const queue2 = createPluginBuildQueue({
+    build: async (id, dir, fromWatch) => {
+      events.push(`build:${id}:${dir}:${fromWatch ? 'watch' : 'explicit'}`)
+      if (events.length === 1) await secondGate
+    },
+    remove: async (id) => {
+      events.push(`remove:${id}`)
+    },
+  })
+  const p2 = queue2.load('fred', '/plugins/fred', false)
+  void queue2.load('fred', '/plugins/fred', true)
+  void queue2.load('fred', '/plugins/fred', false)
+  void queue2.load('fred', '/plugins/fred', true)
+  releaseSecond()
+  await p2
+  assert.deepEqual(events, ['build:fred:/plugins/fred:explicit', 'build:fred:/plugins/fred:explicit'])
 })

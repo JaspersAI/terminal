@@ -307,3 +307,141 @@ export function classifyPluginWatchPath(filename: string): { id: string; kind: '
   }
   return { id, kind: segments[1] === 'skills' ? 'skills' : 'code' }
 }
+
+export interface BuiltPluginOutput {
+  dir: string
+  code: string
+  bundle: string
+}
+
+/** Whether two built plugin outputs have the exact same folder, CJS definitions, and browser bundle. */
+export function samePluginBuild(previous: BuiltPluginOutput | undefined, next: BuiltPluginOutput): boolean {
+  return (
+    previous !== undefined &&
+    previous.dir === next.dir &&
+    previous.code === next.code &&
+    previous.bundle === next.bundle
+  )
+}
+
+export interface HostBuildSpec {
+  code: string
+  dir: string
+  capabilities: readonly Capability[]
+  eager: boolean
+}
+
+/** Whether two plugin host builds have the same code, folder, capabilities, and eager start flag. */
+export function sameHostBuild(previous: HostBuildSpec | undefined, next: HostBuildSpec): boolean {
+  return (
+    previous !== undefined &&
+    previous.code === next.code &&
+    previous.dir === next.dir &&
+    previous.eager === next.eager &&
+    previous.capabilities.length === next.capabilities.length &&
+    previous.capabilities.every((c, i) => c === next.capabilities[i])
+  )
+}
+
+/** Whether an error from a plugin host RPC call was caused by the host being stopped for a reload. */
+export function isReloadAbort(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return msg === 'plugin reloaded' || msg === 'plugin host did not start: plugin reloaded'
+}
+
+export const HOST_ENV_KEPT = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'LANG',
+  'USER',
+  'SystemRoot',
+  'SystemDrive',
+  'windir',
+  'ComSpec',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'ProgramData',
+  'TEMP',
+  'TMP',
+  'USERNAME',
+] as const
+
+/**
+ * The sanitized environment handed to a plugin's utility process: system and user path variables
+ * matched case-insensitively (so Windows `Path`, `SYSTEMROOT`, and `Windir` resolve), with all
+ * shell-exported credentials stripped.
+ */
+export function pluginHostEnv(from: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {}
+  const lower = new Map<string, string>()
+  for (const [key, value] of Object.entries(from)) {
+    if (typeof value === 'string' && value !== '') lower.set(key.toLowerCase(), value)
+  }
+  for (const key of HOST_ENV_KEPT) {
+    const exact = from[key]
+    const value = typeof exact === 'string' && exact !== '' ? exact : lower.get(key.toLowerCase())
+    if (typeof value === 'string' && value !== '') out[key] = value
+  }
+  return out
+}
+
+export interface PluginBuildScheduler {
+  load(id: string, dir: string, fromWatch?: boolean): Promise<void>
+  remove(id: string): Promise<void>
+}
+
+type PendingPluginWork = { kind: 'build'; dir: string; fromWatch: boolean } | { kind: 'remove' }
+
+/**
+ * Serializes per-plugin builds and removals while coalescing multiple watcher rescans that arrive
+ * while a build is already running into at most one follow-up pass.
+ */
+export function createPluginBuildQueue(handlers: {
+  build: (id: string, dir: string, fromWatch: boolean) => Promise<void>
+  remove: (id: string) => void | Promise<void>
+}): PluginBuildScheduler {
+  const active = new Map<string, Promise<void>>()
+  const nextWork = new Map<string, PendingPluginWork>()
+
+  function drain(id: string, initial: PendingPluginWork): Promise<void> {
+    const run = (async () => {
+      let current: PendingPluginWork | undefined = initial
+      while (current) {
+        if (current.kind === 'build') {
+          await handlers.build(id, current.dir, current.fromWatch)
+        } else {
+          await handlers.remove(id)
+        }
+        current = nextWork.get(id)
+        if (current) nextWork.delete(id)
+      }
+    })().finally(() => {
+      if (active.get(id) === run) active.delete(id)
+    })
+    active.set(id, run)
+    return run
+  }
+
+  return {
+    load(id, dir, fromWatch = false) {
+      const running = active.get(id)
+      if (running) {
+        const prev = nextWork.get(id)
+        const coalescedFromWatch = prev?.kind === 'build' ? prev.fromWatch && fromWatch : fromWatch
+        nextWork.set(id, { kind: 'build', dir, fromWatch: coalescedFromWatch })
+        return running
+      }
+      return drain(id, { kind: 'build', dir, fromWatch })
+    },
+    remove(id) {
+      const running = active.get(id)
+      if (running) {
+        nextWork.set(id, { kind: 'remove' })
+        return running
+      }
+      return drain(id, { kind: 'remove' })
+    },
+  }
+}

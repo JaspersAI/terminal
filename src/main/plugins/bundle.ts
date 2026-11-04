@@ -870,3 +870,40 @@ function realpath(file: string): string {
     return path.resolve(file)
   }
 }
+
+/**
+ * Fingerprint of a plugin folder's code files (path, size, mtime), ignoring dotfiles/dotfolders,
+ * `node_modules`, `__pycache__`, and top-level `skills`, so watcher rescans triggered by `.venv`,
+ * `.install.json`, or directory metadata changes can skip running esbuild when no code changed.
+ */
+export function pluginCodeStamp(dir: string): string {
+  const parts: string[] = []
+  const walk = (current: string, relPrefix: string): void => {
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true })
+    } catch {
+      return
+    }
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    for (const entry of entries) {
+      const name = entry.name
+      if (name.startsWith('.') || name === 'node_modules' || name === '__pycache__') continue
+      if (relPrefix === '' && name === 'skills') continue
+      const rel = relPrefix ? `${relPrefix}/${name}` : name
+      const full = path.join(current, name)
+      if (entry.isDirectory()) {
+        walk(full, rel)
+        continue
+      }
+      try {
+        const stat = fs.statSync(full)
+        parts.push(`${rel}:${stat.size}:${stat.mtimeMs}`)
+      } catch {
+        // Ignore files that disappeared mid-scan.
+      }
+    }
+  }
+  walk(dir, '')
+  return parts.join('\n')
+}
