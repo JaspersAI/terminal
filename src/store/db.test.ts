@@ -587,6 +587,47 @@ test('a refreshed dataset run replaces earlier rows for the same call, while a f
   })
   assert.equal(docs.rows.length, 1)
   assert.equal(docs.rows[0]![0], secondId)
+
+  // Repeated failures during an outage replace the earlier error for that call rather than piling up
+  // or evicting the last good dataset past RUNS_PER_CALL_MAX, and a later success clears the error.
+  for (let i = 1; i <= 25; i++) {
+    db.record(
+      run({
+        source: 'charts/history',
+        args: '{"symbol":"AAPL"}',
+        argsHash: 'h-aapl',
+        fetchedAt: 3000 + i * 1000,
+        rows: null,
+        text: null,
+        error: `ENOTFOUND attempt ${i}`,
+      }),
+    )
+  }
+  const duringOutage = db.query({
+    sql: `select r.id, json_extract(d.data, '$.close') close
+          from (select id from runs where source = 'charts/history' order by id desc limit 10) r
+          join run_rows d on d.run_id = r.id`,
+  })
+  assert.deepEqual(duringOutage.rows, [[secondId, 235]])
+  const errorsDuringOutage = db.query({
+    sql: "select error from runs where source = 'charts/history' and error is not null",
+  })
+  assert.deepEqual(errorsDuringOutage.rows, [['ENOTFOUND attempt 25']])
+
+  const recoveredId = db.record(
+    run({
+      source: 'charts/history',
+      args: '{"symbol":"AAPL"}',
+      argsHash: 'h-aapl',
+      fetchedAt: 30_000,
+      rows: [{ symbol: 'AAPL', date: '2026-10-27', close: 240 }],
+      text: '[{"symbol":"AAPL","date":"2026-10-27","close":240}]',
+    }),
+  )
+  const afterRecovery = db.query({
+    sql: "select id, row_count, error from runs where source = 'charts/history' order by id",
+  })
+  assert.deepEqual(afterRecovery.rows, [[recoveredId, 1, null]])
   db.close()
 })
 
@@ -629,11 +670,18 @@ test('periodic refreshes bound history per call and per source, and opening an a
       .run(id, i < 30 ? 'not-json' : JSON.stringify({ symbol: 'AAPL', price: 100 + i }))
     raw.prepare('insert into docs (rowid, text) values (?, ?)').run(id, `quote ${i}`)
   }
+  for (let i = 1; i <= 14; i++) {
+    raw
+      .prepare(
+        "insert into runs (source, args, args_hash, workspace, fetched_at, row_count, error) values ('yfinance/quote', '{\"symbol\":\"AAPL\"}', 'h-quote-aapl', 'w1', ?, 0, ?)",
+      )
+      .run(30_000 + i * 100, `ENOTFOUND ${i}`)
+  }
   raw.close()
 
   const reopened = openStore(file)
   const quotes = reopened.query({
-    sql: "select json_extract(d.data, '$.price') from runs r join run_rows d on d.run_id = r.id where r.source = 'yfinance/quote'",
+    sql: "select json_extract(d.data, '$.price') from (select id from runs where source = 'yfinance/quote' order by id desc limit 10) r join run_rows d on d.run_id = r.id",
   })
   assert.deepEqual(quotes.rows, [[130]])
   reopened.close()

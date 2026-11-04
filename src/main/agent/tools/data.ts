@@ -25,7 +25,7 @@ export function storeTools(): Tool[] {
         // Which sources have been filed is said with the workspace state, not here: a tool's description
         // sits in front of the whole conversation, and one that changed when a source first ran would
         // cost a provider everything it had read.
-        'The workspace state names the sources filed so far. SELECT only, one statement. Newest first is `order by fetched_at desc`.',
+        "The workspace state names the sources filed so far. SELECT only, one statement. Newest first is `order by fetched_at desc`; filter `row_count > 0` when selecting dataset runs so a failed call never hides the last good dataset, and use `datetime(fetched_at / 1000, 'unixepoch', 'localtime')` for local timestamps.",
       ].join(' '),
       parameters: {
         type: 'object',

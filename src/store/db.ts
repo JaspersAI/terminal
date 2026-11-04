@@ -298,8 +298,11 @@ export function openStore(file: string): Store {
   const replaceDatasetRuns = db.prepare(
     'delete from runs where source = ? and args_hash = ? and row_count > 0 and id != ?',
   )
+  const replaceFailedRuns = db.prepare(
+    'delete from runs where source = ? and args_hash = ? and error is not null and id != ?',
+  )
   const trimCallRuns = db.prepare(
-    `delete from runs where source = ? and args_hash = ? and id not in (select id from runs where source = ? and args_hash = ? order by fetched_at desc, id desc limit ${RUNS_PER_CALL_MAX})`,
+    `delete from runs where source = ? and args_hash = ? and row_count = 0 and id not in (select id from runs where source = ? and args_hash = ? order by fetched_at desc, id desc limit ${RUNS_PER_CALL_MAX})`,
   )
   const trimSourceRuns = db.prepare(
     `delete from runs where source = ? and id not in (select id from runs where source = ? order by fetched_at desc, id desc limit ${RUNS_PER_SOURCE_MAX})`,
@@ -359,9 +362,13 @@ export function openStore(file: string): Store {
         // Only text worth searching goes in the index; an empty answer would be a row of nothing.
         if (run.text) insertDoc.run(id, run.text)
         // A fresh dataset run for the same call supersedes earlier dataset rows for that call; a
-        // failed or prose-only run keeps the last dataset intact. History per call and per source
-        // stays bounded so short-interval refreshes cannot pile up rows without bound.
+        // failed or prose-only run keeps the last dataset intact. Earlier failed runs for the same
+        // call are replaced by a newer failure and cleared once the call succeeds, so consecutive
+        // errors during an outage cannot pile up or crowd out valid runs.
         if (rows.length > 0 && !run.error) replaceDatasetRuns.run(run.source, run.argsHash, id)
+        if (rows.length > 0 || Boolean(run.text) || Boolean(run.error)) {
+          replaceFailedRuns.run(run.source, run.argsHash, id)
+        }
         trimCallRuns.run(run.source, run.argsHash, run.source, run.argsHash)
         trimSourceRuns.run(run.source, run.source)
         db.exec('commit')
@@ -580,10 +587,12 @@ function prepareRuns(db: DatabaseSync): void {
       ) where dataset_rn > 1
       union all
       select 1 from (
-        select row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as call_rn,
+        select error,
+               row_count,
+               row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as call_rn,
                row_number() over (partition by source order by fetched_at desc, id desc) as source_rn
         from runs
-      ) where call_rn > ${RUNS_PER_CALL_MAX} or source_rn > ${RUNS_PER_SOURCE_MAX}
+      ) where (error is not null and call_rn > 1) or (row_count = 0 and call_rn > ${RUNS_PER_CALL_MAX}) or source_rn > ${RUNS_PER_SOURCE_MAX}
       limit 1
       `,
     )
@@ -606,12 +615,21 @@ function prepareRuns(db: DatabaseSync): void {
           ) where rn = 1
         );
       delete from runs
-      where id in (
-        select id from (
-          select id, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
-          from runs
-        ) where rn > ${RUNS_PER_CALL_MAX}
-      );
+      where error is not null
+        and id in (
+          select id from (
+            select id, error, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
+            from runs
+          ) where error is not null and rn > 1
+        );
+      delete from runs
+      where row_count = 0
+        and id in (
+          select id from (
+            select id, row_number() over (partition by source, args_hash order by fetched_at desc, id desc) as rn
+            from runs
+          ) where rn > ${RUNS_PER_CALL_MAX}
+        );
       delete from runs
       where id in (
         select id from (
