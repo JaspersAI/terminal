@@ -194,6 +194,7 @@ const api = {
   /** The store: what is in the file every source run is filed to, and reclaiming its space. */
   store: {
     query: (sql: string, limit?: number): Promise<QueryResult> => ipcRenderer.invoke('store:query', sql, limit),
+    onRecorded: (listener: (source: string) => void): (() => void) => on('store:recorded', listener),
     stats: (): Promise<StoreStats> => ipcRenderer.invoke('store:stats'),
     /** What each kind of run has spent today. */
     usage: (): Promise<{ origin: string; input: number; output: number; runs: number }[]> =>

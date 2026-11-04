@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { app, utilityProcess, type UtilityProcess } from 'electron'
+import { app, BrowserWindow, utilityProcess, type UtilityProcess } from 'electron'
 import { jaspersHome } from '../home'
 import { createRpc, type Rpc } from '../../shared/rpc'
 import type { QueryRequest, QueryResult, RunRecord, StoreStats } from '../../shared/data/store'
@@ -76,7 +76,13 @@ export function startStore(): void {
 
   const queue = createStoreQueue({
     ready,
-    sendRecord: (run) => rpc.request('record', run, timeout(RECORD_TIMEOUT_MS)),
+    sendRecord: async (run) => {
+      const id = await rpc.request('record', run, timeout(RECORD_TIMEOUT_MS))
+      if (!run.error && ((run.rows?.length ?? 0) > 0 || Boolean(run.text))) {
+        publishRecorded(run.source)
+      }
+      return id
+    },
     sendUsage: (usage) => rpc.request('usage.record', usage, timeout(RECORD_TIMEOUT_MS)),
     onError: (label, error) => console.warn(`[store] ${label}: ${message(error)}`),
   })
@@ -111,6 +117,9 @@ export async function recordRun(run: RunRecord): Promise<number | null> {
   try {
     const sig = timeout(RECORD_TIMEOUT_MS)
     const id = await current.queue.foreground(() => current.rpc.request('record', run, sig), sig)
+    if (typeof id === 'number' && !run.error && ((run.rows?.length ?? 0) > 0 || Boolean(run.text))) {
+      publishRecorded(run.source)
+    }
     return typeof id === 'number' ? id : null
   } catch (error) {
     console.warn(`[store] recordRun ${run.source}: ${message(error)}`)
@@ -389,6 +398,13 @@ function running(): Live {
   if (!live) startStore()
   if (!live) throw new Error('The store is not running.')
   return live
+}
+
+/** Tells open windows when a source run with rows or text has landed in the store, so SQL views can refresh. */
+function publishRecorded(source: string): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('store:recorded', source)
+  }
 }
 
 function timeout(ms: number): AbortSignal {
