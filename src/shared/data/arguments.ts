@@ -27,20 +27,34 @@ export type ConnectionLookup =
   | Record<string, { id?: string; plugin?: string; status?: string; tools?: readonly ConnectionLookupTool[] }>
   | Iterable<string | ConnectionLookupEntry>
 
+export interface WorkbookTable {
+  title: string
+  columns: string[]
+  rows: unknown[]
+  [key: string]: unknown
+}
+
+const TABLE_ROWS_HINT =
+  " Each table's rows must be an array of row arrays or row objects (never a row count). For multi-sheet workbooks, pass 1 or 2 tables per run_source call with the same filename (one call per round); each call adds or updates sheets by title in that workbook so the call does not time out."
+
 /** Parses source arguments with Zod, retries schema coercion and JSON fields, then reports invalid field paths. */
 export function parseArguments(schema: ZodType, args: unknown, sourceId: string): unknown {
-  const first = schema.safeParse(args)
+  const normalized = isRecord(args) ? normalizeWorkbookArgs(args) : args
+  const first = schema.safeParse(normalized)
   if (first.success) return first.data
-  if (isRecord(args)) {
-    const prepared = schema.safeParse(coerceToSchema(schema, args))
+  if (isRecord(normalized)) {
+    const prepared = schema.safeParse(coerceToSchema(schema, normalized))
     if (prepared.success) return prepared.data
-    const retried = schema.safeParse(coerceToSchema(schema, unstringFields(args)))
+    const retried = schema.safeParse(coerceToSchema(schema, unstringFields(normalized)))
     if (retried.success) return retried.data
   }
   const issues = first.error.issues.map(
     (issue) => `${issue.path.join('.') || '(arguments)'}: ${issue.message.replace(/^Invalid input: /, '')}`,
   )
-  throw new Error(`Invalid arguments for ${sourceId}: ${issues.join('; ')}.`)
+  const needsRowsHint = first.error.issues.some(
+    (issue) => issue.path.length >= 3 && issue.path[0] === 'tables' && issue.path[2] === 'rows',
+  )
+  throw new Error(`Invalid arguments for ${sourceId}: ${issues.join('; ')}.${needsRowsHint ? TABLE_ROWS_HINT : ''}`)
 }
 
 /**
@@ -418,4 +432,214 @@ function unstringFields(args: Record<string, unknown>): Record<string, unknown> 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const PLAIN_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
+
+/**
+ * Normalizes `tables` entries on workbook-export inputs: maps `sheet` or `name` to `title`, `headers`
+ * or `fields` to `columns`, object column definitions (`{ header, label, key }`) to string headers with
+ * row-object key remapping, and Markdown pipe or TSV strings on `rows` to arrays of cell values.
+ */
+export function normalizeWorkbookArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const rawTables = fromJson(args['tables'])
+  if (!Array.isArray(rawTables)) return args
+  const tables = rawTables.map((entry) => {
+    const item = isRecord(entry)
+      ? entry
+      : isRecord(fromJson(entry))
+        ? (fromJson(entry) as Record<string, unknown>)
+        : null
+    if (!item) return entry
+    const out: Record<string, unknown> = { ...item }
+    if (typeof out['title'] !== 'string' || !out['title'].trim()) {
+      const alias =
+        typeof out['sheet'] === 'string' && out['sheet'].trim()
+          ? out['sheet'].trim()
+          : typeof out['name'] === 'string' && out['name'].trim()
+            ? out['name'].trim()
+            : undefined
+      if (alias !== undefined) {
+        out['title'] = alias
+        delete out['sheet']
+        delete out['name']
+      }
+    }
+    const rawCols = Array.isArray(out['columns'])
+      ? out['columns']
+      : Array.isArray(out['headers'])
+        ? out['headers']
+        : Array.isArray(out['fields'])
+          ? out['fields']
+          : undefined
+    let colLabels: string[] | undefined
+    let colKeys: string[] | undefined
+    let hadObjectCols = false
+    if (rawCols) {
+      colLabels = []
+      colKeys = []
+      for (const col of rawCols) {
+        if (isRecord(col)) {
+          hadObjectCols = true
+          const label = String(
+            col['label'] ?? col['title'] ?? col['header'] ?? col['name'] ?? col['key'] ?? col['field'] ?? '',
+          )
+          const key = String(col['key'] ?? col['field'] ?? col['name'] ?? col['id'] ?? label)
+          colLabels.push(label)
+          colKeys.push(key)
+        } else {
+          const str = String(col)
+          colLabels.push(str)
+          colKeys.push(str)
+        }
+      }
+      out['columns'] = colLabels
+      delete out['headers']
+      delete out['fields']
+    }
+    if (typeof out['rows'] === 'string') {
+      const parsedJson = fromJson(out['rows'])
+      if (Array.isArray(parsedJson)) {
+        out['rows'] = parsedJson
+      } else {
+        const parsedRows = parseTableText(out['rows'], colLabels)
+        if (parsedRows) {
+          if (!colLabels && parsedRows.columns.length > 0) {
+            colLabels = parsedRows.columns
+            colKeys = parsedRows.columns
+            out['columns'] = colLabels
+          }
+          out['rows'] = parsedRows.rows
+        }
+      }
+    }
+    if (Array.isArray(out['rows']) && colLabels && colKeys) {
+      out['rows'] = (out['rows'] as unknown[]).map((row) => {
+        if (!isRecord(row)) return row
+        const needsRemap = hadObjectCols || colLabels!.some((label, i) => !(label in row) && colKeys![i]! in row)
+        if (!needsRemap) return row
+        return colLabels!.map((label, i) => {
+          if (label in row) return row[label]
+          const key = colKeys![i]!
+          if (key in row) return row[key]
+          const match = Object.keys(row).find(
+            (k) => k.toLowerCase() === label.toLowerCase() || k.toLowerCase() === key.toLowerCase(),
+          )
+          return match !== undefined ? row[match] : undefined
+        })
+      })
+    }
+    return out
+  })
+  return { ...args, tables }
+}
+
+function parseTableText(text: string, existingColumns?: string[]): { columns: string[]; rows: unknown[][] } | null {
+  const lines = text.split(/\r?\n/)
+  const pipe = lines.filter((line) => /^\s*\|.*\|\s*$/.test(line))
+  if (pipe.length >= 2) {
+    const splitCells = (line: string): string[] =>
+      line
+        .trim()
+        .replace(/^\||\|$/g, '')
+        .split('|')
+        .map((cell) => cell.trim())
+    const body = pipe.filter((line) => !/^\s*\|[\s:|-]+\|\s*$/.test(line)).map(splitCells)
+    if (body.length >= 1) {
+      const headerMatches =
+        existingColumns &&
+        body[0]!.length === existingColumns.length &&
+        body[0]!.every((cell, i) => cell.toLowerCase() === existingColumns[i]!.toLowerCase())
+      const columns = existingColumns ?? body[0]!
+      const dataRows = headerMatches || !existingColumns ? body.slice(1) : body
+      return { columns, rows: dataRows.map((row) => row.map(toScalarCell)) }
+    }
+  }
+  const tsv = lines.filter((line) => line.includes('\t'))
+  if (tsv.length >= 2) {
+    const body = tsv.map((line) => line.split('\t').map((cell) => cell.trim()))
+    const headerMatches =
+      existingColumns &&
+      body[0]!.length === existingColumns.length &&
+      body[0]!.every((cell, i) => cell.toLowerCase() === existingColumns[i]!.toLowerCase())
+    const columns = existingColumns ?? body[0]!
+    const dataRows = headerMatches || !existingColumns ? body.slice(1) : body
+    return { columns, rows: dataRows.map((row) => row.map(toScalarCell)) }
+  }
+  return null
+}
+
+function toScalarCell(cell: string): string | number {
+  if (PLAIN_NUMBER.test(cell) && cell.length < 16) {
+    const num = Number(cell)
+    if (Number.isFinite(num)) return num
+  }
+  return cell
+}
+
+/**
+ * Merges incoming `tables` for `excel-export/export-tables` with any sheets already written to the
+ * same `(workspaceId, filename)` workbook, replacing sheets with matching sanitized titles in place
+ * and appending new sheets so multi-sheet workbooks can be exported 1–2 sheets per round.
+ */
+export function mergeWorkbookTables(
+  store: Map<string, WorkbookTable[]>,
+  workspaceId: string | null | undefined,
+  args: unknown,
+): unknown {
+  if (!isRecord(args)) return args
+  const normalized = normalizeWorkbookArgs(args)
+  const filename = typeof normalized['filename'] === 'string' ? normalized['filename'].trim() : ''
+  const rawTables = normalized['tables']
+  if (!filename || !Array.isArray(rawTables) || rawTables.length === 0) return normalized
+  const validTables: WorkbookTable[] = []
+  for (const item of rawTables) {
+    if (!isValidWorkbookTable(item)) return normalized
+    validTables.push(item)
+  }
+  const key = workbookKey(workspaceId, filename)
+  const merged = [...(store.get(key) ?? [])]
+  for (const table of validTables) {
+    const titleKey = sheetTitleKey(table.title)
+    const index = merged.findIndex((existing) => sheetTitleKey(existing.title) === titleKey)
+    if (index >= 0) merged[index] = table
+    else if (merged.length < 50) merged.push(table)
+  }
+  store.set(key, merged)
+  return { ...normalized, tables: merged }
+}
+
+function isValidWorkbookTable(value: unknown): value is WorkbookTable {
+  return (
+    isRecord(value) &&
+    typeof value['title'] === 'string' &&
+    value['title'].trim().length > 0 &&
+    Array.isArray(value['columns']) &&
+    value['columns'].length > 0 &&
+    value['columns'].every((col) => typeof col === 'string') &&
+    Array.isArray(value['rows']) &&
+    value['rows'].every((row) => Array.isArray(row) || isRecord(row))
+  )
+}
+
+function workbookKey(workspaceId: string | null | undefined, filename: string): string {
+  const base = filename
+    .split(/[\\/]/)
+    .pop()!
+    .replace(/[<>:"|?*\x00-\x1f]/g, '-')
+    .replace(/\.xlsx$/i, '')
+    .trim()
+    .toLowerCase()
+  return `${workspaceId ?? ''}::${base || 'export'}`
+}
+
+function sheetTitleKey(title: string): string {
+  return title
+    .replace(/[:\\/?*[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^'+|'+$/g, '')
+    .slice(0, 31)
+    .trim()
+    .toLowerCase()
 }

@@ -9,7 +9,12 @@ import {
 import { stableStringify } from '../../shared/data/hash'
 import type { RunRecord } from '../../shared/data/store'
 import { isMcpSource, type BackendContext, type FunctionSourceSpec } from '@jaspers-ai/sdk/define'
-import { parseArguments, prepareMcpArguments } from '../../shared/data/arguments'
+import {
+  mergeWorkbookTables,
+  parseArguments,
+  prepareMcpArguments,
+  type WorkbookTable,
+} from '../../shared/data/arguments'
 import { withParameters } from '../../shared/data/tool-parameters'
 import { guardedFetch } from '../../shared/plugins/guarded-fetch'
 import { messageOf } from '../../shared/rpc'
@@ -41,6 +46,8 @@ const texts = new Map<string, string>()
 const cache = new Map<string, string>()
 /** Every stored result by id, and when it may go. */
 const expires = new Map<string, number>()
+/** Accumulated sheets per `(workspaceId, filename)` so multi-sheet workbooks can be exported across calls. */
+const workbooks = new Map<string, WorkbookTable[]>()
 const inFlight = createInFlightMap<{ result: RunResult & { text: string }; citations: unknown }>()
 let seq = 0
 
@@ -71,7 +78,8 @@ export async function runSource(
       : undefined
   const tool = declared()
   const mcpArgs = isMcpSource(def) ? (tool ? prepareMcpArguments(tool.inputSchema, asArgs(args)) : asArgs(args)) : null
-  const preparedArgs: unknown = mcpArgs ?? args
+  const preparedArgs: unknown =
+    mcpArgs ?? (source.id === 'excel-export/export-tables' ? mergeWorkbookTables(workbooks, workspaceId, args) : args)
   // A server answers the same whoever asks; a plugin's code may answer each workspace its own way.
   const key = stableStringify(isMcpSource(def) ? [source.id, mcpArgs] : [source.id, preparedArgs, workspaceId])
   const cached = options.fresh ? null : stillGood(key)

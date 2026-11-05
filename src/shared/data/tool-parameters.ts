@@ -73,10 +73,36 @@ function parameterHint(schema: unknown, root: unknown): string | null {
     }
   }
   if (node['items'] !== undefined) {
-    const itemHint = parameterHint(node['items'], root)
+    const itemHint = parameterHint(node['items'], root) ?? objectItemsHint(node['items'], root)
     if (itemHint) return itemHint
   }
   return boundsOf(node)
+}
+
+/** Formats an array's object item properties (`{ title, columns[], rows[], notes? }[]`), or null when items have no properties. */
+function objectItemsHint(items: unknown, root: unknown): string | null {
+  const node = resolveRef(items, root)
+  if (!isRecord(node) || !isRecord(node['properties'])) return null
+  const properties = node['properties']
+  const names = Object.keys(properties)
+  if (names.length === 0) return null
+  const required = new Set(
+    Array.isArray(node['required'])
+      ? (node['required'] as unknown[]).filter((one): one is string => typeof one === 'string')
+      : [],
+  )
+  const formatField = (name: string): string => {
+    const field = resolveRef(properties[name], root)
+    const isArray =
+      isRecord(field) &&
+      (field['type'] === 'array' ||
+        (Array.isArray(field['type']) && field['type'].includes('array')) ||
+        field['items'] !== undefined)
+    return `${name}${isArray ? '[]' : ''}${required.has(name) ? '' : '?'}`
+  }
+  const must = names.filter((name) => required.has(name)).map(formatField)
+  const may = names.filter((name) => !required.has(name)).map(formatField)
+  return `{ ${[...must, ...may].join(', ')} }[]`
 }
 
 /** Extracts enum or const choices for display, omitting null and empty strings. */

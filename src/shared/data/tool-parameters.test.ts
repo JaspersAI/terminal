@@ -38,12 +38,25 @@ test('fixed choices and numeric bounds are shown beside the parameter name, whil
         limit: { type: 'integer', minimum: 1, maximum: 200 },
         maxRows: { type: 'integer', maximum: 200 },
         minScore: { type: 'number', minimum: 1 },
+        tables: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['title', 'columns', 'rows'],
+            properties: {
+              title: { type: 'string' },
+              columns: { type: 'array', items: { type: 'string' } },
+              rows: { type: 'array', items: { type: 'array' } },
+              notes: { type: 'string' },
+            },
+          },
+        },
       },
       $defs: {
         Period: { type: 'string', enum: ['FY', 'Q1', 'Q2', 'Q3', 'Q4'] },
       },
     }),
-    'topic: sec_filings|screener, ticker, [mode: fast, period: FY|Q1|Q2|Q3|Q4, order: asc|desc, section: mda|risk, forms: 10-K|10-Q, limit: 1..200, maxRows: <=200, minScore: >=1]',
+    'topic: sec_filings|screener, ticker, [mode: fast, period: FY|Q1|Q2|Q3|Q4, order: asc|desc, section: mda|risk, forms: 10-K|10-Q, limit: 1..200, maxRows: <=200, minScore: >=1, tables: { title, columns[], rows[], notes? }[]]',
   )
 })
 

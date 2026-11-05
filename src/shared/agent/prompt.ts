@@ -409,9 +409,13 @@ function describeSources(
             ? ` [plugin ${s.plugin}: needs-secret]`
             : ''
       const takes = s.parameterNames ? ` — takes ${s.parameterNames}` : ''
+      const batchNote =
+        s.id === 'excel-export/export-tables'
+          ? ' (for multi-sheet workbooks, pass 1–2 tables per round with the same filename; each call adds or updates sheets by title)'
+          : ''
       const viewsFor = renderedBy.get(s.id)
       const rendered = viewsFor && viewsFor.length > 0 ? ` (rendered by ${viewsFor.join(', ')})` : ''
-      return `- ${s.id}: ${cap(firstSentence(s.description), SOURCE_MAX)}${takes}${rendered}${on}`
+      return `- ${s.id}: ${cap(firstSentence(s.description), SOURCE_MAX)}${takes}${batchNote}${rendered}${on}`
     }),
   ]
 }
