@@ -15,6 +15,7 @@ import {
   publishText,
   refreshPanel,
   removeElement,
+  editIn,
   setIn,
   setPanelState,
   setRect,
@@ -1040,6 +1041,32 @@ export function setPanelStateChecked(workspaceId: string, panelId: string, path:
   }
   checkState(panel.content, setIn(panel.state, path, value))
   const updated = changeGridOf(workspaceId, panel.id, (grid) => setPanelState(grid, panel.id, path, value)).panel
+  if (panel.error) syncPluginViewErrors()
+  return updated
+}
+
+/**
+ * Replaces one passage in a string inside a panel's state, once the whole result passes the view's schema.
+ */
+export function editPanelStateChecked(
+  workspaceId: string,
+  panelId: string,
+  path: string[],
+  old: unknown,
+  next: unknown,
+  label = 'state',
+): Panel {
+  const { grid } = findElement(workspaceId, panelId)
+  const panel = panelOf(grid, panelId)
+  if (panel.content.kind === 'frame') {
+    const inside = layoutOf(grid, panel.elementId).elements.map((e) => e.id)
+    throw new Error(
+      `${panel.elementId} is a piece of work's tile, which holds no view of its own: set the state of a view inside it (${inside.join(', ') || 'none yet'}).`,
+    )
+  }
+  const nextState = editIn(panel.state, path, old, next, label)
+  checkState(panel.content, nextState)
+  const updated = changeGridOf(workspaceId, panel.id, (g) => setPanelState(g, panel.id, [], nextState)).panel
   if (panel.error) syncPluginViewErrors()
   return updated
 }

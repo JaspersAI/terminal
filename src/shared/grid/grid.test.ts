@@ -47,6 +47,7 @@ import {
   placeFramed,
   placeView,
   removeElement,
+  editIn,
   setIn,
   setMode,
   setPanelState,
@@ -426,13 +427,40 @@ test('setting panel state leaves the rest of it, and the grid it came from, alon
   assert.deepEqual(panelOf(grid, 'p1').state, { text: 'hi', keep: 1 })
 })
 
-test('an empty path replaces the whole state, and a deep one creates what it needs', () => {
-  const grid = build({ content: view('core/note'), state: { text: 'hi' } })
-  assert.deepEqual(setPanelState(grid, 'p1', [], { only: true }).panel.state, { only: true })
+test('an empty path merges top-level keys into the state, and a deep one creates what it needs', () => {
+  const grid = build({ content: view('core/note'), state: { text: 'hi', keep: 1 } })
+  assert.deepEqual(setPanelState(grid, 'p1', [], { only: true }).panel.state, { text: 'hi', keep: 1, only: true })
+  assert.deepEqual(setPanelState(grid, 'p1', [], { text: 'bye' }).panel.state, { text: 'bye', keep: 1 })
   assert.deepEqual(setPanelState(grid, 'p1', ['filters', 'sector'], 'Tech').panel.state, {
     text: 'hi',
+    keep: 1,
     filters: { sector: 'Tech' },
   })
+})
+
+test('editIn replaces a unique passage in a string path or a matching string field on an object path', () => {
+  const state = {
+    sql: "SELECT '1. Offense' AS Factor, 2.6 AS Edge\nUNION ALL SELECT '2. Defense', -0.8",
+    markdown: '# Model\n\nWin Prob: 71.6%\nSpread: -6.0',
+    columns: ['Factor', 'Edge'],
+  }
+  assert.deepEqual(editIn(state, ['sql'], '2.6 AS Edge', '2.8 AS Edge', 'panels/e6/state/sql'), {
+    ...state,
+    sql: "SELECT '1. Offense' AS Factor, 2.8 AS Edge\nUNION ALL SELECT '2. Defense', -0.8",
+  })
+  // Omitting the leaf key on panels/<id>/state resolves the single string field that holds `old`.
+  assert.deepEqual(editIn(state, [], 'Win Prob: 71.6%', 'Win Prob: 74.8%', 'panels/e9/state'), {
+    ...state,
+    markdown: '# Model\n\nWin Prob: 74.8%\nSpread: -6.0',
+  })
+  assert.throws(
+    () => editIn(state, ['sql'], 'missing text', 'new', 'panels/e6/state/sql'),
+    /not in panels\/e6\/state\/sql/,
+  )
+  assert.throws(() => editIn(state, ['sql'], 'SELECT', 'select', 'panels/e6/state/sql'), /2 times/)
+  assert.throws(() => editIn(state, ['sql'], '', 'x', 'panels/e6/state/sql'), /old is the passage/)
+  assert.throws(() => editIn(state, ['sql'], '2.6', '2.6', 'panels/e6/state/sql'), /same/)
+  assert.throws(() => editIn(state, ['columns'], 'Factor', 'Name', 'panels/e6/state/columns'), /not a string/)
 })
 
 test('panels answer to their element id as well as their own, and unknown ids are named', () => {

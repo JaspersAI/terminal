@@ -382,7 +382,7 @@ test('a focused view with text says how long it is and where to read it, and lea
   assert.equal(describeContext(tree(placed), WS, instructionsFor).includes('\ntext:'), false)
 })
 
-test('long values are cut where the model can see that they were', () => {
+test('long values are cut where the model can see that they were and how to read a cut state', () => {
   const placed = placeView(EMPTY_GRID, {
     content: { kind: 'view', view: 'core/note' },
     state: { text: 'x'.repeat(4000) },
@@ -390,7 +390,8 @@ test('long values are cut where the model can see that they were', () => {
   const line = describeContext(tree(placed.grid), WS, instructionsFor)
     .split('\n')
     .find((l) => l.startsWith('state:'))!
-  assert.equal(line.length, 'state: '.length + 2048 + '…(cut)'.length)
+  assert.equal(line.length, 'state: '.length + 2048 + '…(cut; read it with get panels/e1/state)'.length)
+  assert.equal(line.endsWith('…(cut; read it with get panels/e1/state)'), true)
 })
 
 test('an internal source is not offered, and a plugin says what it may use and what is running', () => {
@@ -1134,6 +1135,7 @@ test('the rules forbid unsolicited chart views on watchlist or table requests, f
   assert.match(LOOP_PLACEMENT, /do not add chart views alongside a watchlist or table/i)
   assert.match(LOOP_PLACEMENT, /do not place a separate chart per symbol when one chart/i)
   assert.match(LOOP_PLACEMENT, /pass replace to place_view or call remove_element on the extra views/i)
+  assert.match(LOOP_PLACEMENT, /old and new/i)
   // Preserves isolated room blindness from PR #122:
   assert.doesNotMatch(LOOP_PLACEMENT, /Other work has a tile of its own/i)
 })
