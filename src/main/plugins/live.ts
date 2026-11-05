@@ -1,4 +1,4 @@
-import { checkLiveKey, checkLiveValue } from '../../shared/plugins/live.ts'
+import { AGENTS_PLUGIN, checkLiveKey, checkLiveValue, normalizeAgentsLiveSet } from '../../shared/plugins/live.ts'
 
 // Plugins' live values, held here and nowhere else: not in the tree, which is pushed whole on every
 // change, and not on disk, since a plugin keeps what it needs in its own files and publishes it
@@ -20,8 +20,13 @@ export function setLive(plugin: string, key: string, value: unknown): void {
   checkLiveValue(value)
   let forPlugin = values.get(plugin)
   if (!forPlugin) values.set(plugin, (forPlugin = new Map()))
-  forPlugin.set(key, value)
-  push(plugin, key, value)
+  const normalized = plugin === AGENTS_PLUGIN ? normalizeAgentsLiveSet(key, value, forPlugin) : { value }
+  forPlugin.set(key, normalized.value)
+  push(plugin, key, normalized.value)
+  if (normalized.extra) {
+    forPlugin.set(normalized.extra.key, normalized.extra.value)
+    push(plugin, normalized.extra.key, normalized.extra.value)
+  }
 }
 
 export function deleteLive(plugin: string, key: string): void {

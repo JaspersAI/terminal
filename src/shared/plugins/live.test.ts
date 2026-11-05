@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { checkLiveKey, checkLiveValue, liveKeyOf, researchLiveText, researchRoomOf } from './live.ts'
+import {
+  checkLiveKey,
+  checkLiveValue,
+  liveKeyOf,
+  normalizeAgentsLiveSet,
+  researchLiveText,
+  researchRoomOf,
+} from './live.ts'
 
 test('a key is names joined by slashes', () => {
   assert.equal(checkLiveKey('rooms/flws-credit-7k2p/m/000001'), 'rooms/flws-credit-7k2p/m/000001')
@@ -202,4 +209,53 @@ test('researchLiveText prefers the final answer after tool steps and falls back 
     citations: [],
   }))
   assert.equal(finished, '#1 [Basic Analyst]: ## Summary\n\nThe revolver matures in 2027. [2]')
+})
+
+test('normalizeAgentsLiveSet preserves signedIn and company statuses across background sign-out or loaded conversations while gating empty unsigned sessions', () => {
+  const empty = new Map<string, unknown>()
+  // Before any sign-in or loaded conversation, setup stays signedIn: false so Setup is shown.
+  assert.deepEqual(normalizeAgentsLiveSet('setup', { signedIn: false, status: 'needs-sign-in', error: null }, empty), {
+    value: { signedIn: false, status: 'needs-sign-in', error: null },
+  })
+  // An empty conversation (messages: []) does not unlock setup.
+  const withUnsignedSetup = new Map<string, unknown>([
+    ['setup', { signedIn: false, status: 'needs-sign-in', error: null }],
+  ])
+  assert.deepEqual(normalizeAgentsLiveSet('chat/c1', { messages: [] }, withUnsignedSetup), {
+    value: { messages: [] },
+  })
+
+  // Publishing a conversation with loaded messages upgrades setup to signedIn: true so ChatPane renders it.
+  const loadedChat = {
+    messages: [
+      { seq: 1, role: 'user', text: 'SpaceX ownership report' },
+      { seq: 2, role: 'agent', agent: 'research-analyst', status: 'done', text: 'SpaceX is privately held.' },
+    ],
+  }
+  assert.deepEqual(normalizeAgentsLiveSet('chat/c1', loadedChat, withUnsignedSetup), {
+    value: loadedChat,
+    extra: {
+      key: 'setup',
+      value: { signedIn: true, status: 'needs-sign-in', error: null },
+    },
+  })
+
+  // Once signed in or holding a loaded conversation, background sign-out keeps signedIn: true and preserves sec statuses.
+  const active = new Map<string, unknown>([
+    ['setup', { signedIn: true, status: 'ready', error: null }],
+    ['chat/c1', loadedChat],
+    ['sec', [{ ticker: 'TSLA', company: 'Tesla, Inc.', filings: 12, chunks: 340 }]],
+  ])
+  const afterSignOut = normalizeAgentsLiveSet(
+    'setup',
+    { signedIn: false, status: 'needs-sign-in', error: null },
+    active,
+  )
+  assert.deepEqual(afterSignOut, {
+    value: { signedIn: true, status: 'needs-sign-in', error: null },
+  })
+  active.set('setup', afterSignOut.value)
+  assert.deepEqual(normalizeAgentsLiveSet('sec', [], active), {
+    value: [{ ticker: 'TSLA', company: 'Tesla, Inc.', filings: 12, chunks: 340 }],
+  })
 })
