@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createLimiter, isOverflow, isRetryable, retryAfter, retryLine, retryWait, RETRIES_MAX } from './limits.ts'
+import {
+  createLimiter,
+  isOverflow,
+  isRetryable,
+  isTurnTimeout,
+  retryAfter,
+  retryLine,
+  retryWait,
+  RETRIES_MAX,
+  STALLED_TURN_MS,
+} from './limits.ts'
 
 test('a limiter runs everything, never more than its limit at once, and passes failures through', async () => {
   const limit = createLimiter(2)
@@ -53,6 +63,40 @@ test('rate limits, server errors, timeouts, and dropped connections are worth on
 test('a provider that says it is overloaded part way through a stream is worth another try', () => {
   assert.equal(isRetryable('Overloaded'), true)
   assert.equal(isRetryable('Anthropic: overloaded_error'), true)
+})
+
+test('a turn that stalled on a silent stream or a gateway timeout is told apart from rate limits, server errors, and brief network hiccups', () => {
+  assert.equal(STALLED_TURN_MS, 60_000)
+  for (const message of [
+    'Jaspers: nothing arrived for 300 s',
+    'Anthropic: nothing arrived for 90 s',
+    'Jaspers returned 524: timed out',
+    'Jaspers returned 522: timed out',
+    'Anthropic returned 504: timed out',
+    'Anthropic returned 408: request timeout',
+    'Jaspers: The operation was aborted due to timeout',
+    'OpenAI: Request timed out',
+  ]) {
+    assert.equal(isTurnTimeout(message), true, message)
+    assert.equal(isTurnTimeout(message, STALLED_TURN_MS), true, message)
+  }
+  // Stream silence and Cloudflare 522/524 origin timeouts always indicate a stalled turn, while a fast 408/504 can retry in place.
+  assert.equal(isTurnTimeout('Jaspers returned 524: timed out', 125_225), true)
+  assert.equal(isTurnTimeout('Jaspers: nothing arrived for 90 s', 5_000), true)
+  assert.equal(isTurnTimeout('Anthropic returned 504: timed out', 5_000), false)
+  assert.equal(isTurnTimeout('Anthropic returned 408: request timeout', 5_000), false)
+
+  for (const message of [
+    'Anthropic returned 429: rate limited',
+    'OpenRouter returned 502: bad gateway',
+    'OpenRouter returned 503: unavailable',
+    'Anthropic returned 529: overloaded',
+    'Ollama: fetch failed (ECONNRESET)',
+    'Anthropic returned 400: request timed out parameter is invalid',
+  ]) {
+    assert.equal(isTurnTimeout(message), false, message)
+    assert.equal(isTurnTimeout(message, 125_000), false, message)
+  }
 })
 
 test('each try waits about twice as long as the last, never past a minute, and then there are no more', () => {

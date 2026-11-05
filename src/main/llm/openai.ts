@@ -2,7 +2,7 @@ import { post, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
 import { getAttachedImages } from '../agent/attachments.ts'
 import { marksCache } from '../../shared/llm/providers.ts'
-import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../shared/llm/llm'
+import type { Completion, CompleteOptions, Effort, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
   streams,
   refusedStreaming,
@@ -44,6 +44,9 @@ interface OpenAiResponse {
   }
 }
 
+/** Models that refused `reasoning_effort` on Chat Completions this session, asked without it from then on. */
+const withoutReasoningEffort = new Set<string>()
+
 export async function openai(
   config: ProviderConfig<'llm'>,
   system: string,
@@ -51,39 +54,50 @@ export async function openai(
   tools: ToolDefinition[],
   options: CompleteOptions,
 ): Promise<Completion> {
-  const body = openaiBody(
-    options.model || config.model,
-    system,
-    history,
-    tools,
-    options.maxTokens,
-    options.loop === true && marksCache(config.provider),
-  )
+  const model = options.model || config.model
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }
   if (config.token) headers.authorization = `Bearer ${config.token}`
 
   const url = `${config.baseUrl}/chat/completions`
-  const model = options.model || config.model
-  if (streams(options, model)) {
-    try {
-      const reader = openaiStream(options.onText, options.onCall, options.onThinking)
-      // Without asking, a streamed reply says nothing about what it cost; the last chunk then carries it.
-      const streamed = JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } })
-      for await (const payload of sse(config, url, headers, streamed, options.timeoutMs, options.signal)) {
-        const parsed = event(payload)
-        if (parsed) reader.push(parsed)
+  const send = async (effort: Effort | undefined): Promise<Completion> => {
+    const body = openaiBody(
+      model,
+      system,
+      history,
+      tools,
+      options.maxTokens,
+      options.loop === true && marksCache(config.provider),
+      effort,
+    )
+    if (streams(options, model)) {
+      try {
+        const reader = openaiStream(options.onText, options.onCall, options.onThinking)
+        // Without asking, a streamed reply says nothing about what it cost; the last chunk then carries it.
+        const streamed = JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } })
+        for await (const payload of sse(config, url, headers, streamed, options.timeoutMs, options.signal)) {
+          const parsed = event(payload)
+          if (parsed) reader.push(parsed)
+        }
+        return readOpenai(reader.done())
+      } catch (err) {
+        if (!refusedStreaming(err)) throw err
+        withoutStreaming.add(model)
       }
-      return readOpenai(reader.done())
-    } catch (err) {
-      if (!refusedStreaming(err)) throw err
-      withoutStreaming.add(model)
     }
+    return readOpenai(
+      await post<OpenAiResponse>(config, url, headers, JSON.stringify(body), options.timeoutMs, options.signal),
+    )
   }
-  return readOpenai(
-    await post<OpenAiResponse>(config, url, headers, JSON.stringify(body), options.timeoutMs, options.signal),
-  )
+  const effort = options.effort === 'low' && !withoutReasoningEffort.has(model) ? 'low' : undefined
+  try {
+    return await send(effort)
+  } catch (err) {
+    if (!effort || !(err instanceof Error) || !/ returned 400: .*reasoning/i.test(err.message)) throw err
+    withoutReasoningEffort.add(model)
+    return send(undefined)
+  }
 }
 
 /**
@@ -101,6 +115,7 @@ export function openaiBody(
   tools: ToolDefinition[],
   maxTokens: number | undefined,
   cache = false,
+  effort?: Effort,
 ): Record<string, unknown> {
   const messages: unknown[] = [
     cache
@@ -151,6 +166,7 @@ export function openaiBody(
   })
   const body: Record<string, unknown> = { model, messages }
   if (cache) body.cache_control = MARK
+  if (effort === 'low') body.reasoning_effort = 'low'
   if (maxTokens !== undefined) body.max_tokens = maxTokens
   if (tools.length) {
     body.tools = tools.map((t) => ({

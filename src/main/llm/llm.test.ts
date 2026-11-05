@@ -686,7 +686,11 @@ test('through OpenRouter a tool loop asks for automatic caching and marks the sy
   })
   const plain = openaiBody('gpt-4.1', 'S', PLACED, [], undefined, false)
   assert.equal('cache_control' in plain, false)
+  assert.equal('reasoning_effort' in plain, false)
   assert.deepEqual((plain.messages as unknown[])[0], { role: 'system', content: 'S' })
+
+  const lowEffort = openaiBody('gemini-4-argon', 'S', PLACED, [], undefined, false, 'low')
+  assert.equal(lowEffort.reasoning_effort, 'low')
 })
 
 test('what OpenRouter served from its cache and wrote to it is read into the usage', () => {

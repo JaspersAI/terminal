@@ -1,6 +1,6 @@
 import { sleep } from '../../../shared/abort'
 import { saidOf } from '../../../shared/agent/rounds'
-import { isRetryable, retryLine, retryWait } from '../../../shared/llm/limits'
+import { isRetryable, isTurnTimeout, retryLine, retryWait } from '../../../shared/llm/limits'
 import type { Completion, Effort, ToolDefinition, Turn } from '../../../shared/llm/llm'
 import { ProviderError } from '../../llm/http'
 import { complete } from '../../llm/llm'
@@ -33,6 +33,12 @@ export interface RoundRequest {
   maxTokens?: number
   timeoutMs?: number
   effort?: Effort
+  /**
+   * Whether the caller mends a stalled turn (stream silence or a gateway/request timeout on a long
+   * generation) by restating the turn with a smaller-step note: `request` then throws on the first
+   * stalled timeout instead of repeating the identical prompt 6 times in place.
+   */
+  restateOnTimeout?: boolean
 }
 
 /**
@@ -56,6 +62,7 @@ export async function request({
   maxTokens,
   timeoutMs,
   effort = EFFORT,
+  restateOnTimeout = false,
 }: RoundRequest): Promise<Completion> {
   const signal = entry.controller.signal
   const says = saidOf(entry.origin, shown)
@@ -91,16 +98,18 @@ export async function request({
       })
       return reply
     } catch (err) {
+      const elapsedMs = Date.now() - began
       const message = err instanceof Error ? err.message : String(err)
       noteLlm(entry.runId, {
         ...asked,
-        ms: Date.now() - began,
+        ms: elapsedMs,
         ok: false,
         status: err instanceof ProviderError ? err.status : null,
         message,
         retryAfterMs: err instanceof ProviderError ? err.retryAfterMs : null,
       })
       if (signal.aborted) throw err
+      if (restateOnTimeout && isTurnTimeout(message, elapsedMs)) throw err
       const wait = isRetryable(message)
         ? retryWait(attempt, err instanceof ProviderError ? err.retryAfterMs : null)
         : null

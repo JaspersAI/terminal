@@ -28,6 +28,23 @@ export function isRetryable(message: string): boolean {
   )
 }
 
+/** How long a request must have waited before a generic 408/504/timeout is treated as a stalled turn rather than a brief hiccup. */
+export const STALLED_TURN_MS = 60_000
+
+/**
+ * Whether a failure is a turn that stalled while the model was thinking or buffering an oversized
+ * tool call: stream silence (`nothing arrived for … s`), a proxy origin timeout (`522` or `524`,
+ * such as Cloudflare's ~100–125 s cutoff), or a request/gateway timeout (`408`, `504`, `timed out`)
+ * that waited at least `STALLED_TURN_MS`. Repeating the identical prompt 6 times in place stalls
+ * the same way; restating the turn with a smaller-step note lets the loop recover.
+ */
+export function isTurnTimeout(message: string, elapsedMs?: number): boolean {
+  if (/nothing arrived for \d+ s/i.test(message) || /returned (522|524)\b/.test(message)) return true
+  if (/returned 4(?!08\b)\d\d\b/.test(message) || /returned 5(?!04\b)\d\d\b/.test(message)) return false
+  if (!/returned (408|504)\b|aborted due to timeout|timed out/i.test(message)) return false
+  return elapsedMs === undefined || elapsedMs >= STALLED_TURN_MS
+}
+
 /**
  * What a run says when its provider failed in a way that passes and it is about to ask again: what
  * the provider said, and how long the wait is. Never a wait of no seconds.
