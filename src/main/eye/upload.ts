@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { batchAccepted, EYE_TOKEN, eventsPart, eyeEndpoint, retryDelay } from '../../shared/app/eye'
+import { STARTUP_GRACE_MS } from '../../shared/tasks/tasks'
 import { eyeRoot } from '../home'
 import { getState, subscribe } from '../state'
 import { liveSession, onRecorded, ownSession, queuedBatches, record } from './eye'
@@ -44,6 +45,8 @@ const IDLE_MS = 5 * 60_000
 
 let timer: NodeJS.Timeout | null = null
 let sending = false
+let sleeping = false
+let wakeUntil = 0
 let inFlightPass: Promise<void> | null = null
 /** A wake that came during a pass: the pass runs again as soon as it ends. */
 let nudged = false
@@ -71,6 +74,19 @@ export function startUploads(): void {
 export function stopUploads(): void {
   if (timer) clearTimeout(timer)
   timer = null
+}
+
+/** Disarms telemetry uploads while the machine sleeps so none fire before the network is back. */
+export function suspendUploads(): void {
+  sleeping = true
+  stopUploads()
+}
+
+/** Re-arms telemetry uploads after the post-wake grace window so the network has settled. */
+export function wakeUploads(graceMs = STARTUP_GRACE_MS): void {
+  sleeping = false
+  wakeUntil = Date.now() + Math.max(0, graceMs)
+  if (ENDPOINT !== null) schedule(Math.max(NEXT_MS, graceMs))
 }
 
 /** How long quit waits at most for this session's final lines to reach the server. */
@@ -123,12 +139,13 @@ export async function flushUploads(timeoutMs = FLUSH_TIMEOUT_MS): Promise<void> 
 }
 
 function wake(): void {
-  if (failures > 0 || liveSession() === null) return
+  if (sleeping || failures > 0 || liveSession() === null) return
   if (sending) nudged = true
-  else schedule(NEXT_MS)
+  else schedule(Math.max(NEXT_MS, wakeUntil - Date.now()))
 }
 
 function schedule(ms: number): void {
+  if (sleeping) return
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => {
     const p = pass()
@@ -140,7 +157,12 @@ function schedule(ms: number): void {
 
 /** One pass: the oldest batch with something in it, sent. */
 async function pass(): Promise<void> {
-  if (sending) return
+  if (sending || sleeping) return
+  const wait = wakeUntil - Date.now()
+  if (wait > 0) {
+    schedule(wait)
+    return
+  }
   sending = true
   try {
     const batches = (await queuedBatches()).sort((a, b) => a.at - b.at || a.session.localeCompare(b.session))

@@ -53,6 +53,10 @@ export interface Session {
   signedIn(): boolean
   /** Checks a stored sign-in on open: unseals the tokens and renews an expiring one, ending with `reason` when invalid or unreadable. */
   check(): Promise<void>
+  /** Disarms token refreshes while the machine sleeps so a single-use refresh token is never sent on a dying socket. */
+  suspend(): void
+  /** Holds off token refreshes for `graceMs` after wake while the network settles. */
+  wake(graceMs?: number): void
   /** The access token for a request made now, renewed first when it is about to run out. Rejects with `SignedOutError` when there is no sign-in. */
   token(): Promise<string>
   /** A fetch that goes out as the account: the bearer added, a 401, 402, or 403 renewed once and sent again, a refusal thrown in the service's own words. */
@@ -85,6 +89,7 @@ export class RefusedError extends Error {
 }
 
 const CLIENT_NAME = 'Jaspers Terminal'
+const DEFAULT_WAKE_GRACE_MS = 15_000
 
 /** Account's word that a grant is over, which no retry mends; anything else it answers is a passing failure, and the tokens stay for the next try. */
 const GRANT_OVER = new Set([
@@ -101,17 +106,44 @@ export function createSession(deps: SessionDeps): Session {
   /** The page the running flow sent the browser to, once it has. */
   let page: string | null = null
   let renewing: Promise<JaspersTokens | null> | null = null
+  let sleeping = false
+  let wakeUntil = 0
 
-  /** Account's endpoints, read once and kept. A failure is not kept, so the next call asks again. */
-  function discover(): Promise<AuthorizationServerMetadata> {
+  function suspend(): void {
+    sleeping = true
+  }
+
+  function wake(graceMs = DEFAULT_WAKE_GRACE_MS): void {
+    sleeping = false
+    wakeUntil = deps.now() + Math.max(0, graceMs)
+  }
+
+  function asleepOrWaking(): boolean {
+    return sleeping || deps.now() < wakeUntil
+  }
+
+  /**
+   * Fetch for metadata discovery, with a failure to reach Account thrown as a plain Error: the MCP
+   * SDK reads a TypeError as a browser's CORS refusal, retries without headers across every
+   * fallback URL, and then reports that the server publishes no metadata.
+   */
+  const reach: FetchLike = (url, init) =>
+    Promise.resolve(deps.fetch(url, init)).catch((err: unknown) => {
+      throw new Error(err instanceof Error ? err.message : String(err), { cause: err })
+    })
+
+  /** Account's endpoints, read once and kept unless `fresh` asks to probe reachability first. A failure is not kept, so the next call asks again. */
+  function discover(fresh = false): Promise<AuthorizationServerMetadata> {
+    if (fresh) metadata = null
     if (!metadata) {
-      metadata = discoverAuthorizationServerMetadata(deps.account, { fetchFn: deps.fetch }).then((found) => {
+      const request = discoverAuthorizationServerMetadata(deps.account, { fetchFn: reach }).then((found) => {
         if (found) return found
         throw new Error(`${deps.account} publishes no OAuth metadata.`)
       })
-      metadata.catch(() => {
-        metadata = null
+      request.catch(() => {
+        if (metadata === request) metadata = null
       })
+      metadata = request
     }
     return metadata
   }
@@ -225,9 +257,16 @@ export function createSession(deps: SessionDeps): Session {
       end('The sign-in has no client registration to renew it with. Sign in again.')
       return null
     }
+    if (asleepOrWaking()) {
+      throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+    }
     try {
+      const found = await discover(true)
+      if (asleepOrWaking()) {
+        throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+      }
       const answer = await refreshAuthorization(deps.account, {
-        metadata: await discover(),
+        metadata: found,
         clientInformation: client,
         refreshToken: held.refresh,
         fetchFn: deps.fetch,
@@ -295,7 +334,7 @@ export function createSession(deps: SessionDeps): Session {
 
   async function call<T>(send: () => Promise<T>): Promise<T> {
     const held = current()
-    const before = held && !nearExpiry(held, deps.now()) ? held.access : await token().catch(() => null)
+    const before = held ? (nearExpiry(held, deps.now()) ? await token() : held.access) : null
     const result = await send()
     if (!before || !needsSubscription(result)) return result
     let again: string | null
@@ -340,6 +379,8 @@ export function createSession(deps: SessionDeps): Session {
     signOut,
     signedIn: () => deps.read().tokens !== null,
     check,
+    suspend,
+    wake,
     token,
     fetch: asAccount,
     call,

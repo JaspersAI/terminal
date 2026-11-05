@@ -31,7 +31,7 @@ import { deleteRecordings, endSession, eyeFolder, startEye } from './eye/eye'
 import { recordAction, recordNote, startTelemetry } from './eye/taps'
 import { closePendingRuns } from './agent/utils/record'
 import { knownSecrets } from './agent/utils/settings'
-import { canFlushUploads, flushUploads, startUploads, stopUploads } from './eye/upload'
+import { canFlushUploads, flushUploads, startUploads, stopUploads, suspendUploads, wakeUploads } from './eye/upload'
 import { startTheme } from './app/theme'
 import { installUpdate, startUpdates } from './app/updates'
 import { startTasks, stopTasks, suspendTasks, wakeTasks } from './tasks/tasks'
@@ -41,7 +41,14 @@ import { registerVoiceIpc } from './llm/voice'
 import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
 import { anyInFront, isHttps, openAllStored, registerDragIpc, showAll, watchDisplays } from './grid/windows'
 import { installMenu } from './app/menu'
-import { accountPageAddress, checkSignIn, onSignInChange, refreshTerms } from './jaspers/jaspers'
+import {
+  accountPageAddress,
+  checkSignIn,
+  onSignInChange,
+  refreshTerms,
+  suspendJaspers,
+  wakeJaspers,
+} from './jaspers/jaspers'
 
 // The schemes a plugin view's iframe loads from have to be declared before the app is ready; their
 // handlers come after it, below.
@@ -85,6 +92,12 @@ app.whenReady().then(async () => {
   // Before the plugins, since a stdio connection's command is looked up on PATH when it connects,
   // and an app opened from Finder has launchd's PATH rather than the user's.
   void adoptShellPath().finally(() => startPlugins())
+  const wakeAll = (): void => {
+    wakeTasks()
+    wakeRetries()
+    wakeJaspers()
+    wakeUploads()
+  }
   // The scheduler. A call task runs its tool the way the orchestrator would, on the task's
   // workspace; an instructions task is a request to the orchestrator, in a thread of its own, and its
   // reply joins the workspace's conversation. Neither can open the key field: nobody may be there to
@@ -94,7 +107,11 @@ app.whenReady().then(async () => {
     runCall: runTaskCall,
     runAsk: runTask,
     intoChat: taskSaid,
-    onWake: wakeRetries,
+    onWake: () => {
+      wakeRetries()
+      wakeJaspers()
+      wakeUploads()
+    },
   })
   registerConnectionIpc()
   registerAppsIpc()
@@ -212,18 +229,17 @@ app.whenReady().then(async () => {
     suspendTasks: () => {
       suspendTasks()
       suspendRetries()
+      suspendJaspers()
+      suspendUploads()
     },
-    wakeTasks: () => {
-      wakeTasks()
-      wakeRetries()
-    },
+    wakeTasks: wakeAll,
     installUpdate,
   })
   // Eye, if the user has it on: a frame of the app's own windows every minute, and a line of
   // telemetry for what the app did. It records into a folder on this machine, and the uploader
   // sends each piece to Jaspers as soon as it is whole. Started here rather than with a window, so
   // recording carries on with the windows closed to the menu bar, as the tasks do.
-  startEye({ secrets: knownSecrets })
+  startEye({ secrets: knownSecrets, onWake: wakeAll })
   startTelemetry()
   startUploads()
   // A launch at login starts hidden: the windows load, so the views on screen keep working, and
