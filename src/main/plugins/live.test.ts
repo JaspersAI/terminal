@@ -85,3 +85,38 @@ test('a plugin has live values while any is published, and none once they are de
   clearLive('p7')
   assert.equal(hasLive('p7'), false)
 })
+
+test('agents live store preserves loaded conversations and company statuses when signed out in the background', () => {
+  clearLive('agents')
+  const win = window(8)
+  subscribeLive('agents', 'setup', win)
+  subscribeLive('agents', 'sec', win)
+  subscribeLive('agents', 'chat/c1', win)
+
+  // Initial unsigned state before any conversation is opened.
+  setLive('agents', 'setup', { signedIn: false, status: 'needs-sign-in', error: null })
+  assert.deepEqual(getLive('agents', 'setup'), { signedIn: false, status: 'needs-sign-in', error: null })
+
+  // Opening a saved conversation with messages upgrades setup.signedIn to true and notifies subscribers.
+  const loadedChat = {
+    messages: [
+      { seq: 1, role: 'user', text: 'SpaceX ownership report' },
+      { seq: 2, role: 'agent', agent: 'research-analyst', status: 'done', text: 'Ownership breakdown...' },
+    ],
+  }
+  setLive('agents', 'chat/c1', loadedChat)
+  assert.deepEqual(getLive('agents', 'setup'), { signedIn: true, status: 'needs-sign-in', error: null })
+
+  // Store connects and publishes companies, then background refresh token expiration signs out.
+  setLive('agents', 'setup', { signedIn: true, status: 'ready', error: null })
+  const companies = [{ ticker: 'TSLA', company: 'Tesla, Inc.', filings: 8, chunks: 210 }]
+  setLive('agents', 'sec', companies)
+
+  setLive('agents', 'setup', { signedIn: false, status: 'needs-sign-in', error: null })
+  setLive('agents', 'sec', [])
+
+  assert.deepEqual(getLive('agents', 'setup'), { signedIn: true, status: 'needs-sign-in', error: null })
+  assert.deepEqual(getLive('agents', 'sec'), companies)
+  assert.deepEqual(getLive('agents', 'chat/c1'), loadedChat)
+  clearLive('agents')
+})

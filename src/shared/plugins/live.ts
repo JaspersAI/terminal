@@ -12,6 +12,78 @@ const SEGMENT = /^[A-Za-z0-9._-]+$/
 export const RESEARCH_PLUGIN = 'research'
 export const RESEARCH_ROOM_VIEW = 'research/room'
 export const RESEARCH_THREAD_SOURCE = 'research/thread'
+export const AGENTS_PLUGIN = 'agents'
+
+/** Whether any conversation published in `entries` (`chat/<id>`) holds one or more messages. */
+function hasLoadedAgentsConversation(entries: ReadonlyMap<string, unknown>): boolean {
+  for (const [key, value] of entries) {
+    if (!key.startsWith('chat/')) continue
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      const messages = (value as Record<string, unknown>)['messages']
+      if (Array.isArray(messages) && messages.length > 0) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Normalizes a live value published by the `agents` plugin so an already-loaded conversation or an
+ * active session is not replaced by the initial `<Setup />` sign-in gate or stripped of its
+ * company chips when `agents/research` transitions out of `ready` (for example on a background
+ * refresh token expiration or transient sleep/wake disconnect).
+ */
+export function normalizeAgentsLiveSet(
+  key: string,
+  value: unknown,
+  existing: ReadonlyMap<string, unknown>,
+): { value: unknown; extra?: { key: string; value: unknown } } {
+  if (key === 'setup' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const nextSetup = value as Record<string, unknown>
+    if (nextSetup['signedIn'] === false) {
+      const prevSetup = existing.get('setup')
+      const wasSignedIn =
+        typeof prevSetup === 'object' &&
+        prevSetup !== null &&
+        !Array.isArray(prevSetup) &&
+        (prevSetup as Record<string, unknown>)['signedIn'] === true
+      if (wasSignedIn || hasLoadedAgentsConversation(existing)) {
+        return { value: { ...nextSetup, signedIn: true } }
+      }
+    }
+    return { value }
+  }
+  if (key.startsWith('chat/') && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const messages = (value as Record<string, unknown>)['messages']
+    if (Array.isArray(messages) && messages.length > 0) {
+      const prevSetup = existing.get('setup')
+      if (prevSetup === undefined) {
+        return { value, extra: { key: 'setup', value: { signedIn: true, status: 'ready', error: null } } }
+      }
+      if (
+        typeof prevSetup === 'object' &&
+        prevSetup !== null &&
+        !Array.isArray(prevSetup) &&
+        (prevSetup as Record<string, unknown>)['signedIn'] === false
+      ) {
+        return { value, extra: { key: 'setup', value: { ...(prevSetup as Record<string, unknown>), signedIn: true } } }
+      }
+    }
+    return { value }
+  }
+  if (key === 'sec' && Array.isArray(value) && value.length === 0) {
+    const prevSec = existing.get('sec')
+    const prevSetup = existing.get('setup')
+    const notReady =
+      typeof prevSetup === 'object' &&
+      prevSetup !== null &&
+      !Array.isArray(prevSetup) &&
+      (prevSetup as Record<string, unknown>)['status'] !== 'ready'
+    if (notReady && Array.isArray(prevSec) && prevSec.length > 0) {
+      return { value: prevSec }
+    }
+  }
+  return { value }
+}
 
 export function checkLiveKey(key: unknown): string {
   if (
