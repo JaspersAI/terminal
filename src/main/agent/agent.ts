@@ -1,7 +1,17 @@
 import { startOf } from '../../shared/agent/aside'
 import { dayOf, overBudget } from '../../shared/agent/budget'
 import { afterRound, handoffReply, MAX_ROUNDS, shouldDeferForAdded } from '../../shared/agent/rounds'
-import { cutShort, windowFull } from '../../shared/agent/stop'
+import {
+  canRestateCut,
+  CUT_NOTE,
+  CUT_OFF,
+  CUT_TEXT_NOTE,
+  CUTS_MAX,
+  cutShort,
+  turnTimeoutCut,
+  windowFull,
+} from '../../shared/agent/stop'
+import { isTurnTimeout } from '../../shared/llm/limits'
 import type { Completion, Turn } from '../../shared/llm/llm'
 import { recordUsage, spentToday } from '../data/store'
 import type { ProviderConfig } from '../secrets'
@@ -34,13 +44,6 @@ import { citedBy, mend, offered, putAway, restate, sentOf, shorten, userLine } f
 
 /** How often one run's thread may be mended before the refusal is the answer. Each time it is shorter, so this is a backstop. */
 const MENDS_MAX = 8
-/** How often one run may be cut off in the middle of a call before that is the answer. */
-const CUTS_MAX = 2
-const CUT_OFF = "(Cut off at the model's output limit.)"
-const CUT_TEXT_NOTE =
-  'Your last reply ran past the output limit before it finished, so it was dropped. Keep your words short: make the tool calls the procedure names, and write text only for the final report.'
-const CUT_NOTE =
-  'Your last reply ran past the output limit in the middle of a tool call, so it was dropped and nothing was run. Make the call again with less in it, or in parts.'
 
 /** A turn of the user's. */
 export type UserTurn = Extract<Turn, { role: 'user' }>
@@ -146,6 +149,7 @@ async function loop({
       // What the rounds so far brought may be more than the request keeps whole in front of its model.
       putAway(history, sending, log)
       const available = offered(tools(), history)
+      const spent = round > most
       let reply: Completion
       try {
         reply = await request({
@@ -159,16 +163,34 @@ async function loop({
           tell,
           shown: !quiet,
           maxTokens,
+          ...(cuts > 0 ? { effort: 'low' as const } : {}),
+          restateOnTimeout: canRestateCut(available.length > 0, quiet, spent),
         })
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
         // A refusal that is about the thread rather than the request is mended, and asked again.
         const mendable = !signal.aborted && mends < MENDS_MAX
-        if (!mendable || !mend(history, sending, err instanceof Error ? err.message : String(err), tell)) throw err
-        mends++
-        restate(history, prompt.round())
-        // The provider answered nothing, so the round is not spent: it is asked again as the same one.
-        round--
-        continue
+        if (mendable && mend(history, sending, message, tell)) {
+          mends++
+          restate(history, prompt.round())
+          // The provider answered nothing, so the round is not spent: it is asked again as the same one.
+          round--
+          continue
+        }
+        // A turn that timed out (stream silence or a gateway 524/504 timeout) in a tool loop was likely
+        // stalled buffering a tool call too large for one turn: tell the model what happened and ask for
+        // a smaller step at low reasoning effort instead of repeating the identical prompt 6 times.
+        const timedOut =
+          !signal.aborted && isTurnTimeout(message)
+            ? turnTimeoutCut(message, ++cuts, available.length > 0, quiet, spent)
+            : null
+        if (timedOut) {
+          tell(timedOut.tell)
+          restate(history, prompt.round(), timedOut.note)
+          round--
+          continue
+        }
+        throw err
       }
       cost.input += reply.usage.input
       cost.output += reply.usage.output
@@ -191,7 +213,6 @@ async function loop({
         const said = reply.text.trim()
         throw new Error(`${config.provider.name} declined this request${said ? `: ${said}` : '.'}`)
       }
-      const spent = round > most
       if (short === 'length' && (reply.toolCalls.length > 0 || quiet) && !spent) {
         // A call cut off part way has arguments that stop mid-word. It is never run, and the reply is
         // not kept: the model is told what happened and asked again. A quiet run's words are for

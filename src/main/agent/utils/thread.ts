@@ -23,6 +23,7 @@ import {
 import { keepTail, settle } from '../../../shared/agent/thread-store'
 import { CLOSED_NOTE, lastExchange, maskExchange, transcript, type Exchange } from '../../../shared/agent/transcript'
 import { attachedFileNames, stripAttachedFiles } from '../../../shared/agent/attachments'
+import { restate } from '../../../shared/agent/stop'
 import { ranByUser, saidByUser } from '../../../shared/agent/typed'
 import { isOverflow } from '../../../shared/llm/limits'
 import type { Turn } from '../../../shared/llm/llm'
@@ -391,12 +392,7 @@ function readAgain(history: Turn[]): Tool {
   }
 }
 
-/** Puts the state as it is now on the turn about to be sent again, with a note for the model when there is one. */
-export function restate(history: Turn[], state: string, note?: string): void {
-  const last = history[history.length - 1]
-  if (!last || last.role === 'assistant') return
-  last.context = [state, ...(note ? [note] : [])].join('\n')
-}
+export { restate }
 
 /** A user turn for the log: what was typed, and the size of any skill or attached files in it. */
 export function userLine(text: string): string {
