@@ -141,6 +141,25 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
           input: {
             type: 'object',
             description: "The source's arguments, as its line in the sources block names them.",
+            properties: {
+              tables: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    title: { type: 'string' },
+                    columns: { type: 'array', items: { type: 'string' } },
+                    rows: {
+                      type: 'array',
+                      items: {
+                        anyOf: [{ type: 'array' }, { type: 'object', additionalProperties: true }],
+                      },
+                    },
+                  },
+                  required: ['title', 'columns', 'rows'],
+                },
+              },
+            },
             additionalProperties: true,
           },
         },
@@ -238,9 +257,14 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
           connection && 'mcp' in def
             ? state.connections[connection]?.tools.find((one) => one.name === def.tool)
             : undefined
+        const baseDescription = def.description ?? tool?.description ?? ''
+        const description =
+          id === 'excel-export/export-tables'
+            ? `${baseDescription} For multi-sheet workbooks, pass 1 or 2 tables per run_source call (one call per round) with the same filename; each call adds or updates sheets by title in that workbook.`
+            : baseDescription
         return JSON.stringify({
           source: id,
-          description: def.description ?? tool?.description ?? '',
+          description,
           parameters: sourceParameters(def, tool),
         })
       },

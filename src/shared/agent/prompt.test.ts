@@ -1215,3 +1215,35 @@ test('the rules and source catalog direct screening and rendered sources to the 
   assert.match(LOOP_PLACEMENT, /screener-mcp\/screener/)
   assert.match(LOOP_PLACEMENT, /core\/table/)
 })
+
+test('excel-export/export-tables is described with multi-sheet batching guidance so models pass 1–2 tables per round with the same filename', () => {
+  const exportTables: SourceInfo = {
+    id: 'excel-export/export-tables',
+    plugin: 'excel-export',
+    description:
+      "Writes one or more tables to an .xlsx workbook (one sheet per table, bold frozen header, numeric cells, fitted column widths) in the plugin's exports folder and opens it. Answers the path, sheet names, and row counts.",
+    parameterNames: 'tables: { title, columns[], rows[] }[], [filename]',
+    connection: null,
+    tool: null,
+    internal: false,
+  }
+  const told = describePlugin(
+    tree(
+      EMPTY_GRID,
+      {},
+      { 'excel-export/export-tables': exportTables },
+      {},
+      {
+        'excel-export': plugin('excel-export', {
+          sources: ['excel-export/export-tables'],
+          capabilities: ['files', 'state'],
+        }),
+      },
+    ),
+    'excel-export',
+  )
+  assert.match(
+    told,
+    /- excel-export\/export-tables: .* — takes tables: \{ title, columns\[\], rows\[\] \}\[\], \[filename\] \(for multi-sheet workbooks, pass 1–2 tables per round with the same filename; each call adds or updates sheets by title\)/,
+  )
+})

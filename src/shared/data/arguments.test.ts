@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { z } from 'zod'
-import { dropEmptyOptionals, parseArguments, prepareMcpArguments, readInput, readMcpCall } from './arguments.ts'
+import {
+  dropEmptyOptionals,
+  mergeWorkbookTables,
+  parseArguments,
+  prepareMcpArguments,
+  readInput,
+  readMcpCall,
+  type WorkbookTable,
+} from './arguments.ts'
 
 const POST = z.object({ room: z.string(), text: z.string(), to: z.array(z.string()), last: z.number().optional() })
 
@@ -355,4 +363,147 @@ test("readMcpCall and readInput resolve a bare plugin with multiple connections 
       'research/filings',
     )
   }
+})
+
+const EXPORT_TABLES = z.object({
+  tables: z
+    .array(
+      z.object({
+        title: z.string().min(1),
+        columns: z.array(z.string()).min(1),
+        rows: z.array(z.union([z.array(z.unknown()), z.record(z.string(), z.unknown())])),
+      }),
+    )
+    .min(1)
+    .max(50),
+  filename: z.string().optional(),
+})
+
+test('table export arguments normalize header/column aliases, object column defs, key-mapped row objects, and pipe/TSV row strings', () => {
+  const parsed = parseArguments(
+    EXPORT_TABLES,
+    {
+      filename: 'ITW_10Yr_DCF_Model.xlsx',
+      tables: [
+        {
+          sheet: 'Inputs & Assumptions',
+          columns: [
+            { header: 'Parameter', key: 'param' },
+            { label: 'Value', key: 'val' },
+            { title: 'Unit', key: 'unit' },
+          ],
+          rows: [
+            { param: 'Share Price', val: 293.45, unit: 'USD' },
+            { param: 'Diluted Shares', val: 285.3, unit: 'M' },
+          ],
+        },
+        {
+          name: 'WACC & Yield Curve',
+          headers: ['Year', 'Tenor', 'WACC (%)'],
+          rows: '| Year | Tenor | WACC (%) |\n|---|---|---|\n| 2027E | 1Y | 8.193 |\n| 2028E | 2Y | 8.399 |',
+        },
+      ],
+    },
+    'excel-export/export-tables',
+  )
+  assert.deepEqual(parsed, {
+    filename: 'ITW_10Yr_DCF_Model.xlsx',
+    tables: [
+      {
+        title: 'Inputs & Assumptions',
+        columns: ['Parameter', 'Value', 'Unit'],
+        rows: [
+          ['Share Price', 293.45, 'USD'],
+          ['Diluted Shares', 285.3, 'M'],
+        ],
+      },
+      {
+        title: 'WACC & Yield Curve',
+        columns: ['Year', 'Tenor', 'WACC (%)'],
+        rows: [
+          ['2027E', '1Y', 8.193],
+          ['2028E', '2Y', 8.399],
+        ],
+      },
+    ],
+  })
+})
+
+test('a table export call that passes row counts instead of row arrays fails with guidance to send row arrays and batch 1–2 tables per call', () => {
+  assert.throws(
+    () =>
+      parseArguments(
+        EXPORT_TABLES,
+        {
+          filename: 'ITW_10Yr_DCF_Model.xlsx',
+          tables: [
+            {
+              title: 'Inputs & Assumptions',
+              columns: ['Category', 'Input Parameter', 'Value'],
+              rows: 12,
+            },
+            {
+              title: 'WACC & Yield Curve',
+              columns: ['Forecast Year', 'WACC (%)'],
+              rows: 11,
+            },
+          ],
+        },
+        'excel-export/export-tables',
+      ),
+    (err: Error) => {
+      assert.match(
+        err.message,
+        /Invalid arguments for excel-export\/export-tables: tables\.0\.rows: expected array, received number/,
+      )
+      assert.match(err.message, /never a row count/i)
+      assert.match(err.message, /1 or 2 tables per run_source call with the same filename/i)
+      return true
+    },
+  )
+})
+
+test('mergeWorkbookTables accumulates sheets across calls for the same workspace and filename, updating matching sheet titles in place', () => {
+  const store = new Map<string, WorkbookTable[]>()
+  const first = mergeWorkbookTables(store, 'ws-1', {
+    filename: 'ITW_10Yr_DCF_Model.xlsx',
+    tables: [
+      { title: 'Inputs & Assumptions', columns: ['Param', 'Value'], rows: [['WACC', 8.5]] },
+      { title: 'WACC & Yield Curve', columns: ['Year', 'WACC'], rows: [[2027, 8.19]] },
+    ],
+  }) as { filename: string; tables: WorkbookTable[] }
+  assert.equal(first.tables.length, 2)
+
+  const second = mergeWorkbookTables(store, 'ws-1', {
+    filename: 'exports/itw_10yr_dcf_model',
+    tables: [
+      { title: 'Prob-Weighted DCF', columns: ['Year', 'FCFF'], rows: [[2027, 3544]] },
+      {
+        title: 'Inputs & Assumptions',
+        columns: ['Param', 'Value'],
+        rows: [
+          ['WACC', 8.73],
+          ['Growth', 2.75],
+        ],
+      },
+    ],
+  }) as { filename: string; tables: WorkbookTable[] }
+  assert.deepEqual(
+    second.tables.map((t) => [t.title, t.rows.length]),
+    [
+      ['Inputs & Assumptions', 2],
+      ['WACC & Yield Curve', 1],
+      ['Prob-Weighted DCF', 1],
+    ],
+  )
+
+  // Another workspace or a call without a filename stays independent.
+  const otherWs = mergeWorkbookTables(store, 'ws-2', {
+    filename: 'ITW_10Yr_DCF_Model.xlsx',
+    tables: [{ title: 'Summary', columns: ['Metric'], rows: [['EV']] }],
+  }) as { tables: WorkbookTable[] }
+  assert.deepEqual(
+    otherWs.tables.map((t) => t.title),
+    ['Summary'],
+  )
 })
