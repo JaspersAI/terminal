@@ -43,12 +43,12 @@ export const INSTRUCTIONS: ReadonlySet<string> = new Set([ACTIVATE_SKILL, READ_S
 /** How much of an answer its note keeps: the beginning, where a table names its columns and a reply its ids. */
 const HEAD = 200
 /** A call whose arguments are shorter than this, all told, goes as it was made. */
-const ARGS_MAX = 500
+const ARGS_MAX = LARGE
 /** A text among a call's arguments is cut once it is longer than this, to its first so many characters. */
-const TEXT_MAX = 300
+const TEXT_MAX = LARGE
 const TEXT_KEPT = 200
 /** A list among them is cut once it is longer than this as written, to the items that fit in so many characters. */
-const LIST_MAX = 300
+const LIST_MAX = LARGE
 const LIST_KEPT = 200
 
 /** Which of a run's history goes to its model as it is. */
@@ -349,9 +349,9 @@ function shortList(items: unknown[], id: string): unknown[] {
   ]
 }
 
-const SHORTENED_TEXT_END = /… \[[\d,]+ characters, set aside: read_again "([^"]+)" has the call as it was made\]$/
+const SHORTENED_TEXT_END = /… \[([\d,]+) characters, set aside: read_again "([^"]+)" has the call as it was made\]$/
 const SHORTENED_TEXT_ANY = /… \[[\d,]+ characters, set aside: read_again "([^"]+)" has the call as it was made\]/
-const SHORTENED_LIST = /^… \[[\d,]+ more of [\d,]+, set aside: read_again "([^"]+)" has them all\]$/
+const SHORTENED_LIST = /^… \[([\d,]+) more of ([\d,]+), set aside: read_again "([^"]+)" has them all\]$/
 
 /**
  * Restores any argument in `input` that repeats a `[… set aside: read_again "<id>" …]` note from an
@@ -366,19 +366,23 @@ function restoreValue(value: unknown, path: (string | number)[], turns: Turn[]):
   if (typeof value === 'string') {
     const match = SHORTENED_TEXT_END.exec(value)
     if (match) {
-      const id = match[1]!
+      const expectedLength = match[1]!
+      const id = match[2]!
       const prefix = value.slice(0, match.index)
       const found = prefix.length > 0 ? callOf(turns, id) : null
       const original = found ? atPath(found.call.input, path) : undefined
       if (typeof original === 'string' && original.startsWith(prefix)) return original
+      const fallback =
+        prefix.length >= TEXT_KEPT ? findMatchingString(turns, found?.call, prefix, expectedLength) : null
+      if (fallback !== null) return fallback
       throw new Error(
-        `Write the full argument out: "[… set aside: read_again \\"${id}\\" has the call as it was made]" is a note from an earlier shortened turn, not text to include in a new call.`,
+        `Write the full argument out (or for set on a long string, pass old and new to replace only the passage that changed after reading it with get or read_again): "[… set aside: read_again \\"${id}\\" has the call as it was made]" is a note from an earlier shortened turn, not text to include in a new call.`,
       )
     }
     const embedded = SHORTENED_TEXT_ANY.exec(value)
     if (embedded) {
       throw new Error(
-        `Write the full argument out: "[… set aside: read_again \\"${embedded[1]!}\\" has the call as it was made]" is a note from an earlier shortened turn, not text to include in a new call.`,
+        `Write the full argument out (or for set on a long string, pass old and new to replace only the passage that changed after reading it with get or read_again): "[… set aside: read_again \\"${embedded[1]!}\\" has the call as it was made]" is a note from an earlier shortened turn, not text to include in a new call.`,
       )
     }
     return value
@@ -388,19 +392,25 @@ function restoreValue(value: unknown, path: (string | number)[], turns: Turn[]):
     if (typeof last === 'string') {
       const match = SHORTENED_LIST.exec(last)
       if (match) {
-        const id = match[1]!
+        const expectedMore = match[1]!
+        const expectedTotal = match[2]!
+        const id = match[3]!
         const found = callOf(turns, id)
         const original = found ? atPath(found.call.input, path) : undefined
         const headCount = value.length - 1
+        const headItems = value.slice(0, headCount)
         if (
           Array.isArray(original) &&
           original.length >= headCount &&
           headCount > 0 &&
-          value
-            .slice(0, headCount)
-            .every((item, index) => JSON.stringify(item) === JSON.stringify(shortened(original[index], id)))
+          headItems.every((item, index) => JSON.stringify(item) === JSON.stringify(shortened(original[index], id)))
         ) {
           return original.map((item, index) => restoreValue(item, [...path, index], turns))
+        }
+        const fallback =
+          headCount > 0 ? findMatchingList(turns, found?.call, headItems, expectedMore, expectedTotal) : null
+        if (fallback !== null) {
+          return fallback.map((item, index) => restoreValue(item, [...path, index], turns))
         }
         throw new Error(
           `Write the full argument out: "[… set aside: read_again \\"${id}\\" has them all]" is a note from an earlier shortened turn, not a list to include in a new call.`,
@@ -414,6 +424,94 @@ function restoreValue(value: unknown, path: (string | number)[], turns: Turn[]):
   const record = value as Record<string, unknown>
   const entries = Object.entries(record).map(([key, one]) => [key, restoreValue(one, [...path, key], turns)] as const)
   return entries.every(([key, one]) => one === record[key]) ? value : Object.fromEntries(entries)
+}
+
+function findMatchingString(
+  turns: Turn[],
+  named: ToolCall | undefined,
+  prefix: string,
+  expectedLength: string,
+): string | null {
+  const matchIn = (node: unknown): string | null => {
+    if (typeof node === 'string') {
+      return count(node.length) === expectedLength && node.startsWith(prefix) ? node : null
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const hit = matchIn(item)
+        if (hit !== null) return hit
+      }
+      return null
+    }
+    if (typeof node === 'object' && node !== null) {
+      for (const val of Object.values(node)) {
+        const hit = matchIn(val)
+        if (hit !== null) return hit
+      }
+    }
+    return null
+  }
+  if (named) {
+    const hit = matchIn(named.input)
+    if (hit !== null) return hit
+  }
+  for (let at = turns.length - 1; at >= 0; at--) {
+    const turn = turns[at]!
+    if (turn.role !== 'assistant') continue
+    for (let i = turn.toolCalls.length - 1; i >= 0; i--) {
+      const hit = matchIn(turn.toolCalls[i]!.input)
+      if (hit !== null) return hit
+    }
+  }
+  return null
+}
+
+function findMatchingList(
+  turns: Turn[],
+  named: ToolCall | undefined,
+  headItems: unknown[],
+  expectedMore: string,
+  expectedTotal: string,
+): unknown[] | null {
+  const headCount = headItems.length
+  const matchIn = (node: unknown, callId: string): unknown[] | null => {
+    if (Array.isArray(node)) {
+      if (
+        node.length >= headCount &&
+        count(node.length) === expectedTotal &&
+        count(node.length - headCount) === expectedMore &&
+        headItems.every((item, index) => JSON.stringify(item) === JSON.stringify(shortened(node[index], callId)))
+      ) {
+        return node
+      }
+      for (const item of node) {
+        const hit = matchIn(item, callId)
+        if (hit !== null) return hit
+      }
+      return null
+    }
+    if (typeof node === 'object' && node !== null) {
+      for (const val of Object.values(node)) {
+        const hit = matchIn(val, callId)
+        if (hit !== null) return hit
+      }
+    }
+    return null
+  }
+  if (named) {
+    const hit = matchIn(named.input, named.id)
+    if (hit !== null) return hit
+  }
+  for (let at = turns.length - 1; at >= 0; at--) {
+    const turn = turns[at]!
+    if (turn.role !== 'assistant') continue
+    for (let i = turn.toolCalls.length - 1; i >= 0; i--) {
+      const call = turn.toolCalls[i]!
+      const hit = matchIn(call.input, call.id)
+      if (hit !== null) return hit
+    }
+  }
+  return null
 }
 
 function atPath(root: unknown, path: (string | number)[]): unknown {
