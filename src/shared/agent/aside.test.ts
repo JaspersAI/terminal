@@ -155,6 +155,20 @@ test("an earlier request's call goes with its long arguments cut short, and the 
   assert.equal(calls(turns[1])[0]!.input.value, sql)
 })
 
+test('an earlier call whose arguments fit within LARGE stays whole so set calls and results match', () => {
+  const sql = `SELECT '1. Offense' AS Factor, 2.6 AS Edge\n${big(650, 'x')}`
+  const turns: Turn[] = [
+    asked('build model'),
+    calling('c1', 'set', { path: 'panels/e7/state', value: { sql, kind: 'hbar', x: 'Factor', y: ['Edge'] } }),
+    answer('c1', JSON.stringify({ path: 'panels/e7/state', state: { sql, kind: 'hbar', x: 'Factor', y: ['Edge'] } })),
+    replied('updated'),
+    asked('update numbers'),
+  ]
+  const out = sent(turns, startOf(turns))
+  assert.equal(out[1], turns[1])
+  assert.equal(out[2], turns[2])
+})
+
 test("an earlier request's turn is sent as its words and its calls: nothing a provider tied to that request rides along", () => {
   const call = { id: 'c1', name: 'get', input: { path: 'panels' } }
   const sources = [{ id: 'a1', title: 'A filing', url: 'https://example.com/a' }]
@@ -327,11 +341,28 @@ test('a call that repeats a shortened argument from an earlier turn gets the ori
   assert.deepEqual(restoreInput(shortenedBuild, turns), { id: 'options-chain', request: fullRequest })
   assert.deepEqual(restoreInput(shortenedScreen, turns), { source: 'screener/screen', input: { sics } })
 
+  // When a shortened state string from place_view (or an earlier set) is reused at another path or with a
+  // hallucinated call id, restoreInput still finds the matching earlier value by its 200-char prefix and length.
+  const reId = (shortenedBuild.request as string).replace('"c1"', '"call_999999"')
+  assert.deepEqual(restoreInput({ path: 'panels/e6/state', value: { sql: reId } }, turns), {
+    path: 'panels/e6/state',
+    value: { sql: fullRequest },
+  })
+  const shortenedSicsReId = [
+    ...(shortenedScreen.input as { sics: string[] }).sics.slice(0, -1),
+    (shortenedScreen.input as { sics: string[] }).sics.at(-1)!.replace('"c2"', '"call_888888"'),
+  ]
+  assert.deepEqual(restoreInput({ path: 'panels/e6/state/sics', value: shortenedSicsReId }, turns), {
+    path: 'panels/e6/state/sics',
+    value: sics,
+  })
+
   // Plain inputs without set-aside notes pass through untouched.
   const plain = { id: 'options-chain', request: 'Build a clean plugin.' }
   assert.equal(restoreInput(plain, turns), plain)
 
-  // When the model fabricates a set-aside note in a new call (or edits the prefix so it is not c1's), it is refused.
+  // When the model fabricates a set-aside note in a new call (or edits the prefix so it is not c1's), it is refused
+  // and told how to edit a passage with set { path, old, new }.
   assert.throws(
     () =>
       restoreInput(
@@ -342,7 +373,7 @@ test('a call that repeats a shortened argument from an earlier turn gets the ori
         },
         turns,
       ),
-    /Write the full argument|set aside/,
+    /old and new/,
   )
   assert.throws(
     () =>
