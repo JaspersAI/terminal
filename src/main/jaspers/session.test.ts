@@ -29,6 +29,7 @@ interface Account {
   url: string
   issued: Issued[]
   seen: {
+    discoveries: number
     registrations: number
     authorizations: URL[]
     exchanges: URLSearchParams[]
@@ -64,7 +65,15 @@ async function fakeAccount(): Promise<Account> {
   const account: Account = {
     url: '',
     issued: [],
-    seen: { registrations: 0, authorizations: [], exchanges: [], refreshes: [], revocations: [], gateway: [] },
+    seen: {
+      discoveries: 0,
+      registrations: 0,
+      authorizations: [],
+      exchanges: [],
+      refreshes: [],
+      revocations: [],
+      gateway: [],
+    },
     revoked: new Set(),
     expire: (token) => {
       access.get(token)!.expired = true
@@ -101,6 +110,7 @@ async function fakeAccount(): Promise<Account> {
     const at = new URL(req.url ?? '/', url)
     const route = `${req.method} ${at.pathname}`
     if (route === 'GET /.well-known/oauth-authorization-server') {
+      account.seen.discoveries++
       return json(res, 200, {
         issuer: url,
         authorization_endpoint: `${url}/oauth/authorize`,
@@ -229,7 +239,7 @@ function read(req: IncomingMessage): Promise<string> {
 }
 
 /** The app around the session, faked: a tree of one slot, a seal that only marks, a browser that follows Account's redirect, and a clock the test moves. */
-function harness(account: Account, overrides: Partial<SessionDeps> = {}) {
+export function harness(account: Account, overrides: Partial<SessionDeps> = {}) {
   let stored: StoredJaspers = SIGNED_OUT
   const clock = { now: 1_700_000_000_000 }
   const deps: SessionDeps = {
@@ -768,5 +778,88 @@ test('pullTerms fetches the latest Terms of Use from the website on open and req
   } finally {
     server.closeAllConnections()
     await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('an expiring token during sleep or wake grace, or a transient network drop on call, never double-spends the refresh token or signs the user out', async () => {
+  const account = await fakeAccount()
+  try {
+    let failNextFetch = false
+    let failNextTokenPost = false
+    const { session, clock, stored } = harness(account, {
+      fetch: async (url, init) => {
+        if (failNextFetch) {
+          failNextFetch = false
+          throw new TypeError('fetch failed')
+        }
+        if (failNextTokenPost && String(url).endsWith('/oauth/token')) {
+          failNextTokenPost = false
+          throw new TypeError('fetch failed')
+        }
+        return fetch(url, init)
+      },
+    })
+    await session.signIn()
+    assert.equal(account.seen.discoveries, 1)
+
+    // 1. Advancing past expiry while suspended or inside the post-wake grace window holds off refresh rotation.
+    clock.now += 59 * 60_000
+    session.suspend()
+    await session.check()
+    assert.equal(account.seen.refreshes.length, 0)
+    await assert.rejects(session.token(), /sleeping|waking/i)
+    assert.equal(account.seen.refreshes.length, 0)
+    assert.equal(session.signedIn(), true)
+    assert.equal(stored().reason, null)
+
+    session.wake(15_000)
+    clock.now += 5_000
+    await assert.rejects(session.token(), /sleeping|waking/i)
+    assert.equal(account.seen.refreshes.length, 0)
+    assert.equal(session.signedIn(), true)
+
+    // 2. Once the wake grace window elapses, a transient network drop fails on the idempotent discovery probe
+    // before the single-use refresh token is ever sent, and session.call does not swallow the error to retry immediately.
+    clock.now += 10_000
+    failNextFetch = true
+    await assert.rejects(
+      session.call(async () => {
+        const res = await session.fetch(...chat(account))
+        return res.status
+      }),
+      /fetch failed/,
+    )
+    assert.equal(account.seen.refreshes.length, 0)
+    assert.equal(session.signedIn(), true)
+    assert.equal(stored().reason, null)
+
+    // 3. Even if discovery succeeds and POST /oauth/token drops, session.call rejects immediately without calling send()
+    // (which would otherwise call session.fetch -> session.token() a second time back-to-back).
+    failNextTokenPost = true
+    let sendCalled = false
+    await assert.rejects(
+      session.call(async () => {
+        sendCalled = true
+        const res = await session.fetch(...chat(account))
+        return res.status
+      }),
+      /fetch failed/,
+    )
+    assert.equal(sendCalled, false)
+    assert.equal(account.seen.refreshes.length, 0)
+    assert.equal(session.signedIn(), true)
+
+    // 4. When connectivity stabilizes, the refresh succeeds cleanly with the unspent refresh token.
+    const status = await session.call(async () => {
+      const res = await session.fetch(...chat(account))
+      await res.body?.cancel()
+      return res.status
+    })
+    assert.equal(status, 200)
+    assert.equal(account.seen.refreshes.length, 1)
+    assert.equal(session.signedIn(), true)
+    assert.equal(stored().reason, null)
+  } finally {
+    await account.close()
   }
 })

@@ -90,6 +90,16 @@ export function checkSignIn(): Promise<void> {
   return session().check()
 }
 
+/** Disarms Jaspers token refreshes while the machine sleeps so a single-use refresh token is never sent on a dying socket. */
+export function suspendJaspers(): void {
+  session().suspend()
+}
+
+/** Holds off Jaspers token refreshes after wake while the network settles. */
+export function wakeJaspers(graceMs?: number): void {
+  session().wake(graceMs)
+}
+
 /** A fetch that goes out as the account: the bearer added, a 401, 402, or 403 renewed once and sent again, a refusal thrown in the service's words. */
 export const asAccount: FetchLike = (url, init) => session().fetch(url, init)
 

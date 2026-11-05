@@ -23,6 +23,7 @@ import {
 } from '../../shared/app/eye'
 import { eyeLine, eyeTree, homeForms, writtenTexts, type EyeEvent, type Masking } from '../../shared/app/eye-events'
 import { diff } from '../../shared/app/patch'
+import { WAKE_GRACE_MS } from '../../shared/tasks/tasks'
 import { anyInFront, openWindows } from '../grid/windows'
 import { eyeRoot } from '../home'
 import { getState, subscribe, toPublic, update, type MainState, type StoredProvider } from '../state'
@@ -70,6 +71,7 @@ const lastFrames = new Map<number, Buffer>()
 const recorded = new Set<() => void>()
 /** The keys the app holds, as main knows them: handed in, so Eye depends on nothing of the agent's. */
 let secretsOf: () => string[] = () => []
+let onWakeLag: (() => void) | undefined
 /** The tree as the last line had it, while recording: what the next change is told from. */
 let tree: Record<string, unknown> | null = null
 /** A change too big to be a line was left out since the last tick: the next tick writes the tree whole. */
@@ -82,8 +84,9 @@ let inFlight = 0
  * there. `secrets` answers the keys the app holds, which every line is masked against. Called once,
  * after the app is ready.
  */
-export function startEye(options: { secrets: () => string[] }): void {
+export function startEye(options: { secrets: () => string[]; onWake?: () => void }): void {
   secretsOf = options.secrets
+  onWakeLag = options.onWake
   session = stamp(Date.now())
   live = session
   subscribe((next, prev) => {
@@ -178,7 +181,12 @@ function sessionData(): Record<string, unknown> {
 async function tick(): Promise<void> {
   if (!getState().eye.recording) return
   if (snapshotDue) snapshot()
-  record({ kind: 'metrics', data: metricsData(openWindows().length, inFlight) })
+  const metrics = metricsData(openWindows().length, inFlight)
+  const lagMax = (metrics['lag'] as { max?: unknown } | null)?.max
+  if (typeof lagMax === 'number' && lagMax >= WAKE_GRACE_MS) {
+    onWakeLag?.()
+  }
+  record({ kind: 'metrics', data: metrics })
   await applyRetention()
 }
 

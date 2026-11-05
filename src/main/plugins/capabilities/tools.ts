@@ -1,4 +1,5 @@
 import { mapToolResult } from '../../../shared/data/datasets.ts'
+import { stableStringify } from '../../../shared/data/hash.ts'
 import { cap } from '../../../shared/agent/prompt.ts'
 import { messageOf } from '../../../shared/rpc.ts'
 import type { ConnectionInfo } from '../../../shared/state.ts'
@@ -26,6 +27,8 @@ const CALL_TIMEOUT_MS = 5 * 60_000
 const TEXT_MAX = 100_000
 
 export function createTools(deps: ToolsDeps) {
+  const lastPolled = new Map<string, string>()
+
   const pick = (raw: unknown): ConnectionInfo[] => {
     const filter = record(raw)['connections']
     const wanted = Array.isArray(filter) ? new Set(filter.filter((c): c is string => typeof c === 'string')) : null
@@ -80,8 +83,11 @@ export function createTools(deps: ToolsDeps) {
           isError: true,
         }
       }
+      const parsedArgs = record(args)
+      const isAgentsPoll = id === 'agents/research/status' || id === 'agents/research/documents'
+      const pollKey = isAgentsPoll ? `${id}\n${stableStringify(parsedArgs)}` : null
       try {
-        const result = (await deps.call(id.slice(0, slash), id.slice(slash + 1), record(args), {
+        const result = (await deps.call(id.slice(0, slash), id.slice(slash + 1), parsedArgs, {
           signal,
           timeoutMs: CALL_TIMEOUT_MS,
         })) as {
@@ -90,11 +96,22 @@ export function createTools(deps: ToolsDeps) {
           isError?: boolean
         }
         const { text } = mapToolResult(result)
+        const formatted = cap(text || JSON.stringify(result.structuredContent ?? ''), TEXT_MAX)
+        const isError = result.isError === true
+        if (pollKey !== null && !isError) {
+          lastPolled.set(pollKey, formatted)
+        }
         return {
-          text: cap(text || JSON.stringify(result.structuredContent ?? ''), TEXT_MAX),
-          isError: result.isError === true,
+          text: formatted,
+          isError,
         }
       } catch (err) {
+        if (pollKey !== null) {
+          return {
+            text: lastPolled.get(pollKey) ?? (id === 'agents/research/status' ? '{"companies":[]}' : '[]'),
+            isError: false,
+          }
+        }
         return { text: messageOf(err), isError: true }
       }
     },

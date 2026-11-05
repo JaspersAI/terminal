@@ -141,3 +141,66 @@ test('a connection a plugin names that is missing its key asks the user first, a
   ])
   assert.deepEqual(await refused.list({ connections: ['fmp/mcp'] }), [])
 })
+
+test('agents/research status and documents polls return the last good payload on transient failure instead of throwing into 2s retry loops', async () => {
+  let fail = false
+  const tools = createTools({
+    connections: () => ({
+      'agents/research': connection('agents/research', 'ready', ['status', 'documents', 'search']),
+    }),
+    call: async (_id, tool) => {
+      if (fail) throw new TypeError('fetch failed')
+      if (tool === 'status') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                companies: [{ ticker: 'TSLA', company: 'Tesla', unembedded: 0, job: null }],
+              }),
+            },
+          ],
+        }
+      }
+      if (tool === 'documents') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify([{ id: 'doc:1', origin: 'upload', title: 'spacex.pdf', chars: 42 }]),
+            },
+          ],
+        }
+      }
+      return { content: [{ type: 'text', text: '[]' }] }
+    },
+  })
+  const signal = new AbortController().signal
+
+  // Before any successful call, a transient failure on status or documents returns an empty non-error payload.
+  fail = true
+  assert.deepEqual(await tools.call({ id: 'agents/research/status', args: { tickers: ['TSLA'] } }, signal), {
+    text: '{"companies":[]}',
+    isError: false,
+  })
+  assert.deepEqual(await tools.call({ id: 'agents/research/documents', args: {} }, signal), {
+    text: '[]',
+    isError: false,
+  })
+  // Non-polling tools like search still surface errors as isError: true.
+  assert.deepEqual(await tools.call({ id: 'agents/research/search', args: { query: 'ownership' } }, signal), {
+    text: 'fetch failed',
+    isError: true,
+  })
+
+  // Once a poll succeeds, a later transient failure returns the last good response for those arguments.
+  fail = false
+  const goodStatus = await tools.call({ id: 'agents/research/status', args: { tickers: ['TSLA'] } }, signal)
+  assert.equal(goodStatus.isError, false)
+  const goodDocs = await tools.call({ id: 'agents/research/documents', args: {} }, signal)
+  assert.equal(goodDocs.isError, false)
+
+  fail = true
+  assert.deepEqual(await tools.call({ id: 'agents/research/status', args: { tickers: ['TSLA'] } }, signal), goodStatus)
+  assert.deepEqual(await tools.call({ id: 'agents/research/documents', args: {} }, signal), goodDocs)
+})
