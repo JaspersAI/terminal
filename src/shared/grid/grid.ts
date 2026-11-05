@@ -983,17 +983,84 @@ export function refreshPanel(grid: Grid, id: string, at: number): { grid: Grid; 
 }
 
 /**
- * A copy of `target` with `value` at `path`, making the objects on the way. An empty path is the
- * value itself, which has to be an object: it becomes a whole panel state. A number in the path
- * under a list is a place in it (filters/0 is the first filter), so the list stays a list; the
- * place just past its end adds one.
+ * A copy of `target` with `value` at `path`, making the objects on the way. An empty path merges
+ * `value` (which has to be an object) into the top-level keys of `target`, so updating a subset of
+ * `panels/<id>/state` preserves the rest. A number in the path under a list is a place in it
+ * (filters/0 is the first filter), so the list stays a list; the place just past its end adds one.
  */
 export function setIn(target: Record<string, unknown>, path: string[], value: unknown): Record<string, unknown> {
   if (path.length === 0) {
     if (!isPlainObject(value)) throw new Error('State must be an object.')
-    return value
+    return { ...target, ...value }
   }
   return putAt(target, path, value, []) as Record<string, unknown>
+}
+
+/**
+ * A copy of `target` with one exact passage `old` replaced by `next` in the string at `path` (or,
+ * when `path` points at an object like `panels/<id>/state`, in the single string property on that
+ * object containing `old`). Refuses missing, duplicated, empty, or unchanged passages.
+ */
+export function editIn(
+  target: Record<string, unknown>,
+  path: string[],
+  old: unknown,
+  next: unknown,
+  label = 'state',
+): Record<string, unknown> {
+  if (typeof old !== 'string' || old === '') {
+    throw new Error('old is the passage to replace, exactly as it is in the state.')
+  }
+  if (typeof next !== 'string') throw new Error('new is the text that goes in its place.')
+  if (old === next) throw new Error('old and new are the same: there is nothing to change.')
+  let current: unknown = target
+  for (const key of path) {
+    if (typeof current !== 'object' || current === null) {
+      current = undefined
+      break
+    }
+    current = (current as Record<string, unknown>)[key]
+  }
+  if (typeof current === 'string') {
+    return setIn(target, path, replacePassage(current, old, next, label))
+  }
+  if (isPlainObject(current)) {
+    const stringEntries = Object.entries(current).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string',
+    )
+    if (stringEntries.length === 0) {
+      throw new Error(`${label} is not a string: old and new edit a text field, like ${label}/sql.`)
+    }
+    const matching = stringEntries.filter(([, text]) => text.includes(old))
+    if (matching.length === 1) {
+      const [key, text] = matching[0]!
+      return setIn(target, [...path, key], replacePassage(text, old, next, `${label}/${key}`))
+    }
+    if (matching.length > 1) {
+      throw new Error(
+        `That passage appears in more than one field of ${label}: name the field in path, like ${label}/${matching[0]![0]}.`,
+      )
+    }
+    throw new Error(
+      `That passage is not in ${label}. Read it with get ${label}, then copy the passage from there, spaces and line breaks included.`,
+    )
+  }
+  throw new Error(`${label} is not a string: old and new edit a text field.`)
+}
+
+function replacePassage(text: string, old: string, next: string, label: string): string {
+  const around = text.split(old)
+  if (around.length === 1) {
+    throw new Error(
+      `That passage is not in ${label}. Read it with get ${label}, then copy the passage from there, spaces and line breaks included.`,
+    )
+  }
+  if (around.length > 2) {
+    throw new Error(
+      `That passage is in ${label} ${around.length - 1} times. Give more of what is around it, so it is the only one.`,
+    )
+  }
+  return around.join(next)
 }
 
 function putAt(target: unknown, path: string[], value: unknown, above: string[]): unknown {

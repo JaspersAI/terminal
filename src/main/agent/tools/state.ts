@@ -13,7 +13,7 @@ import { BROWSER_VIEW } from '../../../shared/grid/browser'
 import { panelOf, type Panel } from '../../../shared/grid/grid'
 import { loopName } from '../../../shared/loops/loops'
 import { RESEARCH_PLUGIN, RESEARCH_THREAD_SOURCE, researchLiveText, researchRoomOf } from '../../../shared/plugins/live'
-import { publishTextChecked, setPanelStateChecked, settlePanel } from '../../actions'
+import { editPanelStateChecked, publishTextChecked, setPanelStateChecked, settlePanel } from '../../actions'
 import { runSource } from '../../data/sources'
 import { ownTile } from '../../loops/loops'
 import { syncBrowserPanelText } from '../../grid/browser'
@@ -142,7 +142,11 @@ export const stateTools: Tool[] = [
           ? rawValue.filter((entry: { loop?: string | null }) => entry.loop === loopName(loop))
           : rawValue
       const error = path.kind === 'panel' && path.field !== 'error' ? panelErrorAt(state, workspaceId, path) : null
-      if (path.kind === 'panel' && path.field === 'text' && typeof value === 'string') {
+      if (
+        path.kind === 'panel' &&
+        (path.field === 'text' || (path.field === 'state' && input.offset !== undefined)) &&
+        typeof value === 'string'
+      ) {
         return JSON.stringify({
           path: formatPath(path),
           ...textPart(value, optional(input.offset, asOffset) ?? 0, TEXT_PAGE),
@@ -156,14 +160,26 @@ export const stateTools: Tool[] = [
   {
     name: 'set',
     description:
-      "Write one value inside a panel's state, which is how you change what a placed view shows. The path is panels/<id>/state, or a key path under it like panels/e3/state/filters/ranges; a number is a place in a list, so panels/e3/state/filters/0 is its first filter. The whole resulting state is checked against the view's schema, and the error says what was wrong with it. Returns the state as it now is.",
+      "Write or edit a value inside a panel's state, which is how you change what a placed view shows. The path is panels/<id>/state, or a key path under it like panels/e3/state/filters/ranges; a number is a place in a list, so panels/e3/state/filters/0 is its first filter. Pass value to set the path (on panels/<id>/state, an object merges into the existing keys), or pass old and new to replace one passage in a string field (like panels/e6/state/sql or panels/e9/state/markdown) without rewriting the rest. The whole resulting state is checked against the view's schema, and the error says what was wrong with it. Returns the state as it now is.",
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'panels/<id>/state, with a key path under it.' },
-        value: { description: 'What to put there. Replaces whatever the path held.' },
+        value: {
+          description:
+            'What to put there when setting a value or merging keys into panels/<id>/state. Omit when using old and new.',
+        },
+        old: {
+          type: 'string',
+          description:
+            'For editing a string in state (like sql or markdown): the exact passage to replace, appearing once.',
+        },
+        new: {
+          type: 'string',
+          description: 'For editing a string in state: what goes in place of old.',
+        },
       },
-      required: ['path', 'value'],
+      required: ['path'],
     },
     async run(input, context) {
       const { workspaceId } = context
@@ -174,6 +190,17 @@ export const stateTools: Tool[] = [
         throw new Error("set reaches only this work's own tiles, on its own workspace.")
       ownTile(context, path.panelId)
       const workspace = path.workspaceId ?? workspaceId
+      if (input.old !== undefined || input.new !== undefined) {
+        if (input.value !== undefined) {
+          throw new Error('Pass either value or old and new to set, not both.')
+        }
+        const panel = editPanelStateChecked(workspace, path.panelId, path.rest, input.old, input.new, formatPath(path))
+        const settled = (await settlePanel(workspace, panel.id, context.signal)) ?? panel
+        return showPathValue(formatPath(path), 'state', settled.state, STATE_MAX, settled.error ?? null)
+      }
+      if (!('value' in input)) {
+        throw new Error('Pass value to set the path, or old and new to replace a passage in a string.')
+      }
       // What the view's schema asks for at this path, where the model wrote it another way; the
       // whole resulting state is still checked, so anything else comes back as the error it is.
       const value = coerceViewState(schemaAt(stateSchemaAt(workspace, path.panelId), path.rest), input.value)

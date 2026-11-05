@@ -114,7 +114,7 @@ export function tilePrimer({ cols, rows }: GridSize): string {
 
 /** How a room's agent places, changes, and removes views inside its own tile. */
 export const LOOP_PLACEMENT =
-  'Installed views are listed below with their state shape, and your plugins\u2019 views include their instructions. Put a view in your tile with place_view { view, state }: always prefer a plugin\u2019s own view over core/table when one renders the source or handles the workflow (such as screener-mcp/screener for any stock screen, including ranked or top-N subsets), and never replace a plugin\u2019s view with a core/table over run_rows. Place only the views the user asked for: do not add chart views alongside a watchlist or table (keep indicators as columns in the watchlist or table), and do not place a separate chart per symbol when one chart (or a chart with a selector) was asked for. When replacing or narrowing down to one view, pass replace to place_view or call remove_element on the extra views in your tile. size defaults to quarter and anchor to auto, and anchor {"beside": <a view of yours>} puts it next to that one. Change what a view shows with set, and lay your views out with move_element and resize_element. Nothing is moved to make room: when the cells run out, shrink or move your own views, or remove one the work no longer needs. The tile itself, whose id the state gives, is where the user put it: move it, size it, or change its mode only when they ask. When the user says "this" or "it" of a view they mean the focused one, which the state marks.'
+  'Installed views are listed below with their state shape, and your plugins\u2019 views include their instructions. Put a view in your tile with place_view { view, state }: always prefer a plugin\u2019s own view over core/table when one renders the source or handles the workflow (such as screener-mcp/screener for any stock screen, including ranked or top-N subsets), and never replace a plugin\u2019s view with a core/table over run_rows. Place only the views the user asked for: do not add chart views alongside a watchlist or table (keep indicators as columns in the watchlist or table), and do not place a separate chart per symbol when one chart (or a chart with a selector) was asked for. When replacing or narrowing down to one view, pass replace to place_view or call remove_element on the extra views in your tile. size defaults to quarter and anchor to auto, and anchor {"beside": <a view of yours>} puts it next to that one. Change what a view shows with set (pass value to set a path or merge keys on panels/<id>/state, or pass old and new to replace a passage in a long string like sql or markdown without rewriting the whole value), and lay your views out with move_element and resize_element. Nothing is moved to make room: when the cells run out, shrink or move your own views, or remove one the work no longer needs. The tile itself, whose id the state gives, is where the user put it: move it, size it, or change its mode only when they ask. When the user says "this" or "it" of a view they mean the focused one, which the state marks.'
 
 /**
  * What is installed: the views, sources, connections, plugins, and skills. This changes when a
@@ -536,9 +536,14 @@ function describeFocus(
 
 /** What a view's panel holds, as the model reads it: its instructions, its state, what it shows, what it threw, and how much text. */
 function panelLines(elementId: string, panel: Panel, instructions: string | undefined): string[] {
+  const stateJson = JSON.stringify(panel.state)
+  const stateLine =
+    stateJson.length <= STATE_MAX
+      ? `state: ${stateJson}`
+      : `state: ${stateJson.slice(0, STATE_MAX)}…(cut; read it with get panels/${elementId}/state)`
   return [
     ...(instructions ? [`Instructions: ${instructions}`] : []),
-    `state: ${cap(JSON.stringify(panel.state), STATE_MAX)}`,
+    stateLine,
     `output: ${cap(JSON.stringify(panel.output), OUTPUT_MAX)}`,
     ...(panel.error ? [`error: ${cap(panel.error, ERROR_MAX)}`] : []),
     // Only its length: the text can be a whole transcript, and this is said every round.
