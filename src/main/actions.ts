@@ -352,9 +352,11 @@ export function setSecret(plugin: string, key: string, value: string): void {
     void connect(id).catch((err: unknown) => console.warn('[mcp]', message(err)))
 }
 
-/** The plugin's connections that carry ${secret:KEY} for this key: the ones a value for it changes. */
+/** The plugin's connections that carry ${secret:KEY} for this key (or OAuth connections that can fall back to `token`): the ones a value for it changes. */
 function referring(plugin: string, key: string): { id: string }[] {
-  return connectionsOf(plugin).filter(({ spec }) => secretRefs(spec).includes(key))
+  return connectionsOf(plugin).filter(
+    ({ spec }) => secretRefs(spec).includes(key) || (key === 'token' && spec.auth === 'oauth'),
+  )
 }
 
 /**
