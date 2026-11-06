@@ -258,4 +258,14 @@ test('normalizeAgentsLiveSet preserves signedIn and company statuses across back
   assert.deepEqual(normalizeAgentsLiveSet('sec', [], active), {
     value: [{ ticker: 'TSLA', company: 'Tesla, Inc.', filings: 12, chunks: 340 }],
   })
+
+  // When a non-Jaspers LLM provider or background sign-out reason is active (readyLlm: true), setup unlocks immediately.
+  assert.deepEqual(
+    normalizeAgentsLiveSet('setup', { signedIn: false, status: 'needs-sign-in', error: null }, empty, {
+      readyLlm: true,
+    }),
+    {
+      value: { signedIn: true, status: 'needs-sign-in', error: null },
+    },
+  )
 })

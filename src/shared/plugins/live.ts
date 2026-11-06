@@ -36,6 +36,7 @@ export function normalizeAgentsLiveSet(
   key: string,
   value: unknown,
   existing: ReadonlyMap<string, unknown>,
+  options: { readyLlm?: boolean } = {},
 ): { value: unknown; extra?: { key: string; value: unknown } } {
   if (key === 'setup' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
     const nextSetup = value as Record<string, unknown>
@@ -46,7 +47,7 @@ export function normalizeAgentsLiveSet(
         prevSetup !== null &&
         !Array.isArray(prevSetup) &&
         (prevSetup as Record<string, unknown>)['signedIn'] === true
-      if (wasSignedIn || hasLoadedAgentsConversation(existing)) {
+      if (options.readyLlm || wasSignedIn || hasLoadedAgentsConversation(existing)) {
         return { value: { ...nextSetup, signedIn: true } }
       }
     }

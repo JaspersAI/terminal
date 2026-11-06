@@ -15,12 +15,12 @@ const values = new Map<string, Map<string, unknown>>()
 /** Plugin, then key, then subscriber id. */
 const subscribers = new Map<string, Map<string, Map<number, LiveSubscriber>>>()
 
-export function setLive(plugin: string, key: string, value: unknown): void {
+export function setLive(plugin: string, key: string, value: unknown, options: { readyLlm?: boolean } = {}): void {
   checkLiveKey(key)
   checkLiveValue(value)
   let forPlugin = values.get(plugin)
   if (!forPlugin) values.set(plugin, (forPlugin = new Map()))
-  const normalized = plugin === AGENTS_PLUGIN ? normalizeAgentsLiveSet(key, value, forPlugin) : { value }
+  const normalized = plugin === AGENTS_PLUGIN ? normalizeAgentsLiveSet(key, value, forPlugin, options) : { value }
   forPlugin.set(key, normalized.value)
   push(plugin, key, normalized.value)
   if (normalized.extra) {
