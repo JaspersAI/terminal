@@ -162,6 +162,26 @@ export function resolveSecrets<T extends Connection>(
 }
 
 /**
+ * A bearer token saved in the plugin's secrets (`token`) that an OAuth connection can use when the
+ * plugin migrated from `auth: 'bearer'` (`${secret:token}`) to Jaspers sign-in (`auth: 'oauth'`).
+ */
+export function savedBearerToken(connection: Connection, values: Record<string, string>): string | null {
+  if (connection.auth !== 'oauth') return null
+  if (Object.keys(connection.headers).some((key) => key.toLowerCase() === 'authorization')) return null
+  const token = values['token']?.trim()
+  return token ? token : null
+}
+
+/** A copy of an HTTP connection that authenticates with a static bearer token instead of OAuth. */
+export function withBearerToken(connection: Connection, token: string): Connection {
+  return {
+    ...connection,
+    auth: 'bearer',
+    headers: { ...connection.headers, Authorization: `Bearer ${token}` },
+  }
+}
+
+/**
  * The tools a connection offers: what the server listed, cut to the `tools` the declaration names
  * when it names any. `missing` is what it named that the server did not list, so a misspelling is
  * told, not silently dropped.

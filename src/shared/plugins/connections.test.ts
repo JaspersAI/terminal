@@ -7,10 +7,12 @@ import {
   offeredTools,
   offersTool,
   resolveSecrets,
+  savedBearerToken,
   secretProgress,
   secretRefs,
   shouldPublishConnecting,
   shouldReconnectOnCall,
+  withBearerToken,
   withConnectionUrl,
 } from './connections.ts'
 import type { ConnectionInfo } from '../state.ts'
@@ -385,4 +387,27 @@ test('shouldReconnectOnCall backs off while sleeping, in wake grace, on non-retr
   assert.equal(shouldReconnectOnCall({ ...base, now: 114_999 }), false)
   assert.equal(shouldReconnectOnCall({ ...base, now: 115_000 }), true)
   assert.equal(shouldReconnectOnCall({ ...base, lastFailedAt: null, now: 100_000 }), true)
+})
+
+test('savedBearerToken and withBearerToken let an OAuth connection reuse a saved plugin token secret', () => {
+  const oauth = checkConnection(
+    { kind: 'connection', url: 'https://r.jsprai.com/mcp', auth: 'oauth', tools: ['search_filings'] },
+    'research/jaspers-v2',
+  )
+  assert.equal(savedBearerToken(oauth, {}), null)
+  assert.equal(savedBearerToken(oauth, { token: '   ' }), null)
+  assert.equal(savedBearerToken(oauth, { token: '  key-123  ' }), 'key-123')
+  assert.equal(
+    savedBearerToken({ ...oauth, headers: { authorization: 'Bearer existing' } }, { token: 'key-123' }),
+    null,
+  )
+  assert.equal(savedBearerToken(checkConnection(HTTP, 'research/jaspers'), { token: 'key-123' }), null)
+
+  assert.deepEqual(withBearerToken(oauth, 'key-123'), {
+    url: 'https://r.jsprai.com/mcp',
+    auth: 'bearer',
+    headers: { Authorization: 'Bearer key-123' },
+    env: {},
+    tools: ['search_filings'],
+  })
 })
