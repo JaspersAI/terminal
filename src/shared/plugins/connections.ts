@@ -172,15 +172,6 @@ export function savedBearerToken(connection: Connection, values: Record<string, 
   return token ? token : null
 }
 
-/** A copy of an HTTP connection that authenticates with a static bearer token instead of OAuth. */
-export function withBearerToken(connection: Connection, token: string): Connection {
-  return {
-    ...connection,
-    auth: 'bearer',
-    headers: { ...connection.headers, Authorization: `Bearer ${token}` },
-  }
-}
-
 /**
  * The tools a connection offers: what the server listed, cut to the `tools` the declaration names
  * when it names any. `missing` is what it named that the server did not list, so a misspelling is
