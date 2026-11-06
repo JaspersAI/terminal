@@ -462,7 +462,12 @@ function serve(host: Host, capabilities: Capability[]): void {
   })
   rpc.onNotification('live.set', (params) => {
     const { key, value } = asRecord(params)
-    attempt(id, 'live.set', () => setLive(id, key as string, value))
+    const state = getState()
+    const readyLlm = Boolean(
+      state.llm &&
+      (state.llm.providerId !== 'jaspers' || state.jaspers.tokens !== null || state.jaspers.reason !== null),
+    )
+    attempt(id, 'live.set', () => setLive(id, key as string, value, { readyLlm }))
   })
   rpc.onNotification('live.delete', (params) =>
     attempt(id, 'live.delete', () => deleteLive(id, asRecord(params)['key'] as string)),
