@@ -912,7 +912,7 @@ test('a streamed request asks Messages for a call\u2019s input as it is written,
 
 // What the loop hands a protocol is a thread as it is sent (`shared/agent/aside.ts`). These hold the
 // two together: a turn rebuilt for sending has to leave on the wire the way it was rebuilt.
-const LONG = 'q'.repeat(1_800)
+const LONG = 'q'.repeat(9_000)
 const ANSWER = 'r'.repeat(5_000)
 
 /** A finished request and the one at work, each with a call whose argument and answer are long, on one protocol's own payloads. */
@@ -982,7 +982,7 @@ for (const { name, sealed, raw, write } of PROTOCOLS) {
     const { earlier } = onTheWire(raw, write)
     assert.ok(earlier.includes('First.') && earlier.includes('Looking.') && earlier.includes('Done.'))
     assert.ok(!earlier.includes(LONG), 'the long argument is cut short')
-    assert.ok(earlier.includes('1,800 characters, set aside'))
+    assert.ok(earlier.includes('9,000 characters, set aside'))
     assert.ok(!earlier.includes(ANSWER), 'the long answer is a note')
     assert.ok(earlier.includes('Set aside: 5,000 characters'))
     assert.ok(!earlier.includes(sealed), "the provider's own payload stays with the request it was written in")

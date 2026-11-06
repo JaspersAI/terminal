@@ -43,12 +43,12 @@ export const INSTRUCTIONS: ReadonlySet<string> = new Set([ACTIVATE_SKILL, READ_S
 /** How much of an answer its note keeps: the beginning, where a table names its columns and a reply its ids. */
 const HEAD = 200
 /** A call whose arguments are shorter than this, all told, goes as it was made. */
-const ARGS_MAX = LARGE
+const ARGS_MAX = 8_000
 /** A text among a call's arguments is cut once it is longer than this, to its first so many characters. */
-const TEXT_MAX = LARGE
+const TEXT_MAX = 8_000
 const TEXT_KEPT = 200
 /** A list among them is cut once it is longer than this as written, to the items that fit in so many characters. */
-const LIST_MAX = LARGE
+const LIST_MAX = 8_000
 const LIST_KEPT = 200
 
 /** Which of a run's history goes to its model as it is. */

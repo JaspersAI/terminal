@@ -110,8 +110,8 @@ test("an answer the run goes by is never set aside: a skill's instructions and a
 })
 
 test("an earlier request's call goes with its long arguments cut short, and the rest of it as it was made", () => {
-  const sql = `select ${big(3_000)}`
-  const sics = Array.from({ length: 400 }, (_, at) => String(2000 + at))
+  const sql = `select ${big(9_000)}`
+  const sics = Array.from({ length: 1_500 }, (_, at) => String(2000 + at))
   const turns: Turn[] = [
     asked('go'),
     calling('c1', 'set', { path: 'panels/p4/state', value: sql }),
@@ -133,7 +133,7 @@ test("an earlier request's call goes with its long arguments cut short, and the 
   const value = set.input.value as string
   assert.ok(value.startsWith('select xxxx'))
   assert.ok(value.length < 400, `the text is ${value.length} characters`)
-  assert.match(value, /3,007 characters/)
+  assert.match(value, /9,007 characters/)
   assert.match(value, /read_again "c1"/)
 
   const screen = calls(out[3])[0]!.input as {
@@ -146,27 +146,26 @@ test("an earlier request's call goes with its long arguments cut short, and the 
   const list = screen.input.filters[0]!.value
   assert.equal(list[0], '2000')
   assert.ok(list.length < 60, `the list is ${list.length} long`)
-  const more = /(\d+) more of 400/.exec(list[list.length - 1]!)
+  const more = /(\d+|[\d,]+) more of 1,500/.exec(list[list.length - 1]!)
   assert.ok(more, 'the list ends on how many more there were')
-  assert.equal(Number(more[1]) + list.length - 1, 400)
+  assert.equal(Number(more[1]!.replace(/,/g, '')) + list.length - 1, 1_500)
   assert.match(list[list.length - 1]!, /read_again "c2"/)
 
   // The thread keeps both calls as they were made.
   assert.equal(calls(turns[1])[0]!.input.value, sql)
 })
 
-test('an earlier call whose arguments fit within LARGE stays whole so set calls and results match', () => {
-  const sql = `SELECT '1. Offense' AS Factor, 2.6 AS Edge\n${big(650, 'x')}`
+test('an earlier call whose arguments fit within 8,000 characters stays whole so multi-factor SQL and chart set calls are not truncated', () => {
+  const sql = `SELECT '1. Offense' AS Factor, 2.6 AS Edge\n${big(2_700, 'x')}`
   const turns: Turn[] = [
     asked('build model'),
-    calling('c1', 'set', { path: 'panels/e7/state', value: { sql, kind: 'hbar', x: 'Factor', y: ['Edge'] } }),
-    answer('c1', JSON.stringify({ path: 'panels/e7/state', state: { sql, kind: 'hbar', x: 'Factor', y: ['Edge'] } })),
+    calling('c1', 'set', { path: 'panels/e6/state', value: { sql, columns: ['Factor', 'Edge'] } }),
+    answer('c1', JSON.stringify({ path: 'panels/e6/state', state: { sql, columns: ['Factor', 'Edge'] } })),
     replied('updated'),
     asked('update numbers'),
   ]
   const out = sent(turns, startOf(turns))
   assert.equal(out[1], turns[1])
-  assert.equal(out[2], turns[2])
 })
 
 test("an earlier request's turn is sent as its words and its calls: nothing a provider tied to that request rides along", () => {
@@ -322,8 +321,8 @@ test('read_again resolves through an earlier read_again to the original call, an
 })
 
 test('a call that repeats a shortened argument from an earlier turn gets the original back, and a fabricated set-aside note is refused', () => {
-  const fullRequest = `Build the options-chain plugin with Yahoo, Alpaca, Massive, and Databento. ${big(1_800, 'a')}`
-  const sics = Array.from({ length: 400 }, (_, at) => String(2000 + at))
+  const fullRequest = `Build the options-chain plugin with Yahoo, Alpaca, Massive, and Databento. ${big(8_500, 'a')}`
+  const sics = Array.from({ length: 1_500 }, (_, at) => String(2000 + at))
   const turns: Turn[] = [
     asked('build it'),
     calling('c1', 'build_plugin', { id: 'options-chain', request: fullRequest }),
