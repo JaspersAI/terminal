@@ -32,10 +32,17 @@ export interface LlmDeps {
 const IN_FLIGHT = 4
 const TOKENS_MAX = 32_000
 
-export function createLlm(deps: LlmDeps): { complete(raw: unknown, signal: AbortSignal): Promise<Completion> } {
+export interface LlmStream {
+  onText?: (delta: string) => void
+  onThinking?: (delta: string) => void
+}
+
+export function createLlm(deps: LlmDeps): {
+  complete(raw: unknown, signal: AbortSignal, stream?: LlmStream): Promise<Completion>
+} {
   const limit = createLimiter(IN_FLIGHT)
   return {
-    async complete(raw, signal) {
+    async complete(raw, signal, stream) {
       const request = asRequest(raw)
       return limit(async () => {
         const config = deps.config()
@@ -45,6 +52,8 @@ export function createLlm(deps: LlmDeps): { complete(raw: unknown, signal: Abort
           maxTokens: request.maxTokens === undefined ? undefined : Math.min(request.maxTokens, TOKENS_MAX),
           signal,
           stream: true,
+          ...(stream?.onText ? { onText: stream.onText } : {}),
+          ...(stream?.onThinking ? { onThinking: stream.onThinking } : {}),
           ...(request.tools.length > 0 || request.turns.length > 1 ? { loop: true } : {}),
         }
         const call = (): Promise<Completion> =>
