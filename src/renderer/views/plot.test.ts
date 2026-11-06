@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { DEFAULT_TEXT_WIDTH_MAP, platformApi } from 'zrender/lib/core/platform.js'
+import { echarts } from './echarts.ts'
 import {
+  buildOption,
   CHART_KINDS,
+  chartFont,
   chartLegendOf,
   chartMessage,
   chartPointOf,
@@ -208,4 +212,98 @@ test('chart interactions extract zoom ranges, legend toggles, and clicked points
     series: null,
   })
   assert.equal(chartPointOf({ componentType: 'legend' }, ['2024']), null)
+})
+
+test('zooming a horizontal bar chart scales its y-axis label measurement so category labels do not clip at the left edge', () => {
+  const origMeasureText = platformApi.measureText
+  // HTML Canvas 2D rejects `font:` shorthands containing CSS-wide keywords like `inherit` (`13px inherit`),
+  // keeping the previous valid font (`10px sans-serif`).
+  let canvasFont = '10px sans-serif'
+  const seenFonts: string[] = []
+  platformApi.measureText = (text: string, font?: string) => {
+    if (font) {
+      seenFonts.push(font)
+      if (!/\b(inherit|initial|unset|revert|revert-layer)\b/i.test(font)) {
+        canvasFont = font
+      }
+    }
+    const match = /((?:\d+)?\.?\d*)px/.exec(canvasFont)
+    const fontSize = match ? Number(match[1]) : 10
+    let width = 0
+    for (const ch of text || '') {
+      width += (DEFAULT_TEXT_WIDTH_MAP[ch] ?? 1) * fontSize
+    }
+    return { width }
+  }
+
+  try {
+    const labels = [
+      '1. Offensive Line / Trench (22%)',
+      '3. Lions Secondary / Pass D (18%)',
+      '4. Bears Defense / Turnover (15%)',
+      '5. 3rd-Down / Red-Zone D (12%)',
+      '6. Roster Health / Injuries (8%)',
+      '7. Momentum / SRS (8%)',
+      'NET SPREAD (Bears -6.9)',
+    ]
+    const rows = labels.map((factor, i) => ({ factor, edge: -(i + 1) }))
+
+    const labelTranslateX = (scale: number): number => {
+      canvasFont = '10px sans-serif'
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 420, height: 220 })
+      try {
+        chart.setOption(
+          buildOption({
+            shape: 'hbar',
+            labels,
+            rows,
+            yColumns: ['edge'],
+            stack: false,
+            log: false,
+            zoom: false,
+            yFormat: 'auto',
+            scheme: 'dark',
+            scale,
+          }),
+          true,
+        )
+        const svg = chart.renderToSVGString()
+        const match = /text-anchor="end"[^>]*transform="translate\(([0-9.]+)\s+[0-9.]+\)"/.exec(svg)
+        assert.ok(match, 'expected right-aligned y-axis category labels in SVG')
+        return Number(match[1])
+      } finally {
+        chart.dispose()
+      }
+    }
+
+    const xAt100 = labelTranslateX(1)
+    const xAt125 = labelTranslateX(1.25)
+
+    assert.equal(chartFont('inherit'), 'sans-serif')
+    assert.equal(chartFont('  unset '), 'sans-serif')
+    assert.equal(chartFont('', 'ui-sans-serif, sans-serif'), 'ui-sans-serif, sans-serif')
+    assert.equal(chartFont('ui-sans-serif, system-ui, sans-serif'), 'ui-sans-serif, system-ui, sans-serif')
+
+    // No font shorthand passed to canvas measurement may contain `inherit`.
+    assert.equal(
+      seenFonts.some((f) => /\binherit\b/i.test(f)),
+      false,
+    )
+    // At 125% zoom (13px labels vs 10px), the right-aligned category labels must be shifted right
+    // far enough to fit the widest 13px label inside the left edge of the SVG.
+    const widestAt125 = Math.max(
+      ...labels.map((label) => {
+        let w = 0
+        for (const ch of label) w += (DEFAULT_TEXT_WIDTH_MAP[ch] ?? 1) * 13
+        return w
+      }),
+    )
+    assert.ok(xAt125 > xAt100, `expected 125% zoom left margin (${xAt125}) > 100% zoom (${xAt100})`)
+    assert.ok(
+      xAt125 >= widestAt125 + 8,
+      `expected label anchor x (${xAt125}) to leave room for widest 13px label (${widestAt125}) plus 8px left padding`,
+    )
+  } finally {
+    platformApi.measureText = origMeasureText
+  }
 })
