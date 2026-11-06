@@ -363,13 +363,15 @@ function ConnectionBlock({
 
   return (
     <div className="border-b border-border py-3 text-sm">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span>
+      <div className="flex items-center gap-x-2">
+        <span className="min-w-0 truncate">
           Connection <span className="font-mono">{name}</span>
         </span>
-        <span className="text-muted-foreground">{connection.transport === 'http' ? 'Streamable HTTP' : 'stdio'}</span>
-        <span className={STATUS_COLOR[status]}>{STATUS[status]}</span>
-        <div className="ml-auto flex gap-2">
+        <span className="shrink-0 text-muted-foreground">
+          {connection.transport === 'http' ? 'Streamable HTTP' : 'stdio'}
+        </span>
+        <span className={`shrink-0 ${STATUS_COLOR[status]}`}>{STATUS[status]}</span>
+        <div className="ml-auto flex shrink-0 gap-1.5">
           {status === 'needs-auth' && (
             <button type="button" onClick={() => act({ type: 'connection.authorize', id })} className={BUTTON}>
               Authorize
