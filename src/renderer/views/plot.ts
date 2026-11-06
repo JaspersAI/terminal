@@ -1,4 +1,5 @@
 import { cellText, isYearColumn } from './cells.ts'
+import type { EChartsOption } from './echarts.ts'
 
 // What the chart needs that a chart library does not give: the hues, the app's own ink, reading a
 // cell as a number, and a tooltip. Scales, ticks, and gaps in a line are ECharts' work, not ours.
@@ -120,18 +121,36 @@ export function numberOf(value: unknown): number | null {
   return null
 }
 
+const CSS_WIDE_KEYWORDS = new Set(['inherit', 'initial', 'unset', 'revert', 'revert-layer'])
+
 /**
- * The app's own colours, read from the theme's variables (src/host-runtime/theme.css) rather than
- * written again here, so the chart is drawn in whichever scheme is showing.
+ * A font-family stack safe to embed inside a CSS `font:` shorthand (`<size>px <family>`).
+ * ECharts' tooltip and ZRender's offscreen 2D canvas measurement both build `font:` shorthands,
+ * which reject CSS-wide keywords like `inherit` and fall back to the 10px canvas default.
  */
-export function ink(): { text: string; muted: string; line: string; surface: string } {
+export function chartFont(raw: string | null | undefined, fallback = 'sans-serif'): string {
+  const trimmed = raw?.trim() ?? ''
+  if (!trimmed || CSS_WIDE_KEYWORDS.has(trimmed.toLowerCase())) return fallback
+  return trimmed
+}
+
+/**
+ * The app's own colours and font stack, read from the theme's variables (src/host-runtime/theme.css)
+ * rather than written again here, so the chart is drawn and measured in whichever scheme and face are showing.
+ */
+export function ink(): { text: string; muted: string; line: string; surface: string; font: string } {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') {
+    return { text: '#171717', muted: '#737373', line: '#e5e5e5', surface: '#ffffff', font: 'sans-serif' }
+  }
   const style = getComputedStyle(document.documentElement)
   const token = (name: string, fallback: string): string => style.getPropertyValue(name).trim() || fallback
+  const bodyFont = document.body ? getComputedStyle(document.body).fontFamily : ''
   return {
     text: token('--jaspers-foreground', '#171717'),
     muted: token('--jaspers-muted-foreground', '#737373'),
     line: token('--jaspers-border', '#e5e5e5'),
     surface: token('--jaspers-background', '#ffffff'),
+    font: chartFont(bodyFont || style.fontFamily, token('--jaspers-font-sans', 'sans-serif')),
   }
 }
 
@@ -256,4 +275,255 @@ export function chartPointOf(
   const fromRaw = typeof raw['name'] === 'string' && raw['name'].trim() ? raw['name'].trim() : null
   const series = typeof raw['seriesName'] === 'string' && raw['seriesName'].trim() ? raw['seriesName'].trim() : null
   return { index, label: fromLabels ?? fromRaw, series }
+}
+
+export interface Build {
+  shape: ChartKind
+  /** The x column's values as the axis writes them, one a row. */
+  labels: string[]
+  rows: Record<string, unknown>[]
+  yColumns: string[]
+  stack: boolean
+  log: boolean
+  zoom: boolean
+  yFormat: Format
+  scheme: Scheme
+  scale: number
+  onHover?: (index: number, head: string) => void
+  renderTip?: (tip: Tip, paint: ReturnType<typeof ink>) => HTMLElement | string
+}
+
+export function buildOption({
+  shape,
+  labels,
+  rows,
+  yColumns,
+  stack,
+  log,
+  zoom,
+  yFormat,
+  scheme,
+  scale,
+  onHover,
+  renderTip,
+}: Build): EChartsOption {
+  const paint = ink()
+  const palette = seriesColors(scheme)
+  const many = yColumns.length > 1 || shape === 'pie'
+  const axisText = { color: paint.muted, fontSize: Math.round(10 * scale), fontFamily: paint.font }
+  const axisLine = { lineStyle: { color: paint.line } }
+  const value = (row: Record<string, unknown>, column: string): number | null => numberOf(row[column])
+
+  const base: EChartsOption = {
+    color: [...palette],
+    // What ECharts picks a label's color by where it draws one over a mark.
+    darkMode: scheme === 'dark',
+    animation: false,
+    // The family by name: ZRender measures labels on a 2D canvas and ECharts writes the tooltip's
+    // font as a CSS `font:` shorthand, neither of which accepts `inherit`.
+    textStyle: { color: paint.text, fontFamily: paint.font },
+    grid: { top: many ? 28 : 10, right: 12, bottom: zoom ? 38 : 22, left: 8, containLabel: true },
+    // Identity is never colour alone: for two or more series the legend names each in ink.
+    legend: many
+      ? {
+          top: 0,
+          left: 0,
+          itemWidth: 8,
+          itemHeight: 8,
+          itemGap: 12,
+          icon: 'rect',
+          textStyle: axisText,
+          inactiveColor: paint.line,
+          inactiveBorderColor: paint.line,
+        }
+      : undefined,
+    tooltip: {
+      trigger: isCartesian(shape) && shape !== 'scatter' && shape !== 'heatmap' ? 'axis' : 'item',
+      axisPointer: { type: shape === 'bar' || shape === 'hbar' ? 'shadow' : 'line', lineStyle: { color: paint.muted } },
+      backgroundColor: paint.surface,
+      borderColor: paint.line,
+      borderRadius: 0,
+      padding: [6, 8],
+      textStyle: {
+        color: paint.text,
+        fontSize: Math.round(11 * scale),
+        fontFamily: paint.font,
+      },
+      // Inside the chart, since the element around it clips whatever crosses its edge.
+      confine: true,
+      formatter: (raw: unknown) => {
+        const hovered = (Array.isArray(raw) ? raw : [raw]) as Hovered[]
+        // The tooltip is where a value is read exactly, so it is never cut down to 391B.
+        const write = (one: unknown): string => formatted(one, yFormat === 'compact' ? 'number' : yFormat)
+        const tip = tipOf(shape, hovered, rows, labels, yColumns, write, paint.muted)
+        if (tip && hovered[0] && typeof hovered[0].dataIndex === 'number') {
+          onHover?.(hovered[0].dataIndex, tip.head)
+        }
+        return tip ? (renderTip ? renderTip(tip, paint) : tip.head) : ''
+      },
+    },
+    dataZoom:
+      isCartesian(shape) && shape !== 'heatmap'
+        ? [
+            { type: 'inside' },
+            ...(zoom
+              ? [
+                  {
+                    type: 'slider' as const,
+                    height: 16,
+                    bottom: 6,
+                    borderColor: paint.line,
+                    textStyle: axisText,
+                    // ECharts' own handles are white, which a dark chart shows as two glaring tabs.
+                    handleStyle: { color: paint.surface, borderColor: paint.muted },
+                    moveHandleStyle: { color: paint.muted },
+                  },
+                ]
+              : []),
+          ]
+        : undefined,
+  }
+
+  if (shape === 'pie') {
+    const column = yColumns[0]!
+    return {
+      ...base,
+      grid: undefined,
+      series: [
+        {
+          type: 'pie',
+          radius: ['45%', '72%'],
+          // A 2px gap in the surface colour between slices, which is what separates them.
+          itemStyle: { borderColor: paint.surface, borderWidth: 2 },
+          label: { color: paint.muted, fontSize: Math.round(10 * scale), fontFamily: paint.font },
+          data: rows.map((row, index) => ({
+            name: labels[index] || String(index + 1),
+            value: value(row, column) ?? 0,
+          })),
+        },
+      ],
+    }
+  }
+
+  if (shape === 'heatmap') {
+    const [down, by] = yColumns as [string, string]
+    const downGrouped = !isYearColumn(rows, down)
+    const downOf = (row: Record<string, unknown>): string => cellText(row[down], downGrouped)
+    const downValues = [...new Set(rows.map(downOf))]
+    const across = [...new Set(labels)]
+    const numbers = rows.map((row) => value(row, by)).filter((one): one is number => one !== null)
+    return {
+      ...base,
+      legend: undefined,
+      grid: { ...(base.grid as object), top: 10, right: 60 },
+      xAxis: { type: 'category', data: across, axisLabel: axisText, axisLine, splitLine: { show: false } },
+      yAxis: { type: 'category', data: downValues, axisLabel: axisText, axisLine, splitLine: { show: false } },
+      visualMap: {
+        min: Math.min(0, ...numbers),
+        max: Math.max(0, ...numbers),
+        calculable: true,
+        orient: 'vertical',
+        right: 4,
+        top: 'center',
+        itemWidth: 10,
+        textStyle: axisText,
+        // One hue from nothing to full: magnitude is not a rainbow.
+        inRange: { color: HEAT[scheme] },
+        handleStyle: { borderColor: paint.surface },
+        indicatorStyle: { borderColor: paint.surface },
+      },
+      series: [
+        {
+          type: 'heatmap',
+          data: rows.map((row, index) => [
+            across.indexOf(labels[index] ?? ''),
+            downValues.indexOf(downOf(row)),
+            value(row, by) ?? 0,
+          ]),
+          itemStyle: { borderColor: paint.surface, borderWidth: 2 },
+        },
+      ],
+    }
+  }
+
+  const category = {
+    type: 'category' as const,
+    data: labels,
+    axisLabel: { ...axisText, hideOverlap: true },
+    axisLine,
+    axisTick: { show: false },
+    splitLine: { show: false },
+  }
+  const measure = {
+    type: (log ? 'log' : 'value') as 'log' | 'value',
+    // Bars are read by their length, so their axis starts at zero or it lies. A line or a point is
+    // read by its shape, and a price series pinned to zero is a flat line at the top of the plot.
+    scale: shape !== 'bar' && shape !== 'hbar',
+    axisLabel: { ...axisText, formatter: (raw: number) => formatted(raw, yFormat) },
+    axisLine: { show: false },
+    // Recessive: hairline, solid, one step off the surface.
+    splitLine: { lineStyle: { color: paint.line, width: 1 } },
+  }
+
+  if (shape === 'candlestick') {
+    const [open, close, low, high] = yColumns as [string, string, string, string]
+    return {
+      ...base,
+      legend: undefined,
+      xAxis: category,
+      yAxis: measure,
+      series: [
+        {
+          type: 'candlestick',
+          data: rows.map((row) => [
+            value(row, open) ?? 0,
+            value(row, close) ?? 0,
+            value(row, low) ?? 0,
+            value(row, high) ?? 0,
+          ]),
+          itemStyle: {
+            color: palette[2],
+            color0: palette[7],
+            borderColor: palette[2],
+            borderColor0: palette[7],
+          },
+        },
+      ],
+    }
+  }
+
+  const series = yColumns.map((column, index) => {
+    const data = rows.map((row) => value(row, column))
+    const color = palette[index % SERIES_MAX]!
+    if (shape === 'scatter')
+      return { name: column, type: 'scatter' as const, symbolSize: 8, data, itemStyle: { color } }
+    if (shape === 'bar' || shape === 'hbar') {
+      return {
+        name: column,
+        type: 'bar' as const,
+        stack: stack ? 'all' : undefined,
+        barMaxWidth: 24,
+        // Square ends: the house style has no rounded corners anywhere.
+        itemStyle: { color, borderRadius: 0, borderColor: paint.surface, borderWidth: stack ? 2 : 0 },
+        data,
+      }
+    }
+    return {
+      name: column,
+      type: 'line' as const,
+      stack: stack && shape === 'area' ? 'all' : undefined,
+      showSymbol: false,
+      symbolSize: 8,
+      lineStyle: { width: 2, color },
+      itemStyle: { color },
+      areaStyle: shape === 'area' ? { color, opacity: stack ? 0.85 : 0.15 } : undefined,
+      // A gap in the data is a gap in the line, not a leap across it.
+      connectNulls: false,
+      data,
+    }
+  })
+
+  return shape === 'hbar'
+    ? { ...base, xAxis: measure, yAxis: category, series }
+    : { ...base, xAxis: category, yAxis: measure, series }
 }
