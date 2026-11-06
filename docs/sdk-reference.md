@@ -71,7 +71,7 @@ A plugin with `start` gets its process when it loads. One without gets it on its
 | `ctx`         | Needs          | What it does                                                                                                                                     |
 | ------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `fetch`       |                | `fetch`, only to the source's `hosts`. `${secret:KEY}` in the address or a header value is filled in from the plugin's declared secrets before the request goes out; a key not set fails the call and names `set_secret` |
-| `llm`         | `llm`          | `complete({ system, turns, tools, model, maxTokens, signal })` on the app's model; the key never reaches the plugin                              |
+| `llm`         | `llm`          | `complete({ system, turns, tools, model, maxTokens, signal, onText, onThinking })` on the app's model; the key never reaches the plugin          |
 | `tools`       | `tools`        | `connections()`, `list()`, and `call(id, args)` for the tools on the app's MCP connections                                                       |
 | `files`       | `files`        | `read`, `write`, `list`, `remove`, `watch`, `open`, `reveal`: plain paths in `~/Jaspers/<plugin id>/`, `plugin:` paths in the plugin's folder, read only |
 | `state`       | `state`        | `get(path)`: the app's state, read only, by the paths `useData` takes                                                                            |

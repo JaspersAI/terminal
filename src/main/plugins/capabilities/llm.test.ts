@@ -153,3 +153,23 @@ test("a request with tools, or with more than one turn, is a round of a loop: ma
     [true, true, undefined],
   )
 })
+
+test('stream callbacks for text and thinking are forwarded to the provider when given', async () => {
+  const texts: string[] = []
+  const thoughts: string[] = []
+  const { d } = deps(async (options) => {
+    options.onText?.('First ')
+    options.onThinking?.('Check ')
+    options.onText?.('second.')
+    options.onThinking?.('10-K.')
+    return REPLY
+  })
+  const signal = new AbortController().signal
+  const out = await createLlm(d).complete(request, signal, {
+    onText: (delta) => void texts.push(delta),
+    onThinking: (delta) => void thoughts.push(delta),
+  })
+  assert.equal(out, REPLY)
+  assert.deepEqual(texts, ['First ', 'second.'])
+  assert.deepEqual(thoughts, ['Check ', '10-K.'])
+})
