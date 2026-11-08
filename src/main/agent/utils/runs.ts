@@ -28,6 +28,7 @@ export interface Tile {
 }
 
 const live = new Map<string, Live>()
+const liveListeners = new Set<(active: boolean) => void>()
 /** What each run in flight was asked, by run: what a question of its is said to be about. */
 const requests = new Map<string, string>()
 /** What each run in flight has done so far, as its status said it: what its exchange is filed with. */
@@ -35,6 +36,17 @@ const trails = new Map<string, string[]>()
 let runSeq = 0
 /** How much of a request a question carries to say whose it is. */
 const ABOUT_MAX = 120
+
+/** Whether any assistant run is currently in flight. */
+export function hasLiveRuns(): boolean {
+  return live.size > 0
+}
+
+/** Subscribes to transitions between zero and one-or-more active assistant runs. */
+export function onLiveRunsChange(listener: (active: boolean) => void): () => void {
+  liveListeners.add(listener)
+  return () => liveListeners.delete(listener)
+}
 
 /** Sends one event to every window. Showing only: a window that misses one is less informed, nothing more. */
 export function emit(event: AgentEvent): void {
@@ -85,8 +97,12 @@ export function begin(
     ...(ask === undefined ? {} : { ask }),
     ...(tile ? { tile } : {}),
   }
+  const wasEmpty = live.size === 0
   live.set(runId, entry)
   requests.set(runId, request)
+  if (wasEmpty) {
+    for (const listener of [...liveListeners]) listener(true)
+  }
   noteRequest(runId, origin, request, { workspaceId, label, ...(tile ? { tile } : {}) })
   emit({
     kind: 'start',
@@ -101,10 +117,13 @@ export function begin(
 }
 
 export function end(entry: Live): void {
-  live.delete(entry.runId)
+  const removed = live.delete(entry.runId)
   requests.delete(entry.runId)
   trails.delete(entry.runId)
   clearAnswered(entry.runId)
+  if (removed && live.size === 0) {
+    for (const listener of [...liveListeners]) listener(false)
+  }
 }
 
 /** What a run in flight has done so far, a line a step, as the chat showed them. */

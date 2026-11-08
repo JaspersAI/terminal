@@ -30,6 +30,7 @@ import { startBackground, startsHidden } from './app/background'
 import { deleteRecordings, endSession, eyeFolder, startEye } from './eye/eye'
 import { recordAction, recordNote, startTelemetry } from './eye/taps'
 import { closePendingRuns } from './agent/utils/record'
+import { hasLiveRuns, onLiveRunsChange } from './agent/utils/runs'
 import { knownSecrets } from './agent/utils/settings'
 import { canFlushUploads, flushUploads, startUploads, stopUploads, suspendUploads, wakeUploads } from './eye/upload'
 import { startTheme } from './app/theme'
@@ -37,6 +38,7 @@ import { installUpdate, startUpdates } from './app/updates'
 import { startTasks, stopTasks, suspendTasks, wakeTasks } from './tasks/tasks'
 import { findTool } from './agent/tools'
 import { registerSchemes, registerViewHost } from './plugins/viewhost'
+import { suspendLlm, wakeLlm } from './llm/http'
 import { registerVoiceIpc } from './llm/voice'
 import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
 import { anyInFront, isHttps, openAllStored, registerDragIpc, showAll, watchDisplays } from './grid/windows'
@@ -96,6 +98,7 @@ app.whenReady().then(async () => {
     wakeTasks()
     wakeRetries()
     wakeJaspers()
+    wakeLlm()
     wakeUploads()
   }
   // The scheduler. A call task runs its tool the way the orchestrator would, on the task's
@@ -110,6 +113,7 @@ app.whenReady().then(async () => {
     onWake: () => {
       wakeRetries()
       wakeJaspers()
+      wakeLlm()
       wakeUploads()
     },
   })
@@ -230,10 +234,13 @@ app.whenReady().then(async () => {
       suspendTasks()
       suspendRetries()
       suspendJaspers()
+      suspendLlm()
       suspendUploads()
     },
     wakeTasks: wakeAll,
     installUpdate,
+    runsInFlight: hasLiveRuns,
+    onRunsChange: onLiveRunsChange,
   })
   // Eye, if the user has it on: a frame of the app's own windows every minute, and a line of
   // telemetry for what the app did. It records into a folder on this machine, and the uploader

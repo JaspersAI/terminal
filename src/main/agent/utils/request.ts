@@ -1,8 +1,8 @@
 import { sleep } from '../../../shared/abort'
 import { saidOf } from '../../../shared/agent/rounds'
-import { isRetryable, isTurnTimeout, retryLine, retryWait } from '../../../shared/llm/limits'
+import { retryLine, shouldRetryRoundError, SLEEP_INTERRUPTED_MESSAGE } from '../../../shared/llm/limits'
 import type { Completion, Effort, ToolDefinition, Turn } from '../../../shared/llm/llm'
-import { ProviderError } from '../../llm/http'
+import { isLlmSleeping, ProviderError, QUIET_MS, waitUntilLlmAwake, wakeLlm } from '../../llm/http'
 import { complete } from '../../llm/llm'
 import type { ProviderConfig } from '../../secrets'
 import { noteLlm } from './record'
@@ -39,6 +39,11 @@ export interface RoundRequest {
    * stalled timeout instead of repeating the identical prompt 6 times in place.
    */
   restateOnTimeout?: boolean
+  /**
+   * Whether earlier tool rounds have already completed in this run, so a turn interrupted by system
+   * sleep should throw immediately for partial completion rather than waiting across sleep.
+   */
+  abortOnSleep?: boolean
 }
 
 /**
@@ -63,6 +68,7 @@ export async function request({
   timeoutMs,
   effort = EFFORT,
   restateOnTimeout = false,
+  abortOnSleep = false,
 }: RoundRequest): Promise<Completion> {
   const signal = entry.controller.signal
   const says = saidOf(entry.origin, shown)
@@ -100,24 +106,42 @@ export async function request({
     } catch (err) {
       const elapsedMs = Date.now() - began
       const message = err instanceof Error ? err.message : String(err)
+      const status = err instanceof ProviderError ? err.status : null
+      const retryAfterMs = err instanceof ProviderError ? err.retryAfterMs : null
       noteLlm(entry.runId, {
         ...asked,
         ms: elapsedMs,
         ok: false,
-        status: err instanceof ProviderError ? err.status : null,
+        status,
         message,
-        retryAfterMs: err instanceof ProviderError ? err.retryAfterMs : null,
+        retryAfterMs,
       })
       if (signal.aborted) throw err
-      if (restateOnTimeout && isTurnTimeout(message, elapsedMs)) throw err
-      const wait = isRetryable(message)
-        ? retryWait(attempt, err instanceof ProviderError ? err.retryAfterMs : null)
-        : null
-      if (wait === null) throw err
-      tell(retryLine(message, wait))
+      const decision = shouldRetryRoundError({
+        message,
+        attempt,
+        retryAfterMs,
+        elapsedMs,
+        timeoutMs: timeoutMs ?? QUIET_MS,
+        restateOnTimeout,
+        abortOnSleep,
+        sleeping: isLlmSleeping(),
+      })
+      if (decision.sleepInterrupted && !isLlmSleeping()) {
+        wakeLlm()
+      }
+      if (decision.action === 'throw') {
+        if (decision.sleepInterrupted && !/across sleep/i.test(message)) {
+          throw new ProviderError(`${config.provider.name}: ${SLEEP_INTERRUPTED_MESSAGE}`, status, retryAfterMs)
+        }
+        throw err
+      }
+      tell(retryLine(message, decision.waitMs))
       // Whatever was held goes out now, before the box is told to start over, not after.
       text?.flush()
-      await sleep(wait, signal)
+      if (decision.waitAwake) await waitUntilLlmAwake(signal)
+      await sleep(decision.waitMs, signal)
+      if (decision.waitAwake || isLlmSleeping()) await waitUntilLlmAwake(signal)
       // The box starts the round over: whatever part of a reply got out is about to be said again.
       emit({ kind: 'round', runId: entry.runId, round })
     } finally {
