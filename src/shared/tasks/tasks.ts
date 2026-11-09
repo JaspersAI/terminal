@@ -4,6 +4,10 @@
 // a time is written for someone to read. Keep this file free of Node and DOM imports.
 
 import { COMMAND_MAX, TASK_COMMANDS_MAX } from '../app/pro-mode.ts'
+import { refreshGridOnWake, type Grid } from '../grid/grid.ts'
+import { MAIN_WINDOW } from '../grid/windows.ts'
+import { refreshTarget, type Loops } from '../loops/loops.ts'
+import type { Workspace } from '../state.ts'
 import { checkRule, nextByRule, ruleText, type ClockRule } from './clock-rule.ts'
 
 export type { ClockRule } from './clock-rule.ts'
@@ -206,18 +210,64 @@ export function isWakeLag(expectedAt: number | null, now: number): boolean {
 }
 
 /**
- * How far ahead of a `refresh_element` task a non-refresh task on the same workspace holds the
- * refresh back, so a refresh scheduled in the same turn (a split-second earlier) waits for the
- * data task to run and finish first.
+ * How far ahead of a panel refresh or state task a non-refresh task on the same workspace holds it
+ * back, so a refresh scheduled in the same turn (a split-second earlier) waits for the data task to
+ * run and finish first.
  */
 const REFRESH_COALESCE_MS = 2_000
 
 function isRefreshCall(task: Pick<Task, 'call'>): boolean {
-  return task.call?.tool === 'refresh_element'
+  const tool = task.call?.tool
+  return tool === 'refresh_element' || tool === 'set'
+}
+
+/** The workspace and panel/element/room identifier targeted by a `refresh_element` or `set` task call, or null. */
+export function panelTargetOfCall(
+  task: Pick<Task, 'workspaceId' | 'call'>,
+): { workspaceId: string; panelId: string } | null {
+  const call = task.call
+  if (!call) return null
+  if (call.tool === 'refresh_element') {
+    const id = firstTrimmed(call.input.elementId, call.input.panelId, call.input.id)
+    return id ? { workspaceId: task.workspaceId, panelId: id } : null
+  }
+  if (call.tool === 'set') {
+    const raw = firstTrimmed(call.input.path)
+    if (!raw) return null
+    const segments = raw.split('/')
+    if (segments[0] === 'panels' && segments[1]) {
+      return { workspaceId: task.workspaceId, panelId: segments[1] }
+    }
+    if (
+      (segments[0] === 'workspaces' || segments[0] === 'tabs') &&
+      segments[1] &&
+      segments[2] === 'panels' &&
+      segments[3]
+    ) {
+      return { workspaceId: segments[1], panelId: segments[3] }
+    }
+  }
+  return null
+}
+
+function firstTrimmed(...values: unknown[]): string | null {
+  for (const value of values) {
+    const trimmed = typeof value === 'string' ? value.trim() : ''
+    if (trimmed) return trimmed
+  }
+  return null
+}
+
+function targetKey(task: Pick<Task, 'workspaceId' | 'call'>): string | null {
+  const target = panelTargetOfCall(task)
+  return target ? `${target.workspaceId}:${target.panelId}` : null
 }
 
 function holdsBackRefresh(refreshTask: Task, tasks: readonly Task[], now?: number): boolean {
+  const target = targetKey(refreshTask)
   return tasks.some((other) => {
+    if (other.id === refreshTask.id) return false
+    if (target !== null && other.running && targetKey(other) === target) return true
     if (other.workspaceId !== refreshTask.workspaceId || isRefreshCall(other)) return false
     if (other.running) return true
     if (now !== undefined && isDue(other, now)) return true
@@ -228,12 +278,27 @@ function holdsBackRefresh(refreshTask: Task, tasks: readonly Task[], now?: numbe
 }
 
 /**
- * The tasks due to start now. A `refresh_element` call on a workspace waits while another task on
- * that workspace is running, also due, or about to run within `REFRESH_COALESCE_MS`, so panels
- * refresh after the workspace's data tasks settle.
+ * The tasks due to start now. A `refresh_element` or `set` panel call on a workspace waits while
+ * another task on that workspace is running, also due, or about to run within `REFRESH_COALESCE_MS`,
+ * and at most one task per panel target starts in a tick, so panels refresh after the workspace's
+ * data tasks settle and never race duplicate overdue toggles on the same panel.
  */
 export function dueTasks(tasks: Task[], now: number): Task[] {
-  return tasks.filter((t) => isDue(t, now) && (!isRefreshCall(t) || !holdsBackRefresh(t, tasks, now)))
+  const seenTargets = new Set<string>()
+  const due: Task[] = []
+  for (const task of tasks) {
+    if (!isDue(task, now)) continue
+    if (isRefreshCall(task)) {
+      if (holdsBackRefresh(task, tasks, now)) continue
+      const target = targetKey(task)
+      if (target !== null) {
+        if (seenTargets.has(target)) continue
+        seenTargets.add(target)
+      }
+    }
+    due.push(task)
+  }
+  return due
 }
 
 /**
@@ -248,6 +313,56 @@ export function earliestNext(tasks: Task[]): number | null {
     if (earliest === null || task.nextAt! < earliest) earliest = task.nextAt!
   }
   return earliest
+}
+
+export interface WakeGridState {
+  workspaces: readonly Workspace[]
+  currentWorkspaceId: string
+  windows: readonly number[]
+  grids: Record<string, Record<number, Grid>>
+  loops: Record<string, Loops>
+  tasks: readonly Task[]
+}
+
+/**
+ * The workspace grids after system wake: stamps `refreshedAt` on data and plugin views in visible
+ * workspaces that do not already have a due task targeting them, leaving inactive tabs, browsers,
+ * apps, and static core views untouched.
+ */
+export function wakeGrids(state: WakeGridState, at: number): Record<string, Record<number, Grid>> {
+  const visible = new Set<string>([state.currentWorkspaceId])
+  for (const ws of state.workspaces) {
+    if (ws.window !== undefined && ws.window > MAIN_WINDOW && state.windows.includes(ws.window)) {
+      visible.add(ws.id)
+    }
+  }
+  let nextGrids = state.grids
+  for (const workspaceId of visible) {
+    const grids = state.grids[workspaceId]
+    if (!grids) continue
+    const loops = state.loops[workspaceId]?.list ?? []
+    const skipIds = new Set<string>()
+    for (const task of state.tasks) {
+      if (!isDue(task, at)) continue
+      const target = panelTargetOfCall(task)
+      if (!target || target.workspaceId !== workspaceId) continue
+      skipIds.add(target.panelId)
+      skipIds.add(refreshTarget(grids, loops, target.panelId))
+    }
+    let nextWorkspaceGrids = grids
+    for (const [win, grid] of Object.entries(grids)) {
+      const refreshed = refreshGridOnWake(grid, at, skipIds)
+      if (refreshed !== grid) {
+        if (nextWorkspaceGrids === grids) nextWorkspaceGrids = { ...grids }
+        nextWorkspaceGrids[Number(win)] = refreshed
+      }
+    }
+    if (nextWorkspaceGrids !== grids) {
+      if (nextGrids === state.grids) nextGrids = { ...state.grids }
+      nextGrids[workspaceId] = nextWorkspaceGrids
+    }
+  }
+  return nextGrids
 }
 
 /** A task that will not run again unless it is changed: no next time, and no run in flight. */

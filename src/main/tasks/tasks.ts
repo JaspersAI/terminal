@@ -12,6 +12,7 @@ import {
   STARTUP_GRACE_MS,
   TASKS_MAX,
   TIMER_MAX_MS,
+  wakeGrids,
   WAKE_GRACE_MS,
   type Task,
   type TaskCall,
@@ -62,11 +63,18 @@ function now(): number {
   return deps?.now?.() ?? Date.now()
 }
 
-function startAfterGrace(ms: number): void {
+function startAfterGrace(ms: number, waking = false): void {
   suspendTasks()
   grace = setTimeout(() => {
     grace = null
     started = true
+    if (waking) {
+      const at = now()
+      update((state) => {
+        const grids = wakeGrids(state, at)
+        return grids === state.grids ? state : { ...state, grids }
+      })
+    }
     arm()
   }, ms)
 }
@@ -95,7 +103,7 @@ export function suspendTasks(): void {
 /** After sleep: wait the grace window for connections and the network to settle, then arm from the clock as it is now. */
 export function wakeTasks(): void {
   if (!deps) return
-  startAfterGrace(WAKE_GRACE_MS)
+  startAfterGrace(WAKE_GRACE_MS, true)
 }
 
 /** On quit: nothing more is started. A run in flight is lost, and its task runs at the next launch. */

@@ -27,9 +27,11 @@ import {
   runNotice,
   shortLocal,
   taskStatus,
+  wakeGrids,
   WAKE_GRACE_MS,
   type Task,
 } from './tasks.ts'
+import { EMPTY_GRID, panelOf, placeFramed, type PanelContent } from '../grid/grid.ts'
 
 /** 2026-09-14 09:00:00 UTC. */
 const T0 = Date.UTC(2026, 8, 14, 9, 0, 0)
@@ -38,14 +40,15 @@ const MIN = 60 * S
 const DAY = 24 * 60 * MIN
 
 function task(over: Partial<Task> = {}): Task {
+  const id = over.id ?? 't1'
   return {
-    id: 't1',
+    id,
     workspaceId: 'ws-1',
     instructions: 'Refresh e3',
     model: null,
     at: null,
     speak: 'always',
-    call: { tool: 'refresh_element', input: { elementId: 'e3' } },
+    call: { tool: 'refresh_element', input: { elementId: id === 't1' ? 'e3' : `e_${id}` } },
     executeAt: T0,
     every: 30 * S,
     enabled: true,
@@ -202,6 +205,225 @@ test('a refresh_element task waits while another task on its workspace is due or
     dueTasks(afterSlightlyLaterFetch, T0 + 700).map((t) => t.id),
     ['t3', 't4'],
   )
+})
+
+test('panel set tasks wait for workspace data tasks and run one at a time per panel target on wake', () => {
+  const quoteFetch = task({
+    id: 't11',
+    workspaceId: 'ws-1',
+    every: 60 * S,
+    executeAt: T0,
+    nextAt: T0,
+    call: { tool: 'run_source', input: { source: 'yfinance/quote' } },
+  })
+  const tableToggleA = task({
+    id: 't12',
+    workspaceId: 'ws-1',
+    every: 60 * S,
+    executeAt: T0,
+    nextAt: T0,
+    call: { tool: 'set', input: { path: 'panels/e46/state/sql', value: 'SELECT 1' } },
+  })
+  const chartToggleA = task({
+    id: 't13',
+    workspaceId: 'ws-1',
+    every: 60 * S,
+    executeAt: T0,
+    nextAt: T0,
+    call: { tool: 'set', input: { path: 'panels/e113/state/sql', value: 'SELECT 1' } },
+  })
+  const tableToggleB = task({
+    id: 't14',
+    workspaceId: 'ws-1',
+    every: 60 * S,
+    executeAt: T0 + 30 * S,
+    nextAt: T0 + 30 * S,
+    call: { tool: 'set', input: { path: 'panels/e46/state/sql', value: 'SELECT 1 -- toggle' } },
+  })
+  const chartToggleB = task({
+    id: 't15',
+    workspaceId: 'ws-1',
+    every: 60 * S,
+    executeAt: T0 + 30 * S,
+    nextAt: T0 + 30 * S,
+    call: { tool: 'set', input: { path: 'panels/e113/state/sql', value: 'SELECT 1 -- toggle' } },
+  })
+  const watchlistRefresh = task({
+    id: 't20',
+    workspaceId: 'ws-1',
+    every: 60 * S,
+    executeAt: T0,
+    nextAt: T0,
+    call: { tool: 'refresh_element', input: { elementId: 'e7' } },
+  })
+
+  const wakeTime = T0 + 10 * MIN
+  const allOverdue = [quoteFetch, tableToggleA, chartToggleA, tableToggleB, chartToggleB, watchlistRefresh]
+
+  // On wake, only the data fetch task starts; panel set and refresh_element tasks wait for it.
+  assert.deepEqual(
+    dueTasks(allOverdue, wakeTime).map((t) => t.id),
+    ['t11'],
+  )
+  assert.equal(earliestNext([{ ...quoteFetch, running: true }, tableToggleA, chartToggleA, watchlistRefresh]), null)
+
+  // Once the quote fetch finishes, one task per panel target (t12 on e46, t13 on e113, t20 on e7) starts;
+  // duplicate overdue tasks targeting the same panels (t14 on e46, t15 on e113) wait until t12/t13 finish.
+  const afterQuoteFetch = [
+    afterRun({ ...quoteFetch, running: true }, { at: wakeTime, ok: true, result: 'ok', ms: 200 }),
+    tableToggleA,
+    chartToggleA,
+    tableToggleB,
+    chartToggleB,
+    watchlistRefresh,
+  ]
+  assert.deepEqual(
+    dueTasks(afterQuoteFetch, wakeTime + 200).map((t) => t.id),
+    ['t12', 't13', 't20'],
+  )
+
+  // While t12 and t13 are running, t14 and t15 remain held back.
+  const whileFirstTogglesRun = [
+    afterQuoteFetch[0]!,
+    { ...tableToggleA, running: true },
+    { ...chartToggleA, running: true },
+    tableToggleB,
+    chartToggleB,
+    { ...watchlistRefresh, running: true },
+  ]
+  assert.deepEqual(dueTasks(whileFirstTogglesRun, wakeTime + 200), [])
+  assert.equal(earliestNext(whileFirstTogglesRun), wakeTime + 60 * S)
+
+  // Once t12 and t13 finish, t14 and t15 become due.
+  const afterFirstToggles = [
+    afterQuoteFetch[0]!,
+    afterRun({ ...tableToggleA, running: true }, { at: wakeTime + 200, ok: true, result: 'ok', ms: 250 }),
+    afterRun({ ...chartToggleA, running: true }, { at: wakeTime + 200, ok: true, result: 'ok', ms: 250 }),
+    tableToggleB,
+    chartToggleB,
+    afterRun({ ...watchlistRefresh, running: true }, { at: wakeTime + 200, ok: true, result: 'ok', ms: 250 }),
+  ]
+  assert.equal(earliestNext(afterFirstToggles), T0 + 30 * S)
+  assert.deepEqual(
+    dueTasks(afterFirstToggles, wakeTime + 450).map((t) => t.id),
+    ['t14', 't15'],
+  )
+
+  // Two due refresh_element tasks targeting the same panel also run one at a time.
+  const duplicateWatchlistRefresh = task({
+    id: 't21',
+    workspaceId: 'ws-1',
+    every: 60 * S,
+    executeAt: T0 + 30 * S,
+    nextAt: T0 + 30 * S,
+    call: { tool: 'refresh_element', input: { elementId: 'e7' } },
+  })
+  assert.deepEqual(
+    dueTasks([watchlistRefresh, duplicateWatchlistRefresh], wakeTime).map((t) => t.id),
+    ['t20'],
+  )
+  assert.deepEqual(dueTasks([{ ...watchlistRefresh, running: true }, duplicateWatchlistRefresh], wakeTime), [])
+  assert.equal(earliestNext([{ ...watchlistRefresh, running: true }, duplicateWatchlistRefresh]), null)
+})
+
+test('wakeGrids refreshes data and plugin views on visible workspaces while skipping inactive tabs, browsers, and panels with due refresh or set tasks', () => {
+  const view = (id: string): PanelContent => ({ kind: 'view', view: id })
+  let activeGrid = EMPTY_GRID
+  const optionsChain = placeFramed(activeGrid, {
+    rect: { x: 0, y: 0, w: 8, h: 6 },
+    content: view('options/chain'),
+    state: { symbol: 'FLWS' },
+    loop: 'f1',
+  })
+  activeGrid = optionsChain.grid
+  const fredExplorer = placeFramed(activeGrid, {
+    rect: { x: 8, y: 0, w: 8, h: 6 },
+    content: view('fred/explorer'),
+    state: { series: 'FEDFUNDS' },
+    loop: 'f2',
+  })
+  activeGrid = fredExplorer.grid
+  const sqlTableWithTask = placeFramed(activeGrid, {
+    rect: { x: 0, y: 6, w: 8, h: 6 },
+    content: view('core/table'),
+    state: { sql: 'SELECT 1' },
+    loop: 'f3',
+  })
+  activeGrid = sqlTableWithTask.grid
+  const watchlistWithRoomTask = placeFramed(activeGrid, {
+    rect: { x: 8, y: 6, w: 8, h: 6 },
+    content: view('yfinance/watchlist'),
+    state: {},
+    loop: 'f4',
+  })
+  activeGrid = watchlistWithRoomTask.grid
+
+  const inactiveView = placeFramed(EMPTY_GRID, {
+    rect: { x: 0, y: 0, w: 8, h: 6 },
+    content: view('options/chain'),
+    state: { symbol: 'SPY' },
+  })
+  const detachedView = placeFramed(EMPTY_GRID, {
+    rect: { x: 0, y: 0, w: 8, h: 6 },
+    content: view('core/chart'),
+    state: { sql: 'SELECT 1' },
+  })
+
+  const wakeTime = T0 + 10 * MIN
+  const nextGrids = wakeGrids(
+    {
+      workspaces: [
+        { id: 'ws-active', name: 'Retail Portfolio Watch' },
+        { id: 'ws-inactive', name: 'Tab 2' },
+        { id: 'ws-detached', name: 'Detached', window: 2 },
+      ],
+      currentWorkspaceId: 'ws-active',
+      windows: [2],
+      grids: {
+        'ws-active': { 1: activeGrid },
+        'ws-inactive': { 1: inactiveView.grid },
+        'ws-detached': { 2: detachedView.grid },
+      },
+      loops: {
+        'ws-active': {
+          seq: 4,
+          list: [
+            { id: 'f1', desc: 'Options', brief: '', plugins: [], skills: [], createdAt: T0 },
+            { id: 'f2', desc: 'FRED', brief: '', plugins: [], skills: [], createdAt: T0 },
+            { id: 'f3', desc: 'Table', brief: '', plugins: [], skills: [], createdAt: T0 },
+            { id: 'f4', desc: 'Watchlist', brief: '', plugins: [], skills: [], createdAt: T0 },
+          ],
+        },
+      },
+      tasks: [
+        task({
+          id: 't12',
+          workspaceId: 'ws-active',
+          nextAt: T0,
+          call: { tool: 'set', input: { path: `panels/${sqlTableWithTask.element.id}/state/sql`, value: 'SELECT 1' } },
+        }),
+        task({
+          id: 't20',
+          workspaceId: 'ws-active',
+          nextAt: T0,
+          call: { tool: 'refresh_element', input: { elementId: 'room_4' } },
+        }),
+      ],
+    },
+    wakeTime,
+  )
+
+  const wokenActive = nextGrids['ws-active']![1]!
+  // Views without a scheduled task on the active workspace get refreshedAt stamped on wake.
+  assert.equal(panelOf(wokenActive, optionsChain.panel.id).refreshedAt, wakeTime)
+  assert.equal(panelOf(wokenActive, fredExplorer.panel.id).refreshedAt, wakeTime)
+  // Views with a due set or refresh_element task (including by room_N name) are left to their task.
+  assert.equal(panelOf(wokenActive, sqlTableWithTask.panel.id).refreshedAt, null)
+  assert.equal(panelOf(wokenActive, watchlistWithRoomTask.panel.id).refreshedAt, null)
+  // Detached window workspaces also refresh their data views on wake.
+  assert.equal(panelOf(nextGrids['ws-detached']![2]!, detachedView.panel.id).refreshedAt, wakeTime)
+  // Inactive tabs are untouched until selected.
+  assert.equal(nextGrids['ws-inactive']![1], inactiveView.grid)
 })
 
 test('isWakeLag detects a timer firing after an OS sleep or event-loop lag spike', () => {

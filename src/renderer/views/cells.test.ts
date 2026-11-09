@@ -196,4 +196,9 @@ test('sqlMatchesSource matches quoted source filters and falls back to all sourc
   const unfiltered = 'select close/open from run_rows'
   assert.equal(sqlMatchesSource(unfiltered, 'yfinance/quote'), true)
   assert.equal(sqlMatchesSource(unfiltered, 'alpaca/news'), true)
+
+  // Date strings ('10/19') or double-quoted SQL column aliases ("P/E") alongside the word `source`
+  // are not <plugin>/<name> source filters and must not suppress refreshes.
+  const withDateAndAlias = `select source, '10/19' as entry_date, price / eps as "P/E" from runs r join run_rows d on d.run_id = r.id`
+  assert.equal(sqlMatchesSource(withDateAndAlias, 'yfinance/quote'), true)
 })

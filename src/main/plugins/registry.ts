@@ -231,7 +231,7 @@ const DATA_STATE = {
 }
 
 const DATA_INSTRUCTIONS =
-  'Set state.source to a source id and state.args to its arguments, or set state.sql to a SELECT over the store (the query tool describes it; filter row_count > 0 when selecting dataset runs from runs) and leave source null. Never both.'
+  'Set state.source to a source id and state.args to its arguments, or set state.sql to a SELECT over the store (the query tool describes it; filter row_count > 0 when selecting dataset runs from runs) and leave source null. Never both. A view with state.sql refreshes automatically when new runs are filed to the store and on refresh_element.'
 
 const TABLE: ViewDef = {
   id: 'core/table',

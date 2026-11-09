@@ -1034,7 +1034,13 @@ export function deleteLoop(workspaceId: string, loopId: string): void {
  * Writes one value inside a panel's state, once the whole result passes the view's schema. A frame
  * holds no view of its own, so it has no state to write: the views inside it have.
  */
-export function setPanelStateChecked(workspaceId: string, panelId: string, path: string[], value: unknown): Panel {
+export function setPanelStateChecked(
+  workspaceId: string,
+  panelId: string,
+  path: string[],
+  value: unknown,
+  at = Date.now(),
+): Panel {
   const { grid } = findElement(workspaceId, panelId)
   const panel = panelOf(grid, panelId)
   if (panel.content.kind === 'frame') {
@@ -1044,7 +1050,7 @@ export function setPanelStateChecked(workspaceId: string, panelId: string, path:
     )
   }
   checkState(panel.content, setIn(panel.state, path, value))
-  const updated = changeGridOf(workspaceId, panel.id, (grid) => setPanelState(grid, panel.id, path, value)).panel
+  const updated = changeGridOf(workspaceId, panel.id, (grid) => setPanelState(grid, panel.id, path, value, at)).panel
   if (panel.error) syncPluginViewErrors()
   return updated
 }
@@ -1059,6 +1065,7 @@ export function editPanelStateChecked(
   old: unknown,
   next: unknown,
   label = 'state',
+  at = Date.now(),
 ): Panel {
   const { grid } = findElement(workspaceId, panelId)
   const panel = panelOf(grid, panelId)
@@ -1070,7 +1077,8 @@ export function editPanelStateChecked(
   }
   const nextState = editIn(panel.state, path, old, next, label)
   checkState(panel.content, nextState)
-  const updated = changeGridOf(workspaceId, panel.id, (g) => setPanelState(g, panel.id, [], nextState)).panel
+  const stampAt = nextState.sql !== panel.state.sql || path[0] === 'sql' ? at : undefined
+  const updated = changeGridOf(workspaceId, panel.id, (g) => setPanelState(g, panel.id, [], nextState, stampAt)).panel
   if (panel.error) syncPluginViewErrors()
   return updated
 }
