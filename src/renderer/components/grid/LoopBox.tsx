@@ -275,15 +275,15 @@ export function LoopBox({
     >
       {secret !== null ? (
         <div className="border border-border">
-          <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} />
+          <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} active={active} />
         </div>
       ) : question !== null ? (
         <div className="border border-border">
-          <QuestionField key={question.id} question={question} shown={!covered} />
+          <QuestionField key={question.id} question={question} shown={active && !covered} active={active} />
         </div>
       ) : need !== null ? (
         <div className="border border-border">
-          <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} />
+          <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} active={active} />
         </div>
       ) : (
         <form

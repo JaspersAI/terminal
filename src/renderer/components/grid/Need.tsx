@@ -10,6 +10,7 @@ interface Props {
   on: string
   /** Sets the ask aside, which shows the view as it is, without what it needs. */
   onSkip: () => void
+  active?: boolean
 }
 
 /**
@@ -21,7 +22,7 @@ interface Props {
  * sign-in opens the browser, and the view comes up once the connection has its token. The cross sets
  * the ask aside, and the view is drawn as it is.
  */
-export function Need({ waiting, on, onSkip }: Props): ReactElement {
+export function Need({ waiting, on, onSkip, active = true }: Props): ReactElement {
   const { plugin, title, need } = waiting
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -53,13 +54,13 @@ export function Need({ waiting, on, onSkip }: Props): ReactElement {
     <div data-need={need.kind} className="relative shrink-0 bg-background">
       {need.kind === 'key' ? (
         <form onSubmit={save} className="py-2 pr-8 pl-3 text-sm">
-          <label htmlFor={`need-input-${on}`} className="block">
+          <label htmlFor={active ? `need-input-${on}` : undefined} className="block">
             <span className="font-medium">{need.label}</span>
             <span className="text-muted-foreground"> for {title}</span>
           </label>
           <div className="mt-1.5 flex gap-2">
             <input
-              id={`need-input-${on}`}
+              id={active ? `need-input-${on}` : undefined}
               name="element-secret"
               type="password"
               value={value}
@@ -101,7 +102,7 @@ export function Need({ waiting, on, onSkip }: Props): ReactElement {
       )}
       <button
         type="button"
-        id={`need-skip-${on}`}
+        id={active ? `need-skip-${on}` : undefined}
         aria-label="Show the view without it"
         onClick={onSkip}
         className="absolute top-0 right-0 flex h-7 w-7 items-center justify-center text-muted-foreground hover:text-foreground"

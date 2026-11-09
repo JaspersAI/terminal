@@ -24,6 +24,7 @@ interface Props {
   shown?: boolean
   /** True in the top command line so the question and choices fit strictly inside a single 24px (h-6) line. */
   compact?: boolean
+  active?: boolean
 }
 
 /** Over the composer, riding its spring; in the docked chat, a plain row above the command line; in a tile's box, in its line's place. */
@@ -48,7 +49,7 @@ const TILE = 'relative shrink-0 bg-background'
  * up at once. Its ids carry the tile, since an id names one thing. It takes the keyboard only from its
  * own tile's line, which the box sees to, and hears Escape only when it is pressed in its own box.
  */
-export function QuestionField({ question, box, shown = true, compact = false }: Props): ReactElement {
+export function QuestionField({ question, box, shown = true, compact = false, active = true }: Props): ReactElement {
   const [value, setValue] = useState('')
   const [activeChoice, setActiveChoice] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -56,24 +57,25 @@ export function QuestionField({ question, box, shown = true, compact = false }: 
   const input = useRef<HTMLInputElement>(null)
   // The tile it is asked in, by its element's id: a box draws only its own workspace's tiles.
   const on = question.place?.on
-  const id = (name: string): string => (on ? `${name}-${on}` : name)
+  const id = (name: string): string | undefined => (!active ? undefined : on ? `${name}-${on}` : name)
   const hasTyped = value.trim() !== ''
   const selectedChoice =
     question.choices.length > 0 && !hasTyped ? Math.min(Math.max(0, activeChoice), question.choices.length - 1) : -1
 
   useEffect(() => {
     setActiveChoice(0)
-    if (!on) input.current?.focus()
-  }, [question.id, on])
+    if (active && !on) input.current?.focus()
+  }, [active, question.id, on])
 
   // A tile's question reports once its tile has drawn it, which only a window can say: main
   // cannot tell a tile on a workspace off screen, in a closed window, or under a maximized element.
   useEffect(() => {
-    if (on && shown) void dispatch({ type: 'question.seen', id: question.id }).catch(() => undefined)
-  }, [question.id, on, shown])
+    if (active && on && shown) void dispatch({ type: 'question.seen', id: question.id }).catch(() => undefined)
+  }, [active, question.id, on, shown])
 
   // Escape closes it, and the run carries on without an answer, as the cross does.
   useEffect(() => {
+    if (!active) return
     const down = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape' || !hears(on, event.target)) return
       if (event.target instanceof HTMLElement && event.target.closest('#workspace-title')) return

@@ -13,6 +13,7 @@ interface Props {
   box?: RefObject<HTMLDivElement | null>
   /** True in the top command line so the secret prompt fits strictly inside a single 24px (h-6) line. */
   compact?: boolean
+  active?: boolean
 }
 
 /** Over the composer, riding its spring; in the docked chat, a plain row above the command line; in a tile's box, in its line's place. */
@@ -31,21 +32,22 @@ const TILE = 'relative shrink-0 bg-background'
  * are: its ids carry the tile, it takes the keyboard only from its own tile's line, and it hears
  * Escape only when it is pressed in its own box.
  */
-export function SecretField({ request, box, compact = false }: Props): ReactElement {
+export function SecretField({ request, box, compact = false, active = true }: Props): ReactElement {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   // The tile it is asked in, by its element's id: a box draws only its own workspace's tiles.
   const on = request.place?.on
-  const id = (name: string): string => (on ? `${name}-${on}` : name)
+  const id = (name: string): string | undefined => (!active ? undefined : on ? `${name}-${on}` : name)
 
   useEffect(() => {
-    if (!on) input.current?.focus()
-  }, [on])
+    if (active && !on) input.current?.focus()
+  }, [active, on])
 
   // Escape cancels, except where something else on screen owns the key, as for the answer.
   useEffect(() => {
+    if (!active) return
     const down = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape' || !hears(on, event.target)) return
       if (event.target instanceof HTMLElement && event.target.closest('#workspace-title')) return
@@ -54,7 +56,7 @@ export function SecretField({ request, box, compact = false }: Props): ReactElem
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [])
+  }, [active])
 
   function cancel(): void {
     void dispatch({ type: 'secret.dismiss', ...(request.place ? { place: request.place } : {}) })
