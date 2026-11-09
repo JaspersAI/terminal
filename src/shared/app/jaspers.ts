@@ -383,7 +383,7 @@ const SUBSCRIPTION_SIGNAL =
   /\b(?:NEEDS_SUBSCRIPTION|SUBSCRIPTION_REQUIRED|ENTITLEMENT_REQUIRED|insufficient_scope)\b|\/auth\/account\b/i
 
 const SUBSCRIPTION_REFUSAL =
-  /\b(?:(?:needs?|requires?|missing|no|without|upgrade)\s+(?:a\s+|an\s+|your\s+|active\s+)?(?:jaspers\s+)?(?:subscription|entitlement|account\s+access)|(?:subscription|entitlement|account\s+access)\s+(?:is\s+)?(?:required|needed|missing|inactive)|(?:this|your)\s+account\s+does\s+not\s+(?:include|have)|not\s+entitled\b|allowance\s+is\s+used\s+up)/i
+  /\b(?:(?:needs?|requires?|missing|no|without|upgrade)\s+(?:a\s+|an\s+|your\s+|active\s+)?(?:jaspers\s+)?(?:subscription|entitlement|account\s+access)|(?:subscription|entitlement|account\s+access)\s+(?:is\s+)?(?:required|needed|missing|inactive)|(?:this|your)\s+(?:jaspers\s+)?account\s+does\s+not\s+(?:include|have)|not\s+entitled\b|allowance\s+is\s+used\s+up)/i
 
 /**
  * Whether a tool result or error payload says the account needs a subscription, entitlement, or

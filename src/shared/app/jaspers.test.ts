@@ -190,6 +190,15 @@ test('a tool result or error that asks for a subscription or account access is r
     }),
     true,
   )
+  assert.equal(needsSubscription('Your Jaspers account does not include research.'), true)
+  assert.equal(needsSubscription(new Error('Your Jaspers account does not include research.')), true)
+  assert.equal(
+    needsSubscription({
+      error: 'forbidden',
+      error_description: 'Your Jaspers account does not include research.',
+    }),
+    true,
+  )
   // Normal company or filing results mentioning subscriptions or account access are data, not refusals.
   assert.equal(
     needsSubscription({

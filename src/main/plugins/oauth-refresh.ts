@@ -1,4 +1,6 @@
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { needsSubscription } from '../../shared/app/jaspers.ts'
+import type { ListedTool } from '../../shared/plugins/apps.ts'
 
 // One exchange for one refresh token. A server that rotates refresh tokens reads a spent one
 // presented again as theft and revokes every token of the grant, and the MCP SDK refreshes inside
@@ -48,21 +50,144 @@ export function refreshOnce(fetchFn: FetchLike): FetchLike {
   }
 }
 
+export interface StreamableHttpOptions {
+  viaJaspers?: boolean
+  /**
+   * A bearer token saved in the plugin's secrets (`token`), used when the app is signed out of
+   * Jaspers or when the signed-in Jaspers account lacks the service's entitlement.
+   */
+  savedToken?: string | null
+  /** Fetch for requests sent with `savedToken` instead of the Jaspers account session. */
+  tokenFetch?: FetchLike
+  /**
+   * Tools to list when an Account-backed server refuses `initialize` with a 403 subscription error
+   * instead of deferring the refusal to `tools/call` (as `screener-mcp` and `analyst-api` do).
+   */
+  fallbackTools?: () => ListedTool[]
+  /** Called when a handshake completed via `fallbackTools` so main can enrich tool schemas from sibling connections. */
+  onSubscriptionDeferred?: () => void
+}
+
 /**
  * Wraps the fetch handed to `StreamableHTTPClientTransport` so standalone `GET` SSE streams are
  * declined with 405 on Jaspers-backed connections and on stateless servers (those that returned no
- * `mcp-session-id` on `initialize`). The SDK opens a background `GET` stream after `initialized` and
- * reconnects it whenever the stream closes or the machine wakes from sleep, which would otherwise
- * poll stateless servers and rotate Jaspers refresh tokens while idle; 405 is the MCP Streamable
- * HTTP signal that no standalone `GET` stream is offered.
+ * `mcp-session-id` on `initialize`), and so Jaspers-backed connections fall back to a saved plugin
+ * bearer token or defer 403 subscription refusals from `initialize` to `tools/call`.
  */
-export function streamableHttpFetch(fetchFn: FetchLike, opts: { viaJaspers?: boolean } = {}): FetchLike {
+export function streamableHttpFetch(fetchFn: FetchLike, opts: StreamableHttpOptions = {}): FetchLike {
+  const saved = opts.viaJaspers && opts.savedToken?.trim() ? opts.savedToken.trim() : null
+  const sendToken: FetchLike = (url, init) => (opts.tokenFetch ?? fetch)(url, withBearerHeader(init, saved!))
+  let usingSavedToken = false
+  let deferredSubscription = false
+
   return async (url, init) => {
     const method = (init?.method ?? 'GET').toUpperCase()
     if (method === 'GET' && (opts.viaJaspers || !hasSessionId(init?.headers))) {
       return new Response(null, { status: 405 })
     }
-    return fetchFn(url, init)
+    const rpc = method === 'POST' ? parseJsonRpc(init?.body) : null
+    if (usingSavedToken && saved !== null) {
+      return sendToken(url, init)
+    }
+    if (deferredSubscription && opts.fallbackTools) {
+      if (rpc?.method === 'notifications/initialized') return new Response(null, { status: 202 })
+      if (rpc?.method === 'tools/list') {
+        return Response.json({ jsonrpc: '2.0', id: rpc.id ?? 1, result: { tools: opts.fallbackTools() } })
+      }
+    }
+    try {
+      const response = await fetchFn(url, init)
+      if (
+        saved !== null &&
+        rpc?.method === 'tools/call' &&
+        (response.headers.get('content-type') ?? '').includes('application/json')
+      ) {
+        const bodyText = await response.text()
+        if (isSubscriptionToolResponse(bodyText)) {
+          const retried = await sendToken(url, init)
+          if (retried.ok) {
+            usingSavedToken = true
+            return retried
+          }
+          await retried.body?.cancel()
+        }
+        return new Response(bodyText, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: [...response.headers].filter(([name]) => name !== 'content-encoding' && name !== 'content-length'),
+        })
+      }
+      return response
+    } catch (err) {
+      if (saved !== null && isAccountAuthOrRefusal(err)) {
+        const retried = await sendToken(url, init)
+        if (retried.status !== 401 && retried.status !== 403 && retried.status !== 404) {
+          usingSavedToken = true
+          return retried
+        }
+        await retried.body?.cancel()
+      }
+      if (opts.viaJaspers && opts.fallbackTools && isSubscriptionRefusal(err)) {
+        if (rpc?.method === 'initialize') {
+          deferredSubscription = true
+          opts.onSubscriptionDeferred?.()
+          return Response.json({
+            jsonrpc: '2.0',
+            id: rpc.id ?? 0,
+            result: {
+              protocolVersion: '2025-03-26',
+              capabilities: { tools: {} },
+              serverInfo: { name: 'jaspers-mcp', version: '0.1.0' },
+            },
+          })
+        }
+        if (rpc?.method === 'notifications/initialized') return new Response(null, { status: 202 })
+        if (rpc?.method === 'tools/list') {
+          return Response.json({ jsonrpc: '2.0', id: rpc.id ?? 1, result: { tools: opts.fallbackTools() } })
+        }
+      }
+      throw err
+    }
+  }
+}
+
+function withBearerHeader(init: RequestInit | undefined, token: string): RequestInit {
+  const headers = new Headers(init?.headers)
+  headers.set('authorization', `Bearer ${token}`)
+  return { ...init, headers }
+}
+
+function parseJsonRpc(body: BodyInit | null | undefined): { id?: unknown; method?: string } | null {
+  if (typeof body !== 'string') return null
+  try {
+    const parsed: unknown = JSON.parse(body)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as { id?: unknown; method?: string })
+      : null
+  } catch {
+    return null
+  }
+}
+
+function isAccountAuthOrRefusal(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'SignedOutError' || err.name === 'RefusedError')
+}
+
+function isSubscriptionRefusal(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.name === 'RefusedError' &&
+    (err as { status?: unknown }).status === 403 &&
+    needsSubscription(err.message)
+  )
+}
+
+function isSubscriptionToolResponse(bodyText: string): boolean {
+  try {
+    const parsed = JSON.parse(bodyText) as { result?: unknown }
+    return parsed !== null && typeof parsed === 'object' && needsSubscription(parsed.result)
+  } catch {
+    return false
   }
 }
 

@@ -24,15 +24,16 @@ import {
   offeredTools,
   offersTool,
   resolveSecrets,
+  savedBearerToken,
   shouldPublishConnecting,
   shouldReconnectOnCall,
   type Connection,
 } from '../../shared/plugins/connections'
 import { messageOf } from '../../shared/rpc'
 import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
-import { getConnection, missingOf, secretValues, setInfo, statusFor } from './connections'
+import { connectionsOf, getConnection, missingOf, secretValues, setInfo, statusFor } from './connections'
 import { oauthProvider } from './oauth'
-import { refreshOnce, streamableHttpFetch } from './oauth-refresh'
+import { refreshOnce, streamableHttpFetch, type StreamableHttpOptions } from './oauth-refresh'
 import { accountAddress, asAccount, callAsAccount, signedIn } from '../jaspers/jaspers'
 import { RefusedError, SignedOutError } from '../jaspers/session'
 import { WAKE_GRACE_MS } from '../../shared/tasks/tasks'
@@ -60,9 +61,12 @@ interface Live {
   /** Every tool the connection offers, the ones only its page may call included, each with its page and callers. */
   tools: Map<string, ToolApp>
   viaJaspers: boolean
+  /** True when the handshake completed via `fallbackTools` after a 403 subscription refusal. */
+  deferredSubscription?: boolean
 }
 
 const clients = new Map<string, Live>()
+const listedTools = new Map<string, ListedTool[]>()
 /** Each attempt at a connection gets a number, so a slow one cannot publish over a newer one. */
 const attempts = new Map<string, number>()
 /** An attempt already under way, so concurrent callers join one handshake instead of aborting each other's. */
@@ -152,7 +156,8 @@ async function connectOne(id: string, retry = 0): Promise<void> {
     return
   }
   if (attempts.get(id) !== attempt) return
-  const waiting = waitingOn(id, spec, viaJaspers)
+  const savedToken = viaJaspers ? savedBearerToken(resolved.connection, values) : null
+  const waiting = waitingOn(id, spec, viaJaspers, savedToken)
   if (waiting) {
     failedAt.delete(id)
     setInfo(id, { status: waiting, error: null, tools: [], instructions: null })
@@ -183,7 +188,14 @@ async function connectOne(id: string, retry = 0): Promise<void> {
     },
   })
   try {
-    const transport = build(id, resolved.connection, dir, values, viaJaspers)
+    let deferredSubscription = false
+    const transport = build(id, resolved.connection, dir, values, viaJaspers, {
+      savedToken,
+      fallbackTools: () => fallbackToolsFor(id, plugin, spec),
+      onSubscriptionDeferred: () => {
+        deferredSubscription = true
+      },
+    })
     await client.connect(transport)
     const listed = await listAll(client)
     if (attempts.get(id) !== attempt) {
@@ -194,14 +206,18 @@ async function connectOne(id: string, retry = 0): Promise<void> {
     const offered = offeredTools(spec, listed)
     if (offered.missing.length > 0) console.warn(`[mcp ${id}] tools: the server lists no ${offered.missing.join(', ')}`)
     const { tree, all } = readTools(offered.tools)
-    clients.set(id, { client, transport, tools: all, viaJaspers })
+    const instructions =
+      client.getInstructions()?.trim() || (deferredSubscription ? siblingInstructionsFor(id, plugin) : null) || null
+    if (!deferredSubscription) listedTools.set(id, listed)
+    clients.set(id, { client, transport, tools: all, viaJaspers, deferredSubscription })
     failedAt.delete(id)
     setInfo(id, {
       status: 'ready',
       error: null,
       tools: tree,
-      instructions: client.getInstructions()?.trim() || null,
+      instructions,
     })
+    if (!deferredSubscription) enrichDeferredSiblings(id, plugin, listed, instructions)
   } catch (err) {
     await client.close().catch(() => undefined)
     if (attempts.get(id) !== attempt) return
@@ -301,11 +317,57 @@ const reach: FetchLike = (url, init) =>
     throw new Error(messageOf(err), { cause: err })
   })
 
-/** What an OAuth connection waits on before a client is built: the app's sign-in with Jaspers, or a sign-in of its own; nothing, with either in hand. */
-function waitingOn(id: string, spec: Connection, viaJaspers: boolean): 'needs-sign-in' | 'needs-auth' | null {
+/** What an OAuth connection waits on before a client is built: the app's sign-in with Jaspers (or a saved plugin bearer token), or a sign-in of its own; nothing, with either in hand. */
+function waitingOn(
+  id: string,
+  spec: Connection,
+  viaJaspers: boolean,
+  savedToken: string | null = null,
+): 'needs-sign-in' | 'needs-auth' | null {
   if (spec.auth !== 'oauth') return null
-  if (viaJaspers) return signedIn() ? null : 'needs-sign-in'
+  if (viaJaspers) return signedIn() || savedToken !== null ? null : 'needs-sign-in'
   return getState().oauth[id]?.tokens ? null : 'needs-auth'
+}
+
+function fallbackToolsFor(id: string, plugin: string, spec: Connection): ListedTool[] {
+  for (const sibling of connectionsOf(plugin)) {
+    if (sibling.id === id) continue
+    const siblingListed = listedTools.get(sibling.id)
+    if (siblingListed && siblingListed.length > 0) return siblingListed
+    const siblingTree = getState().connections[sibling.id]?.tools
+    if (siblingTree && siblingTree.length > 0) {
+      return siblingTree.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
+    }
+  }
+  return (spec.tools ?? []).map((name) => ({
+    name,
+    description: '',
+    inputSchema: { type: 'object', properties: {} },
+  }))
+}
+
+function siblingInstructionsFor(id: string, plugin: string): string | null {
+  for (const sibling of connectionsOf(plugin)) {
+    if (sibling.id === id) continue
+    const instructions = getState().connections[sibling.id]?.instructions
+    if (instructions) return instructions
+  }
+  return null
+}
+
+function enrichDeferredSiblings(id: string, plugin: string, listed: ListedTool[], instructions: string | null): void {
+  for (const sibling of connectionsOf(plugin)) {
+    if (sibling.id === id) continue
+    const live = clients.get(sibling.id)
+    if (!live?.deferredSubscription) continue
+    const offered = offeredTools(sibling.spec, listed)
+    const { tree, all } = readTools(offered.tools)
+    live.tools = all
+    setInfo(sibling.id, {
+      tools: tree,
+      instructions: instructions ?? getState().connections[sibling.id]?.instructions ?? null,
+    })
+  }
 }
 
 /**
@@ -348,6 +410,7 @@ function cancelRetry(id: string): void {
 
 export async function disconnect(id: string): Promise<void> {
   cancelRetry(id)
+  listedTools.delete(id)
   const live = clients.get(id)
   if (!live) return
   clients.delete(id)
@@ -375,6 +438,7 @@ export async function forget(id: string): Promise<void> {
 export function closeAll(): void {
   connecting.clear()
   failedAt.clear()
+  listedTools.clear()
   if (wakeGrace) clearTimeout(wakeGrace)
   wakeGrace = null
   for (const id of [...retries.keys(), ...pendingRetries.keys()]) cancelRetry(id)
@@ -507,11 +571,23 @@ async function asked<T>(
     if (spec.auth !== 'oauth') return send(current.client)
     try {
       const attempt = () => sentAgainIfRefused(() => send(current.client))
-      return await (current.viaJaspers ? callAsAccount(attempt) : attempt())
+      if (!current.viaJaspers) return await attempt()
+      try {
+        return await callAsAccount(attempt)
+      } catch (err) {
+        if (err instanceof SignedOutError) {
+          const entry = getConnection(id)
+          if (entry && savedBearerToken(entry.spec, secretValues(entry.plugin)) !== null) {
+            return await attempt()
+          }
+        }
+        throw err
+      }
     } catch (err) {
       // The app's sign-in with Jaspers ended under the call, or the connection's own did.
       if (err instanceof SignedOutError) await signedOut(id, current, 'needs-sign-in')
-      else if (err instanceof UnauthorizedError || refused(err)) await signedOut(id, current, 'needs-auth')
+      else if (err instanceof UnauthorizedError || refused(err))
+        await signedOut(id, current, current.viaJaspers ? 'needs-sign-in' : 'needs-auth')
       // Cut off because another call had just found the sign-in gone: told what a call made now would be.
       else if (clients.get(id) !== current && waits(getState().connections[id]?.status)) throw unavailable(id)
       throw err
@@ -594,6 +670,7 @@ function build(
   dir: string,
   values: Record<string, string>,
   viaJaspers: boolean,
+  httpOpts: Omit<StreamableHttpOptions, 'viaJaspers'> = {},
 ): Transport {
   if (connection.command) {
     const [command, ...args] = connection.command
@@ -627,7 +704,7 @@ function build(
   return new StreamableHTTPClientTransport(new URL(connection.url!), {
     requestInit: { headers: connection.headers },
     authProvider: connection.auth === 'oauth' && !viaJaspers ? oauthProvider(id) : undefined,
-    fetch: streamableHttpFetch(baseFetch, { viaJaspers }),
+    fetch: streamableHttpFetch(baseFetch, { viaJaspers, ...httpOpts }),
   })
 }
 
