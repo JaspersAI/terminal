@@ -264,10 +264,20 @@ function targetKey(task: Pick<Task, 'workspaceId' | 'call'>): string | null {
 }
 
 function holdsBackRefresh(refreshTask: Task, tasks: readonly Task[], now?: number): boolean {
-  const target = refreshTask.call?.tool === 'set' ? targetKey(refreshTask) : null
+  const target = targetKey(refreshTask)
   return tasks.some((other) => {
     if (other.id === refreshTask.id) return false
-    if (target !== null && other.running && targetKey(other) === target) return true
+    if (
+      target !== null &&
+      other.running &&
+      targetKey(other) === target &&
+      (now !== undefined ||
+        refreshTask.call?.tool === 'set' ||
+        other.call?.tool === 'set' ||
+        refreshTask.nextAt! <= (other.nextAt ?? Infinity))
+    ) {
+      return true
+    }
     if (other.workspaceId !== refreshTask.workspaceId || isRefreshCall(other)) return false
     if (other.running) return true
     if (now !== undefined && isDue(other, now)) return true

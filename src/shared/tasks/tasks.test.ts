@@ -307,6 +307,22 @@ test('panel set tasks wait for workspace data tasks and run one at a time per pa
     dueTasks(afterFirstToggles, wakeTime + 450).map((t) => t.id),
     ['t14', 't15'],
   )
+
+  // Two due refresh_element tasks targeting the same panel also run one at a time.
+  const duplicateWatchlistRefresh = task({
+    id: 't21',
+    workspaceId: 'ws-1',
+    every: 60 * S,
+    executeAt: T0,
+    nextAt: T0,
+    call: { tool: 'refresh_element', input: { elementId: 'e7' } },
+  })
+  assert.deepEqual(
+    dueTasks([watchlistRefresh, duplicateWatchlistRefresh], T0).map((t) => t.id),
+    ['t20'],
+  )
+  assert.deepEqual(dueTasks([{ ...watchlistRefresh, running: true }, duplicateWatchlistRefresh], T0), [])
+  assert.equal(earliestNext([{ ...watchlistRefresh, running: true }, duplicateWatchlistRefresh]), null)
 })
 
 test('wakeGrids refreshes data and plugin views on visible workspaces while skipping inactive tabs, browsers, and panels with due refresh or set tasks', () => {
