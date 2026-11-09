@@ -7,6 +7,7 @@ interface Props {
   elementId: string
   panel: Panel | undefined
   focused: boolean
+  active?: boolean
   working?: boolean
   zoom: number
   onZoomGesture?: (direction: 'in' | 'out' | 'reset') => void
@@ -18,6 +19,7 @@ export function Held({
   elementId,
   panel,
   focused,
+  active = true,
   working = false,
   zoom,
   onZoomGesture,
@@ -27,9 +29,9 @@ export function Held({
       {panel?.content.kind === 'view' && (
         // The view fills the room and keeps its own selection.
         <div
-          data-eye-view={panel.content.view}
-          data-eye-plugin={panel.content.view.split('/')[0] ?? ''}
-          data-eye-panel={panel.id}
+          data-eye-view={active ? panel.content.view : undefined}
+          data-eye-plugin={active ? (panel.content.view.split('/')[0] ?? '') : undefined}
+          data-eye-panel={active ? panel.id : undefined}
           className="absolute inset-0 overflow-hidden select-text"
         >
           <ViewHost
@@ -38,6 +40,7 @@ export function Held({
             elementId={elementId}
             view={panel.content.view}
             focused={focused}
+            active={active}
             working={working}
             zoom={zoom}
             onZoomGesture={onZoomGesture}

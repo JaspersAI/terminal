@@ -1,6 +1,7 @@
-import type { ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import { chatElement, EMPTY_GRID } from '../../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
+import { mountedTabIds } from '../../../shared/tabs/tabs'
 import { errorMessage } from '../../lib/errors'
 import { currentWorkspace, dispatch, useAppState, windowWorkspaces } from '../../lib/state'
 import { Composer } from '../composer/Composer'
@@ -27,6 +28,11 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
   const app = useAppState()
   const current = currentWorkspace(app)
   const tabs = windowWorkspaces(app)
+  const [mounted, setMounted] = useState<ReadonlySet<string>>(() => new Set([current.id]))
+  const mountedIds = mountedTabIds(mounted, tabs, current.id)
+  useEffect(() => {
+    if (mountedIds !== mounted) setMounted(mountedIds)
+  }, [mountedIds, mounted])
   const docked = useDockedChat(current.id, MAIN_WINDOW)
   const orbOpen = useOrbOpen()
   const totalRooms =
@@ -93,8 +99,22 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
         </div>
       </header>
       <div className="relative min-h-0 flex-1">
-        {/* Keyed by id so elements from one tab never take over another's views. */}
-        <GridLayer key={current.id} workspaceId={current.id} windowNumber={MAIN_WINDOW} />
+        {/* Visited tabs stay mounted (inert and hidden when inactive) so switching tabs preserves live view state. */}
+        {tabs
+          .filter((tab) => mountedIds.has(tab.id))
+          .map((tab) => {
+            const active = tab.id === current.id
+            return (
+              <div
+                key={tab.id}
+                inert={!active}
+                aria-hidden={!active || undefined}
+                className={active ? 'absolute inset-0' : 'pointer-events-none invisible absolute inset-0'}
+              >
+                <GridLayer workspaceId={tab.id} windowNumber={MAIN_WINDOW} active={active} />
+              </div>
+            )
+          })}
         {orbOpen && <FloatingOrb />}
       </div>
       <TabBar workspaces={tabs} currentId={current.id} />

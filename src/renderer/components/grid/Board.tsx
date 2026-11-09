@@ -15,6 +15,7 @@ interface Props {
   frame: GridElement
   /** True while the frame is its window's focused element. */
   focused: boolean
+  active?: boolean
   /** True while the loop's agent is working on the tile. */
   working?: boolean
   /** The elements not drawn yet: views whose plugins are waiting on the user, which the tile's box asks for. */
@@ -46,6 +47,7 @@ export function Board({
   grid,
   frame,
   focused,
+  active = true,
   working = false,
   waiting,
   zoom,
@@ -62,7 +64,7 @@ export function Board({
   const top = drawn.reduce((z, e) => Math.max(z, e.z), 0)
   return (
     <div
-      id={`board-${frame.id}`}
+      id={active ? `board-${frame.id}` : undefined}
       ref={layer}
       style={{
         gridTemplateColumns: `repeat(${cut.w}, minmax(0, 1fr))`,
@@ -80,7 +82,7 @@ export function Board({
         return (
           <section
             key={element.id}
-            id={`element-${element.id}`}
+            id={active ? `element-${element.id}` : undefined}
             aria-label={label}
             data-mode={element.mode}
             onPointerDown={() => {
@@ -100,6 +102,7 @@ export function Board({
               elementId={element.id}
               panel={panel}
               focused={focused && here}
+              active={active}
               working={working}
               zoom={zoom}
               onZoomGesture={onZoomGesture}

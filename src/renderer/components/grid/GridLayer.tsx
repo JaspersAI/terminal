@@ -12,6 +12,8 @@ interface Props {
   workspaceId: string
   /** Which window's grid: 1 is the main window. */
   windowNumber: number
+  /** Whether this workspace tab is the one currently shown in the window. */
+  active?: boolean
 }
 
 /**
@@ -28,19 +30,19 @@ interface Props {
  * `layer` is the cells' box, not the window's: both drags measure the pointer against it, so the
  * gutter is already out of their reckoning.
  */
-export function GridLayer({ workspaceId, windowNumber }: Props): ReactElement {
+export function GridLayer({ workspaceId, windowNumber, active = true }: Props): ReactElement {
   // The grid is there before the window is, so this only guards a push that beat the page.
   const grid = useAppState((s) => s.grids[workspaceId]?.[windowNumber] ?? EMPTY_GRID)
   // The window's own layout: what is drawn on its cells.
   const own = useMemo(() => layoutOf(grid), [grid])
   const layer = useRef<HTMLDivElement>(null)
   const { draft, grab } = useDrag(workspaceId, windowNumber, layer)
-  const ghost = useIncomingDrag(workspaceId, windowNumber, layer)
+  const ghost = useIncomingDrag(workspaceId, windowNumber, layer, active)
   const focused = own.elements.find((e) => e.id === own.focus[0]) ?? null
 
   // Cmd or Ctrl, Shift, Enter maximizes the focused element, or restores it.
   useEffect(() => {
-    if (!focused) return
+    if (!active || !focused) return
     const down = (event: KeyboardEvent): void => {
       if (event.key !== 'Enter' || !event.shiftKey || !(event.metaKey || event.ctrlKey)) return
       event.preventDefault()
@@ -48,7 +50,7 @@ export function GridLayer({ workspaceId, windowNumber }: Props): ReactElement {
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [workspaceId, focused])
+  }, [active, workspaceId, focused])
 
   const maximized = own.elements.some((e) => e.mode === 'maximized')
   const top = own.elements.reduce((z, e) => Math.max(z, e.z), 0)
@@ -56,7 +58,7 @@ export function GridLayer({ workspaceId, windowNumber }: Props): ReactElement {
     <div className="absolute inset-0">
       <Labels size={grid.size} />
       <div
-        id="grid"
+        id={active ? 'grid' : undefined}
         ref={layer}
         style={{
           gridTemplateColumns: `repeat(${grid.size.cols}, minmax(0, 1fr))`,
@@ -65,7 +67,13 @@ export function GridLayer({ workspaceId, windowNumber }: Props): ReactElement {
         className="absolute inset-4 isolate grid"
       >
         <Gridlines size={grid.size} />
-        <Cells workspaceId={workspaceId} windowNumber={windowNumber} size={grid.size} cells={grid.cells} />
+        <Cells
+          workspaceId={workspaceId}
+          windowNumber={windowNumber}
+          size={grid.size}
+          cells={grid.cells}
+          active={active}
+        />
         {own.elements.map((element) => (
           <ElementFrame
             key={element.id}
@@ -76,6 +84,7 @@ export function GridLayer({ workspaceId, windowNumber }: Props): ReactElement {
             rect={draft?.rects[element.id] ?? element.rect}
             panel={grid.panels.find((p) => p.elementId === element.id)}
             focused={element === focused}
+            active={active}
             covered={maximized && element.mode !== 'maximized'}
             away={draft?.away === true && draft.elementId === element.id}
             onGrab={(event, handle) => grab(event, element, handle)}
@@ -84,7 +93,7 @@ export function GridLayer({ workspaceId, windowNumber }: Props): ReactElement {
         {ghost && (
           <div
             aria-hidden
-            id="drag-ghost"
+            id={active ? 'drag-ghost' : undefined}
             className="pointer-events-none border border-dashed border-foreground bg-muted"
             style={{
               gridColumn: `${ghost.rect.x + 1} / span ${ghost.rect.w}`,

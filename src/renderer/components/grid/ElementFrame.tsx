@@ -47,6 +47,7 @@ interface Props {
   rect: Rect
   panel: Panel | undefined
   focused: boolean
+  active?: boolean
   /** True while another element is maximized over this one. */
   covered: boolean
   /** True while a drag has carried it out of this window: drawn dimmed at home until the move lands. */
@@ -104,6 +105,7 @@ export function ElementFrame({
   rect,
   panel,
   focused,
+  active = true,
   covered,
   away = false,
   onGrab,
@@ -121,18 +123,19 @@ export function ElementFrame({
   const tileRef = useRef<HTMLElement>(null)
   const zoomPopoverRef = useRef<HTMLDivElement>(null)
   const zoomTriggerRef = useRef<HTMLButtonElement>(null)
-  const [selected, setSelected] = useState(focused)
+  const [selected, setSelected] = useState(active && focused)
   const [zoomPopover, setZoomPopover] = useState(false)
-  const prevFocused = useRef(focused)
+  const prevFocused = useRef(active && focused)
   useEffect(() => {
-    if (!focused) {
+    if (!active || !focused) {
       setSelected(false)
       setZoomPopover(false)
+      if (!active) setMenu(false)
     } else if (!prevFocused.current) {
       setSelected(true)
     }
-    prevFocused.current = focused
-  }, [focused])
+    prevFocused.current = active && focused
+  }, [active, focused])
   // A deep research loop's field invites follow-up questions; any other invites view commands.
   const chat = loop !== undefined && showsChat(loop)
   const place = useMemo(() => ({ workspaceId, on: element.id }), [workspaceId, element.id])
@@ -174,12 +177,12 @@ export function ElementFrame({
   useEffect(() => {
     if (prevZoom.current === zoom) return
     prevZoom.current = zoom
-    if (zoomable && focused && !minimized && !covered) {
+    if (active && zoomable && focused && !minimized && !covered) {
       setSelected(true)
       setMenu(false)
       setZoomPopover(true)
     }
-  }, [zoom, zoomable, focused, minimized, covered])
+  }, [active, zoom, zoomable, focused, minimized, covered])
   // What the work is doing. A tile whose box asks for what a view waits on is asking, whatever its runs are doing.
   const doing = useLoopStatus(workspaceId, element.loop)
   const status = need ? 'asking' : doing
@@ -205,7 +208,7 @@ export function ElementFrame({
   )
 
   useEffect(() => {
-    if (!zoomable) return
+    if (!active || !zoomable) return
     const onPointerDown = (event: PointerEvent): void => {
       const target = event.target as Node | null
       const inside = Boolean(tileRef.current?.contains(target))
@@ -236,17 +239,17 @@ export function ElementFrame({
       document.removeEventListener('focusin', onFocusIn, true)
       window.removeEventListener('blur', onWindowBlur)
     }
-  }, [zoomable, zoomPopover])
+  }, [active, zoomable, zoomPopover])
 
   // Cmd or Ctrl and K puts the caret in the focused element's box: its line, or what it is asking.
   // Cmd or Ctrl and +/=/-/_/0 zooms the selected, focused loop or Docked Central and shows its zoom popover.
   useEffect(() => {
-    if (!focused) return
+    if (!active || !focused) return
     const down = (event: KeyboardEvent): void => {
       if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         setSelected(true)
-        document.querySelector<HTMLInputElement>(`#loop-box-${element.id} input`)?.focus()
+        tileRef.current?.querySelector<HTMLInputElement>('[data-loop-box] input')?.focus()
         return
       }
       if (event.key === 'Escape' && zoomPopover) {
@@ -257,12 +260,12 @@ export function ElementFrame({
       }
       const dir = zoomKey(event)
       if (!dir) return
-      const active = document.activeElement
+      const activeEl = document.activeElement
       const outsideFocused =
-        active instanceof Element &&
-        active !== document.body &&
-        active !== document.documentElement &&
-        !tileRef.current?.contains(active)
+        activeEl instanceof Element &&
+        activeEl !== document.body &&
+        activeEl !== document.documentElement &&
+        !tileRef.current?.contains(activeEl)
       if (
         !canZoomLoop({
           hasLoop: zoomable,
@@ -282,13 +285,13 @@ export function ElementFrame({
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [focused, selected, minimized, covered, zoomable, element.id, zoomPopover, applyZoomStep])
+  }, [active, focused, selected, minimized, covered, zoomable, element.id, zoomPopover, applyZoomStep])
 
   return (
     <section
       ref={tileRef}
-      id={`element-${element.id}`}
-      data-tile-id={element.id}
+      id={active ? `element-${element.id}` : undefined}
+      data-tile-id={active ? element.id : undefined}
       data-zoom={zoom}
       data-loop-zoom={zoomable && !minimized ? zoom : undefined}
       aria-label={label}
@@ -347,8 +350,8 @@ export function ElementFrame({
           <button
             ref={zoomTriggerRef}
             type="button"
-            id={`tile-zoom-${element.id}`}
-            data-tile-zoom
+            id={active ? `tile-zoom-${element.id}` : undefined}
+            data-tile-zoom={active ? '' : undefined}
             aria-label={`Zoom ${zoomPercent(zoom)}. Open zoom controls.`}
             aria-expanded={zoomPopover}
             title={`Zoom ${zoomPercent(zoom)}`}
@@ -369,7 +372,7 @@ export function ElementFrame({
         {loop && (
           <button
             type="button"
-            id={`loop-min-${element.id}`}
+            id={active ? `loop-min-${element.id}` : undefined}
             aria-label={`${minimized ? 'Restore' : 'Minimize'} ${label}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => toggleMinimized(workspaceId, element)}
@@ -384,7 +387,7 @@ export function ElementFrame({
           <button
             ref={more}
             type="button"
-            id={`loop-more-${element.id}`}
+            id={active ? `loop-more-${element.id}` : undefined}
             aria-label={`More for ${label}`}
             aria-expanded={menu}
             onPointerDown={(event) => event.stopPropagation()}
@@ -402,7 +405,7 @@ export function ElementFrame({
         )}
         <button
           type="button"
-          id={loop ? `loop-close-${element.id}` : undefined}
+          id={active && loop ? `loop-close-${element.id}` : undefined}
           aria-label={`Close ${label}`}
           onPointerDown={(event) => event.stopPropagation()}
           // Closing a loop keeps it, conversation and views, and View loops in Settings reopens it.
@@ -428,8 +431,8 @@ export function ElementFrame({
       {zoomable && zoomPopover && !minimized && (
         <div
           ref={zoomPopoverRef}
-          id={`loop-zoom-popover-${element.id}`}
-          data-zoom-popover
+          id={active ? `loop-zoom-popover-${element.id}` : undefined}
+          data-zoom-popover={active ? '' : undefined}
           role="dialog"
           aria-label={`Zoom controls for ${called || title}`}
           onPointerDown={(event) => event.stopPropagation()}
@@ -494,6 +497,7 @@ export function ElementFrame({
             label={label}
             called={called}
             chat={chat}
+            active={active}
             covered={covered || minimized}
             fills={empty}
             need={need}
@@ -512,11 +516,12 @@ export function ElementFrame({
             grid={grid}
             frame={element}
             focused={focused}
+            active={active}
             working={working}
             waiting={undrawn}
             zoom={zoom}
             onZoomGesture={
-              focused && selected && !minimized && !covered
+              active && focused && selected && !minimized && !covered
                 ? (dir) => {
                     applyZoomStep(dir)
                   }
@@ -529,10 +534,11 @@ export function ElementFrame({
             elementId={element.id}
             panel={panel}
             focused={focused}
+            active={active}
             working={working}
             zoom={zoom}
             onZoomGesture={
-              zoomable && focused && selected && !minimized && !covered
+              active && zoomable && focused && selected && !minimized && !covered
                 ? (dir) => {
                     applyZoomStep(dir)
                   }

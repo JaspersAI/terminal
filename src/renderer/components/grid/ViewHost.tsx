@@ -19,6 +19,7 @@ interface Props {
   /** A registry id, like core/note. */
   view: string
   focused: boolean
+  active?: boolean
   working?: boolean
   zoom: number
   onZoomGesture?: (direction: 'in' | 'out' | 'reset') => void
@@ -42,6 +43,7 @@ export function ViewHost({
   elementId,
   view,
   focused,
+  active = true,
   working = false,
   zoom,
   onZoomGesture,
@@ -67,6 +69,7 @@ export function ViewHost({
         microphone={plugins[plugin]?.capabilities.includes('microphone') ?? false}
         title={views[view]?.title ?? view}
         focused={focused}
+        active={active}
         working={working}
         zoom={zoom}
         onZoomGesture={onZoomGesture}
@@ -98,6 +101,7 @@ interface FrameProps {
   microphone: boolean
   title: string
   focused: boolean
+  active: boolean
   working: boolean
   zoom: number
   onZoomGesture?: (direction: 'in' | 'out' | 'reset') => void
@@ -119,6 +123,7 @@ function PluginView({
   microphone,
   title,
   focused,
+  active,
   working,
   zoom,
   onZoomGesture,
@@ -298,13 +303,13 @@ function PluginView({
   // A press inside the frame never reaches this page. The window losing focus to the frame is the
   // only sign of one, and it is what focuses the element then.
   useEffect(() => {
-    if (focused) return
+    if (!active || focused) return
     function onBlur(): void {
       if (document.activeElement === frame.current) send({ type: 'element.focus', workspaceId, elementId })
     }
     window.addEventListener('blur', onBlur)
     return () => window.removeEventListener('blur', onBlur)
-  }, [focused, workspaceId, elementId])
+  }, [active, focused, workspaceId, elementId])
 
   return (
     <iframe

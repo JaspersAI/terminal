@@ -190,3 +190,32 @@ export function tabsForWindow<T extends { id: string; window?: number }>(
   const mainTabs = workspaces.filter((w) => w.window === undefined || w.window === 1)
   return mainTabs.length > 0 ? mainTabs : workspaces.slice(0, 1)
 }
+
+/**
+ * Updates the set of mounted tab ids for a window: keeps previously visited tabs that still belong
+ * to `tabs` and includes `currentId` so switching tabs keeps mounted views alive without retaining
+ * closed or detached tabs.
+ */
+export function mountedTabIds(
+  previous: ReadonlySet<string>,
+  tabs: readonly { id: string }[],
+  currentId: string,
+): ReadonlySet<string> {
+  const valid = new Set(tabs.map((t) => t.id))
+  let changed = !previous.has(currentId)
+  if (!changed) {
+    for (const id of previous) {
+      if (!valid.has(id)) {
+        changed = true
+        break
+      }
+    }
+  }
+  if (!changed) return previous
+  const next = new Set<string>()
+  for (const tab of tabs) {
+    if (tab.id === currentId || previous.has(tab.id)) next.add(tab.id)
+  }
+  if (!next.has(currentId)) next.add(currentId)
+  return next
+}

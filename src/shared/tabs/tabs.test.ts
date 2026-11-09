@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   formatTabLabel,
   isTabColor,
+  mountedTabIds,
   reorderTabs,
   TAB_CHAR_DEFAULT,
   TAB_PALETTE,
@@ -90,4 +91,26 @@ test('tabsForWindow isolates a detached tab into its Terminal (copy) window whil
     tabsForWindow(all, 2).map((t) => t.id),
     ['t2'],
   )
+})
+
+test('mountedTabIds keeps visited tabs mounted across switches and drops closed or detached tabs', () => {
+  const tabs = [{ id: 't1' }, { id: 't2' }, { id: 't3' }]
+  const first = mountedTabIds(new Set(), tabs, 't1')
+  assert.deepEqual([...first], ['t1'])
+
+  // Staying on the same tab with the same tab list preserves the set reference.
+  assert.equal(mountedTabIds(first, tabs, 't1'), first)
+
+  // Switching to t2 keeps t1 mounted alongside t2.
+  const second = mountedTabIds(first, tabs, 't2')
+  assert.deepEqual([...second], ['t1', 't2'])
+
+  // Switching back to t1 keeps both t1 and t2 mounted.
+  const back = mountedTabIds(second, tabs, 't1')
+  assert.equal(back, second)
+  assert.deepEqual([...back], ['t1', 't2'])
+
+  // Closing t2 drops it from the mounted set while keeping t1.
+  const afterClose = mountedTabIds(back, [{ id: 't1' }, { id: 't3' }], 't1')
+  assert.deepEqual([...afterClose], ['t1'])
 })

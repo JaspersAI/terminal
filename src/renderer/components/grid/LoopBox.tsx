@@ -92,6 +92,7 @@ interface Props {
   called: string
   /** True for a deep research loop, whose field invites follow-up questions rather than view commands. */
   chat: boolean
+  active?: boolean
   /** True while another element is maximized over the tile: nothing in the box can be read then. */
   covered: boolean
   /** True while the tile has no view in it yet: with nothing to make room for, what the box shows open is the tile. */
@@ -135,6 +136,7 @@ export function LoopBox({
   label,
   called,
   chat,
+  active = true,
   covered,
   fills,
   need,
@@ -206,9 +208,10 @@ export function LoopBox({
   // The keyboard stays in the box when a question takes the line's place, and when the line comes
   // back: the draw that swapped them took the field it was in.
   useLayoutEffect(() => {
-    if (focused && !box.current?.contains(document.activeElement)) box.current?.querySelector('input')?.focus()
+    if (active && focused && !box.current?.contains(document.activeElement))
+      box.current?.querySelector('input')?.focus()
     // Only as what is asked changes: `focused` is as it was before the swap, which is what is wanted.
-  }, [asked])
+  }, [active, asked])
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
@@ -251,8 +254,8 @@ export function LoopBox({
   return (
     <div
       ref={box}
-      id={`loop-box-${elementId}`}
-      data-loop-box
+      id={active ? `loop-box-${elementId}` : undefined}
+      data-loop-box={active ? '' : undefined}
       data-open={open}
       // It can hold the keyboard itself, so a press on what it shows keeps the keyboard in it.
       tabIndex={-1}
@@ -283,7 +286,11 @@ export function LoopBox({
           <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} />
         </div>
       ) : (
-        <form id={`loop-form-${elementId}`} onSubmit={submit} className="flex shrink-0 items-center gap-1">
+        <form
+          id={active ? `loop-form-${elementId}` : undefined}
+          onSubmit={submit}
+          className="flex shrink-0 items-center gap-1"
+        >
           <div
             style={zoom !== 1 ? { height: `${1.5 * zoom}rem` } : undefined}
             className="flex h-6 min-w-0 flex-1 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground"
@@ -307,7 +314,7 @@ export function LoopBox({
               </span>
             ))}
             <input
-              id={`loop-input-${elementId}`}
+              id={active ? `loop-input-${elementId}` : undefined}
               name="loop-prompt"
               aria-label={`Message ${label}`}
               autoComplete="off"
@@ -324,7 +331,7 @@ export function LoopBox({
                 type="button"
                 aria-label="Stop"
                 title="Working — click to stop"
-                data-loop-stop=""
+                data-loop-stop={active ? '' : undefined}
                 onClick={(event) => {
                   event.preventDefault()
                   stopNewest()
@@ -338,10 +345,10 @@ export function LoopBox({
           </div>
           <button
             type="button"
-            id={`loop-expand-${elementId}`}
-            data-loop-expand
+            id={active ? `loop-expand-${elementId}` : undefined}
+            data-loop-expand={active ? '' : undefined}
             aria-expanded={open}
-            aria-controls={`loop-box-${elementId}`}
+            aria-controls={active ? `loop-box-${elementId}` : undefined}
             aria-label={open ? 'Fold the conversation' : 'Open the conversation'}
             title={open ? 'Collapse conversation' : 'Expand conversation'}
             onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
