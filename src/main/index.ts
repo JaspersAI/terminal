@@ -27,7 +27,7 @@ import { startThreads } from './agent/thread-file'
 import { startInbox } from './app/notices'
 import { compact, notifications, query, startStore, stats, stopOnQuit, usageToday } from './data/store'
 import { startBackground, startsHidden } from './app/background'
-import { deleteRecordings, endSession, eyeFolder, startEye } from './eye/eye'
+import { deleteRecordings, endSession, eyeFolder, startEye, suspendEye, wakeEye } from './eye/eye'
 import { recordAction, recordNote, startTelemetry } from './eye/taps'
 import { closePendingRuns } from './agent/utils/record'
 import { knownSecrets } from './agent/utils/settings'
@@ -44,6 +44,7 @@ import { installMenu } from './app/menu'
 import {
   accountPageAddress,
   checkSignIn,
+  jaspersWakeDelayMs,
   onSignInChange,
   refreshTerms,
   suspendJaspers,
@@ -93,9 +94,10 @@ app.whenReady().then(async () => {
   // and an app opened from Finder has launchd's PATH rather than the user's.
   void adoptShellPath().finally(() => startPlugins())
   const wakeAll = (): void => {
-    wakeTasks()
-    wakeRetries()
+    wakeEye()
     wakeJaspers()
+    wakeRetries()
+    wakeTasks()
     wakeUploads()
   }
   // The scheduler. A call task runs its tool the way the orchestrator would, on the task's
@@ -107,9 +109,11 @@ app.whenReady().then(async () => {
     runCall: runTaskCall,
     runAsk: runTask,
     intoChat: taskSaid,
+    wakeDelayMs: jaspersWakeDelayMs,
     onWake: () => {
-      wakeRetries()
+      wakeEye()
       wakeJaspers()
+      wakeRetries()
       wakeUploads()
     },
   })
@@ -227,6 +231,7 @@ app.whenReady().then(async () => {
     showWindow: reopen,
     windowInFront: anyInFront,
     suspendTasks: () => {
+      suspendEye()
       suspendTasks()
       suspendRetries()
       suspendJaspers()

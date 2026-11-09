@@ -16,6 +16,7 @@ import {
   FRAME_WIDTH,
   INTERVAL_MINUTES,
   pickCaptureWhy,
+  shouldTriggerWakeLag,
   stamp,
   type CaptureWhy,
   type EyeFeedback,
@@ -72,6 +73,9 @@ const recorded = new Set<() => void>()
 /** The keys the app holds, as main knows them: handed in, so Eye depends on nothing of the agent's. */
 let secretsOf: () => string[] = () => []
 let onWakeLag: (() => void) | undefined
+let sleeping = false
+let lastWakeAt = 0
+let lastMetricsAt = 0
 /** The tree as the last line had it, while recording: what the next change is told from. */
 let tree: Record<string, unknown> | null = null
 /** A change too big to be a line was left out since the last tick: the next tick writes the tree whole. */
@@ -120,11 +124,23 @@ function clearCaptureTimer(): void {
 
 /** Recording begins: the metrics timer, the session's details, and the tree whole, which every change after is told from. */
 function begin(): void {
+  lastMetricsAt = Date.now()
   if (!timer) timer = setInterval(() => void tick(), INTERVAL_MINUTES * 60_000)
   console.log('[eye] recording: frames on state and interaction changes')
   startMetrics()
   record({ kind: 'session', data: sessionData() })
   snapshot()
+}
+
+/** Marks the machine as sleeping so periodic metrics ticks do not fire wake handlers during a dark wake. */
+export function suspendEye(): void {
+  sleeping = true
+}
+
+/** Marks the machine as awake from `at` so the next metrics tick does not re-trigger wake handlers for the same sleep. */
+export function wakeEye(at = Date.now()): void {
+  sleeping = false
+  lastWakeAt = at
 }
 
 function snapshot(): void {
@@ -181,9 +197,13 @@ function sessionData(): Record<string, unknown> {
 async function tick(): Promise<void> {
   if (!getState().eye.recording) return
   if (snapshotDue) snapshot()
+  const now = Date.now()
+  const sampleSince = lastMetricsAt
+  lastMetricsAt = now
   const metrics = metricsData(openWindows().length, inFlight)
   const lagMax = (metrics['lag'] as { max?: unknown } | null)?.max
-  if (typeof lagMax === 'number' && lagMax >= WAKE_GRACE_MS) {
+  if (shouldTriggerWakeLag({ lagMax, thresholdMs: WAKE_GRACE_MS, sleeping, lastWakeAt, sampleSince })) {
+    lastWakeAt = now
     onWakeLag?.()
   }
   record({ kind: 'metrics', data: metrics })

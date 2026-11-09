@@ -209,6 +209,32 @@ export function isWakeLag(expectedAt: number | null, now: number): boolean {
   return expectedAt !== null && now - expectedAt >= WAKE_GRACE_MS
 }
 
+/** Whether a failure came from a request made while the machine was sleeping or inside its post-wake auth grace window. */
+export function isSleepWakeError(message: string): boolean {
+  return /\bwhile the computer is sleeping or waking\b/i.test(message)
+}
+
+/**
+ * How long the scheduler waits before running tasks after wake: the longer of its own `graceMs` and
+ * any remaining auth wake hold-off (`authWakeDelayMs`), or `Infinity` while the machine is sleeping.
+ */
+export function wakeGraceDelayMs(graceMs: number, authWakeDelayMs = 0): number {
+  if (!Number.isFinite(authWakeDelayMs)) return Number.POSITIVE_INFINITY
+  return Math.max(0, graceMs, authWakeDelayMs)
+}
+
+/**
+ * Whether a task run that failed should be deferred until the machine finishes waking rather than
+ * recorded as a failed run or surfaced as a notice.
+ */
+export function shouldDeferTaskRun(
+  run: Pick<TaskRun, 'ok' | 'result'>,
+  state: { started: boolean; wakeDelayMs?: number },
+): boolean {
+  if (run.ok) return false
+  return isSleepWakeError(run.result) || !state.started || (state.wakeDelayMs ?? 0) > 0
+}
+
 /**
  * How far ahead of a panel refresh or state task a non-refresh task on the same workspace holds it
  * back, so a refresh scheduled in the same turn (a split-second earlier) waits for the data task to
@@ -531,6 +557,7 @@ export function runNotice(
   run: Pick<TaskRun, 'ok' | 'result'> & { changed: boolean },
 ): string | null {
   if (!run.ok) {
+    if (isSleepWakeError(run.result)) return null
     const before = [task.lastRun, ...task.history]
     const failedBefore = before.findIndex((one) => one === null || one.ok)
     const streak = failedBefore === -1 ? before.length : failedBefore

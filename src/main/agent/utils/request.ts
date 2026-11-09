@@ -2,6 +2,8 @@ import { sleep } from '../../../shared/abort'
 import { saidOf } from '../../../shared/agent/rounds'
 import { isRetryable, isTurnTimeout, retryLine, retryWait } from '../../../shared/llm/limits'
 import type { Completion, Effort, ToolDefinition, Turn } from '../../../shared/llm/llm'
+import { signsIn } from '../../../shared/llm/providers'
+import { jaspersWakeDelayMs } from '../../jaspers/jaspers'
 import { ProviderError } from '../../llm/http'
 import { complete } from '../../llm/llm'
 import type { ProviderConfig } from '../../secrets'
@@ -74,6 +76,10 @@ export async function request({
     const began = Date.now()
     const asked = { round, attempt, label, provider: config.provider.id, model: config.model }
     try {
+      const wakeWait = signsIn(config.provider) ? jaspersWakeDelayMs() : 0
+      if (wakeWait > 0 && Number.isFinite(wakeWait)) {
+        await sleep(wakeWait, signal)
+      }
       const reply = await complete(config, system, history, tools, {
         signal,
         stream: true,
