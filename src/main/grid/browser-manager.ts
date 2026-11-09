@@ -589,10 +589,9 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       },
       onDidStopLoading() {
         if (!isCurrent()) return
-        tab.loading = false
-        tab.loadedAt = Date.now()
-        notifyLoadWaiters(tab)
         if (tab.error !== null) {
+          tab.loading = false
+          notifyLoadWaiters(tab)
           pushSnapshot(entry)
           return
         }
@@ -602,24 +601,21 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
           if (retryTarget) tab.url = retryTarget
           if (retryTarget && tab.challengeRetriedUrl !== retryTarget) {
             tab.challengeRetriedUrl = retryTarget
-            const savedTitle = tab.title
-            const savedText = tab.text
-            void Promise.resolve(tab.view.clearBotCookies?.(retryTarget))
-              .catch(() => undefined)
-              .then(() => {
-                if (!isCurrent()) return
-                loadTabAddress(entry, tab, retryTarget, {
-                  preserveTitle: savedTitle,
-                  preserveText: savedText,
-                  keepChallengeRetry: true,
-                })
-              })
+            loadTabAddress(entry, tab, retryTarget, {
+              preserveTitle: tab.title,
+              preserveText: tab.text,
+              keepChallengeRetry: true,
+              clearBotCookies: true,
+            })
             return
           }
         } else if (isBrowserUrl(liveUrl)) {
           tab.url = liveUrl
           tab.challengeRetriedUrl = null
         }
+        tab.loading = false
+        tab.loadedAt = Date.now()
+        notifyLoadWaiters(tab)
         const liveTitle = tab.view.getTitle()
         if (liveTitle && !isBotChallengeUrl(liveUrl) && !isBotChallengeText('', liveTitle)) {
           tab.title = liveTitle
@@ -643,23 +639,18 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
             if (isVideoPageUrl(unwrapped)) tab.theater = true
             tab.view.setTheaterMode?.(tab.theater, unwrapped)
           }
-          positionEntry(entry, deps.getState())
-          pushSnapshot(entry)
           if (!tab.loading && !tab.view.isLoading() && unwrapped && tab.challengeRetriedUrl !== unwrapped) {
             tab.challengeRetriedUrl = unwrapped
-            const savedTitle = tab.title
-            const savedText = tab.text
-            void Promise.resolve(tab.view.clearBotCookies?.(unwrapped))
-              .catch(() => undefined)
-              .then(() => {
-                if (!isCurrent()) return
-                loadTabAddress(entry, tab, unwrapped, {
-                  preserveTitle: savedTitle,
-                  preserveText: savedText,
-                  keepChallengeRetry: true,
-                })
-              })
+            loadTabAddress(entry, tab, unwrapped, {
+              preserveTitle: tab.title,
+              preserveText: tab.text,
+              keepChallengeRetry: true,
+              clearBotCookies: true,
+            })
+            return
           }
+          positionEntry(entry, deps.getState())
+          pushSnapshot(entry)
           return
         }
         const normalized = normalizeBrowserUrl(url)
@@ -843,7 +834,12 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     entry: Entry,
     tab: TabEntry,
     url: string,
-    options?: { preserveTitle?: string; preserveText?: string | null; keepChallengeRetry?: boolean },
+    options?: {
+      preserveTitle?: string
+      preserveText?: string | null
+      keepChallengeRetry?: boolean
+      clearBotCookies?: boolean
+    },
   ): void {
     clearSuspendTimer(tab)
     clearHydrationTimers(tab)
@@ -869,7 +865,20 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     positionEntry(entry, deps.getState())
     pushSnapshot(entry)
     const currentView = tab.view
-    void currentView.loadURL(targetUrl).catch((err: unknown) => {
+    const startLoad = async (): Promise<void> => {
+      if (options?.clearBotCookies) {
+        try {
+          await currentView.clearBotCookies?.(targetUrl)
+        } catch {
+          // Ignore cookie cleanup failures before load.
+        }
+        if (tab.destroyed || tab.suspended || tab.view !== currentView || entry.destroyed || tab.loadSeq !== loadId) {
+          return
+        }
+      }
+      await currentView.loadURL(targetUrl)
+    }
+    void startLoad().catch((err: unknown) => {
       if (
         tab.destroyed ||
         tab.suspended ||
@@ -897,10 +906,11 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     const targetUrl = unwrapBotChallengeUrl(tab.url || entry.stateUrl, entry.stateUrl) || tab.url || entry.stateUrl
     const liveUrl = tab.view.getURL()
     if (isBotChallengeUrl(liveUrl) && targetUrl) {
-      const savedTitle = tab.title
-      const savedText = tab.text
-      void Promise.resolve(tab.view.clearBotCookies?.(targetUrl)).catch(() => undefined)
-      loadTabAddress(entry, tab, targetUrl, { preserveTitle: savedTitle, preserveText: savedText })
+      loadTabAddress(entry, tab, targetUrl, {
+        preserveTitle: tab.title,
+        preserveText: tab.text,
+        clearBotCookies: true,
+      })
       return
     }
     if ((tab.error !== null || !isBrowserUrl(liveUrl) || liveUrl !== targetUrl) && targetUrl) {

@@ -818,6 +818,12 @@ test('recovers from Bloomberg tosv2.html bot-challenge redirects, preserves unwr
 
   // Simulate Bloomberg redirecting a refresh to tosv2.html once due to a stale PerimeterX cookie, then succeeding on automatic retry via loadURL.
   let redirectedOnce = false
+  let cookiesCleared = false
+  let cookiesClearedBeforeLoad = false
+  view.clearBotCookies = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    cookiesCleared = true
+  }
   const origLoad = view.loadURL.bind(view)
   const origReload = view.reload.bind(view)
   view.reload = () => {
@@ -831,13 +837,16 @@ test('recovers from Bloomberg tosv2.html bot-challenge redirects, preserves unwr
       view.loading = true
       view.events.onDidStartLoading()
       view.events.onDidNavigate(challengeUrl)
-      view.loading = false
-      view.events.onDidStopLoading()
+      setTimeout(() => {
+        view.loading = false
+        view.events.onDidStopLoading()
+      }, 10)
       return
     }
     origReload()
   }
   view.loadURL = async (url: string) => {
+    cookiesClearedBeforeLoad = cookiesCleared
     view.title = 'Bloomberg Markets'
     view.pageText = 'Bloomberg Markets refreshed headlines'
     return origLoad(url)
@@ -845,13 +854,15 @@ test('recovers from Bloomberg tosv2.html bot-challenge redirects, preserves unwr
 
   updateGrid('ws-1', refreshPanel(getState().grids['ws-1']![1]!, placed.panel.id, 1001).grid)
   manager.sweep()
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  const settledAfterChallengeRetry = await manager.syncPanelText('ws-1', placed.panel.id)
 
+  assert.equal(cookiesClearedBeforeLoad, true)
+  assert.equal(settledAfterChallengeRetry, 'Bloomberg Markets refreshed headlines')
   assert.equal(view.getURL(), marketsUrl)
   assert.equal(published.at(-1)?.snapshot.url, marketsUrl)
   assert.equal(published.at(-1)?.snapshot.text, 'Bloomberg Markets refreshed headlines')
 
-  // If Bloomberg still lands on tosv2.html after retry, the tab keeps marketsUrl as its address, preserves prior article text, and reload loads marketsUrl instead of tosv2.html.
+  // If Bloomberg still lands on tosv2.html after retry, the tab keeps marketsUrl as its address, preserves prior article text, and reload awaits clearBotCookies before loading marketsUrl instead of tosv2.html.
   let forceChallenge = true
   const sendChallenge = (): void => {
     view.history = [...view.history.slice(0, view.index + 1), challengeUrl]
@@ -877,6 +888,7 @@ test('recovers from Bloomberg tosv2.html bot-challenge redirects, preserves unwr
       sendChallenge()
       return
     }
+    cookiesClearedBeforeLoad = cookiesCleared
     view.title = 'Bloomberg Markets'
     view.pageText = 'Bloomberg Markets recovered after manual reload'
     return origLoad(url)
@@ -884,13 +896,17 @@ test('recovers from Bloomberg tosv2.html bot-challenge redirects, preserves unwr
 
   updateGrid('ws-1', refreshPanel(getState().grids['ws-1']![1]!, placed.panel.id, 1002).grid)
   manager.sweep()
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await new Promise((resolve) => setTimeout(resolve, 40))
 
   assert.equal(published.at(-1)?.snapshot.url, marketsUrl)
   assert.equal(published.at(-1)?.snapshot.text, 'Bloomberg Markets refreshed headlines')
 
+  cookiesCleared = false
+  cookiesClearedBeforeLoad = false
   forceChallenge = false
   const afterReload = await manager.navigate(1, 'ws-1', placed.panel.id, 'reload')
+  await manager.syncPanelText('ws-1', placed.panel.id)
+  assert.equal(cookiesClearedBeforeLoad, true)
   assert.equal(afterReload.url, marketsUrl)
   assert.equal(view.getURL(), marketsUrl)
 

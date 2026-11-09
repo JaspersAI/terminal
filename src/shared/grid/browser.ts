@@ -620,25 +620,29 @@ function decodeChallengeTarget(rawParam: string, origin: string): string | null 
 function resolveSameOriginTarget(target: string, origin: string): string | null {
   const trimmed = target.trim()
   if (!trimmed) return null
-  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+  let candidate: string
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.startsWith('/\\')) {
     try {
-      return normalizeBrowserUrl(new URL(trimmed, origin).toString())
+      candidate = new URL(trimmed, origin).toString()
     } catch {
       return null
     }
+  } else if (/^https?:\/\//i.test(trimmed)) {
+    candidate = trimmed
+  } else {
+    return null
   }
-  if (/^https?:\/\//i.test(trimmed)) {
-    const normalized = normalizeBrowserUrl(trimmed)
-    if (!normalized) return null
-    try {
-      const originHost = new URL(origin).hostname.toLowerCase()
-      const targetHost = new URL(normalized).hostname.toLowerCase()
-      if (targetHost === originHost || targetHost.endsWith(`.${originHost.replace(/^www\./, '')}`)) {
-        return normalized
-      }
-    } catch {
-      return null
+  const normalized = normalizeBrowserUrl(candidate)
+  if (!normalized) return null
+  try {
+    const originHost = new URL(origin).hostname.toLowerCase()
+    const rootHost = originHost.replace(/^www\./, '')
+    const targetHost = new URL(normalized).hostname.toLowerCase()
+    if (targetHost === originHost || targetHost === rootHost || targetHost.endsWith(`.${rootHost}`)) {
+      return normalized
     }
+  } catch {
+    return null
   }
   return null
 }
