@@ -17,6 +17,7 @@ interface Props {
   /** True on a minimized tile, which is as tall as its bar: the menu hangs below it, as tall as it needs. */
   hangs: boolean
   onClose: () => void
+  onRename?: () => void
 }
 
 /**
@@ -28,7 +29,15 @@ interface Props {
  * tile, like the tile's box, so it works in every window. It closes on Escape, on a press outside it,
  * when the window loses the keyboard, and with its tile.
  */
-export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose }: Props): ReactElement | null {
+export function LoopMenu({
+  workspaceId,
+  elementId,
+  loop,
+  opener,
+  hangs,
+  onClose,
+  onRename,
+}: Props): ReactElement | null {
   // The slices the rule reads, each as the tree holds it, so the menu is rebuilt only when one changes.
   const loops = useAppState((s) => s.loops[workspaceId])
   const plugins = useAppState((s) => s.plugins)
@@ -111,7 +120,7 @@ export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose 
       ref={root}
       id={`loop-menu-${elementId}`}
       role="dialog"
-      aria-label={`More for ${loopTitle(loop.id)}`}
+      aria-label={`More for ${loopTitle(loop)}`}
       tabIndex={-1}
       onKeyDown={(event) => {
         if (event.key !== 'Escape') return
@@ -127,6 +136,11 @@ export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose 
         {status === 'working' && (
           <button type="button" data-stop onClick={stop} className={item}>
             Stop what it is doing
+          </button>
+        )}
+        {onRename && (
+          <button type="button" data-rename onClick={onRename} className={item}>
+            Rename this room
           </button>
         )}
         <button

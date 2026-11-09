@@ -10,7 +10,7 @@ import { THINKING, type AgentEvent, type AgentOrigin } from '../../../shared/age
 import type { Place } from '../../../shared/agent/asking'
 import { shownQuestion } from '../../../shared/agent/attachments.ts'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript.ts'
-import type { LoopStatus } from '../../../shared/loops/loops'
+import { normalizeLoopTitle, type Loop, type LoopStatus } from '../../../shared/loops/loops.ts'
 import { answered, failed, heard, over, sent, without, type LiveExchange } from '../composer/live.ts'
 
 /** What a message says while the one before it is still being worked on. */
@@ -168,6 +168,29 @@ export function canZoomLoop(state: {
     !state.modalOpen &&
     !state.outsideFocused
   )
+}
+
+/** Maximum pointer movement in pixels between pointerdown and pointerup for a press on the room title to count as a click rather than a drag. */
+export const TITLE_TAP_MAX_PX = 5
+
+/** Whether a pointer press and release on the room title is a tap/click rather than a header drag. */
+export function isTitleTap(startX: number, startY: number, endX: number, endY: number, button = 0): boolean {
+  return button === 0 && Math.hypot(endX - startX, endY - startY) < TITLE_TAP_MAX_PX
+}
+
+/** Whether a double-click on a tile's header bar should toggle maximize/restore. */
+export function shouldToggleHeaderMode(state: { renaming: boolean; onButton: boolean; onTitle: boolean }): boolean {
+  return !state.renaming && !state.onButton && !state.onTitle
+}
+
+/**
+ * The title string to dispatch for `room.rename` when committing an inline room title edit, or
+ * `null` when the normalized title is unchanged. Returns `''` when clearing a custom title back to `Room N`.
+ */
+export function roomRenameChange(loop: Pick<Loop, 'id' | 'title'>, draft: string): string | null {
+  const next = normalizeLoopTitle(loop.id, draft)
+  if (next === loop.title) return null
+  return next ?? ''
 }
 
 /** What a window keeps of a tile's box across workspace switches while the tile is on a grid. */
