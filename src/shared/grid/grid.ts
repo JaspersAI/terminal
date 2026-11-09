@@ -967,18 +967,21 @@ export function watchedViewPanels(grid: Grid, panelId: string): Panel[] {
 
 /**
  * Whether the view panel(s) affected by a placement, state write, or refresh have settled: true as
- * soon as any watched view records a runtime error or every watched view publishes new output.
+ * soon as any watched view records a runtime error or every watched view publishes new output or text.
  */
 export function panelTargetsSettled(
   grid: Grid,
   panelId: string,
   beforeOutputs: ReadonlyMap<string, unknown>,
+  beforeTexts?: ReadonlyMap<string, string | null>,
 ): { settled: boolean; error: string | null } {
   const targets = watchedViewPanels(grid, panelId)
   if (targets.length === 0) return { settled: true, error: null }
   const failed = targets.find((p) => Boolean(p.error))
   if (failed?.error) return { settled: true, error: failed.error }
-  const allPublished = targets.every((p) => p.output !== beforeOutputs.get(p.id))
+  const allPublished = targets.every(
+    (p) => p.output !== beforeOutputs.get(p.id) || (beforeTexts !== undefined && p.text !== beforeTexts.get(p.id)),
+  )
   return { settled: allPublished, error: null }
 }
 

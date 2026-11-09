@@ -583,6 +583,11 @@ test('panelTargetsSettled watches a view panel or a frame’s child views until 
   })
   const published = publishOutput(grid, 'e2', { rows: [] }, '0 rows').grid
   assert.deepEqual(panelTargetsSettled(published, 'p1', before), { settled: true, error: null })
+  const textOnly = publishText(grid, 'e2', 'Option Chain FLWS | Spot: $2.85').grid
+  assert.deepEqual(panelTargetsSettled(textOnly, 'p1', before, new Map([['p2', null]])), {
+    settled: true,
+    error: null,
+  })
   const emptyFrame = placeFrame(EMPTY_GRID, { content: { kind: 'frame' } }).grid
   assert.deepEqual(panelTargetsSettled(emptyFrame, 'p1', new Map()), { settled: true, error: null })
 })

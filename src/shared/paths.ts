@@ -207,6 +207,26 @@ function connectionSummary(c: ConnectionInfo): ConnectionSummary {
 }
 
 /**
+ * Resolves which workspace holds `panelId` (an element or panel id): `preferredWorkspaceId` when it
+ * has the panel, or the single other workspace that holds `panelId` when it is unique across tabs.
+ */
+export function resolvePanelWorkspace(
+  gridsByTab: Record<string, Record<number, Grid>>,
+  preferredWorkspaceId: string,
+  panelId: string,
+): string {
+  const trimmed = panelId.trim()
+  const hasPanel = (grids: Record<number, Grid> | undefined): boolean =>
+    grids !== undefined &&
+    Object.values(grids).some((grid) => grid.panels.some((p) => p.id === trimmed || p.elementId === trimmed))
+  if (hasPanel(gridsByTab[preferredWorkspaceId])) return preferredWorkspaceId
+  const matches = Object.keys(gridsByTab).filter(
+    (tabId) => tabId !== preferredWorkspaceId && hasPanel(gridsByTab[tabId]),
+  )
+  return matches.length === 1 ? matches[0]! : preferredWorkspaceId
+}
+
+/**
  * A panel by its own id or its element's, across a workspace's windows, and which window holds it.
  * Ids are unique across the windows, so the first grid holding one is the only one.
  */

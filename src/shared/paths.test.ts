@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_GRID, failPanel, placeView, publishText } from './grid/grid.ts'
-import { formatPath, panelErrorAt, parsePath, readPath, showPathValue, textPart } from './paths.ts'
+import {
+  formatPath,
+  panelErrorAt,
+  parsePath,
+  readPath,
+  resolvePanelWorkspace,
+  showPathValue,
+  textPart,
+} from './paths.ts'
 import { skill } from './skills/skill-fixture.ts'
 import type { AppState } from './state.ts'
 import { EYE_OFF } from './app/eye.ts'
@@ -470,4 +478,23 @@ test('connections and connections/<id> list tool names without schemas, hide int
     () => readPath(state, WS, parsePath('connections/screener-mcp/jaspers')),
     /No connection screener-mcp\/jaspers\. No connections are installed\./,
   )
+})
+
+test('resolvePanelWorkspace prefers the caller workspace and falls back to a unique matching workspace across tabs', () => {
+  const state = fixture()
+  const { grid: otherGrid } = placeView(EMPTY_GRID, {
+    content: { kind: 'view', view: 'core/note' },
+    state: { text: 'moved' },
+  })
+  state.grids['ws-2'] = {
+    1: {
+      ...otherGrid,
+      elements: otherGrid.elements.map((e) => ({ ...e, id: 'e96', panelId: 'p96' })),
+      panels: otherGrid.panels.map((p) => ({ ...p, id: 'p96', elementId: 'e96' })),
+    },
+  }
+  assert.equal(resolvePanelWorkspace(state.grids, WS, 'e1'), WS)
+  assert.equal(resolvePanelWorkspace(state.grids, WS, 'e96'), 'ws-2')
+  assert.equal(resolvePanelWorkspace(state.grids, WS, 'p96'), 'ws-2')
+  assert.equal(resolvePanelWorkspace(state.grids, WS, 'e404'), WS)
 })

@@ -1129,6 +1129,10 @@ export function failPanelChecked(workspaceId: string, panelId: string, error: st
 
 /** How long a tool that placed or updated a view waits for its frame to report an immediate mount error or output. */
 const PANEL_SETTLE_MS = 250
+/** How long an agent-initiated `refresh_element` waits for the view's source run and publish to finish. */
+export const REFRESH_SETTLE_MS = 2_500
+/** Brief grace window after `output` settles so a companion `publishText` from the same render lands too. */
+const COMPANION_PUBLISH_GRACE_MS = 25
 
 /**
  * Gives an open window a moment to mount or re-render a view panel (or the views inside a refreshed
@@ -1136,7 +1140,12 @@ const PANEL_SETTLE_MS = 250
  * the panel when the tool answers and the round's `workspace_state` is built. Returns at once when
  * no window is showing the workspace.
  */
-export async function settlePanel(workspaceId: string, panelId: string, signal?: AbortSignal): Promise<Panel | null> {
+export async function settlePanel(
+  workspaceId: string,
+  panelId: string,
+  signal?: AbortSignal,
+  timeoutMs: number = PANEL_SETTLE_MS,
+): Promise<Panel | null> {
   const initial = readPanel(workspaceId, panelId)
   if (!initial) return null
   const targets = watchedViewPanels(initial.grid, panelId)
@@ -1144,22 +1153,45 @@ export async function settlePanel(workspaceId: string, panelId: string, signal?:
     return initial.panel
   }
   const beforeOutputs = new Map(targets.map((p) => [p.id, p.output]))
+  const beforeTexts = new Map(targets.map((p) => [p.id, p.text]))
   const needsMountSettle = targets.some(
     (p) => !(p.content.kind === 'view' && p.content.view === BROWSER_VIEW && p.output !== null),
   )
   if (needsMountSettle) {
     await new Promise<void>((resolve) => {
+      let companionTimer: NodeJS.Timeout | null = null
       const finish = (): void => {
         clearTimeout(timer)
+        if (companionTimer) clearTimeout(companionTimer)
         stop()
         signal?.removeEventListener('abort', finish)
         resolve()
       }
       const stop = subscribe(() => {
         const now = readPanel(workspaceId, panelId)
-        if (!now || panelTargetsSettled(now.grid, panelId, beforeOutputs).settled) finish()
+        if (!now) {
+          finish()
+          return
+        }
+        const status = panelTargetsSettled(now.grid, panelId, beforeOutputs, beforeTexts)
+        if (!status.settled) return
+        if (status.error) {
+          finish()
+          return
+        }
+        const currentTargets = watchedViewPanels(now.grid, panelId)
+        const bothChanged = currentTargets.every(
+          (p) => p.output !== beforeOutputs.get(p.id) && p.text !== beforeTexts.get(p.id),
+        )
+        if (bothChanged) {
+          finish()
+          return
+        }
+        if (!companionTimer) {
+          companionTimer = setTimeout(finish, COMPANION_PUBLISH_GRACE_MS)
+        }
       })
-      const timer = setTimeout(finish, PANEL_SETTLE_MS)
+      const timer = setTimeout(finish, timeoutMs)
       signal?.addEventListener('abort', finish, { once: true })
     })
   }
@@ -1171,7 +1203,7 @@ export async function settlePanel(workspaceId: string, panelId: string, signal?:
   }
   const now = readPanel(workspaceId, panelId)
   if (!now) return initial.panel
-  const { error } = panelTargetsSettled(now.grid, panelId, beforeOutputs)
+  const { error } = panelTargetsSettled(now.grid, panelId, beforeOutputs, beforeTexts)
   return error ? { ...now.panel, error } : now.panel
 }
 

@@ -4,6 +4,7 @@ import {
   panelIn,
   parsePath,
   readPath,
+  resolvePanelWorkspace,
   showPathValue,
   textPart,
   type StorePath,
@@ -134,14 +135,19 @@ export const stateTools: Tool[] = [
           ownTile(context, path.panelId)
         }
       }
-      await syncPathPanels(workspaceId, path, signal)
+      const effectiveWorkspaceId =
+        loop === undefined && (path.kind === 'panel' || path.kind === 'panelEntry') && path.workspaceId === undefined
+          ? resolvePanelWorkspace(getState().grids, workspaceId, path.panelId)
+          : workspaceId
+      await syncPathPanels(effectiveWorkspaceId, path, signal)
       const state = toPublic(getState())
-      const rawValue = readPath(state, workspaceId, path)
+      const rawValue = readPath(state, effectiveWorkspaceId, path)
       const value =
         loop !== undefined && path.kind === 'panels' && Array.isArray(rawValue)
           ? rawValue.filter((entry: { loop?: string | null }) => entry.loop === loopName(loop))
           : rawValue
-      const error = path.kind === 'panel' && path.field !== 'error' ? panelErrorAt(state, workspaceId, path) : null
+      const error =
+        path.kind === 'panel' && path.field !== 'error' ? panelErrorAt(state, effectiveWorkspaceId, path) : null
       if (
         path.kind === 'panel' &&
         (path.field === 'text' || (path.field === 'state' && input.offset !== undefined)) &&
@@ -189,7 +195,9 @@ export const stateTools: Tool[] = [
       if (context.loop !== undefined && path.workspaceId !== undefined && path.workspaceId !== context.workspaceId)
         throw new Error("set reaches only this work's own tiles, on its own workspace.")
       ownTile(context, path.panelId)
-      const workspace = path.workspaceId ?? workspaceId
+      const workspace =
+        path.workspaceId ??
+        (context.loop === undefined ? resolvePanelWorkspace(getState().grids, workspaceId, path.panelId) : workspaceId)
       if (input.old !== undefined || input.new !== undefined) {
         if (input.value !== undefined) {
           throw new Error('Pass either value or old and new to set, not both.')

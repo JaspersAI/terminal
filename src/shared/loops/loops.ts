@@ -787,6 +787,57 @@ export function refreshTarget(grids: Record<number, Grid>, loops: readonly Loop[
 }
 
 /**
+ * Resolves the workspace and element/panel id `refresh_element` acts on: checks `preferredWorkspaceId`
+ * first, and when `allowCrossTab` is true (Central or a scheduled task), resolves a room name or a
+ * unique element/panel id across other tabs.
+ */
+export function resolveRefreshTarget(
+  gridsByTab: Record<string, Record<number, Grid>>,
+  loopsByTab: Record<string, Loops>,
+  preferredWorkspaceId: string,
+  id: string,
+  allowCrossTab: boolean = false,
+): { workspaceId: string; id: string } {
+  const trimmed = id.trim()
+  const localGrids = gridsByTab[preferredWorkspaceId] ?? {}
+  const localLoops = loopsByTab[preferredWorkspaceId]?.list ?? []
+  const localDirect = Object.values(localGrids).some(
+    (grid) =>
+      grid.elements.some((element) => element.id === trimmed) || grid.panels.some((panel) => panel.id === trimmed),
+  )
+  if (localDirect) return { workspaceId: preferredWorkspaceId, id: trimmed }
+  const localLoop = named(localLoops, trimmed)
+  const localFrame = localLoop ? frameOf(localGrids, localLoop.id)?.element.id : undefined
+  if (localFrame) return { workspaceId: preferredWorkspaceId, id: localFrame }
+
+  if (allowCrossTab) {
+    for (const [tabId, loops] of Object.entries(loopsByTab)) {
+      if (tabId === preferredWorkspaceId) continue
+      const match = named(loops.list, trimmed)
+      if (!match) continue
+      const frame = frameOf(gridsByTab[tabId] ?? {}, match.id)?.element.id
+      if (frame) return { workspaceId: tabId, id: frame }
+    }
+    const matchingTabs = Object.entries(gridsByTab)
+      .filter(
+        ([tabId, grids]) =>
+          tabId !== preferredWorkspaceId &&
+          Object.values(grids).some(
+            (grid) =>
+              grid.elements.some((element) => element.id === trimmed) ||
+              grid.panels.some((panel) => panel.id === trimmed),
+          ),
+      )
+      .map(([tabId]) => tabId)
+    if (matchingTabs.length === 1) {
+      return { workspaceId: matchingTabs[0]!, id: trimmed }
+    }
+  }
+
+  return { workspaceId: preferredWorkspaceId, id: refreshTarget(localGrids, localLoops, id) }
+}
+
+/**
  * Why a loop's agent may not change this element, in words for its model, or null when it may: the
  * tile is its own. `id` is an element's or a panel's. One that is on no grid answers null too: the
  * tool says that in the words it always has.

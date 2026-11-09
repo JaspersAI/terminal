@@ -25,6 +25,7 @@ import {
   readLoops,
   elementTarget,
   refreshTarget,
+  resolveRefreshTarget,
   retagged,
   START,
   startQuestion,
@@ -761,4 +762,32 @@ test('asksForLoop ignores text inside attached_file blocks and addressed routes 
   assert.equal(asksForLoop(`Start a new loop for this.\n\n${attached}`), true)
   const list = [loop('f3', 'Screener')]
   assert.deepEqual(addressed(list, `@loop_3\n\n${attached}`), { loop: list[0], message: attached })
+})
+
+test('resolveRefreshTarget resolves rooms and unique elements across tabs when cross-tab lookup is enabled, while keeping room agents local', () => {
+  const gridsByTab = {
+    'tab-a': {
+      1: grid([1, frame, 'f1'], [2, view('core/table'), 'f1', undefined, { parent: 'e1' }]),
+    },
+    'tab-b': {
+      1: grid([10, frame, 'f33'], [96, view('option-chain/table'), 'f33', undefined, { parent: 'e10' }]),
+    },
+  }
+  const loopsByTab: Record<string, Loops> = {
+    'tab-a': { seq: 1, list: [loop('f1', 'Table')] },
+    'tab-b': { seq: 33, list: [loop('f33', 'Options Chain')] },
+  }
+
+  assert.deepEqual(resolveRefreshTarget(gridsByTab, loopsByTab, 'tab-a', 'room_33', true), {
+    workspaceId: 'tab-b',
+    id: 'e10',
+  })
+  assert.deepEqual(resolveRefreshTarget(gridsByTab, loopsByTab, 'tab-a', 'e96', true), {
+    workspaceId: 'tab-b',
+    id: 'e96',
+  })
+  assert.deepEqual(resolveRefreshTarget(gridsByTab, loopsByTab, 'tab-a', 'room_33', false), {
+    workspaceId: 'tab-a',
+    id: 'room_33',
+  })
 })
