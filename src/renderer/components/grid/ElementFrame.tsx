@@ -329,7 +329,7 @@ export function ElementFrame({
           else toggleMaximized(workspaceId, element)
         }}
         className={`flex min-h-6 shrink-0 items-center border-b ${minimized ? 'h-6' : ''} ${
-          central ? 'border-central bg-central text-central-foreground' : 'border-border bg-muted'
+          central ? 'border-central bg-central text-central-foreground' : 'border-border bg-room-header'
         } ${canGrab(element.mode, 'move') ? 'cursor-grab' : ''}`}
       >
         <span
