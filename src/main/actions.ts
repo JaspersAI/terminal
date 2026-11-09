@@ -823,8 +823,10 @@ export function deleteWorkspace(id: string): void {
     const closingLoops = loops[id] ?? NO_LOOPS
     delete loops[id]
     const now = Date.now()
-    loops[neighborId] = archiveTabRooms(closingLoops, closingGrids, id, loops[neighborId] ?? NO_LOOPS, now)
-    const tasks = archiveTabTasks(state.tasks, closingLoops, closingGrids, id, neighborId, now)
+    const intoLoops = loops[neighborId] ?? NO_LOOPS
+    const intoGrids = grids[neighborId] ?? {}
+    loops[neighborId] = archiveTabRooms(closingLoops, closingGrids, id, intoLoops, now, intoGrids)
+    const tasks = archiveTabTasks(state.tasks, closingLoops, closingGrids, id, neighborId, now, intoLoops, intoGrids)
     return {
       ...state,
       workspaces,
@@ -1037,9 +1039,10 @@ export function deleteLoop(workspaceId: string, loopId: string): void {
       (grid) => removeElement(grid, frame.element.id),
       (next) => {
         const currentLoops = next.loops[tabId] ?? NO_LOOPS
-        const closed = closedWithout(currentLoops, before, next.grids[tabId] ?? {}, Date.now())
+        const afterGrids = next.grids[tabId] ?? {}
+        const closed = closedWithout(currentLoops, before, afterGrids, Date.now())
         const shut = closedLoop(closed, loopId)
-        const tasks = shut ? withoutRoomTasks(next.tasks, shut, tabId) : next.tasks
+        const tasks = shut ? withoutRoomTasks(next.tasks, shut, tabId, afterGrids) : next.tasks
         const stripped = withLoops(next, tabId, withoutLoop(currentLoops, loopId))
         return tasks === next.tasks ? stripped : { ...stripped, tasks }
       },
@@ -1054,7 +1057,7 @@ export function deleteLoop(workspaceId: string, loopId: string): void {
     let tasks = state.tasks
     for (const [id, loops] of Object.entries(state.loops)) {
       const shut = closedLoop(loops, loopId)
-      if (shut) tasks = withoutRoomTasks(tasks, shut, id)
+      if (shut) tasks = withoutRoomTasks(tasks, shut, id, state.grids[id])
       const stripped = withoutLoop(loops, loopId)
       if (stripped !== loops) {
         nextLoops[id] = stripped

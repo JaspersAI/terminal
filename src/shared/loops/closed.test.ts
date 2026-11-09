@@ -557,11 +557,16 @@ test('a task created for a new element that reused an id after a room closed on 
       instructions: 'Refresh e2',
       call: { tool: 'refresh_element', input: { elementId: 'e2' } },
     }),
-    // Created at 55 (after f1 closed at 50, when e2 belonged to f3): belongs to f3, not f1.
+    // Created at 55 (after f1 closed at 50, when e2/p2 belonged to f3): belongs to f3, not f1.
     sampleTask('t_new', 't1', {
       createdAt: 55,
       instructions: 'Refresh e2',
       call: { tool: 'refresh_element', input: { elementId: 'e2' } },
+    }),
+    sampleTask('t_new_panel', 't1', {
+      createdAt: 55,
+      instructions: 'Update p2 state',
+      call: { tool: 'set', input: { path: 'panels/p2/state/symbol', value: 'NVDA' } },
     }),
   ]
   const shut = closed.closed![0]!
@@ -569,6 +574,54 @@ test('a task created for a new element that reused an id after a room closed on 
   const updated = reopenRoomTasks(tasks, shut, 't1', 't1', back.ids, back.panelIds, clashGrid)
   assert.deepEqual(updated[0]!.call, { tool: 'refresh_element', input: { elementId: 'e5' } })
   assert.deepEqual(updated[1]!.call, { tool: 'refresh_element', input: { elementId: 'e2' } })
+  assert.deepEqual(updated[2]!.call, { tool: 'set', input: { path: 'panels/p2/state/symbol', value: 'NVDA' } })
+  // Deleting closed f1 while e2/p2 is reused on clashGrid removes only t_old, keeping t_new and t_new_panel.
+  const remaining = withoutRoomTasks(tasks, shut, 't1', clashGrid)
+  assert.deepEqual(
+    remaining.map((t) => t.id),
+    ['t_new', 't_new_panel'],
+  )
+})
+
+test('archiving a closing tab into a neighbor tab that already uses e1/e2 renumbers the archived room and its tasks so they do not collide', () => {
+  const t1Grids = workspace()
+  const t2Grids = workspace()
+  const t1Loops: Loops = { seq: 5, list: [loop('f5', 't1 room on e1/e2'), loop('f6', 't1 second room')] }
+  const t2Loops: Loops = { seq: 2, list: [loop('f1', 't2 room on e1/e2'), loop('f2', 't2 second room')] }
+  const tasks: Task[] = [
+    sampleTask('t_t1', 't1', {
+      createdAt: 10,
+      instructions: 'Refresh t1 e2',
+      call: { tool: 'refresh_element', input: { elementId: 'e2' } },
+    }),
+    sampleTask('t_t2', 't2', {
+      createdAt: 20,
+      instructions: 'Refresh t2 e2',
+      call: { tool: 'refresh_element', input: { elementId: 'e2' } },
+    }),
+  ]
+  const archivedLoops = archiveTabRooms(t2Loops, t2Grids, 't2', t1Loops, 100, t1Grids)
+  const archivedTasks = archiveTabTasks(tasks, t2Loops, t2Grids, 't2', 't1', 100, t1Loops, t1Grids)
+
+  // t_t1 still targets t1's open e2; t_t2 was renumbered to f1's archived view e5 on t1.
+  assert.deepEqual(archivedTasks[0]!.call, { tool: 'refresh_element', input: { elementId: 'e2' } })
+  assert.deepEqual(archivedTasks[1]!.call, { tool: 'refresh_element', input: { elementId: 'e5' } })
+  assert.equal(archivedTasks[1]!.instructions, 'Refresh t2 e5')
+
+  // While f1 is archived (closed) in t1, t_t1 runs (null) and t_t2 is skipped because e5 is in closed room_1.
+  assert.equal(closedCallMessage(archivedTasks[0]!.call!, 't1', { t1: t1Grids }, { t1: archivedLoops }), null)
+  assert.equal(
+    closedCallMessage(archivedTasks[1]!.call!, 't1', { t1: t1Grids }, { t1: archivedLoops }),
+    'Skipped: e5 is in room_1, which is closed. It refreshes again once room_1 is reopened from Rooms.',
+  )
+
+  // Deleting archived f1 removes only t_t2 and leaves t1's own t_t1 intact.
+  const f1Shut = archivedLoops.closed!.find((c) => c.loop.id === 'f1')!
+  const afterDelete = withoutRoomTasks(archivedTasks, f1Shut, 't1', t1Grids)
+  assert.deepEqual(
+    afterDelete.map((t) => t.id),
+    ['t_t1'],
+  )
 })
 
 test('reopenAcrossTabs can move an open room from another tab onto the target tab in one step with its tasks and chat key', () => {

@@ -326,10 +326,97 @@ export function globalSeq(loopsByTab: Record<string, Loops>): number {
   return max
 }
 
+function archivedIncomingRooms(
+  closingLoops: Loops,
+  closingGrids: Record<number, Grid>,
+  closingTabId: string,
+  intoLoops: Loops,
+  now: number,
+  intoGrids: Record<number, Grid> = {},
+): {
+  seq: number
+  rooms: {
+    original: ClosedLoop
+    archived: ClosedLoop
+    ids: Map<string, string>
+    panelIds: Map<string, string>
+  }[]
+} {
+  const closedAll = closedWithout(closingLoops, closingGrids, {}, now)
+  const seq = Math.max(intoLoops.seq, closedAll.seq)
+  const existingRoomIds = new Set([
+    ...intoLoops.list.map((r) => r.id),
+    ...(intoLoops.closed ?? []).map((c) => c.loop.id),
+  ])
+  const used = new Set<string>([
+    ...Object.values(intoGrids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
+    ...(intoLoops.closed ?? []).flatMap((c) => [...c.elements.map((e) => e.id), ...c.panels.map((p) => p.id)]),
+  ])
+  let elemSeq = Math.max(
+    0,
+    ...Object.values(intoGrids).map((g) => g.seq),
+    ...[...used].map((id) => Number(id.slice(1)) || 0),
+  )
+  const rooms: {
+    original: ClosedLoop
+    archived: ClosedLoop
+    ids: Map<string, string>
+    panelIds: Map<string, string>
+  }[] = []
+
+  for (const shut of closedAll.closed ?? []) {
+    if (existingRoomIds.has(shut.loop.id)) continue
+    const clash = shut.elements.some((e) => used.has(e.id)) || shut.panels.some((p) => used.has(p.id))
+    const ids = new Map<string, string>()
+    const panelIds = new Map<string, string>()
+    for (const element of shut.elements) {
+      if (clash) {
+        elemSeq += 1
+        ids.set(element.id, `e${elemSeq}`)
+        panelIds.set(element.panelId, `p${elemSeq}`)
+      } else {
+        ids.set(element.id, element.id)
+        panelIds.set(element.panelId, element.panelId)
+        elemSeq = Math.max(elemSeq, Number(element.id.slice(1)) || 0, Number(element.panelId.slice(1)) || 0)
+      }
+      used.add(ids.get(element.id)!)
+      used.add(panelIds.get(element.panelId)!)
+    }
+    const [first, ...rest] = shut.elements
+    const frameId = ids.get(first!.id)!
+    const elements: GridElement[] = [
+      { ...first!, id: frameId, panelId: panelIds.get(first!.panelId)! },
+      ...rest.map((e) => ({
+        ...e,
+        id: ids.get(e.id)!,
+        panelId: panelIds.get(e.panelId)!,
+        parent: frameId,
+      })),
+    ]
+    const panels = shut.panels.map((p) => ({
+      ...p,
+      id: panelIds.get(p.id) ?? p.id,
+      elementId: ids.get(p.elementId) ?? p.elementId,
+    }))
+    rooms.push({
+      original: shut,
+      archived: {
+        ...shut,
+        loop: { ...shut.loop, chat: loopChat(closingTabId, shut.loop) },
+        elements,
+        panels,
+      },
+      ids,
+      panelIds,
+    })
+  }
+  return { seq, rooms }
+}
+
 /**
  * Archives all open and closed rooms of a closing tab (`closingTabId`) into `intoLoops`'s closed
  * memory, stamping each room's canonical `chat` key (`<closingTabId>/<id>`) so its conversation history
- * survives after the tab is gone.
+ * survives after the tab is gone, and renumbering any element/panel ids that collide with `intoTabId`.
  */
 export function archiveTabRooms(
   closingLoops: Loops,
@@ -337,18 +424,12 @@ export function archiveTabRooms(
   closingTabId: string,
   intoLoops: Loops,
   now: number,
+  intoGrids: Record<number, Grid> = {},
 ): Loops {
-  const closedAll = closedWithout(closingLoops, closingGrids, {}, now)
-  const incoming = (closedAll.closed ?? []).map((shut): ClosedLoop => ({
-    ...shut,
-    loop: { ...shut.loop, chat: loopChat(closingTabId, shut.loop) },
-  }))
-  const seq = Math.max(intoLoops.seq, closedAll.seq)
-  if (incoming.length === 0) return seq === intoLoops.seq ? intoLoops : { ...intoLoops, seq }
-  const existingIds = new Set([...intoLoops.list.map((r) => r.id), ...(intoLoops.closed ?? []).map((c) => c.loop.id)])
-  const filtered = incoming.filter((c) => !existingIds.has(c.loop.id))
-  const closed = [...(intoLoops.closed ?? []), ...filtered]
-  return closed.length > 0 ? { ...intoLoops, seq, closed } : { ...intoLoops, seq }
+  const { seq, rooms } = archivedIncomingRooms(closingLoops, closingGrids, closingTabId, intoLoops, now, intoGrids)
+  if (rooms.length === 0) return seq === intoLoops.seq ? intoLoops : { ...intoLoops, seq }
+  const closed = [...(intoLoops.closed ?? []), ...rooms.map((r) => r.archived)]
+  return { ...intoLoops, seq, closed }
 }
 
 /**
@@ -470,17 +551,14 @@ function instructionsExclusiveToRoom(
   return { matches: namedRoom || referencedIds.length > 0, namedRoom, referencedIds }
 }
 
-function isReusedOnSource(
-  id: string,
-  room: ClosedLoop,
-  elementIds: ReadonlySet<string>,
-  sourceGrids?: Record<number, Grid>,
-): boolean {
+function isReusedOnSource(id: string, room: ClosedLoop, sourceGrids?: Record<number, Grid>): boolean {
   if (!sourceGrids) return false
   return Object.values(sourceGrids).some(
     (grid) =>
       grid.elements.some((e) => e.id === id && e.loop !== room.loop.id) ||
-      grid.panels.some((p) => p.id === id && !elementIds.has(p.elementId)),
+      grid.panels.some(
+        (p) => p.id === id && grid.elements.some((e) => e.id === p.elementId && e.loop !== room.loop.id),
+      ),
   )
 }
 
@@ -501,7 +579,7 @@ export function taskTargetsRoom(
     if (tabId !== sourceTabId) return false
     if (!elementIds.has(id) && !panelIds.has(id)) return false
     if (fromInstructions.namedRoom) return true
-    if (closedAt !== undefined && task.createdAt > closedAt && isReusedOnSource(id, room, elementIds, sourceGrids)) {
+    if (closedAt !== undefined && task.createdAt > closedAt && isReusedOnSource(id, room, sourceGrids)) {
       return false
     }
     return true
@@ -510,10 +588,6 @@ export function taskTargetsRoom(
   if (task.call) {
     const target = panelTargetOfCall(task)
     if (target) return idBelongsToRoom(target.panelId, target.workspaceId)
-    const rawRoom = [task.call.input['room'], task.call.input['loop']].find(
-      (v): v is string => typeof v === 'string' && v.trim() !== '',
-    )
-    if (rawRoom && named([room.loop], rawRoom.trim())) return true
     return false
   }
 
@@ -522,7 +596,7 @@ export function taskTargetsRoom(
   if (
     closedAt !== undefined &&
     task.createdAt > closedAt &&
-    fromInstructions.referencedIds.some((id) => isReusedOnSource(id, room, elementIds, sourceGrids))
+    fromInstructions.referencedIds.some((id) => isReusedOnSource(id, room, sourceGrids))
   ) {
     return false
   }
@@ -618,8 +692,8 @@ export function reopenRoomTasks(
 
 /**
  * When a tab (`closingTabId`) closes and its rooms are archived into `intoTabId`, keeps scheduled
- * tasks that belong to any of the archived rooms by moving them to `intoTabId`, while dropping
- * tab-only tasks that belong to no room.
+ * tasks that belong to any of the archived rooms by moving them to `intoTabId` (renumbering any
+ * element/panel ids that collided with `intoTabId`), while dropping tab-only tasks that belong to no room.
  */
 export function archiveTabTasks(
   tasks: readonly Task[],
@@ -628,14 +702,15 @@ export function archiveTabTasks(
   closingTabId: string,
   intoTabId: string,
   now: number,
+  intoLoops: Loops = NO_LOOPS,
+  intoGrids: Record<number, Grid> = {},
 ): Task[] {
-  const archivedRooms = closedWithout(closingLoops, closingGrids, {}, now).closed ?? []
-  const emptyMap = new Map<string, string>()
+  const { rooms } = archivedIncomingRooms(closingLoops, closingGrids, closingTabId, intoLoops, now, intoGrids)
   return tasks.flatMap((task) => {
     if (task.workspaceId !== closingTabId) return [task]
-    const matched = archivedRooms.some((room) => taskTargetsRoom(task, room, closingTabId))
+    const matched = rooms.find((r) => taskTargetsRoom(task, r.original, closingTabId))
     if (!matched) return []
-    return [retargetTask(task, intoTabId, emptyMap, emptyMap)]
+    return [retargetTask(task, intoTabId, matched.ids, matched.panelIds)]
   })
 }
 
@@ -653,9 +728,9 @@ export function withoutRoomTasks(
 }
 
 /**
- * What a scheduled call (`refresh_element`, `set`, or `update_room`) says when the tile or room
- * it targets is in a room the user closed: nothing to do until the room is reopened, rather than a
- * failure notice on every tick. Null when the target is open on a grid or not in any closed room.
+ * What a scheduled call (`refresh_element` or `set`) says when the tile or panel it targets is in
+ * a room the user closed: nothing to do until the room is reopened, rather than a failure notice on
+ * every tick. Null when the target is open on a grid or not in any closed room.
  */
 export function closedCallMessage(
   call: TaskCall,
@@ -663,23 +738,6 @@ export function closedCallMessage(
   gridsByTab: Record<string, Record<number, Grid>>,
   loopsByTab: Record<string, Loops>,
 ): string | null {
-  if (call.tool === 'update_room') {
-    const raw = [call.input['room'], call.input['loop']]
-      .find((v): v is string => typeof v === 'string' && v.trim() !== '')
-      ?.trim()
-    if (!raw) return null
-    for (const loops of Object.values(loopsByTab)) {
-      if (named(loops.list, raw)) return null
-    }
-    const closed =
-      closedHolding(loopsByTab[workspaceId] ?? NO_LOOPS, raw) ??
-      Object.values(loopsByTab)
-        .map((loops) => closedHolding(loops, raw))
-        .find((one) => one !== undefined)
-    if (!closed) return null
-    const name = loopName(closed.loop.id)
-    return `Skipped: ${name} is closed. It refreshes again once ${name} is reopened from Rooms.`
-  }
   const targetInfo = panelTargetOfCall({ workspaceId, call })
   if (!targetInfo) return null
   const { workspaceId: targetTabId, panelId: target } = targetInfo
