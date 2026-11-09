@@ -6,10 +6,12 @@ import {
   INSTRUCTIONS,
   LARGE,
   makeRoom,
+  readAgainTargets,
   restoreInput,
   sent,
   setAside,
   startOf,
+  unreadAsideTextNote,
   WHOLE_MAX,
 } from './aside.ts'
 import type { ToolCall, Turn } from '../llm/llm.ts'
@@ -604,4 +606,73 @@ test('once the front of a thread is cut, the marks point at the turns they did',
   // A cut that reaches into the request at work leaves all of what is left to it.
   assert.deepEqual(cutFrom({ asked: 10, aside: 14 }, 12), { asked: 0, aside: 2 })
   assert.deepEqual(cutFrom({ asked: 10, aside: 10 }, 12), { asked: 0, aside: 0 })
+})
+
+test('a set-aside note warns not to summarize, count, or quote details without calling read_again first', () => {
+  const turns = earlier(`{"path":"panels/e102/text","text":"${big(4_000)}"}`)
+  const note = outputs(sent(turns, startOf(turns)))[0]!
+  assert.match(note, /do not summarize, count, or quote details from it without calling read_again first/)
+})
+
+test('paginating panels/<id>/text at a positive offset keeps the earlier slice of that page whole alongside it', () => {
+  const paged: Turn[] = [
+    asked('read the feed'),
+    calling('g1', 'get', { path: 'panels/e102/text', offset: 0 }),
+    answer('g1', big(half)),
+    calling('g2', 'get', { path: 'panels/e102/text', offset: 20_000 }),
+    answer('g2', big(half)),
+  ]
+  assert.equal(setAside(paged, { asked: 0, aside: 0 }), null)
+  // Once the agent moves on to another call (like set), the earlier page slices stand aside as usual.
+  const movedOn: Turn[] = [
+    ...paged,
+    calling('s1', 'set', { path: 'panels/e102/state/url', value: 'https://example.com/2' }),
+    answer('s1', 'ok'),
+  ]
+  assert.deepEqual(setAside(movedOn, { asked: 0, aside: 0 })!.sending, { asked: 0, aside: 6 })
+})
+
+test('readAgainTargets extracts single, comma-separated, and array call ids', () => {
+  assert.deepEqual(readAgainTargets({ id: 'r1', name: 'read_again', input: { call: ' "c1" ' } }), ['c1'])
+  assert.deepEqual(readAgainTargets({ id: 'r2', name: 'read_again', input: { call: 'c1, "c2", c1' } }), ['c1', 'c2'])
+  assert.deepEqual(readAgainTargets({ id: 'r3', name: 'read_again', input: { calls: ['c1', 'c2', 'c3'] } }), [
+    'c1',
+    'c2',
+    'c3',
+  ])
+  assert.deepEqual(readAgainTargets({ id: 'g1', name: 'get', input: { path: 'panels/e1/text' } }), [])
+})
+
+test('unreadAsideTextNote flags set-aside panel text get calls when the run finishes without calling read_again, and clears once read_again brings them back', () => {
+  const turns: Turn[] = [
+    asked('scrape posts'),
+    calling('g0', 'get', { path: 'panels/e102/text', offset: 0 }),
+    answer('g0', big(half)),
+    replied('First batch done.'),
+    asked('scrape comments and compare'),
+    calling('g1', 'get', { path: 'panels/e102/text', offset: 0 }),
+    answer('g1', big(half)),
+    calling('s1', 'set', { path: 'panels/e102/state/url', value: 'https://example.com/2' }),
+    answer('s1', 'ok'),
+    calling('g2', 'get', { path: 'panels/e102/text', offset: 0 }),
+    answer('g2', big(half)),
+  ]
+  const sending = startOf(turns.slice(0, 5))
+  const put = setAside(turns, sending)!
+  assert.deepEqual(put.sending, { asked: 4, aside: 10 })
+
+  const unread = unreadAsideTextNote(put.turns, put.sending)
+  assert.ok(unread)
+  assert.match(unread.tell, /read_again/)
+  assert.match(unread.note, /"g1"/)
+  assert.match(unread.note, /"g0"/)
+  assert.doesNotMatch(unread.note, /"g2"/, 'g2 is still whole in the newest round')
+
+  // Once the model calls read_again in the kept-whole window, unreadAsideTextNote returns null.
+  const withReadAgain: Turn[] = [
+    ...put.turns,
+    calling('r1', 'read_again', { calls: ['g0', 'g1'] }),
+    answer('r1', big(half)),
+  ]
+  assert.equal(unreadAsideTextNote(withReadAgain, put.sending), null)
 })

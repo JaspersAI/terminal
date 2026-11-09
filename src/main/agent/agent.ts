@@ -1,4 +1,4 @@
-import { startOf } from '../../shared/agent/aside'
+import { INSTRUCTIONS, READ_AGAIN, startOf } from '../../shared/agent/aside'
 import { dayOf, overBudget } from '../../shared/agent/budget'
 import { afterRound, handoffReply, MAX_ROUNDS, shouldDeferForAdded } from '../../shared/agent/rounds'
 import {
@@ -21,7 +21,17 @@ import { asRun } from './utils/record'
 import { request } from './utils/request'
 import { emit, Stopped, telling, type Live } from './utils/runs'
 import { budget } from './utils/settings'
-import { citedBy, mend, offered, putAway, restate, sentOf, shorten, userLine } from './utils/thread'
+import {
+  citedBy,
+  mend,
+  offered,
+  putAway,
+  restate,
+  sentOf,
+  shorten,
+  unreadAsideTextNote,
+  userLine,
+} from './utils/thread'
 
 // The agent loop. One run per request: call the model, run whatever tools it asks for, feed the results
 // back, repeat until it answers in text, or until a round has handed the request over to work that
@@ -131,6 +141,7 @@ async function loop({
   let rounds = 0
   let mends = 0
   let cuts = 0
+  let asideRestated = false
 
   try {
     // One round past the last is for the answer alone: the model is told the round before that its
@@ -228,6 +239,17 @@ async function loop({
         continue
       }
 
+      if (reply.toolCalls.length === 0 && !spent && !quiet && available.length > 0 && !asideRestated) {
+        const unreadAside = unreadAsideTextNote(history, sending, INSTRUCTIONS)
+        if (unreadAside) {
+          asideRestated = true
+          tell(unreadAside.tell)
+          restate(history, prompt.round(), unreadAside.note)
+          round--
+          continue
+        }
+      }
+
       if (reply.toolCalls.length === 0 || spent) {
         // A call made on the round past the last is not run, and not kept, since a call with no result is
         // refused; the turn is then rebuilt from its words, and has to have some.
@@ -282,7 +304,8 @@ async function loop({
       // state rides on the last turn of the round, so it is said once. A run stopped under its calls
       // takes nothing: what was added then is left for the run after it.
       const joined = signal.aborted ? [] : [...earlyJoined, ...(added?.() ?? [])]
-      const next = afterRound(round, most, limit, prompt.round(), joined.length)
+      const readingAgain = reply.toolCalls.length > 0 && reply.toolCalls.every((call) => call.name === READ_AGAIN)
+      const next = afterRound(round, most, limit, prompt.round(), joined.length, readingAgain)
       most = next.most
       history.push({ role: 'tool', results, ...(joined.length === 0 ? { context: next.riding } : {}) })
       joined.forEach((turn, at) => {

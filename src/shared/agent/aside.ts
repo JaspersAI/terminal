@@ -186,11 +186,25 @@ function findCall(turns: Turn[], id: string): { call: ToolCall; answer: string |
   return null
 }
 
+/** Every call id a `read_again` call asks for: a single id, comma-separated ids in `call`, or an array in `calls`. */
+export function readAgainTargets(call: ToolCall): string[] {
+  if (call.name !== READ_AGAIN) return []
+  const raw = call.input.calls ?? call.input.call ?? call.input.id
+  const parts = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : []
+  const ids: string[] = []
+  for (const part of parts) {
+    if (typeof part !== 'string') continue
+    const id = part
+      .trim()
+      .replace(/^"(.*)"$/, '$1')
+      .trim()
+    if (id && !ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
+
 function readAgainTarget(call: ToolCall): string | null {
-  if (call.name !== READ_AGAIN) return null
-  const given = call.input.call ?? call.input.id
-  const id = typeof given === 'string' ? given.trim().replace(/^"(.*)"$/, '$1') : ''
-  return id || null
+  return readAgainTargets(call)[0] ?? null
 }
 
 function originOf(callId: string, calls: ReadonlyMap<string, ToolCall>): ToolCall | undefined {
@@ -251,7 +265,8 @@ function standsAside(result: ToolResult, calls: ReadonlyMap<string, ToolCall>, k
 
 /**
  * Where the answers that stay whole begin: the newest round, or, when every call of a streak of newest
- * rounds reads an answer again, the round before that streak, which the model was reading when it asked.
+ * rounds reads an answer again or continues reading the next offset slice of a panel's text, the round
+ * before that streak, which the model was reading when it asked.
  */
 function keptWhole(turns: Turn[], calls: ReadonlyMap<string, ToolCall>): number {
   const newest = newestRound(turns)
@@ -259,12 +274,94 @@ function keptWhole(turns: Turn[], calls: ReadonlyMap<string, ToolCall>): number 
   let from = newest
   while (from >= 0) {
     const round = turns[from] as Answered
-    if (!round.results.every((result) => calls.get(result.callId)?.name === READ_AGAIN)) break
+    if (!round.results.every((result) => continuesReading(calls.get(result.callId)))) break
     const before = newestRound(turns.slice(0, from))
     if (before < 0) break
     from = before
   }
   return from
+}
+
+function continuesReading(call: ToolCall | undefined): boolean {
+  if (!call) return false
+  if (call.name === READ_AGAIN) return true
+  return (
+    call.name === 'get' &&
+    isPanelTextPath(call.input.path) &&
+    typeof call.input.offset === 'number' &&
+    call.input.offset > 0
+  )
+}
+
+function isPanelTextPath(path: unknown): boolean {
+  return typeof path === 'string' && /(?:^|\/)panels\/[^/]+\/text$/.test(path.trim())
+}
+
+function isPanelTextGet(call: ToolCall | undefined): boolean {
+  return call?.name === 'get' && isPanelTextPath(call.input.path)
+}
+
+/**
+ * When a run tries to finish (`reply.toolCalls.length === 0`) after earlier `get` (`panels/<id>/text`)
+ * answers in the current request were set aside (`[Set aside: …]`) and the model has not called
+ * `read_again` in the kept-whole window to bring them back, returns the status line and restate note
+ * naming the set-aside `get` call ids from this run and from earlier in the conversation.
+ */
+export function unreadAsideTextNote(
+  turns: Turn[],
+  sending: Sending,
+  kept: ReadonlySet<string> = new Set(),
+): { tell: string; note: string } | null {
+  if (sending.aside <= sending.asked) return null
+  const calls = callsIn(turns)
+  const wholeIds = new Set<string>()
+  let hasWholeTextReadAgain = false
+  for (let at = sending.aside; at < turns.length; at++) {
+    const turn = turns[at]!
+    if (turn.role !== 'tool') continue
+    for (const result of turn.results) {
+      if (result.isError) continue
+      wholeIds.add(result.callId)
+      const call = calls.get(result.callId)
+      if (call?.name === READ_AGAIN) {
+        for (const targetId of readAgainTargets(call)) {
+          wholeIds.add(targetId)
+          const resolved = callOf(turns, targetId)
+          if (resolved) {
+            wholeIds.add(resolved.call.id)
+            if (isPanelTextGet(resolved.call)) hasWholeTextReadAgain = true
+          }
+        }
+      }
+    }
+  }
+  if (hasWholeTextReadAgain) return null
+
+  const collectUnread = (from: number, to: number): string[] => {
+    const ids: string[] = []
+    for (let at = Math.max(0, from); at < Math.min(turns.length, to); at++) {
+      const turn = turns[at]!
+      if (turn.role !== 'tool') continue
+      for (const result of turn.results) {
+        if (result.isError || !standsAside(result, calls, kept)) continue
+        const call = originOf(result.callId, calls) ?? calls.get(result.callId)
+        if (!call || !isPanelTextGet(call) || wholeIds.has(call.id)) continue
+        if (!ids.includes(call.id)) ids.push(call.id)
+      }
+    }
+    return ids
+  }
+
+  const currentUnread = collectUnread(sending.asked, sending.aside)
+  if (currentUnread.length === 0) return null
+  const earlierUnread = collectUnread(0, sending.asked)
+  const formatIds = (ids: readonly string[]): string => ids.map((id) => `"${id}"`).join(', ')
+  const earlierClause =
+    earlierUnread.length > 0 ? `; and from earlier in this conversation: ${formatIds(earlierUnread)}` : ''
+  return {
+    tell: 'Reply skipped read_again on set-aside page text: asking to read it back first',
+    note: `Your last reply was dropped because earlier get results on panel text in this run were set aside ([Set aside: …]), removing their full text and your earlier thinking from view. Call read_again to bring back the set-aside get calls whose text you need to summarize, count, or quote (from this run: ${formatIds(currentUnread)}${earlierClause}) before writing your final answer. You can pass multiple call ids to read_again at once or make multiple read_again calls in one round.`,
+  }
 }
 
 /** The last round of answers in a thread, or -1 in one with none. */
@@ -528,7 +625,7 @@ function asideNote(result: ToolResult, calls: ReadonlyMap<string, ToolCall>): st
   const call = originOf(result.callId, calls)
   const whose = call ? `${call.name}'s answer` : 'this answer'
   const id = call?.id ?? result.callId
-  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. read_again "${id}" brings it back. It began: ${result.output.slice(0, HEAD)}…]`
+  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. read_again "${id}" brings it back; do not summarize, count, or quote details from it without calling read_again first. It began: ${result.output.slice(0, HEAD)}…]`
 }
 
 /** What stands where an answer the model never read would have been. */

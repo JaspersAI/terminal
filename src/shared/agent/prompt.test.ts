@@ -1259,3 +1259,13 @@ test('a loop agent is told to equip research/room analysts with needed ready con
     assert.match(rules, /research\/save-analyst/)
   }
 })
+
+test('the rules instruct agents to call read_again when earlier get or tool results are set aside rather than summarizing truncated notes', () => {
+  for (const rules of [LOOP_RULES, loopRules(false), ROUTER_RULES]) {
+    assert.match(rules, /read_again/)
+  }
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /\[Set aside: …\]/)
+    assert.match(rules, /never summarize, count, or invent details from a truncated set-aside note/)
+  }
+})
