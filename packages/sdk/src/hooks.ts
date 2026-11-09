@@ -292,6 +292,28 @@ export function shouldRetryOnConnections(
   }
   return false
 }
+
+export const SOURCE_AUTO_REFRESH_DEFAULT_MS = 60_000
+export const SOURCE_AUTO_REFRESH_MIN_MS = 15_000
+export const SOURCE_AUTO_REFRESH_MAX_MS = 300_000
+
+const NON_POLLING_SOURCE_PREFIXES = ['research/', 'agents/', 'screener-mcp/', 'excel-export/']
+
+/**
+ * Returns the automatic background refresh interval in milliseconds for a mounted `useData(source, args)`
+ * hook after a successful run, or `null` when the source should not auto-poll.
+ */
+export function sourceAutoRefreshMs(source: string, ttlMs?: number): number | null {
+  const clean = source.trim()
+  if (!clean) return null
+  if (NON_POLLING_SOURCE_PREFIXES.some((prefix) => clean.startsWith(prefix))) return null
+  if (ttlMs !== undefined) {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) return null
+    return Math.min(Math.max(ttlMs, SOURCE_AUTO_REFRESH_MIN_MS), SOURCE_AUTO_REFRESH_MAX_MS)
+  }
+  return SOURCE_AUTO_REFRESH_DEFAULT_MS
+}
+
 /** Whatever a store path holds, kept up to date. Undefined until the first value arrives. */
 export function useData(path: string): unknown
 /** A source run, again whenever `args` change by value, and again, fresh, when the view's panel is refreshed. An empty source is idle, for a view still waiting for its state. */
@@ -339,6 +361,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
       return
     }
     let live = true
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
     const query = `${target}\0${key}`
     const sameQuery = lastQuery.current === query
     lastQuery.current = query
@@ -358,6 +381,17 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
             ? { data: rows, loading: false, error: null, datasetId: run.datasetId, meta: run.meta }
             : { ...IDLE, text: run.text },
         )
+        const refreshMs = sourceAutoRefreshMs(target, run.ttlMs)
+        if (refreshMs !== null) {
+          refreshTimer = setTimeout(() => {
+            if (!live) return
+            fresh.current = true
+            setNonce((n) => n + 1)
+          }, refreshMs)
+          if (typeof refreshTimer === 'object' && refreshTimer !== null && 'unref' in refreshTimer) {
+            ;(refreshTimer as { unref: () => void }).unref()
+          }
+        }
       } catch (err) {
         if (!live) return
         failed.current = true
@@ -366,6 +400,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
     })()
     return () => {
       live = false
+      if (refreshTimer !== null) clearTimeout(refreshTimer)
     }
   }, [bridge, isSource, target, key, nonce])
 

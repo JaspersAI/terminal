@@ -7,6 +7,10 @@ import {
   shouldRetryOnSources,
   shouldRetrySourceRun,
   shownSourceData,
+  sourceAutoRefreshMs,
+  SOURCE_AUTO_REFRESH_DEFAULT_MS,
+  SOURCE_AUTO_REFRESH_MAX_MS,
+  SOURCE_AUTO_REFRESH_MIN_MS,
 } from '../../../packages/sdk/src/hooks.ts'
 import { asTable, canShareInFlight, createInFlightMap, extractRows, mapToolResult } from './datasets.ts'
 
@@ -440,4 +444,19 @@ test('failed source calls retry only when their own source or connection becomes
     ),
     true,
   )
+})
+
+test('sourceAutoRefreshMs returns a bounded periodic refresh interval for data sources and skips non-polling workflow sources', () => {
+  assert.equal(sourceAutoRefreshMs('option-chain/chain'), SOURCE_AUTO_REFRESH_DEFAULT_MS)
+  assert.equal(sourceAutoRefreshMs('alpaca/option-chain'), SOURCE_AUTO_REFRESH_DEFAULT_MS)
+  assert.equal(sourceAutoRefreshMs('yfinance/quote', 30_000), 30_000)
+  assert.equal(sourceAutoRefreshMs('alpaca/stock-snapshots', 5_000), SOURCE_AUTO_REFRESH_MIN_MS)
+  assert.equal(sourceAutoRefreshMs('fred/observations', 900_000), SOURCE_AUTO_REFRESH_MAX_MS)
+  assert.equal(sourceAutoRefreshMs(''), null)
+  assert.equal(sourceAutoRefreshMs('option-chain/chain', 0), null)
+  assert.equal(sourceAutoRefreshMs('option-chain/chain', Number.POSITIVE_INFINITY), null)
+  assert.equal(sourceAutoRefreshMs('research/load-room'), null)
+  assert.equal(sourceAutoRefreshMs('agents/open-conversation'), null)
+  assert.equal(sourceAutoRefreshMs('screener-mcp/screen'), null)
+  assert.equal(sourceAutoRefreshMs('excel-export/export-tables'), null)
 })

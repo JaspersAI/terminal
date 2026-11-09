@@ -14,5 +14,5 @@ export interface Dataset {
 
 /** What a run gives a view: rows to read by id, or text to show. */
 export type RunResult =
-  | { kind: 'dataset'; datasetId: string; rowCount: number; meta: Record<string, unknown> }
-  | { kind: 'text'; resultId: string; text: string }
+  | { kind: 'dataset'; datasetId: string; rowCount: number; meta: Record<string, unknown>; ttlMs?: number }
+  | { kind: 'text'; resultId: string; text: string; ttlMs?: number }

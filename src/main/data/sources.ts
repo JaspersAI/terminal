@@ -91,6 +91,7 @@ export async function runSource(
       datasetId: cached.id,
       rowCount: cached.rows.length,
       meta: cached.meta,
+      ttlMs: cached.ttlMs,
       text: texts.get(cached.id) ?? '',
     }
   }
@@ -146,7 +147,7 @@ export async function runSource(
       texts.set(resultId, text)
       expires.set(resultId, now + KEEP_MS)
       file(source.id, preparedArgs, key, workspaceId, { rows: null, meta: null, text, error: null })
-      return { result: { kind: 'text', resultId, text }, citations: value }
+      return { result: { kind: 'text', resultId, text, ttlMs }, citations: value }
     }
     const datasetId = `d${++seq}`
     datasets.set(datasetId, {
@@ -163,7 +164,7 @@ export async function runSource(
     cache.set(key, datasetId)
     file(source.id, preparedArgs, key, workspaceId, { rows: found.rows, meta: found.meta, text, error: null })
     return {
-      result: { kind: 'dataset', datasetId, rowCount: found.rows.length, meta: found.meta, text },
+      result: { kind: 'dataset', datasetId, rowCount: found.rows.length, meta: found.meta, ttlMs, text },
       citations: value,
     }
   })
