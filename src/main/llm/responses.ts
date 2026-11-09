@@ -11,6 +11,9 @@ import {
   isRecord,
   newestState,
   withState,
+  canSalvageStream,
+  isConnectionDrop,
+  RESET_RETRIES,
 } from './wire.ts'
 
 // OpenAI Responses API. A reply is a list of items (reasoning, messages, function calls), kept as the
@@ -55,23 +58,36 @@ export async function openaiResponses(
   const send = async (reasoning: boolean): Promise<ResponsesReply> => {
     const body = responsesBody(model, system, history, tools, reasoning, options.effort)
     if (streams(options, model)) {
-      try {
-        const reader = responsesStream(options.onText, options.onCall)
-        for await (const payload of sse(
-          config,
-          url,
-          headers,
-          JSON.stringify({ ...body, stream: true }),
-          options.timeoutMs,
-          options.signal,
-        )) {
-          const parsed = event(payload)
-          if (parsed) reader.push(parsed)
+      const streamed = JSON.stringify({ ...body, stream: true })
+      for (let reset = 0; ; reset++) {
+        let sawFrame = false
+        let emittedText = false
+        const reader = responsesStream(
+          options.onText
+            ? (delta) => {
+                emittedText = true
+                options.onText?.(delta)
+              }
+            : undefined,
+          options.onCall,
+        )
+        const requestHeaders = reset > 0 ? { ...headers, connection: 'close' } : headers
+        try {
+          for await (const payload of sse(config, url, requestHeaders, streamed, options.timeoutMs, options.signal)) {
+            sawFrame = true
+            const parsed = event(payload)
+            if (parsed) reader.push(parsed)
+          }
+          return reader.done()
+        } catch (err) {
+          if (reader.finished() && canSalvageStream(err, options.signal)) return reader.done()
+          if (sawFrame && !emittedText && !options.signal?.aborted && reset < RESET_RETRIES && isConnectionDrop(err)) {
+            continue
+          }
+          if (!refusedStreaming(err)) throw err
+          withoutStreaming.add(model)
+          break
         }
-        return reader.done()
-      } catch (err) {
-        if (!refusedStreaming(err)) throw err
-        withoutStreaming.add(model)
       }
     }
     return post<ResponsesReply>(config, url, headers, JSON.stringify(body), options.timeoutMs, options.signal)
@@ -181,6 +197,7 @@ export function responsesStream(
   onCall?: (name: string) => void,
 ): {
   push: (event: Record<string, unknown>) => void
+  finished: () => boolean
   done: () => ResponsesReply
 } {
   let reply: ResponsesReply = {}
@@ -199,6 +216,7 @@ export function responsesStream(
       if (isRecord(event.response)) reply = event.response as ResponsesReply
       else if (event.type === 'error' && typeof event.message === 'string') throw new Error(event.message)
     },
+    finished: () => (reply.status === 'completed' || reply.status === 'incomplete') && !reply.error?.message,
     done: () => reply,
   }
 }

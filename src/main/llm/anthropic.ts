@@ -13,6 +13,9 @@ import {
   isRecord,
   num,
   stateBlock,
+  canSalvageStream,
+  isConnectionDrop,
+  RESET_RETRIES,
 } from './wire.ts'
 
 interface SystemBlock {
@@ -331,23 +334,37 @@ async function send(
 
   const url = `${config.baseUrl}/v1/messages`
   if (streams(options, model)) {
-    try {
-      const reader = anthropicStream(options.onText, options.onThinking, options.onCall)
-      for await (const payload of sse(
-        config,
-        url,
-        headers,
-        JSON.stringify({ ...body, stream: true }),
-        options.timeoutMs,
-        options.signal,
-      )) {
-        const parsed = event(payload)
-        if (parsed) reader.push(parsed)
+    const streamed = JSON.stringify({ ...body, stream: true })
+    for (let reset = 0; ; reset++) {
+      let sawFrame = false
+      let emittedText = false
+      const reader = anthropicStream(
+        options.onText
+          ? (delta) => {
+              emittedText = true
+              options.onText?.(delta)
+            }
+          : undefined,
+        options.onThinking,
+        options.onCall,
+      )
+      const requestHeaders = reset > 0 ? { ...headers, connection: 'close' } : headers
+      try {
+        for await (const payload of sse(config, url, requestHeaders, streamed, options.timeoutMs, options.signal)) {
+          sawFrame = true
+          const parsed = event(payload)
+          if (parsed) reader.push(parsed)
+        }
+        return readAnthropic(reader.done())
+      } catch (err) {
+        if (reader.finished() && canSalvageStream(err, options.signal)) return readAnthropic(reader.done())
+        if (sawFrame && !emittedText && !options.signal?.aborted && reset < RESET_RETRIES && isConnectionDrop(err)) {
+          continue
+        }
+        if (!refusedStreaming(err)) throw err
+        withoutStreaming.add(model)
+        break
       }
-      return readAnthropic(reader.done())
-    } catch (err) {
-      if (!refusedStreaming(err)) throw err
-      withoutStreaming.add(model)
     }
   }
   const data = await post<AnthropicResponse>(
@@ -411,10 +428,12 @@ export function anthropicStream(
   onCall?: (name: string) => void,
 ): {
   push: (event: Record<string, unknown>) => void
+  finished: () => boolean
   done: () => AnthropicResponse
 } {
   const blocks: AnthropicBlock[] = []
   const partial = new Map<number, string>()
+  const openBlocks = new Set<number>()
   const reply: AnthropicResponse = { content: blocks, usage: { input_tokens: 0, output_tokens: 0 } }
   return {
     push(event) {
@@ -427,6 +446,7 @@ export function anthropicStream(
         case 'content_block_start': {
           const block = isRecord(event.content_block) ? { ...event.content_block } : {}
           blocks[index] = block as AnthropicBlock
+          openBlocks.add(index)
           if (block.type === 'tool_use') {
             partial.set(index, '')
             if (typeof block.name === 'string') onCall?.(block.name)
@@ -450,13 +470,14 @@ export function anthropicStream(
           return
         }
         case 'content_block_stop': {
+          openBlocks.delete(index)
           const json = partial.get(index)
           if (json !== undefined && blocks[index]) blocks[index].input = parseArguments(json)
           return
         }
         case 'message_delta': {
           const delta = isRecord(event.delta) ? event.delta : {}
-          if (typeof delta.stop_reason === 'string') reply.stop_reason = delta.stop_reason
+          if (typeof delta.stop_reason === 'string' && delta.stop_reason) reply.stop_reason = delta.stop_reason
           // Cumulative, so the last one is the total rather than something to add up.
           if (isRecord(event.usage)) reply.usage = { ...reply.usage, ...counted(event.usage) }
           return
@@ -467,6 +488,7 @@ export function anthropicStream(
         }
       }
     },
+    finished: () => Boolean(reply.stop_reason) && openBlocks.size === 0,
     done() {
       // A block index nothing ever started would be a hole, which JSON.stringify writes as null.
       reply.content = blocks.filter((block) => block !== undefined)
