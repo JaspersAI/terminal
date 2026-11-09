@@ -370,7 +370,7 @@ function readAgain(history: Turn[]): Tool {
     readsOnly: true,
     whole: true,
     description:
-      'Bring back a call from earlier in this conversation as it was made and what it answered, whole, with nothing run again. A long answer you have already read stands as a note saying so, and so do the long arguments of an earlier request: the note gives the id to pass here. Use it rather than running the tool again; when only some rows of a source are needed, query reads those from the store.',
+      'Bring back a call from earlier in this conversation as it was made and what it answered, whole, with nothing run again. A long answer that was set aside stands as a [Set aside: …] note with only its opening characters (and any earlier tool-round thinking is not in view): pass the id from the note here before counting, quoting, itemizing, or stating facts from that answer, rather than running the tool again or guessing from memory; when only some rows of a source are needed, query reads those from the store.',
     parameters: {
       type: 'object',
       // Named for what it is, not `id`: a run's trail shows a call's id argument, and this one says nothing to a person.

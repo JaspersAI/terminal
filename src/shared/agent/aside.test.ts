@@ -62,9 +62,22 @@ test("an earlier request's long answer is sent as a note: its tool, its length, 
   assert.match(note, /run_source/)
   assert.match(note, /4,019 characters/)
   assert.match(note, /read_again "c1"/)
+  assert.match(note, /counting, quoting, or stating facts/)
   assert.match(note, /ticker,revenue/)
   assert.doesNotMatch(note, /TAIL/)
   assert.ok(note.length < 800, `the note is ${note.length} characters`)
+})
+
+test('a multi-page browser research request across 13 pages (30,000 characters each) keeps all 13 answers whole through synthesis', () => {
+  const turns: Turn[] = [
+    asked('research all 13 executive profiles'),
+    ...Array.from({ length: 13 }, (_, i): Turn[] => [
+      calling(`g${i + 1}`, 'get', { path: 'panels/e102/text', offset: 0 }),
+      answer(`g${i + 1}`, big(30_000, String(i % 10))),
+    ]).flat(),
+  ]
+  assert.ok(WHOLE_MAX >= 400_000)
+  assert.equal(setAside(turns, { asked: 0, aside: 0 }), null)
 })
 
 test('what was said goes whole, and the thread handed in is not changed', () => {

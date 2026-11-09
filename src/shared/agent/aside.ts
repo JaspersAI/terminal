@@ -28,7 +28,7 @@ export const LARGE = 1500
  * High enough that a few steps' findings are in view together, low enough that a round does not
  * carry everything the run ever fetched.
  */
-export const WHOLE_MAX = 60_000
+export const WHOLE_MAX = 400_000
 /**
  * How much of a conversation is left once the round just run has answers withheld. Withholding
  * changes what a provider has cached, so it has to be rare: a third gone is a while before more has
@@ -528,7 +528,7 @@ function asideNote(result: ToolResult, calls: ReadonlyMap<string, ToolCall>): st
   const call = originOf(result.callId, calls)
   const whose = call ? `${call.name}'s answer` : 'this answer'
   const id = call?.id ?? result.callId
-  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. read_again "${id}" brings it back. It began: ${result.output.slice(0, HEAD)}…]`
+  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. Call read_again "${id}" before counting, quoting, or stating facts from it not already written in an earlier reply. It began: ${result.output.slice(0, HEAD)}…]`
 }
 
 /** What stands where an answer the model never read would have been. */
