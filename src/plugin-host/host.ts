@@ -61,6 +61,10 @@ export function createHost(rpc: Rpc, deps: HostDeps): void {
     setTimeout(() => deps.exit(0), EXIT_DELAY_MS)
     return null
   })
+
+  // Announces that the utility process has booted and registered its RPC handlers, so main sends
+  // `init` over a live port rather than before the child is listening.
+  rpc.notify('ready')
 }
 
 /** The plugin's secrets as main sent them: an object of strings, and nothing else read. */

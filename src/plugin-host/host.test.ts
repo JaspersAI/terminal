@@ -63,7 +63,11 @@ function serve(main: Rpc): { watchId: () => number } {
 }
 
 test('init evaluates the build and runs start, which reaches main through its capabilities', async () => {
-  const { main } = start()
+  const [a, b] = pair()
+  const main = createRpc(a)
+  const ready = new Promise<unknown>((resolve) => main.onNotification('ready', resolve))
+  createHost(createRpc(b), { evaluate: evaluatePlugin, exit: () => undefined })
+  assert.equal(await ready, null)
   serve(main)
   const live = new Promise((resolve) => main.onNotification('live.set', resolve))
   assert.deepEqual(await main.request('init', { id: 'hello', code: PLUGIN, capabilities: ['files'] }), {

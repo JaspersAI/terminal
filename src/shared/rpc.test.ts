@@ -146,6 +146,26 @@ test('a request whose params cannot be sent rejects, and the wire goes on workin
   assert.equal(await main.request('ping'), 'pong')
 })
 
+test('aborting or notifying after the underlying port begins throwing still settles cleanly without throwing', async () => {
+  let broken = false
+  const listeners = new Set<(data: unknown) => void>()
+  const rpc = createRpc({
+    postMessage: () => {
+      if (broken) throw new Error('Port is closed')
+    },
+    onMessage: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  })
+  const controller = new AbortController()
+  const pending = rpc.request('init', {}, controller.signal)
+  broken = true
+  assert.doesNotThrow(() => controller.abort(new Error('start took longer than 30 s')))
+  await assert.rejects(pending, /start took longer than 30 s/)
+  assert.doesNotThrow(() => rpc.notify('live.set', { key: 'k', value: 1 }))
+})
+
 test('an error made in another realm, like a plugin vm, crosses as its message alone', async () => {
   const { runInNewContext } = await import('node:vm')
   const [a, b] = pair()
