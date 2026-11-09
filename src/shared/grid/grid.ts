@@ -835,16 +835,24 @@ export function panelOf(grid: Grid, id: string): Panel {
   throw new Error(`No panel ${id}. ${ids ? `The grid has ${ids}.` : 'The grid has no panels.'}`)
 }
 
-/** Writes one value inside a panel's state. An empty path replaces the whole of it. */
+/** Writes one value inside a panel's state. An empty path merges into the top-level keys; writing `sql` stamps `refreshedAt` when `at` is given so SQL views re-query even when the SQL string is unchanged. */
 export function setPanelState(
   grid: Grid,
   panelId: string,
   path: string[],
   value: unknown,
+  at?: number,
 ): { grid: Grid; panel: Panel } {
   const current = panelOf(grid, panelId)
   const { error: _was, ...rest } = current
-  const panel: Panel = { ...rest, state: setIn(current.state, path, value) }
+  const state = setIn(current.state, path, value)
+  const stampSql =
+    at !== undefined && (path[0] === 'sql' || (path.length === 0 && isPlainObject(value) && 'sql' in value))
+  const panel: Panel = {
+    ...rest,
+    state,
+    ...(stampSql ? { refreshedAt: at } : {}),
+  }
   return { grid: withPanel(grid, panel), panel }
 }
 
@@ -980,6 +988,41 @@ export function refreshPanel(grid: Grid, id: string, at: number): { grid: Grid; 
   const { error: _was, ...rest } = current
   const panel: Panel = { ...rest, refreshedAt: at }
   return { grid: withPanel(grid, panel), panel }
+}
+
+const NON_DATA_CORE_VIEWS = new Set([
+  'core/note',
+  'core/inbox',
+  'core/chat',
+  'core/plugins',
+  'core/tasks',
+  'core/app',
+  'core/browser',
+])
+
+/**
+ * Stamps `refreshedAt` on data and plugin views in `grid` after system wake so mounted views
+ * without a scheduled refresh task fetch fresh data, while skipping browsers, apps, static core
+ * views, and any panel (or room frame) in `skipIds` that has a due task about to refresh it.
+ */
+export function refreshGridOnWake(grid: Grid, at: number, skipIds?: ReadonlySet<string>): Grid {
+  let changed = false
+  const elementsById = new Map(grid.elements.map((e) => [e.id, e]))
+  const panels = grid.panels.map((panel) => {
+    if (panel.content.kind !== 'view' || NON_DATA_CORE_VIEWS.has(panel.content.view)) return panel
+    const element = elementsById.get(panel.elementId)
+    if (
+      skipIds &&
+      (skipIds.has(panel.id) ||
+        skipIds.has(panel.elementId) ||
+        (element?.parent !== undefined && skipIds.has(element.parent)))
+    ) {
+      return panel
+    }
+    changed = true
+    return { ...panel, refreshedAt: at }
+  })
+  return changed ? { ...grid, panels } : grid
 }
 
 /**

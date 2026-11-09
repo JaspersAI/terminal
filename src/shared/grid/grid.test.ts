@@ -43,6 +43,7 @@ import {
   summarizePanel,
   rangeName,
   refreshPanel,
+  refreshGridOnWake,
   placeFrame,
   placeFramed,
   placeView,
@@ -653,6 +654,53 @@ test('refreshPanel stamps the panel by its id or its element id and touches noth
   const byElement = refreshPanel(byPanel.grid, panel.elementId, 2000)
   assert.equal(panelOf(byElement.grid, panel.id).refreshedAt, 2000)
   assert.throws(() => refreshPanel(grid, 'p9', 1))
+})
+
+test('setPanelState stamps refreshedAt when sql is written so even an unchanged SQL string re-queries', () => {
+  const { grid, panel } = put(EMPTY_GRID, { content: view('core/table'), state: { sql: 'SELECT 1', title: 'Alpha' } })
+  assert.equal(panel.refreshedAt, null)
+  // Writing sql (even the exact same SQL string from a wake-up toggle) stamps refreshedAt when `at` is given.
+  const sameSql = setPanelState(grid, panel.id, ['sql'], 'SELECT 1', 5000)
+  assert.equal(sameSql.panel.refreshedAt, 5000)
+  // Merging an object containing sql at root also stamps refreshedAt.
+  const mergedSql = setPanelState(sameSql.grid, panel.id, [], { sql: 'SELECT 2' }, 6000)
+  assert.equal(mergedSql.panel.refreshedAt, 6000)
+  // Writing a non-sql field leaves refreshedAt alone.
+  const titleOnly = setPanelState(mergedSql.grid, panel.id, ['title'], 'Beta', 7000)
+  assert.equal(titleOnly.panel.refreshedAt, 6000)
+})
+
+test('refreshGridOnWake stamps data and plugin views while skipping browsers, apps, notes, and task-targeted panels', () => {
+  let grid = EMPTY_GRID
+  const tableInF1 = placeFramed(grid, { rect: r(0, 0, 8, 6), content: view('core/table'), state: { sql: 'SELECT 1' } })
+  grid = tableInF1.grid
+  const pluginView = placeFramed(grid, {
+    rect: r(8, 0, 8, 6),
+    content: view('options/chain'),
+    state: { symbol: 'FLWS' },
+  })
+  grid = pluginView.grid
+  const browserView = placeFramed(grid, {
+    rect: r(0, 6, 8, 6),
+    content: view('core/browser'),
+    state: { url: 'https://example.com' },
+  })
+  grid = browserView.grid
+  const noteView = placeFramed(grid, { rect: r(8, 6, 4, 6), content: view('core/note'), state: { text: 'hello' } })
+  grid = noteView.grid
+  const taskTargeted = placeFramed(grid, {
+    rect: r(12, 6, 4, 6),
+    content: view('yfinance/watchlist'),
+    state: {},
+  })
+  grid = taskTargeted.grid
+
+  const woken = refreshGridOnWake(grid, 9000, new Set([taskTargeted.frame.id]))
+  assert.equal(panelOf(woken, tableInF1.panel.id).refreshedAt, 9000)
+  assert.equal(panelOf(woken, pluginView.panel.id).refreshedAt, 9000)
+  assert.equal(panelOf(woken, browserView.panel.id).refreshedAt, null)
+  assert.equal(panelOf(woken, noteView.panel.id).refreshedAt, null)
+  assert.equal(panelOf(woken, taskTargeted.panel.id).refreshedAt, null)
 })
 
 test('moveAcross keeps the ids and the panel, and focuses on the target', () => {

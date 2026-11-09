@@ -48,7 +48,7 @@ export const QUERY_LIMIT_MAX = 2000
 export const EXCHANGES_MAX = 1000
 
 const HAS_SOURCE_COLUMN = /\bsource\b/i
-const QUOTED_SOURCE_ID = /['"][a-z0-9_-]+\/[a-z0-9_-]+['"]/i
+const QUOTED_SOURCE_ID = /'[a-z][a-z0-9_-]+\/[a-z][a-z0-9_-]+'/i
 
 /**
  * Whether a SQL query over the store could read rows from `source`. When the query filters on the
