@@ -40,14 +40,15 @@ const MIN = 60 * S
 const DAY = 24 * 60 * MIN
 
 function task(over: Partial<Task> = {}): Task {
+  const id = over.id ?? 't1'
   return {
-    id: 't1',
+    id,
     workspaceId: 'ws-1',
     instructions: 'Refresh e3',
     model: null,
     at: null,
     speak: 'always',
-    call: { tool: 'refresh_element', input: { elementId: 'e3' } },
+    call: { tool: 'refresh_element', input: { elementId: id === 't1' ? 'e3' : `e_${id}` } },
     executeAt: T0,
     every: 30 * S,
     enabled: true,
@@ -313,15 +314,15 @@ test('panel set tasks wait for workspace data tasks and run one at a time per pa
     id: 't21',
     workspaceId: 'ws-1',
     every: 60 * S,
-    executeAt: T0,
-    nextAt: T0,
+    executeAt: T0 + 30 * S,
+    nextAt: T0 + 30 * S,
     call: { tool: 'refresh_element', input: { elementId: 'e7' } },
   })
   assert.deepEqual(
-    dueTasks([watchlistRefresh, duplicateWatchlistRefresh], T0).map((t) => t.id),
+    dueTasks([watchlistRefresh, duplicateWatchlistRefresh], wakeTime).map((t) => t.id),
     ['t20'],
   )
-  assert.deepEqual(dueTasks([{ ...watchlistRefresh, running: true }, duplicateWatchlistRefresh], T0), [])
+  assert.deepEqual(dueTasks([{ ...watchlistRefresh, running: true }, duplicateWatchlistRefresh], wakeTime), [])
   assert.equal(earliestNext([{ ...watchlistRefresh, running: true }, duplicateWatchlistRefresh]), null)
 })
 
