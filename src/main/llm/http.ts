@@ -2,6 +2,7 @@ import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { retryAfter } from '../../shared/llm/limits.ts'
 import type { Provider } from '../../shared/llm/providers'
 import { SSE_DONE, sseFrames, sseTail } from '../../shared/llm/sse.ts'
+import { isConnectionDrop, RESET_RETRIES } from './wire.ts'
 
 /**
  * Who a request is to and how it leaves: the provider, for the words of an error, and the fetch it
@@ -40,29 +41,37 @@ export async function post<T>(
   timeoutMs = QUIET_MS,
   signal?: AbortSignal,
 ): Promise<T> {
-  let response: Response
-  const limit = AbortSignal.timeout(timeoutMs)
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body,
-      signal: signal ? AbortSignal.any([limit, signal]) : limit,
-    })
-  } catch (err) {
-    throw new ProviderError(`${provider.name}: ${describe(err)}`)
-  }
-  if (!response.ok) throw await refused(provider, response)
-  let text: string
-  try {
-    text = await response.text()
-  } catch (err) {
-    throw new ProviderError(`${provider.name}: ${describe(err)}`)
-  }
-  try {
-    return JSON.parse(text) as T
-  } catch {
-    throw new ProviderError(`${provider.name} returned something other than JSON.`, response.status)
+  for (let reset = 0; ; reset++) {
+    let response: Response
+    const limit = AbortSignal.timeout(timeoutMs)
+    const requestSignal = signal ? AbortSignal.any([limit, signal]) : limit
+    const requestHeaders = reset > 0 ? { ...headers, connection: 'close' } : headers
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: requestHeaders,
+        body,
+        signal: requestSignal,
+      })
+    } catch (err) {
+      const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
+      if (!requestSignal.aborted && reset < RESET_RETRIES && isConnectionDrop(wrapped)) continue
+      throw wrapped
+    }
+    if (!response.ok) throw await refused(provider, response)
+    let text: string
+    try {
+      text = await response.text()
+    } catch (err) {
+      const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
+      if (!requestSignal.aborted && reset < RESET_RETRIES && isConnectionDrop(wrapped)) continue
+      throw wrapped
+    }
+    try {
+      return JSON.parse(text) as T
+    } catch {
+      throw new ProviderError(`${provider.name} returned something other than JSON.`, response.status)
+    }
   }
 }
 
@@ -148,46 +157,77 @@ export async function* sse(
     clearTimeout(timer)
     timer = setTimeout(() => quiet.abort(new Error(`nothing arrived for ${Math.round(quietMs / 1000)} s`)), quietMs)
   }
-  heard()
   try {
-    let response: Response
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: { ...headers, accept: 'text/event-stream' },
-        body,
-        signal: signal ? AbortSignal.any([quiet.signal, signal]) : quiet.signal,
-      })
-    } catch (err) {
-      throw new ProviderError(`${provider.name}: ${describe(err)}`)
-    }
-    if (!response.ok) throw await refused(provider, response)
-    if (!response.body) throw new ProviderError(`${provider.name} returned no body to read.`, response.status)
-    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
-    let buffer = ''
-    try {
-      for (;;) {
-        let chunk: ReadableStreamReadResult<string>
-        try {
-          if (quiet.signal.aborted) throw quiet.signal.reason
-          chunk = await reader.read()
-        } catch (err) {
-          throw new ProviderError(`${provider.name}: ${describe(err)}`)
-        }
-        if (chunk.done) break
-        buffer += chunk.value
-        const { data, rest } = sseFrames(buffer)
-        buffer = rest
-        if (data.length > 0) heard()
-        for (const payload of data) {
-          if (payload === SSE_DONE) return
-          yield payload
-        }
+    for (let reset = 0; ; reset++) {
+      heard()
+      let yielded = false
+      let response: Response
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            ...headers,
+            accept: 'text/event-stream',
+            ...(reset > 0 ? { connection: 'close' } : {}),
+          },
+          body,
+          signal: signal ? AbortSignal.any([quiet.signal, signal]) : quiet.signal,
+        })
+      } catch (err) {
+        const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
+        if (!signal?.aborted && !quiet.signal.aborted && reset < RESET_RETRIES && isConnectionDrop(wrapped)) continue
+        throw wrapped
       }
-      const last = sseTail(buffer)
-      if (last !== null && last !== SSE_DONE) yield last
-    } finally {
-      await reader.cancel().catch(() => {})
+      if (!response.ok) throw await refused(provider, response)
+      if (!response.body) throw new ProviderError(`${provider.name} returned no body to read.`, response.status)
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+      let buffer = ''
+      try {
+        for (;;) {
+          let chunk: ReadableStreamReadResult<string>
+          try {
+            if (quiet.signal.aborted) throw quiet.signal.reason
+            chunk = await reader.read()
+          } catch (err) {
+            if (!signal?.aborted && !quiet.signal.aborted) {
+              const tail = sseTail(buffer)
+              buffer = ''
+              if (tail === SSE_DONE) return
+              if (tail !== null) {
+                yielded = true
+                yield tail
+              }
+            }
+            const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
+            if (
+              !yielded &&
+              !signal?.aborted &&
+              !quiet.signal.aborted &&
+              reset < RESET_RETRIES &&
+              isConnectionDrop(wrapped)
+            ) {
+              break
+            }
+            throw wrapped
+          }
+          if (chunk.done) {
+            const last = sseTail(buffer)
+            if (last !== null && last !== SSE_DONE) yield last
+            return
+          }
+          buffer += chunk.value
+          const { data, rest } = sseFrames(buffer)
+          buffer = rest
+          if (data.length > 0) heard()
+          for (const payload of data) {
+            if (payload === SSE_DONE) return
+            yielded = true
+            yield payload
+          }
+        }
+      } finally {
+        await reader.cancel().catch(() => {})
+      }
     }
   } finally {
     clearTimeout(timer)

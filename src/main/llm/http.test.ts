@@ -183,3 +183,80 @@ test('an HTML error page from a proxy or gateway is replaced with a clean status
     )
   }
 })
+
+test('a stream or post that resets before delivering a frame retries on a fresh connection, and a reset after [DONE] finishes cleanly', async () => {
+  let streamTries = 0
+  const seenConnections: Array<string | undefined> = []
+  await serving(
+    (res) => {
+      streamTries++
+      seenConnections.push(res.req.headers.connection)
+      if (streamTries === 1) {
+        res.socket?.resetAndDestroy()
+        return
+      }
+      if (streamTries === 2) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.flushHeaders()
+        setTimeout(() => res.socket?.resetAndDestroy(), 15)
+        return
+      }
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write('data: {"n":1}\n\ndata: [DONE]')
+      setTimeout(() => res.socket?.resetAndDestroy(), 15)
+    },
+    async (url) => {
+      assert.deepEqual(await read(url, 1000), ['{"n":1}'])
+      assert.equal(streamTries, 3)
+      assert.equal(seenConnections[1], 'close')
+      assert.equal(seenConnections[2], 'close')
+    },
+  )
+
+  let postTries = 0
+  await serving(
+    (res) => {
+      postTries++
+      if (postTries === 1) {
+        res.socket?.resetAndDestroy()
+        return
+      }
+      if (postTries === 2) {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.write('{"ok":')
+        setTimeout(() => res.socket?.resetAndDestroy(), 15)
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{"ok":true}')
+    },
+    async (url) => {
+      assert.deepEqual(await post<{ ok: boolean }>(WIRE, url, {}, '{}', 1000), { ok: true })
+      assert.equal(postTries, 3)
+    },
+  )
+})
+
+test('a stream reset after a trailing data frame without a blank line yields the buffered frame before throwing', async () => {
+  await serving(
+    (res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write('data: {"n":1}\n\ndata: {"n":2}')
+      setTimeout(() => res.socket?.resetAndDestroy(), 15)
+    },
+    async (url) => {
+      const got: string[] = []
+      await assert.rejects(
+        async () => {
+          for await (const payload of sse(WIRE, url, {}, '{}', 1000)) got.push(payload)
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof ProviderError)
+          assert.equal(isRetryable(err.message), true)
+          return true
+        },
+      )
+      assert.deepEqual(got, ['{"n":1}', '{"n":2}'])
+    },
+  )
+})

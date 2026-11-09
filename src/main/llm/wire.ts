@@ -1,4 +1,8 @@
+import { isRetryable } from '../../shared/llm/limits.ts'
 import type { CompleteOptions, Turn } from '../../shared/llm/llm'
+
+/** How many times a request that hits a transient socket reset before streaming text is retried on a fresh connection. */
+export const RESET_RETRIES = 2
 
 /**
  * Models that refused to stream this session, asked whole from then on. The registry is open: a
@@ -35,6 +39,39 @@ export function withState(text: string, state: string | null): string {
 /** A refusal that is about streaming rather than about the request, so asking whole is worth a try. */
 export function refusedStreaming(err: unknown): boolean {
   return err instanceof Error && / returned 4\d\d: /.test(err.message) && /stream/i.test(err.message)
+}
+
+/**
+ * Whether a provider error is a dropped or reset socket (`ECONNRESET`, `EPIPE`, `socket hang up`,
+ * `terminated`, `other side closed`, `premature close`), rather than an HTTP status refusal or a
+ * timeout, so a request that has not yet emitted text can immediately retry on a fresh connection.
+ */
+export function isConnectionDrop(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  if ('status' in err && typeof err.status === 'number') return false
+  if (/ returned [45]\d\d\b/.test(err.message)) return false
+  if (/nothing arrived for \d+ s|aborted due to timeout|timed out|ETIMEDOUT/i.test(err.message)) return false
+  return /ECONNRESET|EPIPE|socket hang up|\bterminated\b|other side closed|premature close/i.test(err.message)
+}
+
+/**
+ * Whether an error thrown by `sse` at the tail of a stream whose reply is already finished can be
+ * ignored so the completed reply is returned instead of discarded.
+ */
+export function canSalvageStream(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted || !(err instanceof Error)) return false
+  if ('status' in err && typeof err.status === 'number') return false
+  return isRetryable(err.message)
+}
+
+/** Whether a streamed tool call's accumulated argument string is complete enough to parse as a JSON object. */
+export function validArguments(text: string): boolean {
+  if (!text.trim()) return true
+  try {
+    return isRecord(JSON.parse(text))
+  } catch {
+    return false
+  }
 }
 
 /** Reads one SSE payload as JSON. A provider's keep-alive or comment is not JSON and is nothing to read. */
