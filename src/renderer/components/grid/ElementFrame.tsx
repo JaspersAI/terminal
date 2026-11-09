@@ -46,8 +46,10 @@ interface Props {
   /** Where it is drawn: its own rect, or where a drag in progress puts it. */
   rect: Rect
   panel: Panel | undefined
+  /** Whether the element's workspace tab is the active tab in this window. */
+  active?: boolean
   focused: boolean
-  /** True while another element is maximized over this one. */
+  /** True while another element is maximized over this one, or its workspace tab is off screen. */
   covered: boolean
   /** True while a drag has carried it out of this window: drawn dimmed at home until the move lands. */
   away?: boolean
@@ -103,6 +105,7 @@ export function ElementFrame({
   element,
   rect,
   panel,
+  active = true,
   focused,
   covered,
   away = false,
@@ -125,14 +128,15 @@ export function ElementFrame({
   const [zoomPopover, setZoomPopover] = useState(false)
   const prevFocused = useRef(focused)
   useEffect(() => {
-    if (!focused) {
+    if (!focused || !active) {
       setSelected(false)
       setZoomPopover(false)
+      if (!active) setMenu(false)
     } else if (!prevFocused.current) {
       setSelected(true)
     }
     prevFocused.current = focused
-  }, [focused])
+  }, [focused, active])
   // A deep research loop's field invites follow-up questions; any other invites view commands.
   const chat = loop !== undefined && showsChat(loop)
   const place = useMemo(() => ({ workspaceId, on: element.id }), [workspaceId, element.id])
@@ -205,7 +209,7 @@ export function ElementFrame({
   )
 
   useEffect(() => {
-    if (!zoomable) return
+    if (!zoomable || !active) return
     const onPointerDown = (event: PointerEvent): void => {
       const target = event.target as Node | null
       const inside = Boolean(tileRef.current?.contains(target))
@@ -236,7 +240,7 @@ export function ElementFrame({
       document.removeEventListener('focusin', onFocusIn, true)
       window.removeEventListener('blur', onWindowBlur)
     }
-  }, [zoomable, zoomPopover])
+  }, [zoomable, active, zoomPopover])
 
   // Cmd or Ctrl and K puts the caret in the focused element's box: its line, or what it is asking.
   // Cmd or Ctrl and +/=/-/_/0 zooms the selected, focused loop or Docked Central and shows its zoom popover.
@@ -246,7 +250,7 @@ export function ElementFrame({
       if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         setSelected(true)
-        document.querySelector<HTMLInputElement>(`#loop-box-${element.id} input`)?.focus()
+        tileRef.current?.querySelector<HTMLInputElement>('input[name="loop-prompt"]')?.focus()
         return
       }
       if (event.key === 'Escape' && zoomPopover) {
@@ -287,7 +291,7 @@ export function ElementFrame({
   return (
     <section
       ref={tileRef}
-      id={`element-${element.id}`}
+      id={active ? `element-${element.id}` : undefined}
       data-tile-id={element.id}
       data-zoom={zoom}
       data-loop-zoom={zoomable && !minimized ? zoom : undefined}
@@ -347,7 +351,7 @@ export function ElementFrame({
           <button
             ref={zoomTriggerRef}
             type="button"
-            id={`tile-zoom-${element.id}`}
+            id={active ? `tile-zoom-${element.id}` : undefined}
             data-tile-zoom
             aria-label={`Zoom ${zoomPercent(zoom)}. Open zoom controls.`}
             aria-expanded={zoomPopover}
@@ -369,7 +373,7 @@ export function ElementFrame({
         {loop && (
           <button
             type="button"
-            id={`loop-min-${element.id}`}
+            id={active ? `loop-min-${element.id}` : undefined}
             aria-label={`${minimized ? 'Restore' : 'Minimize'} ${label}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => toggleMinimized(workspaceId, element)}
@@ -384,7 +388,7 @@ export function ElementFrame({
           <button
             ref={more}
             type="button"
-            id={`loop-more-${element.id}`}
+            id={active ? `loop-more-${element.id}` : undefined}
             aria-label={`More for ${label}`}
             aria-expanded={menu}
             onPointerDown={(event) => event.stopPropagation()}
@@ -402,7 +406,7 @@ export function ElementFrame({
         )}
         <button
           type="button"
-          id={loop ? `loop-close-${element.id}` : undefined}
+          id={active && loop ? `loop-close-${element.id}` : undefined}
           aria-label={`Close ${label}`}
           onPointerDown={(event) => event.stopPropagation()}
           // Closing a loop keeps it, conversation and views, and View loops in Settings reopens it.
@@ -428,7 +432,7 @@ export function ElementFrame({
       {zoomable && zoomPopover && !minimized && (
         <div
           ref={zoomPopoverRef}
-          id={`loop-zoom-popover-${element.id}`}
+          id={active ? `loop-zoom-popover-${element.id}` : undefined}
           data-zoom-popover
           role="dialog"
           aria-label={`Zoom controls for ${called || title}`}
@@ -494,6 +498,7 @@ export function ElementFrame({
             label={label}
             called={called}
             chat={chat}
+            active={active}
             covered={covered || minimized}
             fills={empty}
             need={need}
@@ -511,6 +516,7 @@ export function ElementFrame({
             windowNumber={windowNumber}
             grid={grid}
             frame={element}
+            active={active}
             focused={focused}
             working={working}
             waiting={undrawn}

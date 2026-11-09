@@ -10,6 +10,7 @@ import {
   tabsForWindow,
   tabSwatchStyle,
   tabWidthPx,
+  updateMountedTabIds,
 } from './tabs.ts'
 
 test('formatTabLabel keeps titles up to the character limit and truncates longer titles with three dots', () => {
@@ -90,4 +91,31 @@ test('tabsForWindow isolates a detached tab into its Terminal (copy) window whil
     tabsForWindow(all, 2).map((t) => t.id),
     ['t2'],
   )
+})
+
+test('updateMountedTabIds keeps visited tabs mounted in stable mount order across tab switches and reorders, and prunes closed tabs', () => {
+  const tabs = [{ id: 't1' }, { id: 't2' }, { id: 't3' }]
+  const m1 = updateMountedTabIds([], tabs, 't1')
+  assert.deepEqual(m1, ['t1'])
+  // Re-reading on the same tab returns the identical array reference.
+  assert.equal(updateMountedTabIds(m1, tabs, 't1'), m1)
+
+  // Switching to t2 mounts t2 while keeping t1 mounted before it.
+  const m2 = updateMountedTabIds(m1, tabs, 't2')
+  assert.deepEqual(m2, ['t1', 't2'])
+
+  // Switching back to t1 keeps both mounted in their original mount order so iframes never move or reload.
+  const m3 = updateMountedTabIds(m2, tabs, 't1')
+  assert.deepEqual(m3, ['t1', 't2'])
+  assert.equal(m3, m2)
+
+  // Drag-reordering tabs in the tab bar does not reorder mounted grid layers in the DOM.
+  const reordered = [{ id: 't2' }, { id: 't1' }, { id: 't3' }]
+  const m4 = updateMountedTabIds(m3, reordered, 't1')
+  assert.deepEqual(m4, ['t1', 't2'])
+
+  // Closing or detaching t1 prunes it from the mounted list while keeping t2.
+  const afterClose = [{ id: 't2' }, { id: 't3' }]
+  const m5 = updateMountedTabIds(m4, afterClose, 't2')
+  assert.deepEqual(m5, ['t2'])
 })

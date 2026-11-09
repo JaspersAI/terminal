@@ -13,6 +13,8 @@ interface Props {
   /** The whole grid of the window the frame is in. */
   grid: Grid
   frame: GridElement
+  /** Whether the frame's workspace tab is the active tab in this window. */
+  active?: boolean
   /** True while the frame is its window's focused element. */
   focused: boolean
   /** True while the loop's agent is working on the tile. */
@@ -45,6 +47,7 @@ export function Board({
   windowNumber,
   grid,
   frame,
+  active = true,
   focused,
   working = false,
   waiting,
@@ -62,7 +65,7 @@ export function Board({
   const top = drawn.reduce((z, e) => Math.max(z, e.z), 0)
   return (
     <div
-      id={`board-${frame.id}`}
+      id={active ? `board-${frame.id}` : undefined}
       ref={layer}
       style={{
         gridTemplateColumns: `repeat(${cut.w}, minmax(0, 1fr))`,
@@ -80,7 +83,7 @@ export function Board({
         return (
           <section
             key={element.id}
-            id={`element-${element.id}`}
+            id={active ? `element-${element.id}` : undefined}
             aria-label={label}
             data-mode={element.mode}
             onPointerDown={() => {
