@@ -7,6 +7,7 @@ import { elementZoom, layoutOf, type Grid, type GridElement } from './grid.ts'
 export const BROWSER_VIEW = 'core/browser'
 export const BROWSER_PARTITION = 'persist:browser'
 export const DEFAULT_BROWSER_URL = 'https://www.bloomberg.com/'
+export const DEFAULT_BROWSER_BOUNDS: BrowserBounds = { x: 0, y: 0, width: 1280, height: 800 }
 export const BROWSER_PLUGIN_ID = 'browser'
 export const BROWSER_PLUGIN_TITLE = 'Browser'
 export const BROWSER_PLUGIN_DESCRIPTION =
@@ -178,6 +179,487 @@ export function browserUserAgentForUrl(url: unknown, baseUserAgent: string, plat
   return isGoogleAuthUrl(url) ? googleAuthUserAgent(platform) : browserUserAgent(baseUserAgent)
 }
 
+export interface BrowserUserAgentBrand {
+  brand: string
+  version: string
+}
+
+export interface BrowserUserAgentMetadata {
+  brands: BrowserUserAgentBrand[]
+  fullVersionList: BrowserUserAgentBrand[]
+  platform: string
+  platformVersion: string
+  architecture: string
+  model: string
+  mobile: boolean
+  bitness: string
+  wow64: boolean
+}
+
+export interface BrowserEmulationOverride {
+  userAgent: string
+  acceptLanguage: string
+  platform: string
+  userAgentMetadata?: BrowserUserAgentMetadata
+}
+
+/** Builds Chromium `UserAgentMetadata` matching standard Google Chrome so `navigator.userAgentData` never exposes `Electron`. */
+export function browserUserAgentMetadata(options?: {
+  chromeVersion?: string
+  platform?: string
+  arch?: string
+}): BrowserUserAgentMetadata {
+  const fullChrome = options?.chromeVersion?.trim() || '136.0.0.0'
+  const majorChrome = fullChrome.split('.')[0] || '136'
+  const platform = options?.platform === 'win32' ? 'Windows' : options?.platform === 'linux' ? 'Linux' : 'macOS'
+  const platformVersion = options?.platform === 'linux' ? '6.5.0' : '15.0.0'
+  const architecture = options?.arch === 'arm64' ? 'arm' : 'x86'
+  return {
+    brands: [
+      { brand: 'Not.A/Brand', version: '99' },
+      { brand: 'Google Chrome', version: majorChrome },
+      { brand: 'Chromium', version: majorChrome },
+    ],
+    fullVersionList: [
+      { brand: 'Not.A/Brand', version: '99.0.0.0' },
+      { brand: 'Google Chrome', version: fullChrome },
+      { brand: 'Chromium', version: fullChrome },
+    ],
+    platform,
+    platformVersion,
+    architecture,
+    model: '',
+    mobile: false,
+    bitness: '64',
+    wow64: false,
+  }
+}
+
+/** Builds the CDP `Emulation.setUserAgentOverride` payload for a navigation target. */
+export function browserEmulationOverrideForUrl(
+  url: unknown,
+  baseUserAgent: string,
+  options?: { chromeVersion?: string; platform?: string; arch?: string },
+): BrowserEmulationOverride {
+  const platform = options?.platform ?? 'darwin'
+  const userAgent = browserUserAgentForUrl(url, baseUserAgent, platform)
+  const navPlatform = platform === 'win32' ? 'Win32' : platform === 'linux' ? 'Linux x86_64' : 'MacIntel'
+  if (isGoogleAuthUrl(url)) {
+    return {
+      userAgent,
+      acceptLanguage: 'en-US,en;q=0.9',
+      platform: navPlatform,
+    }
+  }
+  return {
+    userAgent,
+    acceptLanguage: 'en-US,en;q=0.9',
+    platform: navPlatform,
+    userAgentMetadata: browserUserAgentMetadata({
+      chromeVersion: options?.chromeVersion,
+      platform,
+      arch: options?.arch,
+    }),
+  }
+}
+
+/**
+ * Main-world script evaluated before page scripts in `core/browser` so client-side anti-bot checks
+ * (such as PerimeterX on Bloomberg) see a standard Chrome environment matching the request headers.
+ */
+export function browserStealthScript(options?: { chromeVersion?: string; platform?: string; arch?: string }): string {
+  const fullChrome = options?.chromeVersion?.trim() || '136.0.0.0'
+  const meta = browserUserAgentMetadata(options)
+  return `(() => {
+  try {
+    const meta = ${JSON.stringify(meta)};
+    const fullChrome = ${JSON.stringify(fullChrome)};
+    const majorChrome = fullChrome.split('.')[0] || '136';
+    const w = typeof window !== 'undefined' ? window : globalThis;
+    const nav = typeof navigator !== 'undefined' ? navigator : w.navigator;
+    const doc = typeof document !== 'undefined' ? document : w.document;
+    const navProto = (w.Navigator && w.Navigator.prototype) || (nav ? Object.getPrototypeOf(nav) : null);
+    const docProto = (w.Document && w.Document.prototype) || (doc ? Object.getPrototypeOf(doc) : null);
+
+    if (navProto) {
+      try {
+        Object.defineProperty(navProto, 'webdriver', {
+          get: function webdriver() { return false; },
+          enumerable: true,
+          configurable: true,
+        });
+      } catch {}
+      try {
+        if (!nav.languages || nav.languages.length === 0) {
+          Object.defineProperty(navProto, 'languages', {
+            get: function languages() { return ['en-US', 'en']; },
+            enumerable: true,
+            configurable: true,
+          });
+        }
+        if (!nav.language) {
+          Object.defineProperty(navProto, 'language', {
+            get: function language() { return 'en-US'; },
+            enumerable: true,
+            configurable: true,
+          });
+        }
+      } catch {}
+    }
+
+    const ua = (nav && nav.userAgent) || '';
+    const isFirefox = /\\bFirefox\\//i.test(ua);
+    if (isFirefox) {
+      if (navProto && 'userAgentData' in navProto) {
+        try { delete navProto.userAgentData; } catch {}
+      }
+      if (nav && 'userAgentData' in nav) {
+        try {
+          Object.defineProperty(nav, 'userAgentData', {
+            get: function userAgentData() { return undefined; },
+            configurable: true,
+          });
+        } catch {}
+      }
+    } else {
+      const cleanBrands = (list, full) => {
+        const fallback = full ? meta.fullVersionList : meta.brands;
+        if (!Array.isArray(list) || list.length === 0) return fallback.map((b) => ({ ...b }));
+        const out = [];
+        const seen = new Set();
+        for (const item of list) {
+          if (!item || typeof item.brand !== 'string') continue;
+          const isAppBrand = /electron|jaspers/i.test(item.brand);
+          const brand = isAppBrand ? 'Google Chrome' : item.brand;
+          const version = isAppBrand ? (full ? fullChrome : majorChrome) : String(item.version || (full ? fullChrome : majorChrome));
+          if (seen.has(brand)) continue;
+          seen.add(brand);
+          out.push({ brand, version });
+        }
+        if (!seen.has('Google Chrome')) {
+          return fallback.map((b) => ({ ...b }));
+        }
+        return out;
+      };
+
+      const existingUaData = nav && nav.userAgentData;
+      const uaDataTarget =
+        existingUaData && Object.getPrototypeOf(existingUaData) && Object.getPrototypeOf(existingUaData) !== Object.prototype
+          ? Object.getPrototypeOf(existingUaData)
+          : existingUaData;
+
+      if (uaDataTarget) {
+        const origBrandsDesc = Object.getOwnPropertyDescriptor(uaDataTarget, 'brands');
+        const origGetHighEntropy = typeof uaDataTarget.getHighEntropyValues === 'function'
+          ? uaDataTarget.getHighEntropyValues
+          : null;
+        try {
+          Object.defineProperty(uaDataTarget, 'brands', {
+            get: function brands() {
+              const raw = origBrandsDesc && origBrandsDesc.get ? origBrandsDesc.get.call(this) : null;
+              return cleanBrands(raw, false);
+            },
+            enumerable: true,
+            configurable: true,
+          });
+          Object.defineProperty(uaDataTarget, 'mobile', {
+            get: function mobile() { return false; },
+            enumerable: true,
+            configurable: true,
+          });
+          Object.defineProperty(uaDataTarget, 'platform', {
+            get: function platform() { return meta.platform; },
+            enumerable: true,
+            configurable: true,
+          });
+          Object.defineProperty(uaDataTarget, 'toJSON', {
+            value: function toJSON() {
+              return { brands: this.brands, mobile: this.mobile, platform: this.platform };
+            },
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+          Object.defineProperty(uaDataTarget, 'getHighEntropyValues', {
+            value: async function getHighEntropyValues(hints) {
+              let base = {};
+              if (origGetHighEntropy) {
+                try { base = (await origGetHighEntropy.call(this, hints)) || {}; } catch {}
+              }
+              return {
+                ...base,
+                brands: cleanBrands(base.brands, false),
+                fullVersionList: cleanBrands(base.fullVersionList, true),
+                uaFullVersion: fullChrome,
+                platform: base.platform || meta.platform,
+                platformVersion: base.platformVersion || meta.platformVersion,
+                architecture: base.architecture || meta.architecture,
+                bitness: base.bitness || meta.bitness,
+                model: typeof base.model === 'string' ? base.model : meta.model,
+                mobile: false,
+                wow64: false,
+              };
+            },
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
+        } catch {}
+      } else if (navProto) {
+        const fallbackUaData = {
+          get brands() { return meta.brands.map((b) => ({ ...b })); },
+          get mobile() { return false; },
+          get platform() { return meta.platform; },
+          toJSON() { return { brands: this.brands, mobile: false, platform: meta.platform }; },
+          async getHighEntropyValues() {
+            return {
+              brands: meta.brands.map((b) => ({ ...b })),
+              fullVersionList: meta.fullVersionList.map((b) => ({ ...b })),
+              uaFullVersion: fullChrome,
+              platform: meta.platform,
+              platformVersion: meta.platformVersion,
+              architecture: meta.architecture,
+              bitness: meta.bitness,
+              model: meta.model,
+              mobile: false,
+              wow64: false,
+            };
+          },
+        };
+        try {
+          Object.defineProperty(navProto, 'userAgentData', {
+            get: function userAgentData() { return fallbackUaData; },
+            enumerable: true,
+            configurable: true,
+          });
+        } catch {}
+      }
+
+      if (!w.chrome || typeof w.chrome !== 'object') {
+        try { w.chrome = {}; } catch {}
+      }
+      if (w.chrome && typeof w.chrome === 'object') {
+        if (!w.chrome.app) {
+          w.chrome.app = {
+            isInstalled: false,
+            InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+            RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+            getDetails: function getDetails() { return null; },
+            getIsInstalled: function getIsInstalled() { return false; },
+            runningState: function runningState() { return 'cannot_run'; },
+          };
+        }
+        if (!w.chrome.runtime) {
+          w.chrome.runtime = {
+            OnInstalledReason: {
+              CHROME_UPDATE: 'chrome_update',
+              INSTALL: 'install',
+              SHARED_MODULE_UPDATE: 'shared_module_update',
+              UPDATE: 'update',
+            },
+            OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+            PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+            PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+            PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+            RequestUpdateCheckStatus: {
+              NO_UPDATE: 'no_update',
+              THROTTLED: 'throttled',
+              UPDATE_AVAILABLE: 'update_available',
+            },
+          };
+        }
+        if (typeof w.chrome.csi !== 'function') {
+          w.chrome.csi = function csi() {
+            return { startE: Date.now(), onloadT: Date.now(), pageT: 250, tran: 15 };
+          };
+        }
+        if (typeof w.chrome.loadTimes !== 'function') {
+          w.chrome.loadTimes = function loadTimes() {
+            const now = Date.now() / 1000;
+            return {
+              commitLoadTime: now,
+              connectionInfo: 'h2',
+              finishDocumentLoadTime: now,
+              finishLoadTime: now,
+              firstPaintAfterLoadTime: 0,
+              firstPaintTime: now,
+              navigationType: 'Other',
+              npnNegotiatedProtocol: 'h2',
+              requestTime: now,
+              startLoadTime: now,
+              wasAlternateProtocolAvailable: false,
+              wasFetchedViaSpdy: true,
+              wasNpnNegotiated: true,
+            };
+          };
+        }
+      }
+    }
+
+    if (!w.outerWidth || w.outerWidth === 0) {
+      try {
+        Object.defineProperty(w, 'outerWidth', {
+          get: function outerWidth() { return w.innerWidth || (w.screen && w.screen.availWidth) || 1280; },
+          enumerable: true,
+          configurable: true,
+        });
+      } catch {}
+    }
+    if (!w.outerHeight || w.outerHeight === 0) {
+      try {
+        Object.defineProperty(w, 'outerHeight', {
+          get: function outerHeight() { return w.innerHeight || (w.screen && w.screen.availHeight) || 800; },
+          enumerable: true,
+          configurable: true,
+        });
+      } catch {}
+    }
+
+    if (docProto) {
+      try {
+        Object.defineProperty(docProto, 'hidden', {
+          get: function hidden() { return false; },
+          enumerable: true,
+          configurable: true,
+        });
+        Object.defineProperty(docProto, 'visibilityState', {
+          get: function visibilityState() { return 'visible'; },
+          enumerable: true,
+          configurable: true,
+        });
+      } catch {}
+    }
+  } catch {}
+})()`
+}
+
+/** True when `raw` is Bloomberg's `tosv2.html` bot-verification challenge page. */
+export function isBotChallengeUrl(raw: unknown): boolean {
+  const normalized = normalizeBrowserUrl(raw)
+  if (!normalized) return false
+  try {
+    const parsed = new URL(normalized)
+    const host = parsed.hostname.toLowerCase()
+    const path = parsed.pathname.toLowerCase()
+    if (host === 'bloomberg.com' || host.endsWith('.bloomberg.com')) {
+      return path === '/tosv2.html' || path === '/tosv2'
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Unwraps a Bloomberg `tosv2.html?url=...` bot-challenge redirect back to its intended destination
+ * URL (decoded from the Base64 `url` query parameter, or `fallbackUrl` / the origin root).
+ */
+export function unwrapBotChallengeUrl(raw: unknown, fallbackUrl?: string): string | null {
+  const normalized = normalizeBrowserUrl(raw)
+  if (normalized === null || normalized === '') return normalized
+  if (!isBotChallengeUrl(normalized)) return normalized
+  let parsed: URL
+  try {
+    parsed = new URL(normalized)
+  } catch {
+    return normalized
+  }
+  for (const key of ['url', 'returnUrl', 'dest']) {
+    const param = parsed.searchParams.get(key)
+    if (!param) continue
+    const decoded = decodeChallengeTarget(param, parsed.origin)
+    if (decoded && !isBotChallengeUrl(decoded)) return decoded
+  }
+  if (fallbackUrl) {
+    const normalizedFallback = normalizeBrowserUrl(fallbackUrl)
+    if (normalizedFallback && !isBotChallengeUrl(normalizedFallback)) return normalizedFallback
+  }
+  return `${parsed.origin}/`
+}
+
+/** True when a page's title or body text is Bloomberg's "Are you a robot?" / unusual-activity challenge screen. */
+export function isBotChallengeText(rawText: unknown, rawTitle?: unknown): boolean {
+  const title = typeof rawTitle === 'string' ? rawTitle.trim() : ''
+  if (/\bare you a robot\??\b/i.test(title)) return true
+  const text = typeof rawText === 'string' ? rawText : ''
+  return (
+    /we['\u2019]ve detected unusual activity from your computer network/i.test(text) ||
+    /please click the box below to let us know you['\u2019]re not a robot/i.test(text)
+  )
+}
+
+/** True for PerimeterX (`_px*`, `pxcts`) bot-score cookies that lock a browser session onto `tosv2.html`. */
+export function isPerimeterXCookieName(name: string): boolean {
+  return /^(_px|pxcts)/i.test(name.trim())
+}
+
+function decodeChallengeTarget(rawParam: string, origin: string): string | null {
+  let candidate = rawParam.trim()
+  if (!candidate) return null
+  try {
+    const unescaped = decodeURIComponent(candidate)
+    if (unescaped) candidate = unescaped
+  } catch {
+    // Keep candidate as-is.
+  }
+  const resolvedDirect = resolveSameOriginTarget(candidate, origin)
+  if (resolvedDirect) return resolvedDirect
+
+  const qIndex = candidate.indexOf('?')
+  const b64Part = qIndex >= 0 ? candidate.slice(0, qIndex) : candidate
+  const tail = qIndex >= 0 ? candidate.slice(qIndex) : ''
+  const decoded = decodeBase64Utf8(b64Part)
+  if (!decoded) return null
+  let fullTarget = decoded
+  if (tail && !fullTarget.includes('?')) {
+    fullTarget = `${fullTarget}${tail}`
+  }
+  return resolveSameOriginTarget(fullTarget, origin)
+}
+
+function resolveSameOriginTarget(target: string, origin: string): string | null {
+  const trimmed = target.trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+    try {
+      return normalizeBrowserUrl(new URL(trimmed, origin).toString())
+    } catch {
+      return null
+    }
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    const normalized = normalizeBrowserUrl(trimmed)
+    if (!normalized) return null
+    try {
+      const originHost = new URL(origin).hostname.toLowerCase()
+      const targetHost = new URL(normalized).hostname.toLowerCase()
+      if (targetHost === originHost || targetHost.endsWith(`.${originHost.replace(/^www\./, '')}`)) {
+        return normalized
+      }
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function decodeBase64Utf8(raw: string): string | null {
+  const cleaned = raw.trim().replace(/-/g, '+').replace(/_/g, '/')
+  if (!cleaned || !/^[A-Za-z0-9+/=]+$/.test(cleaned)) return null
+  const padLen = (4 - (cleaned.length % 4)) % 4
+  const padded = `${cleaned}${'='.repeat(padLen)}`
+  try {
+    const binary = atob(padded)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return null
+  }
+}
+
 /** True for empty or `about:blank` popup URLs that OAuth flows open before navigating or submitting a form. */
 export function isBlankBrowserPopupUrl(raw: unknown): boolean {
   if (typeof raw !== 'string') return false
@@ -240,7 +722,7 @@ export function browserRequestHeaders(
 /** Reads a `core/browser` panel's state, normalizing its URL and falling back to `DEFAULT_BROWSER_URL` when unset or invalid. */
 export function readBrowserState(state: unknown): BrowserState {
   if (!isRecord(state)) return { url: DEFAULT_BROWSER_URL }
-  const normalized = normalizeBrowserUrl(state['url'])
+  const normalized = unwrapBotChallengeUrl(state['url'], DEFAULT_BROWSER_URL)
   return { url: normalized || DEFAULT_BROWSER_URL }
 }
 
@@ -343,10 +825,10 @@ export function shouldShowBrowser(options: {
 
 /** One line about a `core/browser` panel, for the model's grid map. */
 export function browserSummary(state: unknown, output: unknown): string {
-  const rawStateUrl = isRecord(state) ? normalizeBrowserUrl(state['url']) : null
+  const rawStateUrl = isRecord(state) ? unwrapBotChallengeUrl(state['url']) : null
   const stateUrl = rawStateUrl ?? ''
   const out = isRecord(output) ? output : {}
-  const outUrl = typeof out['url'] === 'string' ? (normalizeBrowserUrl(out['url']) ?? '') : ''
+  const outUrl = typeof out['url'] === 'string' ? (unwrapBotChallengeUrl(out['url'], stateUrl) ?? '') : ''
   const url = outUrl || stateUrl
   if (!url) return 'nothing yet'
   const short = shortAddress(url)

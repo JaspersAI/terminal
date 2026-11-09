@@ -69,6 +69,14 @@ test('displayAddress and publishedOutput combine panel state.url with the latest
   assert.equal(tabLabel({ title: '', url: 'https://www.bloomberg.com/live' }), 'www.bloomberg.com/live')
   assert.equal(tabLabel({ title: '', url: '' }), 'New tab')
 
+  assert.equal(
+    displayAddress('https://www.bloomberg.com/markets', {
+      ...empty,
+      url: 'https://www.bloomberg.com/tosv2.html?vid=&uuid=abc&url=L21hcmtldHM=',
+    }),
+    'https://www.bloomberg.com/markets',
+  )
+
   assert.equal(sameBrowserSnapshot(navigated, { ...navigated }), true)
   assert.equal(sameBrowserSnapshot(navigated, { ...navigated, title: 'Updated Title' }), false)
 })
