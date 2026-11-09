@@ -1,8 +1,7 @@
 import { describeLoop, describePlugin } from '../../../shared/agent/prompt'
 import { layoutOf } from '../../../shared/grid/grid'
 import { globalRoomLog, searchRooms } from '../../../shared/loops/closed'
-import { frameOf, loopChat, loopName, named, type Loop } from '../../../shared/loops/loops'
-import type { AppState } from '../../../shared/state'
+import { findAnyRoom, findLoop, frameOf, loopChat, loopName } from '../../../shared/loops/loops'
 import { usePlugin } from '../../loops/loops'
 import { getView } from '../../plugins/registry'
 import { getState, toPublic } from '../../state'
@@ -16,43 +15,10 @@ import type { Tool, ToolContext } from './types'
 // a room's agent learning of a plugin it was not told of. A room's agent is blind to other rooms, so
 // it receives only use_plugin here.
 
+export { findAnyRoom, findLoop }
+
 export function loopsTools(context?: ToolContext): Tool[] {
   return context?.loop === undefined ? [readRoom, searchRoomsTool] : [usePluginTool(context.loop)]
-}
-
-/** The open room on a tab (or any tab) that a model names; or the refusal, which says what there is. */
-export function findLoop(state: AppState, workspaceId: string, wanted: string): Loop {
-  const local = state.loops[workspaceId] ?? []
-  const foundLocal = named(local, wanted)
-  if (foundLocal) return foundLocal
-  const allOpen = Object.values(state.loops).flat()
-  const foundAny = named(allOpen, wanted)
-  if (foundAny) return foundAny
-  const have = allOpen.map((one) => loopName(one.id)).join(', ') || 'none'
-  throw new Error(`No open room named ${JSON.stringify(wanted)}. Open: ${have}.`)
-}
-
-/** Finds a room (open or closed) across all tabs, returning its record and owning tab id. */
-export function findAnyRoom(
-  state: AppState,
-  preferredWorkspaceId: string,
-  wanted: string,
-): { loop: Loop; workspaceId: string; open: boolean } {
-  const localOpen = named(state.loops[preferredWorkspaceId] ?? [], wanted)
-  if (localOpen) return { loop: localOpen, workspaceId: preferredWorkspaceId, open: true }
-  for (const [tabId, list] of Object.entries(state.loops)) {
-    const found = named(list, wanted)
-    if (found) return { loop: found, workspaceId: tabId, open: true }
-  }
-  const localClosed = named(state.closedLoops[preferredWorkspaceId] ?? [], wanted)
-  if (localClosed) return { loop: localClosed, workspaceId: preferredWorkspaceId, open: false }
-  for (const [tabId, list] of Object.entries(state.closedLoops)) {
-    const found = named(list, wanted)
-    if (found) return { loop: found, workspaceId: tabId, open: false }
-  }
-  const all = [...Object.values(state.loops).flat(), ...Object.values(state.closedLoops).flat()]
-  const have = all.map((one) => loopName(one.id)).join(', ') || 'none'
-  throw new Error(`No room named ${JSON.stringify(wanted)}. Rooms: ${have}.`)
 }
 
 /** How many of a room's exchanges a read gives: the end of its log. */

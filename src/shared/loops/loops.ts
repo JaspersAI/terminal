@@ -288,6 +288,56 @@ export function named(loops: readonly Loop[], text: string): Loop | undefined {
   return loops.find((one) => one.title !== undefined && titleSlug(one.title) === slug)
 }
 
+/** The open room on a tab (or any tab) that a model names; or the refusal, which says what there is. */
+export function findLoop(state: { loops: Record<string, readonly Loop[]> }, workspaceId: string, wanted: string): Loop {
+  const ordered = [
+    ...(state.loops[workspaceId] ?? []),
+    ...Object.entries(state.loops)
+      .filter(([tabId]) => tabId !== workspaceId)
+      .flatMap(([, list]) => list),
+  ]
+  const found = named(ordered, wanted)
+  if (found) return found
+  const allOpen = Object.values(state.loops).flat()
+  const have = allOpen.map((one) => loopName(one.id)).join(', ') || 'none'
+  throw new Error(`No open room named ${JSON.stringify(wanted)}. Open: ${have}.`)
+}
+
+/** Finds a room (open or closed) across all tabs, returning its record and owning tab id. */
+export function findAnyRoom(
+  state: { loops: Record<string, readonly Loop[]>; closedLoops: Record<string, readonly Loop[]> },
+  preferredWorkspaceId: string,
+  wanted: string,
+): { loop: Loop; workspaceId: string; open: boolean } {
+  const candidates: { loop: Loop; workspaceId: string; open: boolean }[] = [
+    ...(state.loops[preferredWorkspaceId] ?? []).map((loop) => ({
+      loop,
+      workspaceId: preferredWorkspaceId,
+      open: true,
+    })),
+    ...Object.entries(state.loops)
+      .filter(([tabId]) => tabId !== preferredWorkspaceId)
+      .flatMap(([tabId, list]) => list.map((loop) => ({ loop, workspaceId: tabId, open: true }))),
+    ...(state.closedLoops[preferredWorkspaceId] ?? []).map((loop) => ({
+      loop,
+      workspaceId: preferredWorkspaceId,
+      open: false,
+    })),
+    ...Object.entries(state.closedLoops)
+      .filter(([tabId]) => tabId !== preferredWorkspaceId)
+      .flatMap(([tabId, list]) => list.map((loop) => ({ loop, workspaceId: tabId, open: false }))),
+  ]
+  const matched = named(
+    candidates.map((c) => c.loop),
+    wanted,
+  )
+  const hit = matched ? candidates.find((c) => c.loop.id === matched.id) : undefined
+  if (hit) return hit
+  const all = [...Object.values(state.loops).flat(), ...Object.values(state.closedLoops).flat()]
+  const have = all.map((one) => loopName(one.id)).join(', ') || 'none'
+  throw new Error(`No room named ${JSON.stringify(wanted)}. Rooms: ${have}.`)
+}
+
 /**
  * The room a typed message is for, and the message without its address: it starts with that room's
  * name or custom title behind an @, @room_3 (or @loop_3 or @Custom Title), and says something after

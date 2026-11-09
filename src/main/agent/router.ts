@@ -79,9 +79,15 @@ const reopenRoomTool: Tool = {
   async run(input, { workspaceId }) {
     const wanted = asRoomArg(input)
     const state = toPublic(getState())
-    const allClosed = Object.values(state.closedLoops).flat()
-    const loop = named(state.closedLoops[workspaceId] ?? [], wanted) ?? named(allClosed, wanted)
+    const orderedClosed = [
+      ...(state.closedLoops[workspaceId] ?? []),
+      ...Object.entries(state.closedLoops)
+        .filter(([tabId]) => tabId !== workspaceId)
+        .flatMap(([, list]) => list),
+    ]
+    const loop = named(orderedClosed, wanted)
     if (!loop) {
+      const allClosed = Object.values(state.closedLoops).flat()
       const have = allClosed.map((one) => loopName(one.id)).join(', ') || 'none'
       throw new Error(`No closed room named ${JSON.stringify(wanted)}. Closed: ${have}.`)
     }

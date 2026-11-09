@@ -7,6 +7,8 @@ import {
   adopt,
   asksForLoop,
   DESC_MAX,
+  findAnyRoom,
+  findLoop,
   frameOf,
   LOOP_EXCLUDED_TOOLS,
   ORCHESTRATOR_TOOLS,
@@ -592,6 +594,29 @@ test('a room is named by its name however it is written, by its custom title, or
     assert.equal(named(list, text)?.id, 'f1', text)
   for (const text of ['room_3', 'room_0', 'room', 'Backtest FLWS', '12', 'f0', 'room_12x'])
     assert.equal(named(list, text), undefined, text)
+
+  // Across multiple tabs and closed memory, canonical room_N matches before a custom title on the active tab.
+  const multiTabState = {
+    loops: {
+      t1: [{ ...loop('f2', 'Active tab room'), title: 'Room 12' }],
+      t2: [loop('f12', 'Second tab room'), { ...loop('f3', 'Other tab'), title: 'Macro Rates' }],
+    },
+    closedLoops: {
+      t1: [{ ...loop('f15', 'Closed room'), title: 'Saved Rates' }],
+    },
+  }
+  assert.equal(findLoop(multiTabState, 't1', 'room_12').id, 'f12')
+  assert.equal(findLoop(multiTabState, 't1', 'Macro Rates').id, 'f3')
+  assert.deepEqual(findAnyRoom(multiTabState, 't1', 'room_15'), {
+    loop: multiTabState.closedLoops.t1[0],
+    workspaceId: 't1',
+    open: false,
+  })
+  assert.deepEqual(findAnyRoom(multiTabState, 't1', 'Saved Rates'), {
+    loop: multiTabState.closedLoops.t1[0],
+    workspaceId: 't1',
+    open: false,
+  })
 })
 
 test('a loop waiting on the user is asking, whatever else: its run is in flight then too', () => {
