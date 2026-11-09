@@ -260,7 +260,11 @@ function long(
 }
 
 function standsAside(result: ToolResult, calls: ReadonlyMap<string, ToolCall>, kept: ReadonlySet<string>): boolean {
-  return result.output.length > LARGE && !kept.has(originOf(result.callId, calls)?.name ?? '')
+  return (
+    result.output.length > LARGE &&
+    !kept.has(originOf(result.callId, calls)?.name ?? '') &&
+    asideNote(result, calls).length < result.output.length
+  )
 }
 
 /**
@@ -550,12 +554,31 @@ function atPath(root: unknown, path: (string | number)[]): unknown {
   return current
 }
 
+/** How much of a search result's title a set-aside note keeps above its address. */
+const TITLE_MAX = 160
+
 /** What stands where an answer the model has read was: how much it was, the way back to it, and how it began. */
 function asideNote(result: ToolResult, calls: ReadonlyMap<string, ToolCall>): string {
   const call = originOf(result.callId, calls)
   const whose = call ? `${call.name}'s answer` : 'this answer'
   const id = call?.id ?? result.callId
-  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. Call read_again "${id}" before counting, quoting, or stating facts from it not already written in an earlier reply. It began: ${result.output.slice(0, HEAD)}…]`
+  const head = call?.name === 'search_web' ? searchHead(result.output) : null
+  const preview = head ?? ` ${result.output.slice(0, HEAD)}…`
+  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. Call read_again "${id}" before counting, quoting, or stating facts from it not already written in an earlier reply. It began:${preview}]`
+}
+
+/** The numbered titles and addresses of a search_web answer, without the snippets that made it long. */
+function searchHead(text: string): string | null {
+  const lines = text.split('\n')
+  const kept: string[] = []
+  for (let at = 1; at < lines.length; at++) {
+    const url = lines[at]!
+    if (!/^   https?:\/\/\S+$/.test(url)) continue
+    const title = lines[at - 1]!.trim()
+    const head = /^\d+\. /.test(title) ? (title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX)}…` : title) : ''
+    kept.push(head ? `${head}\n${url}` : url)
+  }
+  return kept.length > 0 ? `\n${kept.join('\n')}` : null
 }
 
 /** What stands where an answer the model never read would have been. */

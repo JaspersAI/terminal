@@ -334,6 +334,35 @@ test('read_again resolves through an earlier read_again to the original call, an
   assert.equal(notes[3], outputs(turns)[3])
 })
 
+test('a search_web answer set aside keeps every result title and address while dropping the long snippets', () => {
+  const results = [
+    `1. First Store\n   https://exa.ai/library/place/52zkhnqswtw\n   ${big(900, 'a')}`,
+    `2. Second Store\n   https://exa.ai/library/place/d0g3yxkn6kf\n   ${big(900, 'b')}`,
+    `3. Third Store\n   https://reviews.birdeye.com/1-800-flowers-168612800250471\n   ${big(900, 'c')}`,
+  ].join('\n')
+  const turns: Turn[] = [
+    asked('find store reviews'),
+    calling('s1', 'search_web', { query: 'store reviews' }),
+    answer('s1', results),
+    calling('r1', 'read_again', { call: 's1' }),
+    answer('r1', `search_web {"query":"store reviews"}\n\n${results}`),
+    calling('c2', 'fetch_page', { url: 'https://exa.ai/library/place/52zkhnqswtw' }),
+    answer('c2', big(WHOLE_MAX)),
+  ]
+  const made = setAside(turns, { asked: 0, aside: 0 })!
+  const out = outputs(sent(made.turns, made.sending))
+  for (const note of [out[0]!, out[1]!]) {
+    assert.match(note, /^\[Set aside: /)
+    assert.match(note, /read_again "s1"/)
+    assert.match(note, /1\. First Store\n {3}https:\/\/exa\.ai\/library\/place\/52zkhnqswtw/)
+    assert.match(note, /2\. Second Store\n {3}https:\/\/exa\.ai\/library\/place\/d0g3yxkn6kf/)
+    assert.match(note, /3\. Third Store\n {3}https:\/\/reviews\.birdeye\.com\/1-800-flowers-168612800250471/)
+    assert.doesNotMatch(note, /aaaaaaa/)
+    assert.doesNotMatch(note, /bbbbbbb/)
+    assert.doesNotMatch(note, /ccccccc/)
+  }
+})
+
 test('a call that repeats a shortened argument from an earlier turn gets the original back, and a fabricated set-aside note is refused', () => {
   const fullRequest = `Build the options-chain plugin with Yahoo, Alpaca, Massive, and Databento. ${big(8_500, 'a')}`
   const sics = Array.from({ length: 1_500 }, (_, at) => String(2000 + at))
