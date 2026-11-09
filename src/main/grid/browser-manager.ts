@@ -4,12 +4,16 @@
 
 import {
   BROWSER_VIEW,
+  browserEmulationOverrideForUrl,
   browserStanding,
   browserUserAgent,
   browserUserAgentForUrl,
   clipBounds,
+  DEFAULT_BROWSER_BOUNDS,
   DEFAULT_BROWSER_URL,
   isBlankBrowserPopupUrl,
+  isBotChallengeText,
+  isBotChallengeUrl,
   isBrowserUrl,
   isVideoPageUrl,
   normalizeBounds,
@@ -17,8 +21,10 @@ import {
   readBrowserState,
   scaleBounds,
   shouldShowBrowser,
+  unwrapBotChallengeUrl,
   type BrowserAction,
   type BrowserBounds,
+  type BrowserEmulationOverride,
   type BrowserSnapshot,
   type BrowserStanding,
   type BrowserTab,
@@ -52,6 +58,7 @@ export interface ManagedBrowserView {
   setBackgrounded?(backgrounded: boolean): void
   setTheaterMode?(theater: boolean, url: string): void
   setZoomFactor?(zoom: number): void
+  clearBotCookies?(url?: string): Promise<void> | void
   readPageText(): Promise<string | null>
   destroy(): void
 }
@@ -127,6 +134,7 @@ interface TabEntry {
   loadSeq: number
   loadedAt: number | null
   initialLoadText: string | null
+  challengeRetriedUrl: string | null
   hydrationTimers: ReturnType<typeof setTimeout>[]
   loadWaiters: Set<() => void>
   backgrounded: boolean
@@ -223,9 +231,16 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       }
     }
     const liveUrl = tab.view.getURL()
-    const committedUrl = isBrowserUrl(liveUrl) ? liveUrl : ''
+    const onChallenge = isBotChallengeUrl(liveUrl)
+    const committedUrl = isBrowserUrl(liveUrl)
+      ? (unwrapBotChallengeUrl(liveUrl, tab.url || fallbackUrl) ?? liveUrl)
+      : ''
     const url = tab.loading || tab.error !== null ? tab.url || fallbackUrl : committedUrl || tab.url || fallbackUrl
-    const title = tab.loading || tab.error !== null ? tab.title : tab.view.getTitle() || tab.title
+    const liveTitle = tab.view.getTitle()
+    const title =
+      tab.loading || tab.error !== null || onChallenge || isBotChallengeText('', liveTitle)
+        ? tab.title
+        : liveTitle || tab.title
     const canGoBack = tab.view.canGoBack()
     const canGoForward = tab.view.canGoForward()
     tab.canGoBack = canGoBack
@@ -345,9 +360,13 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     clearHydrationTimers(tab)
     if (!canSuspendTab(entry, tab)) return
     const liveUrl = tab.view.getURL()
-    if (isBrowserUrl(liveUrl)) tab.url = liveUrl
+    if (isBrowserUrl(liveUrl)) {
+      tab.url = unwrapBotChallengeUrl(liveUrl, tab.url || entry.stateUrl) ?? liveUrl
+    }
     const liveTitle = tab.view.getTitle()
-    if (liveTitle) tab.title = liveTitle
+    if (liveTitle && !isBotChallengeUrl(liveUrl) && !isBotChallengeText('', liveTitle)) {
+      tab.title = liveTitle
+    }
     tab.canGoBack = tab.view.canGoBack()
     tab.canGoForward = tab.view.canGoForward()
     tab.loading = false
@@ -419,6 +438,16 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       ) {
         return tab.text
       }
+      const liveUrl = currentView.getURL()
+      const liveTitle = currentView.getTitle() || tab.title
+      if (
+        text !== null &&
+        (isBotChallengeUrl(liveUrl) || isBotChallengeText(text, liveTitle)) &&
+        tab.text !== null &&
+        !isBotChallengeText(tab.text)
+      ) {
+        return tab.text
+      }
       if (tab.initialLoadText === null && text !== null) {
         tab.initialLoadText = text
       }
@@ -477,6 +506,11 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     }
     if (!standing) {
       setTabBackgrounded(entry, active, true)
+      if (!active.suspended) {
+        const fallback =
+          entry.bounds && entry.bounds.width > 0 && entry.bounds.height > 0 ? entry.bounds : DEFAULT_BROWSER_BOUNDS
+        active.view.setBounds(fallback)
+      }
       detachFromWindow(entry)
       return
     }
@@ -506,6 +540,14 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     const onBoundsWindow = entry.boundsWindow === standing.window
     const scaled = onBoundsWindow && entry.bounds ? scaleBounds(entry.bounds, entry.viewport, viewport) : null
     const clipped = scaled && viewport ? clipBounds(scaled, viewport) : scaled
+    const fallbackBounds =
+      clipped && clipped.width > 0 && clipped.height > 0
+        ? clipped
+        : entry.bounds && entry.bounds.width > 0 && entry.bounds.height > 0
+          ? entry.bounds
+          : viewport && viewport.width > 0 && viewport.height > 0
+            ? { x: 0, y: 0, width: viewport.width, height: viewport.height }
+            : DEFAULT_BROWSER_BOUNDS
     const show = shouldShowBrowser({
       onCurrentWorkspace,
       visibleInGrid: standing.visibleInGrid,
@@ -523,6 +565,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       active.view.setBounds(clipped)
       active.view.setVisible(true)
     } else {
+      active.view.setBounds(fallbackBounds)
       detachFromWindow(entry)
     }
   }
@@ -554,9 +597,33 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
           return
         }
         const liveUrl = tab.view.getURL()
-        if (isBrowserUrl(liveUrl)) tab.url = liveUrl
+        if (isBotChallengeUrl(liveUrl)) {
+          const retryTarget = unwrapBotChallengeUrl(liveUrl, tab.url || entry.stateUrl) || tab.url || entry.stateUrl
+          if (retryTarget) tab.url = retryTarget
+          if (retryTarget && tab.challengeRetriedUrl !== retryTarget) {
+            tab.challengeRetriedUrl = retryTarget
+            const savedTitle = tab.title
+            const savedText = tab.text
+            void Promise.resolve(tab.view.clearBotCookies?.(retryTarget))
+              .catch(() => undefined)
+              .then(() => {
+                if (!isCurrent()) return
+                loadTabAddress(entry, tab, retryTarget, {
+                  preserveTitle: savedTitle,
+                  preserveText: savedText,
+                  keepChallengeRetry: true,
+                })
+              })
+            return
+          }
+        } else if (isBrowserUrl(liveUrl)) {
+          tab.url = liveUrl
+          tab.challengeRetriedUrl = null
+        }
         const liveTitle = tab.view.getTitle()
-        if (liveTitle) tab.title = liveTitle
+        if (liveTitle && !isBotChallengeUrl(liveUrl) && !isBotChallengeText('', liveTitle)) {
+          tab.title = liveTitle
+        }
         if (isVideoPageUrl(tab.url)) tab.theater = true
         tab.view.setTheaterMode?.(tab.theater, tab.url)
         positionEntry(entry, deps.getState())
@@ -568,15 +635,43 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       },
       onDidNavigate(url) {
         if (!isCurrent()) return
+        if (isBotChallengeUrl(url)) {
+          const unwrapped = unwrapBotChallengeUrl(url, tab.url || entry.stateUrl)
+          if (unwrapped) {
+            tab.url = unwrapped
+            tab.error = null
+            if (isVideoPageUrl(unwrapped)) tab.theater = true
+            tab.view.setTheaterMode?.(tab.theater, unwrapped)
+          }
+          positionEntry(entry, deps.getState())
+          pushSnapshot(entry)
+          if (!tab.loading && !tab.view.isLoading() && unwrapped && tab.challengeRetriedUrl !== unwrapped) {
+            tab.challengeRetriedUrl = unwrapped
+            const savedTitle = tab.title
+            const savedText = tab.text
+            void Promise.resolve(tab.view.clearBotCookies?.(unwrapped))
+              .catch(() => undefined)
+              .then(() => {
+                if (!isCurrent()) return
+                loadTabAddress(entry, tab, unwrapped, {
+                  preserveTitle: savedTitle,
+                  preserveText: savedText,
+                  keepChallengeRetry: true,
+                })
+              })
+          }
+          return
+        }
         const normalized = normalizeBrowserUrl(url)
         if (normalized) {
           tab.url = normalized
+          tab.challengeRetriedUrl = null
           tab.error = null
           if (isVideoPageUrl(normalized)) tab.theater = true
           tab.view.setTheaterMode?.(tab.theater, normalized)
         }
         const liveTitle = tab.view.getTitle()
-        if (liveTitle) tab.title = liveTitle
+        if (liveTitle && !isBotChallengeText('', liveTitle)) tab.title = liveTitle
         positionEntry(entry, deps.getState())
         pushSnapshot(entry)
         if (!tab.loading && !tab.view.isLoading() && tab.error === null && activeTab(entry) === tab) {
@@ -599,6 +694,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       },
       onPageTitleUpdated(title) {
         if (!isCurrent()) return
+        if (isBotChallengeUrl(tab.view.getURL()) || isBotChallengeText('', title)) return
         tab.title = title
         pushSnapshot(entry)
       },
@@ -665,6 +761,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       loadSeq: 0,
       loadedAt: null,
       initialLoadText: null,
+      challengeRetriedUrl: null,
       hydrationTimers: [],
       loadWaiters: new Set(),
       backgrounded: false,
@@ -746,7 +843,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     entry: Entry,
     tab: TabEntry,
     url: string,
-    options?: { preserveTitle?: string; preserveText?: string | null },
+    options?: { preserveTitle?: string; preserveText?: string | null; keepChallengeRetry?: boolean },
   ): void {
     clearSuspendTimer(tab)
     clearHydrationTimers(tab)
@@ -755,20 +852,24 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       tab.backgrounded = false
       tab.view = bindTabView(entry, tab, deps.createView)
     }
+    const targetUrl = unwrapBotChallengeUrl(url, tab.url || entry.stateUrl) || url
+    if (!options?.keepChallengeRetry) {
+      tab.challengeRetriedUrl = null
+    }
     const loadId = ++tab.loadSeq
-    tab.url = url
+    tab.url = targetUrl
     tab.title = options?.preserveTitle ?? ''
     tab.text = options?.preserveText ?? null
     tab.loadedAt = null
     tab.initialLoadText = null
     tab.error = null
     tab.loading = true
-    tab.theater = isVideoPageUrl(url)
-    tab.view.setTheaterMode?.(tab.theater, url)
+    tab.theater = isVideoPageUrl(targetUrl)
+    tab.view.setTheaterMode?.(tab.theater, targetUrl)
     positionEntry(entry, deps.getState())
     pushSnapshot(entry)
     const currentView = tab.view
-    void currentView.loadURL(url).catch((err: unknown) => {
+    void currentView.loadURL(targetUrl).catch((err: unknown) => {
       if (
         tab.destroyed ||
         tab.suspended ||
@@ -788,14 +889,22 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   }
 
   function reloadTab(entry: Entry, tab: TabEntry): void {
+    tab.challengeRetriedUrl = null
     if (tab.suspended) {
       wakeTab(entry, tab)
       return
     }
-    const targetUrl = tab.url || entry.stateUrl
+    const targetUrl = unwrapBotChallengeUrl(tab.url || entry.stateUrl, entry.stateUrl) || tab.url || entry.stateUrl
     const liveUrl = tab.view.getURL()
+    if (isBotChallengeUrl(liveUrl) && targetUrl) {
+      const savedTitle = tab.title
+      const savedText = tab.text
+      void Promise.resolve(tab.view.clearBotCookies?.(targetUrl)).catch(() => undefined)
+      loadTabAddress(entry, tab, targetUrl, { preserveTitle: savedTitle, preserveText: savedText })
+      return
+    }
     if ((tab.error !== null || !isBrowserUrl(liveUrl) || liveUrl !== targetUrl) && targetUrl) {
-      loadTabAddress(entry, tab, targetUrl)
+      loadTabAddress(entry, tab, targetUrl, { preserveTitle: tab.title, preserveText: tab.text })
       return
     }
     clearHydrationTimers(tab)
@@ -1193,6 +1302,7 @@ export interface BrowserUserAgentTarget {
   getUserAgent(): string
   setUserAgent(userAgent: string): void
   setCdpUserAgentOverride?(userAgent: string): void
+  setEmulationOverride?(override: BrowserEmulationOverride): void
 }
 
 export interface BrowserUserAgentSync {
@@ -1208,12 +1318,25 @@ export function createBrowserUserAgentSync(
   target: BrowserUserAgentTarget,
   baseUserAgent: string,
   platform = 'darwin',
+  options?: { chromeVersion?: string; arch?: string },
 ): BrowserUserAgentSync {
   const cleanUa = browserUserAgent(baseUserAgent)
   let cdpOverrideUa: string | null = null
+  let lastEmulationUa: string | null = null
   let inFlightMainFrameUrl: string | undefined
 
   const resolveUa = (url: string): string => browserUserAgentForUrl(url, cleanUa || baseUserAgent, platform)
+  const syncEmulation = (url: string): void => {
+    if (!target.setEmulationOverride) return
+    const override = browserEmulationOverrideForUrl(url, cleanUa || baseUserAgent, {
+      chromeVersion: options?.chromeVersion,
+      platform,
+      arch: options?.arch,
+    })
+    if (lastEmulationUa === override.userAgent) return
+    lastEmulationUa = override.userAgent
+    target.setEmulationOverride(override)
+  }
 
   return {
     inFlightUrl: () => inFlightMainFrameUrl,
@@ -1228,6 +1351,7 @@ export function createBrowserUserAgentSync(
         cdpOverrideUa = null
         target.setCdpUserAgentOverride?.('')
       }
+      syncEmulation(url)
     },
     onWillRedirect(url, isMainFrame) {
       if (!isMainFrame || !isBrowserUrl(url)) return
@@ -1239,6 +1363,7 @@ export function createBrowserUserAgentSync(
       const nextOverride = target.getUserAgent() === targetUa ? '' : targetUa
       cdpOverrideUa = nextOverride || null
       target.setCdpUserAgentOverride?.(nextOverride)
+      syncEmulation(url)
     },
     onDidNavigate(url) {
       inFlightMainFrameUrl = undefined
@@ -1247,6 +1372,7 @@ export function createBrowserUserAgentSync(
       if (targetUa && target.getUserAgent() !== targetUa) {
         target.setUserAgent(targetUa)
       }
+      syncEmulation(url)
     },
     onDidFailLoad(isMainFrame) {
       if (!isMainFrame) return
@@ -1261,9 +1387,11 @@ export function createBrowserUserAgentSync(
         cdpOverrideUa = null
         target.setCdpUserAgentOverride?.('')
       }
+      syncEmulation(committedUrl)
     },
     onDebuggerDetach() {
       cdpOverrideUa = null
+      lastEmulationUa = null
     },
   }
 }

@@ -10,13 +10,19 @@ import {
 import { zoomKey } from '../../shared/app/eye-events'
 import {
   BROWSER_PARTITION,
+  browserEmulationOverrideForUrl,
   browserRequestHeaders,
+  browserStealthScript,
   browserUserAgent,
   browserUserAgentForUrl,
+  DEFAULT_BROWSER_BOUNDS,
+  DEFAULT_BROWSER_URL,
   formatBrowserPageText,
   isBlankBrowserPopupUrl,
   isBrowserUrl,
+  isPerimeterXCookieName,
   type BrowserBounds,
+  type BrowserEmulationOverride,
   type BrowserPageLink,
 } from '../../shared/grid/browser'
 import { PANEL_TEXT_MAX, panelOf, stepZoom, tileZoom } from '../../shared/grid/grid'
@@ -41,6 +47,36 @@ import orbLogoDataUrl from '../../renderer/assets/jaspers-logo-black.png?inline'
 
 /** Only media playback and fullscreen are granted to browsed pages; camera, mic, geolocation, and device APIs are denied. */
 const ALLOWED_PERMISSIONS = new Set(['fullscreen', 'mediaKeySystem'])
+
+/** Dedicated isolated world for `core/browser` DOM scripts so page scripts never observe helper globals or stacks. */
+const BROWSER_ISOLATED_WORLD_ID = 9001
+
+function executeInBrowserIsolatedWorld(webContents: WebContents, code: string): Promise<unknown> {
+  if (webContents.isDestroyed()) return Promise.resolve(undefined)
+  return webContents.executeJavaScriptInIsolatedWorld(BROWSER_ISOLATED_WORLD_ID, [{ code }], false)
+}
+
+async function clearPerimeterXCookies(part: Session): Promise<void> {
+  try {
+    const cookies = await part.cookies.get({})
+    await Promise.all(
+      cookies.map(async (cookie) => {
+        const domain = (cookie.domain || '').replace(/^\./, '').toLowerCase()
+        if (!isPerimeterXCookieName(cookie.name)) return
+        if (domain !== 'bloomberg.com' && !domain.endsWith('.bloomberg.com')) return
+        const scheme = cookie.secure ? 'https' : 'http'
+        const cookieUrl = `${scheme}://${domain}${cookie.path || '/'}`
+        try {
+          await part.cookies.remove(cookieUrl, cookie.name)
+        } catch {
+          // Ignore individual cookie removal failures.
+        }
+      }),
+    )
+  } catch {
+    // Ignore cookie store query failures.
+  }
+}
 
 const THEATER_SCRIPT = (theater: boolean): string => `
 (() => {
@@ -366,7 +402,7 @@ function browserWebPreferences(part: Session): WebPreferences {
     webSecurity: true,
     allowRunningInsecureContent: false,
     navigateOnDragDrop: false,
-    backgroundThrottling: true,
+    backgroundThrottling: false,
     spellcheck: false,
   }
 }
@@ -376,7 +412,8 @@ function browserSession(): Session {
   const partition = session.fromPartition(BROWSER_PARTITION)
   const rawUa = partition.getUserAgent()
   const cleanUa = browserUserAgent(rawUa)
-  if (cleanUa) partition.setUserAgent(cleanUa)
+  if (cleanUa) partition.setUserAgent(cleanUa, 'en-US,en;q=0.9')
+  void clearPerimeterXCookies(partition)
   const fullChrome = process.versions.chrome || '136.0.0.0'
   partition.webRequest.onBeforeSendHeaders((details, callback) => {
     let pageUrl =
@@ -413,22 +450,75 @@ function createNativeView(
     ? new WebContentsView({ webContents: adoptedWebContents })
     : new WebContentsView({ webPreferences: browserWebPreferences(part) })
   raw.setVisible(false)
-  let lastBounds: BrowserBounds | null = null
+  raw.setBounds(DEFAULT_BROWSER_BOUNDS)
+  let lastBounds: BrowserBounds | null = { ...DEFAULT_BROWSER_BOUNDS }
   let lastVisible = false
   let lastBackgrounded = false
   let appliedTheater = false
   let closedByManager = false
+  let stealthScriptRegistered = false
   const { webContents } = raw
+  const fullChrome = process.versions.chrome || '136.0.0.0'
+  const stealthScript = browserStealthScript({
+    chromeVersion: fullChrome,
+    platform: process.platform,
+    arch: process.arch,
+  })
   const baseUa = browserUserAgent(part.getUserAgent()) || webContents.getUserAgent()
   const startUa = browserUserAgentForUrl(initialUrl, baseUa, process.platform)
   if (startUa && webContents.getUserAgent() !== startUa) webContents.setUserAgent(startUa)
+
+  const syncBackgroundThrottling = (): void => {
+    if (webContents.isDestroyed()) return
+    const throttle = (!lastVisible || lastBackgrounded) && !loadTracker.isLoading()
+    webContents.setBackgroundThrottling(throttle)
+  }
 
   const loadTracker = createBrowserLoadTracker(
     {
       isLoadingMainFrame: () => !webContents.isDestroyed() && webContents.isLoadingMainFrame(),
     },
-    events,
+    {
+      onDidStartLoading: () => {
+        syncBackgroundThrottling()
+        events.onDidStartLoading()
+      },
+      onDidStopLoading: () => {
+        syncBackgroundThrottling()
+        events.onDidStopLoading()
+      },
+    },
   )
+
+  const applyCdpEmulation = (override: BrowserEmulationOverride): void => {
+    if (webContents.isDestroyed()) return
+    try {
+      if (!webContents.debugger.isAttached()) {
+        webContents.debugger.attach('1.3')
+        stealthScriptRegistered = false
+      }
+      if (!stealthScriptRegistered) {
+        stealthScriptRegistered = true
+        void webContents.debugger
+          .sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: stealthScript })
+          .catch(() => {
+            stealthScriptRegistered = false
+          })
+      }
+      void webContents.debugger
+        .sendCommand('Emulation.setUserAgentOverride', {
+          userAgent: override.userAgent,
+          acceptLanguage: override.acceptLanguage,
+          platform: override.platform,
+          ...(override.userAgentMetadata ? { userAgentMetadata: override.userAgentMetadata } : {}),
+        })
+        .catch(() => {
+          uaSync.onDebuggerDetach()
+        })
+    } catch {
+      uaSync.onDebuggerDetach()
+    }
+  }
 
   const uaSync = createBrowserUserAgentSync(
     {
@@ -437,30 +527,27 @@ function createNativeView(
       setUserAgent: (ua) => {
         if (!webContents.isDestroyed()) webContents.setUserAgent(ua)
       },
-      setCdpUserAgentOverride: (userAgent) => {
-        if (webContents.isDestroyed()) return
-        try {
-          if (userAgent === '') {
-            if (webContents.debugger.isAttached()) {
-              webContents.debugger.detach()
-            }
-            return
-          }
-          if (!webContents.debugger.isAttached()) {
-            webContents.debugger.attach('1.3')
-          }
-          void webContents.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent }).catch(() => {
-            uaSync.onDebuggerDetach()
-          })
-        } catch {
-          uaSync.onDebuggerDetach()
-        }
-      },
+      setEmulationOverride: applyCdpEmulation,
     },
     baseUa,
     process.platform,
+    { chromeVersion: fullChrome, arch: process.arch },
   )
-  webContents.debugger.on('detach', () => uaSync.onDebuggerDetach())
+  webContents.debugger.on('detach', () => {
+    stealthScriptRegistered = false
+    uaSync.onDebuggerDetach()
+  })
+  applyCdpEmulation(
+    browserEmulationOverrideForUrl(initialUrl || DEFAULT_BROWSER_URL, baseUa, {
+      chromeVersion: fullChrome,
+      platform: process.platform,
+      arch: process.arch,
+    }),
+  )
+  webContents.on('dom-ready', () => {
+    if (webContents.isDestroyed() || webContents.debugger.isAttached()) return
+    void webContents.executeJavaScript(stealthScript, false).catch(() => undefined)
+  })
 
   webContents.on('will-attach-webview', (event) => event.preventDefault())
   webContents.on('did-start-navigation', (details) => {
@@ -591,15 +678,15 @@ function createNativeView(
       lastVisible = visible
       if (!visible) lastBounds = null
       raw.setVisible(visible)
-      webContents.setBackgroundThrottling(!visible || lastBackgrounded)
+      syncBackgroundThrottling()
     },
     setBackgrounded: (backgrounded) => {
       if (webContents.isDestroyed() || lastBackgrounded === backgrounded) return
       lastBackgrounded = backgrounded
-      webContents.setBackgroundThrottling(backgrounded || !lastVisible)
+      syncBackgroundThrottling()
       webContents.setAudioMuted(backgrounded)
       if (isBrowserUrl(webContents.getURL())) {
-        void webContents.executeJavaScript(BACKGROUND_MEDIA_SCRIPT(backgrounded), false).catch(() => undefined)
+        void executeInBrowserIsolatedWorld(webContents, BACKGROUND_MEDIA_SCRIPT(backgrounded)).catch(() => undefined)
       }
     },
     setTheaterMode: (theater, url) => {
@@ -617,16 +704,17 @@ function createNativeView(
           })
           .catch(() => undefined)
       }
-      void webContents.executeJavaScript(THEATER_SCRIPT(theater), false).catch(() => undefined)
+      void executeInBrowserIsolatedWorld(webContents, THEATER_SCRIPT(theater)).catch(() => undefined)
     },
     setZoomFactor: (zoom) => {
       if (webContents.isDestroyed() || Math.abs(webContents.getZoomFactor() - zoom) < 0.001) return
       webContents.setZoomFactor(zoom)
     },
+    clearBotCookies: () => clearPerimeterXCookies(part),
     readPageText: async () => {
       if (webContents.isDestroyed()) return null
       try {
-        const raw: unknown = await webContents.executeJavaScript(READ_PAGE_SCRIPT, false)
+        const raw: unknown = await executeInBrowserIsolatedWorld(webContents, READ_PAGE_SCRIPT)
         const pageUrl = webContents.isDestroyed() ? '' : webContents.getURL()
         if (typeof raw === 'string') {
           return formatBrowserPageText(raw, [], pageUrl, PANEL_TEXT_MAX)

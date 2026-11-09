@@ -798,3 +798,113 @@ test('re-reads page text after async client-side hydration, settles syncPanelTex
 
   manager.closeAll()
 })
+
+test('recovers from Bloomberg tosv2.html bot-challenge redirects, preserves unwrapped URL and prior page text, and keeps non-zero bounds on background views', async () => {
+  const { manager, placed, views, published, getState, setState, updateGrid } = createHarness({
+    idleSuspendMs: 25,
+    hydrationDelaysMs: [],
+    hydrationWindowMs: 0,
+  })
+  await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  const view = views[0]!
+
+  const marketsUrl = 'https://www.bloomberg.com/markets'
+  const challengeUrl = 'https://www.bloomberg.com/tosv2.html?vid=&uuid=abc-123&url=L21hcmtldHM='
+
+  view.pageText = 'Bloomberg Markets live headlines and indices'
+  await manager.navigate(1, 'ws-1', placed.panel.id, 'load', marketsUrl)
+  assert.equal(published.at(-1)?.snapshot.url, marketsUrl)
+  assert.equal(published.at(-1)?.snapshot.text, 'Bloomberg Markets live headlines and indices')
+
+  // Simulate Bloomberg redirecting a refresh to tosv2.html once due to a stale PerimeterX cookie, then succeeding on automatic retry via loadURL.
+  let redirectedOnce = false
+  const origLoad = view.loadURL.bind(view)
+  const origReload = view.reload.bind(view)
+  view.reload = () => {
+    if (!redirectedOnce) {
+      redirectedOnce = true
+      view.history = [...view.history.slice(0, view.index + 1), challengeUrl]
+      view.index = view.history.length - 1
+      view.title = 'Bloomberg - Are you a robot?'
+      view.pageText =
+        "We've detected unusual activity from your computer network. To continue, please click the box below to let us know you're not a robot."
+      view.loading = true
+      view.events.onDidStartLoading()
+      view.events.onDidNavigate(challengeUrl)
+      view.loading = false
+      view.events.onDidStopLoading()
+      return
+    }
+    origReload()
+  }
+  view.loadURL = async (url: string) => {
+    view.title = 'Bloomberg Markets'
+    view.pageText = 'Bloomberg Markets refreshed headlines'
+    return origLoad(url)
+  }
+
+  updateGrid('ws-1', refreshPanel(getState().grids['ws-1']![1]!, placed.panel.id, 1001).grid)
+  manager.sweep()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  assert.equal(view.getURL(), marketsUrl)
+  assert.equal(published.at(-1)?.snapshot.url, marketsUrl)
+  assert.equal(published.at(-1)?.snapshot.text, 'Bloomberg Markets refreshed headlines')
+
+  // If Bloomberg still lands on tosv2.html after retry, the tab keeps marketsUrl as its address, preserves prior article text, and reload loads marketsUrl instead of tosv2.html.
+  let forceChallenge = true
+  const sendChallenge = (): void => {
+    view.history = [...view.history.slice(0, view.index + 1), challengeUrl]
+    view.index = view.history.length - 1
+    view.title = 'Bloomberg - Are you a robot?'
+    view.pageText =
+      "We've detected unusual activity from your computer network. To continue, please click the box below to let us know you're not a robot."
+    view.loading = true
+    view.events.onDidStartLoading()
+    view.events.onDidNavigate(challengeUrl)
+    view.loading = false
+    view.events.onDidStopLoading()
+  }
+  view.reload = () => {
+    if (forceChallenge) {
+      sendChallenge()
+      return
+    }
+    origReload()
+  }
+  view.loadURL = async (url: string) => {
+    if (forceChallenge) {
+      sendChallenge()
+      return
+    }
+    view.title = 'Bloomberg Markets'
+    view.pageText = 'Bloomberg Markets recovered after manual reload'
+    return origLoad(url)
+  }
+
+  updateGrid('ws-1', refreshPanel(getState().grids['ws-1']![1]!, placed.panel.id, 1002).grid)
+  manager.sweep()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  assert.equal(published.at(-1)?.snapshot.url, marketsUrl)
+  assert.equal(published.at(-1)?.snapshot.text, 'Bloomberg Markets refreshed headlines')
+
+  forceChallenge = false
+  const afterReload = await manager.navigate(1, 'ws-1', placed.panel.id, 'reload')
+  assert.equal(afterReload.url, marketsUrl)
+  assert.equal(view.getURL(), marketsUrl)
+
+  // Suspending on an inactive workspace and waking via background refresh_element still sets non-zero bounds on the woken view.
+  setState({ ...getState(), currentWorkspaceId: 'ws-2' })
+  manager.sweep()
+  await new Promise((resolve) => setTimeout(resolve, 45))
+  assert.equal(view.destroyed, true)
+
+  updateGrid('ws-1', refreshPanel(getState().grids['ws-1']![1]!, placed.panel.id, 1003).grid)
+  manager.sweep()
+  const bgWokenView = views.at(-1)!
+  assert.notEqual(bgWokenView, view)
+  assert.ok(bgWokenView.bounds && bgWokenView.bounds.width > 0 && bgWokenView.bounds.height > 0)
+
+  manager.closeAll()
+})
