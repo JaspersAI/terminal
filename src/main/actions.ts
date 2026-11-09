@@ -826,6 +826,28 @@ export function deleteWorkspace(id: string): void {
     const intoLoops = loops[neighborId] ?? NO_LOOPS
     const intoGrids = grids[neighborId] ?? {}
     loops[neighborId] = archiveTabRooms(closingLoops, closingGrids, id, intoLoops, now, intoGrids)
+    const closedMaxSeq = (loops[neighborId]?.closed ?? []).reduce(
+      (max, c) =>
+        Math.max(
+          max,
+          ...c.elements.map((e) => Number(e.id.slice(1)) || 0),
+          ...c.panels.map((p) => Number(p.id.slice(1)) || 0),
+        ),
+      0,
+    )
+    if (closedMaxSeq > 0 && grids[neighborId]) {
+      const updatedNeighborGrids: Record<number, Grid> = {}
+      let gridChanged = false
+      for (const [win, g] of Object.entries(grids[neighborId]!)) {
+        if (g.seq < closedMaxSeq) {
+          updatedNeighborGrids[Number(win)] = { ...g, seq: closedMaxSeq }
+          gridChanged = true
+        } else {
+          updatedNeighborGrids[Number(win)] = g
+        }
+      }
+      if (gridChanged) grids[neighborId] = updatedNeighborGrids
+    }
     const tasks = archiveTabTasks(state.tasks, closingLoops, closingGrids, id, neighborId, now, intoLoops, intoGrids)
     return {
       ...state,

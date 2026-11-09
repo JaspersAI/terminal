@@ -622,6 +622,37 @@ test('archiving a closing tab into a neighbor tab that already uses e1/e2 renumb
     afterDelete.map((t) => t.id),
     ['t_t1'],
   )
+
+  // If t2 had an older closed room f1 (closed at 50 with e2) and a newer open room f3 that reused e2 with a task created at 55,
+  // archiving t2 maps the newer task to f3's archived id rather than f1's.
+  const t2AfterF1Close = withoutFrame(t2Grids, 'e1')
+  const t2WithClosedF1 = closedWithout(t2Loops, t2Grids, t2AfterF1Close, 50)
+  const t2WithReusedE2: Record<number, Grid> = {
+    1: {
+      ...t2AfterF1Close[1]!,
+      elements: [
+        ...t2AfterF1Close[1]!.elements,
+        element(4, { loop: 'f3', rect: { x: 0, y: 0, w: 8, h: 6 } }),
+        element(2, { loop: 'f3', parent: 'e4', rect: { x: 0, y: 0, w: 16, h: 12 } }),
+      ],
+      panels: [...t2AfterF1Close[1]!.panels, panel(4, frame), panel(2, chart)],
+      seq: 4,
+    },
+  }
+  const t2LoopsWithF3: Loops = { ...t2WithClosedF1, seq: 3, list: [...t2WithClosedF1.list, loop('f3', 'reused e2')] }
+  const tasksOnT2: Task[] = [
+    sampleTask('t_f3', 't2', {
+      createdAt: 55,
+      instructions: 'Refresh f3 chart e2',
+      call: { tool: 'refresh_element', input: { elementId: 'e2' } },
+    }),
+  ]
+  const intoEmptyLoops: Loops = { seq: 5, list: [] }
+  const archivedFromT2Loops = archiveTabRooms(t2LoopsWithF3, t2WithReusedE2, 't2', intoEmptyLoops, 100)
+  const archivedFromT2Tasks = archiveTabTasks(tasksOnT2, t2LoopsWithF3, t2WithReusedE2, 't2', 't1', 100, intoEmptyLoops)
+  const f3Archived = archivedFromT2Loops.closed!.find((c) => c.loop.id === 'f3')!
+  const f3ViewElemId = f3Archived.elements.find((e) => e.parent !== undefined)!.id
+  assert.deepEqual(archivedFromT2Tasks[0]!.call, { tool: 'refresh_element', input: { elementId: f3ViewElemId } })
 })
 
 test('reopenAcrossTabs can move an open room from another tab onto the target tab in one step with its tasks and chat key', () => {

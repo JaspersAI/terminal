@@ -142,10 +142,14 @@ export function reopened(
   if (!shut) throw new Error(`${loopName(id)} is not closed.`)
   const grid = grids[window]
   if (!grid) throw new Error(`Window ${window} has no grid.`)
-  const used = new Set(
-    Object.values(grids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
-  )
-  let seq = Math.max(0, ...Object.values(grids).map((g) => g.seq))
+  const closedOther = (loops.closed ?? [])
+    .filter((one) => one !== shut)
+    .flatMap((one) => [...one.elements.map((e) => e.id), ...one.panels.map((p) => p.id)])
+  const used = new Set([
+    ...Object.values(grids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
+    ...closedOther,
+  ])
+  let seq = Math.max(0, ...Object.values(grids).map((g) => g.seq), ...closedOther.map((id) => Number(id.slice(1)) || 0))
   const clash = shut.elements.some((e) => used.has(e.id)) || shut.panels.some((p) => used.has(p.id))
   const ids = new Map<string, string>()
   const panelIds = new Map<string, string>()
@@ -708,7 +712,7 @@ export function archiveTabTasks(
   const { rooms } = archivedIncomingRooms(closingLoops, closingGrids, closingTabId, intoLoops, now, intoGrids)
   return tasks.flatMap((task) => {
     if (task.workspaceId !== closingTabId) return [task]
-    const matched = rooms.find((r) => taskTargetsRoom(task, r.original, closingTabId))
+    const matched = rooms.find((r) => taskTargetsRoom(task, r.original, closingTabId, closingGrids))
     if (!matched) return []
     return [retargetTask(task, intoTabId, matched.ids, matched.panelIds)]
   })
