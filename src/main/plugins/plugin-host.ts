@@ -2,8 +2,18 @@ import { shell, utilityProcess, type UtilityProcess } from 'electron'
 import path from 'node:path'
 import type { Capability } from '@jaspers-ai/sdk/define'
 import { parsePath, readPath } from '../../shared/paths'
-import { isReloadAbort, pluginHostEnv, sameHostBuild } from '../../shared/plugins/plugins'
+import {
+  createAwakeTimeout,
+  initializeHostWithRetry,
+  isReloadAbort,
+  isStartupAbort,
+  pluginHostEnv,
+  sameHostBuild,
+  shouldStopIdleHost,
+  type HostAttempt,
+} from '../../shared/plugins/plugins'
 import { createRpc, messageOf, type Rpc } from '../../shared/rpc'
+import { WAKE_GRACE_MS } from '../../shared/tasks/tasks'
 import { createFiles, type FilesService } from './capabilities/files'
 import { createLlm } from './capabilities/llm'
 import { askForMissingSecret } from '../actions'
@@ -36,6 +46,8 @@ const RESPAWN_MS = 5000
 const SHUTDOWN_MS = 3000
 /** A host that worked and then died is started again on its own, at most this often. */
 const AUTO_RESTART_MS = 60_000
+/** How long a forked utility process gets to boot and announce its RPC wire before main retries with a fresh process. */
+const BOOT_MS = 10_000
 /** How long start may take before the host is given up on. */
 const INIT_MS = 30_000
 /** How long main waits on one source run; a source with longer work starts a job and returns. */
@@ -64,16 +76,20 @@ interface Host {
   llm: ReturnType<typeof createLlm>
   watches: Map<number, () => void>
   ready: Promise<void>
+  abortBoot: ((reason: string) => void) | null
   /** Whether init finished, so an exit after it is a host that worked and then died. */
   started: boolean
   /** Set once main asked it to go, so its exit is not reported as a crash. */
   stopping: boolean
+  stopReason: string | null
   /** Source runs in flight. */
   running: number
   /** Jobs running, as the host last said. */
   jobs: number
   /** When a run last started or finished, or its jobs last changed. */
   usedAt: number
+  /** When `stopIfIdle` last inspected this host, so an overdue tick after system sleep is recognized. */
+  lastIdleCheckAt: number
   /** What stops a host started on demand once it is idle. */
   idleCheck: NodeJS.Timeout | null
 }
@@ -85,8 +101,34 @@ const restarts = new Map<string, NodeJS.Timeout>()
 /** A host being stopped for a rebuild or a removal: calls wait for it rather than starting another. */
 const stopping = new Map<string, Promise<void>>()
 const autoRestartedAt = new Map<string, number>()
+let sleeping = false
+let wakeUntil = 0
 /** Set once a quit goes ahead: from then on a host that exits is going with the app, not crashing. */
 let quitting = false
+
+/** Marks plugin hosts as suspended while the computer sleeps so idle checks and timeouts pause. */
+export function suspendHosts(): void {
+  sleeping = true
+}
+
+/** Refreshes host activity timestamps and holds off idle eviction across the post-wake grace window. */
+export function wakeHosts(graceMs = WAKE_GRACE_MS): void {
+  const now = Date.now()
+  sleeping = false
+  wakeUntil = now + Math.max(0, graceMs)
+  for (const host of hosts.values()) {
+    host.usedAt = now
+    host.lastIdleCheckAt = now
+  }
+}
+
+function awakeTimeout(durationMs: number): { signal: AbortSignal; dispose: () => void } {
+  return createAwakeTimeout(durationMs, {
+    isSleeping: () => sleeping,
+    wakeUntil: () => wakeUntil,
+    wakeLagMs: WAKE_GRACE_MS,
+  })
+}
 
 /** A build landed: its host replaces whatever host the plugin had, now or on the first run that needs one. */
 export async function startHost(id: string, input: HostBuild): Promise<void> {
@@ -137,6 +179,7 @@ export async function runInHost(id: string, name: string, args: unknown, workspa
     const host = await hostFor(id)
     host.running++
     host.usedAt = Date.now()
+    const timeout = awakeTimeout(SOURCE_MS)
     try {
       await host.ready
       // The plugin's declared secrets ride with each run, for ${secret:KEY} in its fetches; the values
@@ -144,14 +187,18 @@ export async function runInHost(id: string, name: string, args: unknown, workspa
       return await host.rpc.request(
         'source.run',
         { name, args, workspaceId, secrets: secretValues(id) },
-        AbortSignal.timeout(SOURCE_MS),
+        timeout.signal,
       )
     } catch (err) {
-      if (attempt === 0 && isReloadAbort(err) && builds.has(id) && !quitting) continue
+      if (attempt === 0 && (isReloadAbort(err) || isStartupAbort(err)) && builds.has(id) && !quitting) {
+        spawnedAt.delete(id)
+        continue
+      }
       if (err instanceof Error && err.name === 'TimeoutError')
         throw new Error(`${id}/${name} took longer than ${SOURCE_MS / 60_000} minutes.`)
       throw err
     } finally {
+      timeout.dispose()
       host.running--
       host.usedAt = Date.now()
     }
@@ -179,8 +226,9 @@ export function killAllHosts(): void {
   quittingHosts()
   for (const host of [...hosts.values()]) {
     host.stopping = true
+    host.stopReason = 'the app is quitting'
     teardown(host, 'the app is quitting')
-    host.child.kill()
+    killChild(host.child)
   }
   hosts.clear()
 }
@@ -196,13 +244,9 @@ async function hostFor(id: string): Promise<Host> {
   return spawn(id, build)
 }
 
-/** Returns the registered host, or starts one with RPC and capability services and tracks its initialization. */
-function spawn(id: string, build: HostBuild): Host {
-  // Never a second host over one that is still registered.
-  const existing = hosts.get(id)
-  if (existing) return existing
+function forkChild(host: Host, build: HostBuild): HostAttempt {
+  const { id } = host
   spawnedAt.set(id, Date.now())
-  setPluginInfo(id, { host: 'starting' })
   const child = utilityProcess.fork(path.join(__dirname, 'plugin-host.js'), [], {
     serviceName: `jaspers-plugin-${id}`,
     stdio: 'pipe',
@@ -210,6 +254,9 @@ function spawn(id: string, build: HostBuild): Host {
     // Windows names the same things otherwise, and without SystemRoot Winsock cannot resolve a host
     // name: every fetch fails with getaddrinfo EAI_FAIL.
     env: pluginHostEnv(process.env),
+  })
+  child.on('error', (type, location) => {
+    console.warn(`[plugin ${id}] host process ${type} at ${location}`)
   })
   lines(child.stdout, (line) => console.log(`[plugin ${id}] ${line}`))
   lines(child.stderr, (line) => console.warn(`[plugin ${id}] ${line}`))
@@ -221,6 +268,57 @@ function spawn(id: string, build: HostBuild): Host {
       return () => void child.off('message', handler)
     },
   })
+  host.child = child
+  host.rpc = rpc
+  serve(host, build.capabilities)
+  let rejectBoot: ((err: Error) => void) | null = null
+  host.abortBoot = (reason) => {
+    rejectBoot?.(new Error(reason))
+    rejectBoot = null
+  }
+  const boot = new Promise<void>((resolve, reject) => {
+    rejectBoot = reject
+    rpc.onNotification('ready', () => {
+      rejectBoot = null
+      host.abortBoot = null
+      resolve()
+    })
+  })
+  child.once('exit', (code) => {
+    if (host.child !== child) return
+    if (!host.started) {
+      const reason = host.stopping ? (host.stopReason ?? 'plugin reloaded') : `plugin host exited with code ${code}`
+      if (!host.stopping && !quitting) {
+        record({ kind: 'crash', name: 'plugin-host', data: { plugin: host.id, exitCode: code } })
+      }
+      host.abortBoot?.(reason)
+      rpc.close(reason)
+      return
+    }
+    exited(host, code)
+  })
+  return {
+    boot,
+    rpc,
+    discard: (reason) => {
+      host.abortBoot = null
+      rpc.close(reason)
+      for (const stop of host.watches.values()) stop()
+      host.watches.clear()
+      setPluginInfo(host.id, { jobs: [] })
+      clearLive(host.id)
+      killChild(child)
+    },
+  }
+}
+
+/** Returns the registered host, or starts one with RPC and capability services and tracks its initialization. */
+function spawn(id: string, build: HostBuild): Host {
+  // Never a second host over one that is still registered.
+  const existing = hosts.get(id)
+  if (existing) return existing
+  spawnedAt.set(id, Date.now())
+  setPluginInfo(id, { host: 'starting' })
   const files = createFiles({
     dataRoot: path.join(jaspersHome(), id),
     pluginRoot: build.dir,
@@ -234,48 +332,60 @@ function spawn(id: string, build: HostBuild): Host {
     usage: (input, output) => addUsage(id, input, output),
     wait: delay,
   })
+  const now = Date.now()
   const host: Host = {
     id,
-    child,
-    rpc,
+    child: null as unknown as UtilityProcess,
+    rpc: null as unknown as Rpc,
     files,
     llm,
     watches: new Map(),
     ready: Promise.resolve(),
+    abortBoot: null,
     started: false,
     stopping: false,
+    stopReason: null,
     running: 0,
     jobs: 0,
-    usedAt: Date.now(),
+    usedAt: now,
+    lastIdleCheckAt: now,
     idleCheck: build.eager ? null : setInterval(() => stopIfIdle(host), IDLE_CHECK_MS),
   }
-  serve(host, build.capabilities)
-  child.once('exit', (code) => exited(host, code))
   hosts.set(id, host)
-  host.ready = rpc
-    .request('init', { id, code: build.code, capabilities: build.capabilities }, AbortSignal.timeout(INIT_MS))
-    .then(
-      () => {
-        host.started = true
-        if (hosts.get(id) === host) setPluginInfo(id, { host: 'ready', errors: [] })
-      },
-      (err: unknown) => {
-        const why =
-          err instanceof Error && err.name === 'TimeoutError'
-            ? `start took longer than ${INIT_MS / 1000} s`
-            : messageOf(err)
-        const message = `plugin host did not start: ${why}`
-        if (hosts.get(id) === host) {
-          hosts.delete(id)
-          host.stopping = true
-          teardown(host, message)
-          host.child.kill()
-          setPluginInfo(id, { host: 'exited', errors: [message] })
-          console.warn(`[plugin ${id}] ${message}`)
-        }
-        throw new Error(message)
-      },
-    )
+  host.ready = initializeHostWithRetry({
+    id,
+    code: build.code,
+    capabilities: build.capabilities,
+    bootMs: BOOT_MS,
+    initMs: INIT_MS,
+    makeTimeout: awakeTimeout,
+    spawnAttempt: () => forkChild(host, build),
+    canRetry: () => hosts.get(id) === host && !host.stopping && !quitting,
+    onRetry: (attempt, why) => {
+      console.warn(`[plugin ${id}] host startup attempt ${attempt} failed (${why}); retrying`)
+    },
+  }).then(
+    () => {
+      host.started = true
+      host.usedAt = Date.now()
+      host.lastIdleCheckAt = Date.now()
+      if (hosts.get(id) === host) setPluginInfo(id, { host: 'ready', errors: [] })
+    },
+    (err: unknown) => {
+      const message = messageOf(err)
+      if (hosts.get(id) === host) {
+        hosts.delete(id)
+        host.stopping = true
+        host.stopReason = message
+        teardown(host, message)
+        killChild(host.child)
+        if (isStartupAbort(err)) spawnedAt.delete(id)
+        setPluginInfo(id, { host: 'exited', errors: [message] })
+        console.warn(`[plugin ${id}] ${message}`)
+      }
+      throw err instanceof Error ? err : new Error(message)
+    },
+  )
   host.ready.catch(() => undefined)
   return host
 }
@@ -300,13 +410,16 @@ async function stopHost(id: string, reason: string): Promise<void> {
   }
   hosts.delete(id)
   host.stopping = true
+  host.stopReason = reason
   // Stopped on purpose, so a call waiting on stopping.get(id) starts the next host at once
   // rather than hitting the crash respawn guard before startHost resumes.
   spawnedAt.delete(id)
-  await Promise.race([host.rpc.request('shutdown', { reason }).catch(() => undefined), delay(SHUTDOWN_MS)])
+  if (host.started) {
+    await Promise.race([host.rpc.request('shutdown', { reason }).catch(() => undefined), delay(SHUTDOWN_MS)])
+  }
   // A newer host may have started while this one took its time; the plugin's values are that one's now.
   teardown(host, reason, !hosts.has(id))
-  host.child.kill()
+  killChild(host.child)
 }
 
 /** An exit nobody asked for. */
@@ -330,8 +443,27 @@ function exited(host: Host, code: number): void {
 /** A host started on demand stops once nothing has used it for a while and it holds nothing to lose. */
 function stopIfIdle(host: Host): void {
   if (hosts.get(host.id) !== host) return
-  if (host.running > 0 || host.jobs > 0 || host.watches.size > 0 || hasLive(host.id)) return
-  if (Date.now() - host.usedAt < IDLE_MS) return
+  const now = Date.now()
+  const decision = shouldStopIdleHost({
+    running: host.running,
+    jobs: host.jobs,
+    watches: host.watches.size,
+    hasLive: hasLive(host.id),
+    usedAt: host.usedAt,
+    lastCheckedAt: host.lastIdleCheckAt,
+    now,
+    idleMs: IDLE_MS,
+    checkEveryMs: IDLE_CHECK_MS,
+    wakeLagMs: WAKE_GRACE_MS,
+    sleeping,
+    wakeUntil,
+  })
+  host.lastIdleCheckAt = now
+  if (decision.refreshUsedAt) {
+    host.usedAt = now
+    return
+  }
+  if (!decision.stop) return
   console.log(`[plugin ${host.id}] stopping its idle host`)
   // Stopped on purpose, so the next run starts it at once rather than waiting out the respawn guard.
   spawnedAt.delete(host.id)
@@ -369,13 +501,23 @@ function cancelRestart(id: string): void {
 
 function teardown(host: Host, reason: string, current = true): void {
   if (host.idleCheck) clearInterval(host.idleCheck)
-  host.rpc.close(reason)
+  host.abortBoot?.(reason)
+  host.abortBoot = null
+  host.rpc?.close(reason)
   for (const stop of host.watches.values()) stop()
   host.watches.clear()
   host.files.close()
   if (!current) return
   setPluginInfo(host.id, { jobs: [] })
   clearLive(host.id)
+}
+
+function killChild(child: UtilityProcess | null | undefined): void {
+  try {
+    child?.kill()
+  } catch {
+    // Process has already exited.
+  }
 }
 
 /** The capability calls a host may make, each checked against what its plugin declared. */
@@ -536,6 +678,7 @@ function lines(stream: NodeJS.ReadableStream | null, write: (line: string) => vo
     rest = parts.pop() ?? ''
     for (const line of parts) if (line.trim()) write(line)
   })
+  stream.on('error', () => undefined)
 }
 
 function delay(ms: number): Promise<void> {

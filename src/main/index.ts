@@ -12,7 +12,7 @@ import { registerSkillEditorIpc } from './skills/skill-editor'
 import { registerSkillInstallIpc } from './skills/skill-install'
 import { registerLiveIpc } from './plugins/live-ipc'
 import { flush } from './persist'
-import { killAllHosts, quittingHosts, stopAllHosts } from './plugins/plugin-host'
+import { killAllHosts, quittingHosts, stopAllHosts, suspendHosts, wakeHosts } from './plugins/plugin-host'
 import { startPlugins } from './plugins/plugins'
 import { registerBuiltins } from './plugins/registry'
 import { startSkills } from './skills/skills'
@@ -27,7 +27,7 @@ import { startThreads } from './agent/thread-file'
 import { startInbox } from './app/notices'
 import { compact, notifications, query, startStore, stats, stopOnQuit, usageToday } from './data/store'
 import { startBackground, startsHidden } from './app/background'
-import { deleteRecordings, endSession, eyeFolder, startEye } from './eye/eye'
+import { deleteRecordings, endSession, eyeFolder, record, startEye } from './eye/eye'
 import { recordAction, recordNote, startTelemetry } from './eye/taps'
 import { closePendingRuns } from './agent/utils/record'
 import { knownSecrets } from './agent/utils/settings'
@@ -53,6 +53,18 @@ import {
 // The schemes a plugin view's iframe loads from have to be declared before the app is ready; their
 // handlers come after it, below.
 registerSchemes()
+
+process.on('unhandledRejection', (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  const stack = reason instanceof Error ? (reason.stack ?? null) : null
+  console.error('unhandled rejection:', message)
+  record({ kind: 'error', name: 'main', data: { message, stack } })
+})
+
+process.on('uncaughtException', (err) => {
+  console.error('uncaught exception:', err.message)
+  record({ kind: 'error', name: 'main', data: { message: err.message, stack: err.stack ?? null } })
+})
 
 // One Jaspers per user data folder, since two would write the same files. A second launch shows the
 // first one's windows and leaves.
@@ -94,6 +106,7 @@ app.whenReady().then(async () => {
   void adoptShellPath().finally(() => startPlugins())
   const wakeAll = (): void => {
     wakeTasks()
+    wakeHosts()
     wakeRetries()
     wakeJaspers()
     wakeUploads()
@@ -108,6 +121,7 @@ app.whenReady().then(async () => {
     runAsk: runTask,
     intoChat: taskSaid,
     onWake: () => {
+      wakeHosts()
       wakeRetries()
       wakeJaspers()
       wakeUploads()
@@ -228,6 +242,7 @@ app.whenReady().then(async () => {
     windowInFront: anyInFront,
     suspendTasks: () => {
       suspendTasks()
+      suspendHosts()
       suspendRetries()
       suspendJaspers()
       suspendUploads()

@@ -48,6 +48,9 @@ export function startStore(): void {
     serviceName: 'jaspers-store',
     stdio: 'pipe',
   })
+  child.on('error', (type, location) => {
+    console.warn(`[store] process ${type} at ${location}`)
+  })
   lines(child.stdout, (line) => console.log(`[store] ${line}`))
   lines(child.stderr, (line) => console.warn(`[store] ${line}`))
   const rpc = createRpc({
@@ -428,4 +431,5 @@ function lines(stream: NodeJS.ReadableStream | null, onLine: (line: string) => v
     rest = parts.pop() ?? ''
     for (const line of parts) if (line.trim()) onLine(line)
   })
+  stream.on('error', () => undefined)
 }

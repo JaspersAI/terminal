@@ -7,6 +7,8 @@
 
 import type { BackendContext, Capability, SecretSpec, SourceDef, ViewDefinition } from '@jaspers-ai/sdk/define'
 // The extension is explicit because Node's test runner resolves this import at run time.
+import { untilAborted } from '../abort.ts'
+import { messageOf } from '../rpc.ts'
 import { checkConnection, secretRefs, type Connection } from './connections.ts'
 import { RESERVED_PLUGIN_NAMES } from './id.ts'
 
@@ -347,10 +349,196 @@ export function sameHostBuild(previous: HostBuildSpec | undefined, next: HostBui
   )
 }
 
-/** Whether an error from a plugin host RPC call was caused by the host being stopped for a reload. */
+/** Whether an error from a plugin host RPC call was caused by the host being stopped for a reload or idle eviction. */
 export function isReloadAbort(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err)
-  return msg === 'plugin reloaded' || msg === 'plugin host did not start: plugin reloaded'
+  return (
+    msg === 'plugin reloaded' ||
+    msg === 'plugin host did not start: plugin reloaded' ||
+    msg === 'idle' ||
+    msg === 'plugin host did not start: idle'
+  )
+}
+
+const STARTUP_TIMEOUT = /^(?:plugin host did not start: )?(?:start|boot) took longer than \d+ s$/
+const HOST_EXITED = /^(?:plugin host did not start: )?plugin host exited with code /
+
+/** Whether an error from plugin host initialization is a transient process startup timeout or crash worth retrying once. */
+export function isStartupAbort(err: unknown): boolean {
+  if (err instanceof Error && err.name === 'TimeoutError') return true
+  const msg = err instanceof Error ? err.message : String(err)
+  return STARTUP_TIMEOUT.test(msg) || HOST_EXITED.test(msg)
+}
+
+export interface AwakeTimeoutOptions {
+  now?: () => number
+  setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
+  isSleeping?: () => boolean
+  wakeUntil?: () => number
+  sliceMs?: number
+  wakeLagMs?: number
+  minPostWakeMs?: number
+}
+
+function makeTimeoutError(): Error {
+  const err = new Error('The operation was aborted due to timeout')
+  err.name = 'TimeoutError'
+  return err
+}
+
+/**
+ * An AbortSignal that aborts with `TimeoutError` after `durationMs` of awake execution time,
+ * pausing its countdown while the computer is sleeping, inside the post-wake grace window, or
+ * across an event-loop sleep/wake lag spike (`>= wakeLagMs`), and granting at least
+ * `minPostWakeMs` of awake recovery time after a sleep interruption.
+ */
+export function createAwakeTimeout(
+  durationMs: number,
+  options?: AwakeTimeoutOptions,
+): { signal: AbortSignal; dispose: () => void } {
+  const now = options?.now ?? Date.now
+  const setTimer = options?.setTimer ?? setTimeout
+  const clearTimer = options?.clearTimer ?? clearTimeout
+  const sliceMs = options?.sliceMs ?? 2_000
+  const wakeLagMs = options?.wakeLagMs ?? 5_000
+  const minPostWakeMs = options?.minPostWakeMs ?? Math.min(durationMs, 10_000)
+  const controller = new AbortController()
+  let remaining = Math.max(0, durationMs)
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let disposed = false
+
+  function schedule(): void {
+    if (disposed || controller.signal.aborted) return
+    if (remaining <= 0) {
+      controller.abort(makeTimeoutError())
+      return
+    }
+    const step = Math.min(Math.max(1, remaining), sliceMs)
+    const startedAt = now()
+    timer = setTimer(() => {
+      timer = null
+      if (disposed || controller.signal.aborted) return
+      const currentNow = now()
+      const elapsed = Math.max(0, currentNow - startedAt)
+      const asleep = options?.isSleeping?.() === true
+      const inWakeGrace = currentNow < (options?.wakeUntil?.() ?? 0)
+      const lagged = elapsed >= step + wakeLagMs
+      if (asleep || inWakeGrace || lagged) {
+        remaining = Math.max(remaining, minPostWakeMs)
+        schedule()
+        return
+      }
+      remaining -= Math.min(elapsed || step, step)
+      if (remaining <= 0) {
+        controller.abort(makeTimeoutError())
+        return
+      }
+      schedule()
+    }, step)
+    ;(timer as { unref?: () => void })?.unref?.()
+  }
+
+  schedule()
+
+  return {
+    signal: controller.signal,
+    dispose() {
+      disposed = true
+      if (timer !== null) {
+        clearTimer(timer)
+        timer = null
+      }
+    },
+  }
+}
+
+export interface IdleHostCheckInput {
+  running: number
+  jobs: number
+  watches: number
+  hasLive: boolean
+  usedAt: number
+  lastCheckedAt: number
+  now: number
+  idleMs: number
+  checkEveryMs: number
+  wakeLagMs?: number
+  sleeping?: boolean
+  wakeUntil?: number
+}
+
+/**
+ * Whether an on-demand plugin host should be stopped for being idle, or have its `usedAt`
+ * refreshed because the computer is sleeping, waking, or just resumed from an event-loop sleep gap.
+ */
+export function shouldStopIdleHost(input: IdleHostCheckInput): { stop: boolean; refreshUsedAt: boolean } {
+  const wakeLagMs = input.wakeLagMs ?? 5_000
+  const lagged = input.now - input.lastCheckedAt >= input.checkEveryMs + wakeLagMs
+  if (input.sleeping || (input.wakeUntil !== undefined && input.now < input.wakeUntil) || lagged) {
+    return { stop: false, refreshUsedAt: true }
+  }
+  if (input.running > 0 || input.jobs > 0 || input.watches > 0 || input.hasLive) {
+    return { stop: false, refreshUsedAt: false }
+  }
+  return { stop: input.now - input.usedAt >= input.idleMs, refreshUsedAt: false }
+}
+
+export interface HostAttempt {
+  boot: Promise<void>
+  rpc: {
+    request(method: string, params?: unknown, signal?: AbortSignal): Promise<unknown>
+  }
+  discard(reason: string): void
+}
+
+export interface InitializeHostOptions {
+  id: string
+  code: string
+  capabilities: readonly Capability[]
+  bootMs: number
+  initMs: number
+  makeTimeout: (ms: number) => { signal: AbortSignal; dispose: () => void }
+  spawnAttempt: (attempt: number) => HostAttempt
+  canRetry: () => boolean
+  onRetry?: (attempt: number, why: string) => void
+}
+
+/**
+ * Boots a plugin host utility process and runs `init`, retrying once with a fresh process when the
+ * first attempt times out waiting to boot or in `init` or exits unexpectedly before `init` completes.
+ */
+export async function initializeHostWithRetry(options: InitializeHostOptions): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    const current = options.spawnAttempt(attempt)
+    const bootTimeout = options.makeTimeout(options.bootMs)
+    const initTimeout = options.makeTimeout(options.initMs)
+    try {
+      await untilAborted(current.boot, bootTimeout.signal)
+      bootTimeout.dispose()
+      await current.rpc.request(
+        'init',
+        { id: options.id, code: options.code, capabilities: options.capabilities },
+        initTimeout.signal,
+      )
+      return
+    } catch (err) {
+      const why =
+        err instanceof Error && err.name === 'TimeoutError'
+          ? `start took longer than ${options.initMs / 1000} s`
+          : messageOf(err)
+      const message = `plugin host did not start: ${why}`
+      if (attempt === 0 && isStartupAbort(err) && options.canRetry()) {
+        options.onRetry?.(attempt + 1, why)
+        current.discard(message)
+        continue
+      }
+      throw new Error(message)
+    } finally {
+      bootTimeout.dispose()
+      initTimeout.dispose()
+    }
+  }
 }
 
 export const HOST_ENV_KEPT = [

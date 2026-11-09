@@ -2,12 +2,16 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   classifyPluginWatchPath,
+  createAwakeTimeout,
   createPluginBuildQueue,
+  initializeHostWithRetry,
   isReloadAbort,
+  isStartupAbort,
   pluginHostEnv,
   qualifyConnection,
   sameHostBuild,
   samePluginBuild,
+  shouldStopIdleHost,
   unsetRequiredSecret,
   validatePluginDefinition,
   viewPolicy,
@@ -473,12 +477,217 @@ test('samePluginBuild and sameHostBuild detect unchanged build outputs and host 
   assert.equal(sameHostBuild(host, { ...host, shell: true }), false)
 })
 
-test('isReloadAbort matches host reload shutdown errors and ignores other failures', () => {
+test('isReloadAbort matches host reload and idle shutdown errors and ignores other failures', () => {
   assert.equal(isReloadAbort(new Error('plugin reloaded')), true)
   assert.equal(isReloadAbort(new Error('plugin host did not start: plugin reloaded')), true)
+  assert.equal(isReloadAbort(new Error('idle')), true)
+  assert.equal(isReloadAbort(new Error('plugin host did not start: idle')), true)
   assert.equal(isReloadAbort('plugin reloaded'), true)
   assert.equal(isReloadAbort(new Error('plugin removed')), false)
   assert.equal(isReloadAbort(new Error('fetch failed')), false)
+})
+
+test('isStartupAbort matches transient host startup timeouts and crashes while excluding plugin code errors', () => {
+  const timeoutErr = new Error('The operation was aborted due to timeout')
+  timeoutErr.name = 'TimeoutError'
+  assert.equal(isStartupAbort(timeoutErr), true)
+  assert.equal(isStartupAbort(new Error('plugin host did not start: start took longer than 30 s')), true)
+  assert.equal(isStartupAbort(new Error('plugin host did not start: boot took longer than 10 s')), true)
+  assert.equal(isStartupAbort(new Error('plugin host did not start: plugin host exited with code 1')), true)
+  assert.equal(isStartupAbort(new Error('plugin host exited with code 1')), true)
+  assert.equal(
+    isStartupAbort(new Error('plugin host did not start: declare "files" in capabilities to use ctx.files')),
+    false,
+  )
+  assert.equal(isStartupAbort(new Error('plugin host did not start: ReferenceError: x is not defined')), false)
+  assert.equal(isStartupAbort(new Error('the app is quitting')), false)
+})
+
+test('createAwakeTimeout counts awake slices and pauses across system sleep, wake grace, and event-loop lag spikes', () => {
+  let now = 1_000_000
+  let sleeping = false
+  let wakeUntil = 0
+  let nextFn: (() => void) | null = null
+  let nextDelay = 0
+  let cleared = false
+
+  const timeout = createAwakeTimeout(30_000, {
+    now: () => now,
+    isSleeping: () => sleeping,
+    wakeUntil: () => wakeUntil,
+    sliceMs: 5_000,
+    wakeLagMs: 5_000,
+    minPostWakeMs: 10_000,
+    setTimer: (fn, ms) => {
+      nextFn = fn
+      nextDelay = ms
+      return 1 as unknown as ReturnType<typeof setTimeout>
+    },
+    clearTimer: () => {
+      cleared = true
+      nextFn = null
+    },
+  })
+
+  const step = (advanceMs: number): void => {
+    assert.ok(nextFn, 'expected an armed timer slice')
+    const fn = nextFn
+    nextFn = null
+    now += advanceMs
+    fn()
+  }
+
+  // 25 seconds of normal 5s awake slices leave 5s remaining.
+  for (let i = 0; i < 5; i++) {
+    assert.equal(nextDelay, 5_000)
+    step(5_000)
+    assert.equal(timeout.signal.aborted, false)
+  }
+
+  // The computer then sleeps for 30s during the final 5s slice (60s wall-clock total, like the Massive timeout):
+  // the lagged slice does not abort on wake and grants a 10s post-wake recovery window.
+  step(30_000)
+  assert.equal(timeout.signal.aborted, false)
+
+  // Slices while sleeping or inside the post-wake grace window also do not consume the recovery budget.
+  sleeping = true
+  step(5_000)
+  assert.equal(timeout.signal.aborted, false)
+  sleeping = false
+  wakeUntil = now + 5_000
+  step(3_000)
+  assert.equal(timeout.signal.aborted, false)
+
+  // Once awake past the grace window, two normal 5s awake slices exhaust the 10s recovery window and abort with TimeoutError.
+  step(5_000)
+  assert.equal(timeout.signal.aborted, false)
+  step(5_000)
+  assert.equal(timeout.signal.aborted, true)
+  assert.equal((timeout.signal.reason as Error).name, 'TimeoutError')
+
+  // Disposing an active timeout cancels its pending timer immediately.
+  const active = createAwakeTimeout(30_000, {
+    now: () => now,
+    setTimer: (fn, ms) => {
+      nextFn = fn
+      nextDelay = ms
+      return 2 as unknown as ReturnType<typeof setTimeout>
+    },
+    clearTimer: () => {
+      cleared = true
+      nextFn = null
+    },
+  })
+  assert.equal(cleared, false)
+  active.dispose()
+  assert.equal(cleared, true)
+})
+
+test('shouldStopIdleHost refreshes usedAt on wake lag or sleep instead of evicting a warm host before waking tasks run', () => {
+  const base = {
+    running: 0,
+    jobs: 0,
+    watches: 0,
+    hasLive: false,
+    usedAt: 1_000_000,
+    lastCheckedAt: 1_270_000,
+    now: 2_200_000,
+    idleMs: 300_000,
+    checkEveryMs: 30_000,
+  }
+  // A 30s interval tick that fired 930s late after system sleep refreshes usedAt rather than stopping the host.
+  assert.deepEqual(shouldStopIdleHost(base), { stop: false, refreshUsedAt: true })
+  // Sleeping or inside the wake grace window also refreshes usedAt.
+  assert.deepEqual(shouldStopIdleHost({ ...base, lastCheckedAt: 2_170_000, sleeping: true }), {
+    stop: false,
+    refreshUsedAt: true,
+  })
+  assert.deepEqual(shouldStopIdleHost({ ...base, lastCheckedAt: 2_170_000, wakeUntil: 2_205_000 }), {
+    stop: false,
+    refreshUsedAt: true,
+  })
+  // An on-time check after 5 minutes of genuine awake inactivity stops the idle host.
+  assert.deepEqual(shouldStopIdleHost({ ...base, lastCheckedAt: 2_170_000 }), { stop: true, refreshUsedAt: false })
+  // Active runs, jobs, watches, or live values keep the host running.
+  assert.deepEqual(shouldStopIdleHost({ ...base, lastCheckedAt: 2_170_000, running: 1 }), {
+    stop: false,
+    refreshUsedAt: false,
+  })
+})
+
+test('initializeHostWithRetry waits for ready before init, retries once on boot timeout or crash, and does not retry plugin errors', async () => {
+  // 1. First child wedges before sending ready (boot timeout); second child boots and answers init.
+  const discarded: string[] = []
+  const retries: string[] = []
+  let spawned = 0
+  await initializeHostWithRetry({
+    id: 'massive',
+    code: 'module.exports = {}',
+    capabilities: [],
+    bootMs: 10_000,
+    initMs: 30_000,
+    canRetry: () => true,
+    onRetry: (attempt, why) => retries.push(`${attempt}:${why}`),
+    makeTimeout: () => {
+      const controller = new AbortController()
+      if (spawned === 1) {
+        const err = new Error('The operation was aborted due to timeout')
+        err.name = 'TimeoutError'
+        queueMicrotask(() => controller.abort(err))
+      }
+      return { signal: controller.signal, dispose: () => undefined }
+    },
+    spawnAttempt: () => {
+      spawned++
+      const attemptNum = spawned
+      let readyListener: (() => void) | null = null
+      return {
+        boot: new Promise<void>((resolve) => {
+          readyListener = resolve
+          if (attemptNum === 2) queueMicrotask(() => readyListener?.())
+        }),
+        rpc: {
+          request: async (method) => {
+            assert.equal(method, 'init')
+            assert.equal(attemptNum, 2)
+            return { sources: ['aggregates'] }
+          },
+        },
+        discard: (reason) => discarded.push(`${attemptNum}:${reason}`),
+      }
+    },
+  })
+  assert.equal(spawned, 2)
+  assert.deepEqual(retries, ['1:start took longer than 30 s'])
+  assert.deepEqual(discarded, ['1:plugin host did not start: start took longer than 30 s'])
+
+  // 2. Deterministic plugin error in init fails immediately without retrying.
+  let deterministicSpawns = 0
+  await assert.rejects(
+    initializeHostWithRetry({
+      id: 'broken',
+      code: 'module.exports = {}',
+      capabilities: [],
+      bootMs: 10_000,
+      initMs: 30_000,
+      canRetry: () => true,
+      makeTimeout: () => ({ signal: new AbortController().signal, dispose: () => undefined }),
+      spawnAttempt: () => {
+        deterministicSpawns++
+        return {
+          boot: Promise.resolve(),
+          rpc: {
+            request: async () => {
+              throw new Error('declare "files" in capabilities to use ctx.files')
+            },
+          },
+          discard: () => undefined,
+        }
+      },
+    }),
+    /plugin host did not start: declare "files" in capabilities/,
+  )
+  assert.equal(deterministicSpawns, 1)
 })
 
 test('pluginHostEnv preserves Windows and Unix system variables case-insensitively while stripping secrets', () => {
