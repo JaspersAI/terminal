@@ -3,6 +3,7 @@ import {
   isVideoPageUrl,
   normalizeBrowserUrl,
   shortAddress,
+  unwrapBotChallengeUrl,
   type BrowserBounds,
   type BrowserOutput,
   type BrowserSnapshot,
@@ -12,7 +13,7 @@ import {
 export function tabLabel(tab: { title: string; url: string }): string {
   const title = tab.title.trim()
   if (title) return title
-  const normalized = normalizeBrowserUrl(tab.url)
+  const normalized = unwrapBotChallengeUrl(tab.url)
   return normalized ? shortAddress(normalized) : 'New tab'
 }
 
@@ -41,9 +42,9 @@ export function viewportVisible(options: {
 
 /** The address shown in the bar and reported as output: the live page URL first, then normalized panel state or default. */
 export function displayAddress(stateUrl: string, snapshot: BrowserSnapshot): string {
-  if (snapshot.url) return snapshot.url
-  const normalized = normalizeBrowserUrl(stateUrl)
-  if (normalized) return normalized
+  const fallback = unwrapBotChallengeUrl(stateUrl) ?? normalizeBrowserUrl(stateUrl) ?? undefined
+  if (snapshot.url) return unwrapBotChallengeUrl(snapshot.url, fallback) || snapshot.url
+  if (fallback) return fallback
   const trimmed = stateUrl.trim()
   return trimmed || DEFAULT_BROWSER_URL
 }

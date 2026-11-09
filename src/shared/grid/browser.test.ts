@@ -7,24 +7,32 @@ import {
   BROWSER_PLUGIN_TITLE,
   BROWSER_VIEW,
   browserClientHintHeader,
+  browserEmulationOverrideForUrl,
   browserRequestHeaders,
   browserStanding,
+  browserStealthScript,
   browserSummary,
   browserUserAgent,
   browserUserAgentForUrl,
+  browserUserAgentMetadata,
   clipBounds,
+  DEFAULT_BROWSER_BOUNDS,
   DEFAULT_BROWSER_URL,
   formatBrowserPageText,
   googleAuthUserAgent,
   isBlankBrowserPopupUrl,
+  isBotChallengeText,
+  isBotChallengeUrl,
   isBrowserUrl,
   isGoogleAuthUrl,
+  isPerimeterXCookieName,
   isVideoPageUrl,
   normalizeBounds,
   normalizeBrowserUrl,
   readBrowserState,
   scaleBounds,
   shouldShowBrowser,
+  unwrapBotChallengeUrl,
 } from './browser.ts'
 import { EMPTY_GRID, layoutOf, placeFramed, placeView, setMode, setRect, setZoom, withLayout } from './grid.ts'
 
@@ -395,4 +403,215 @@ test('formatBrowserPageText combines visible page text with deduplicated resolve
       '- [Markets Live](https://www.bloomberg.com/markets)',
     ].join('\n'),
   )
+})
+
+test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text and PerimeterX cookies, and sanitizes client-side navigator.userAgentData', async () => {
+  assert.deepEqual(DEFAULT_BROWSER_BOUNDS, { x: 0, y: 0, width: 1280, height: 800 })
+
+  const challengeMarkets =
+    'https://www.bloomberg.com/tosv2.html?vid=&uuid=2db18732-0522-11ef-8279-690d11208da8&url=L21hcmtldHM='
+  const challengeArticle =
+    'https://www.bloomberg.com/tosv2.html?url=L25ld3MvYXJ0aWNsZXMvMjAyNi0xMS0wNC9kZWJ0LWxpbWl0%3Foh%3D1&uuid=abc'
+  const challengeNoParam = 'https://www.bloomberg.com/tosv2.html?uuid=abc'
+
+  assert.equal(isBotChallengeUrl(challengeMarkets), true)
+  assert.equal(isBotChallengeUrl('https://www.bloomberg.com/markets'), false)
+  assert.equal(unwrapBotChallengeUrl(challengeMarkets), 'https://www.bloomberg.com/markets')
+  assert.equal(
+    unwrapBotChallengeUrl(challengeArticle),
+    'https://www.bloomberg.com/news/articles/2026-11-04/debt-limit?oh=1',
+  )
+  assert.equal(
+    unwrapBotChallengeUrl(challengeNoParam, 'https://www.bloomberg.com/markets'),
+    'https://www.bloomberg.com/markets',
+  )
+  assert.equal(unwrapBotChallengeUrl(challengeNoParam), 'https://www.bloomberg.com/')
+  assert.deepEqual(readBrowserState({ url: challengeMarkets }), { url: 'https://www.bloomberg.com/markets' })
+
+  assert.equal(
+    isBotChallengeText(
+      "We've detected unusual activity from your computer network. To continue, please click the box below to let us know you're not a robot.",
+      'Bloomberg - Are you a robot?',
+    ),
+    true,
+  )
+  assert.equal(isBotChallengeText('Normal market headlines', 'Bloomberg - Are you a robot?'), true)
+  assert.equal(isBotChallengeText('Stocks rallied on Monday.', 'Bloomberg Markets'), false)
+
+  assert.equal(isPerimeterXCookieName('_px3'), true)
+  assert.equal(isPerimeterXCookieName('_pxvid'), true)
+  assert.equal(isPerimeterXCookieName('pxcts'), true)
+  assert.equal(isPerimeterXCookieName('bbg_consent'), false)
+
+  const rawUa =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) jaspers-terminal/0.14.5 Chrome/136.0.7103.49 Electron/44.10.0 Safari/537.36'
+  const chromeOverride = browserEmulationOverrideForUrl('https://www.bloomberg.com/markets', rawUa, {
+    chromeVersion: '136.0.7103.49',
+    platform: 'darwin',
+    arch: 'arm64',
+  })
+  assert.equal(
+    chromeOverride.userAgent,
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.7103.49 Safari/537.36',
+  )
+  assert.equal(chromeOverride.platform, 'MacIntel')
+  assert.deepEqual(chromeOverride.userAgentMetadata?.brands, [
+    { brand: 'Not.A/Brand', version: '99' },
+    { brand: 'Google Chrome', version: '136' },
+    { brand: 'Chromium', version: '136' },
+  ])
+  assert.deepEqual(chromeOverride.userAgentMetadata?.fullVersionList, [
+    { brand: 'Not.A/Brand', version: '99.0.0.0' },
+    { brand: 'Google Chrome', version: '136.0.7103.49' },
+    { brand: 'Chromium', version: '136.0.7103.49' },
+  ])
+
+  const googleOverride = browserEmulationOverrideForUrl('https://accounts.google.com/signin', rawUa, {
+    chromeVersion: '136.0.7103.49',
+    platform: 'darwin',
+  })
+  assert.equal(googleOverride.userAgent, googleAuthUserAgent('darwin'))
+  assert.equal(googleOverride.userAgentMetadata, undefined)
+
+  // Evaluate browserStealthScript against a simulated Electron main-world environment that leaks "Electron" in userAgentData.
+  const meta = browserUserAgentMetadata({ chromeVersion: '136.0.7103.49', platform: 'darwin', arch: 'arm64' })
+  assert.equal(meta.architecture, 'arm')
+  const script = browserStealthScript({ chromeVersion: '136.0.7103.49', platform: 'darwin', arch: 'arm64' })
+  const uaDataProto = {
+    get brands() {
+      return [
+        { brand: 'Not.A/Brand', version: '99' },
+        { brand: 'Electron', version: '44' },
+        { brand: 'Chromium', version: '136' },
+      ]
+    },
+    get mobile() {
+      return false
+    },
+    get platform() {
+      return 'macOS'
+    },
+    toJSON() {
+      return { brands: this.brands, mobile: this.mobile, platform: this.platform }
+    },
+    async getHighEntropyValues(_hints: string[]) {
+      return {
+        brands: this.brands,
+        fullVersionList: [
+          { brand: 'Not.A/Brand', version: '99.0.0.0' },
+          { brand: 'Electron', version: '44.10.0' },
+          { brand: 'Chromium', version: '136.0.7103.49' },
+        ],
+        uaFullVersion: '136.0.7103.49',
+        platform: 'macOS',
+        platformVersion: '15.0.0',
+        architecture: 'arm',
+        bitness: '64',
+        model: '',
+        mobile: false,
+        wow64: false,
+      }
+    },
+  }
+  const navProto = {
+    get userAgent() {
+      return chromeOverride.userAgent
+    },
+    get webdriver() {
+      return true
+    },
+    get languages() {
+      return [] as string[]
+    },
+    get language() {
+      return ''
+    },
+    get userAgentData() {
+      return Object.create(uaDataProto)
+    },
+  }
+  const docProto = {
+    get hidden() {
+      return true
+    },
+    get visibilityState() {
+      return 'hidden'
+    },
+  }
+  const fakeNavigator = Object.create(navProto) as {
+    userAgent: string
+    webdriver: boolean
+    languages: readonly string[]
+    language: string
+    userAgentData?: {
+      brands: { brand: string; version: string }[]
+      toJSON(): { brands: { brand: string; version: string }[]; mobile: boolean; platform: string }
+      getHighEntropyValues(hints: string[]): Promise<{
+        brands: { brand: string; version: string }[]
+        fullVersionList: { brand: string; version: string }[]
+      }>
+    }
+  }
+  const fakeDocument = Object.create(docProto) as { hidden: boolean; visibilityState: string }
+  const fakeWindow = {
+    navigator: fakeNavigator,
+    document: fakeDocument,
+    Navigator: { prototype: navProto },
+    Document: { prototype: docProto },
+    innerWidth: 1280,
+    innerHeight: 800,
+    outerWidth: 0,
+    outerHeight: 0,
+    screen: { availWidth: 1440, availHeight: 900 },
+    chrome: undefined as Record<string, unknown> | undefined,
+  }
+  new Function('window', 'navigator', 'document', script)(fakeWindow, fakeNavigator, fakeDocument)
+
+  assert.equal(fakeNavigator.webdriver, false)
+  assert.deepEqual(fakeNavigator.userAgentData?.brands, [
+    { brand: 'Not.A/Brand', version: '99' },
+    { brand: 'Google Chrome', version: '136' },
+    { brand: 'Chromium', version: '136' },
+  ])
+  const hi = await fakeNavigator.userAgentData?.getHighEntropyValues(['brands', 'fullVersionList'])
+  assert.deepEqual(hi?.fullVersionList, [
+    { brand: 'Not.A/Brand', version: '99.0.0.0' },
+    { brand: 'Google Chrome', version: '136.0.7103.49' },
+    { brand: 'Chromium', version: '136.0.7103.49' },
+  ])
+  assert.equal(typeof fakeWindow.chrome?.runtime, 'object')
+  assert.equal(typeof fakeWindow.chrome?.app, 'object')
+  assert.equal(fakeWindow.outerWidth, 1280)
+  assert.equal(fakeWindow.outerHeight, 800)
+  assert.equal(fakeDocument.hidden, false)
+  assert.equal(fakeDocument.visibilityState, 'visible')
+
+  // On Google sign-in hosts with Firefox User-Agent, userAgentData is hidden and window.chrome is not added.
+  const ffNavProto = {
+    get userAgent() {
+      return googleOverride.userAgent
+    },
+    get webdriver() {
+      return true
+    },
+    get userAgentData() {
+      return Object.create(uaDataProto)
+    },
+  }
+  const ffNav = Object.create(ffNavProto) as { webdriver: boolean; userAgentData?: unknown }
+  const ffWin = {
+    navigator: ffNav,
+    document: fakeDocument,
+    Navigator: { prototype: ffNavProto },
+    Document: { prototype: docProto },
+    innerWidth: 1280,
+    innerHeight: 800,
+    outerWidth: 1280,
+    outerHeight: 800,
+    chrome: undefined as Record<string, unknown> | undefined,
+  }
+  new Function('window', 'navigator', 'document', script)(ffWin, ffNav, fakeDocument)
+  assert.equal(ffNav.webdriver, false)
+  assert.equal(ffNav.userAgentData, undefined)
+  assert.equal(ffWin.chrome, undefined)
 })
