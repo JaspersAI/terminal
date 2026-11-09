@@ -1,7 +1,29 @@
 import { handedBy } from '../../shared/agent/typed'
-import { asksForLoop, loopName, named, NO, notStarted, START, startQuestion, type Loop } from '../../shared/loops/loops'
+import {
+  asksForLoop,
+  handoffSummary,
+  handoffWritten,
+  loopName,
+  named,
+  NO,
+  notStarted,
+  START,
+  startInstructions,
+  startQuestion,
+  type Loop,
+} from '../../shared/loops/loops'
 import { checkModel } from '../../shared/tasks/tasks'
-import { askUserFor, asWindow, closeLoop, createLoop, deleteLoop, detachTab, reopenLoop, roomForLoop } from '../actions'
+import {
+  askUserFor,
+  asWindow,
+  closeLoop,
+  createLoop,
+  deleteLoop,
+  detachTab,
+  reopenLoop,
+  roomForLoop,
+  updateLoop,
+} from '../actions'
 import { gridSizeOf } from '../grid/grid'
 import { findRoomTab } from '../loops/loops'
 import { getState, toPublic } from '../state'
@@ -25,7 +47,7 @@ const ROOM = { type: 'string', description: 'Its name, like room_3.' } as const
 const MESSAGE = {
   type: 'string',
   description:
-    "What you add for its agent under the user's request, which it is always given as typed: its part of a request that starts several. Leave it out when the request as typed says it all.",
+    "The refined, self-contained instructions you write for this room's agent under the user's request (unpacking any context from other rooms or panels since room agents are isolated, and clarifying rough or terse prompts). It is shown to the user as the instructions passed to the room.",
 } as const
 
 function asRoomArg(input: Record<string, unknown>): string {
@@ -50,12 +72,36 @@ const updateRoom: Tool = {
   name: 'update_room',
   handoff: true,
   description:
-    "Hands the request to a room that already exists when the work in its tile needs to change or run something new: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view to place or close, or a follow-up for its agent to run. Its agent takes it up in its own tile, at once when it is free and with what it is doing now when it is at work, on the user's request as they typed it, with message under it when you write one. Do not use this to summarize, explain, compare, or answer a question about what a room or its views already show or have found: read the room with read_room and its view text with get (panels/<id>/text) or query, and answer the user yourself. Never start a second room for what one is already doing.",
-  parameters: { type: 'object', properties: { room: ROOM, loop: ROOM, message: MESSAGE } },
+    "Hands the request to a room that already exists when the work in its tile needs to change, run something new, or have its instructions corrected: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view to place or close, or a follow-up for its agent to run. Always refine and expand rough, terse, or cross-room prompts into explicit, self-contained instructions in message (and optionally update brief, systemPrompt, or desc when the room's standing instructions change), unpacking any context from other rooms or panels first. Its agent takes it up in its own tile, at once when it is free and with what it is doing now when it is at work, on the user's request as they typed it, with your refined instructions shown to the user and passed under it. Do not use this to summarize, explain, compare, or answer a question about what a room or its views already show or have found: read the room with read_room and its view text with get (panels/<id>/text) or query, and answer the user yourself. Never start a second room for what one is already doing.",
+  parameters: {
+    type: 'object',
+    properties: {
+      room: ROOM,
+      loop: ROOM,
+      message: MESSAGE,
+      desc: { type: 'string', description: 'Optional updated one-line description for the room.' },
+      brief: { type: 'string', description: "Optional updated standing brief for the room's agent." },
+      systemPrompt: {
+        type: 'string',
+        description: "Optional updated system prompt instructions for the room's agent.",
+      },
+    },
+  },
   async run(input, context) {
     const loop = findLoop(toPublic(getState()), context.workspaceId, asRoomArg(input))
-    const written = optional(input.message, (value) => asWords(value, 'message'))
-    return hand(context, loop, written, `Sent to ${loopName(loop.id)}.`)
+    const desc = optional(input.desc, (value) => asWords(value, 'desc'))
+    const brief = optional(input.brief, (value) => (typeof value === 'string' ? value.trim() : ''))
+    const systemPrompt = optional(input.systemPrompt, (value) => (typeof value === 'string' ? value.trim() : ''))
+    if (desc !== undefined || brief !== undefined || systemPrompt !== undefined) {
+      updateLoop(context.workspaceId, loop.id, {
+        ...(desc !== undefined ? { desc } : {}),
+        ...(brief !== undefined ? { brief } : {}),
+        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+      })
+    }
+    const message = optional(input.message, (value) => asWords(value, 'message'))
+    const written = handoffWritten({ message, brief, systemPrompt })
+    return hand(context, loop, written, handoffSummary('Sent to', loop.id, written))
   },
 }
 
@@ -147,7 +193,7 @@ function createRoomTool(context: ToolContext): Tool {
     name: 'create_room',
     handoff: true,
     description:
-      'Proposes and sets up a new room with a tile and an isolated agent of its own: for repeatable or lasting work that takes more than 3-6 seconds, or anything that needs views on the grid. Give it one line saying what it is (desc), a brief/systemPrompt for its agent saying what to do and what done looks like, and optionally the model for the room; the installed plugins and skills it needs are chosen for it. The user is then asked whether to start it, shown desc, plugins, and model, and nothing is made unless they press Start: do not ask that yourself, and when they say no or write something else the call says so. Once confirmed, the room is set up in a sandboxed frame and handed off to its agent, which operates the room from then on: do not also do the work yourself. A round in which you only started or sent work ends your part: the user is told what these calls answered, and you write nothing more.',
+      'Proposes and sets up a new room with a tile and an isolated agent of its own: for repeatable or lasting work that takes more than 3-6 seconds, or anything that needs views on the grid. Give it one line saying what it is (desc), a refined, self-contained brief/systemPrompt for its agent saying what to do and what done looks like (always expanding rough, terse, or cross-room prompts and unpacking any context from other rooms first, since room agents are isolated), and optionally the model for the room; the installed plugins and skills it needs are chosen for it. The user is then asked whether to start it, shown desc, plugins, model, and the refined instructions, and nothing is made unless they press Start: do not ask that yourself, and when they say no or write something else the call says so. Once confirmed, the room is set up in a sandboxed frame and handed off to its agent with those refined instructions shown explicitly in the room and in Central: do not also do the work yourself. A round in which you only started or sent work ends your part: the user is told what these calls answered, and you write nothing more.',
     parameters: {
       type: 'object',
       properties: {
@@ -198,6 +244,7 @@ function createRoomTool(context: ToolContext): Tool {
       const window = asWindow(input.window)
       // Sandbox pre-flight: validate that the room frame fits on the tab before setting up or asking the user.
       roomForLoop(workspaceId, window, placement)
+      const message = optional(input.message, (value) => asWords(value, 'message'))
       const { plugins, skills } = await setUpLoop(desc, systemPrompt ? `${brief}\n${systemPrompt}` : brief, ran, {
         plugins: Array.isArray(input.plugins) ? input.plugins : undefined,
         skills: Array.isArray(input.skills) ? input.skills : undefined,
@@ -207,7 +254,7 @@ function createRoomTool(context: ToolContext): Tool {
           startQuestion(desc, plugins, model),
           [START, NO],
           ran.signal,
-          undefined,
+          startInstructions(brief, systemPrompt, message),
           askedBy(ran.runId),
         )
         if (asked.answer !== null) noteAnswered(ran.runId, asked.answer)
@@ -220,8 +267,8 @@ function createRoomTool(context: ToolContext): Tool {
         { desc, brief, plugins, skills, ...(model ? { model } : {}), ...(systemPrompt ? { systemPrompt } : {}) },
         placement,
       )
-      const written = optional(input.message, (value) => asWords(value, 'message'))
-      return hand(ran, loop, written, `Started ${loopName(loop.id)}.`)
+      const written = handoffWritten({ message, brief, systemPrompt })
+      return hand(ran, loop, written, handoffSummary('Started', loop.id, written))
     },
   }
 }

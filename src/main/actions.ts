@@ -43,7 +43,9 @@ import {
   NO_LOOPS,
   withLoopFor,
   withLoopAsked,
+  withLoopUpdated,
   type Loop,
+  type LoopPatch,
   type LoopSpec,
 } from '../shared/loops/loops'
 import { archiveTabRooms, closedLoop, globalSeq, reopenAcrossTabs, withoutLoop } from '../shared/loops/closed'
@@ -176,6 +178,16 @@ const HANDLERS: Record<Action['type'], Handler> = {
     const room = asString(raw.room)
     if (!LOOP_ID.test(room)) throw new Error('room.reopen names a room by its id.')
     reopenLoop(asString(raw.workspaceId), room, raw.window === undefined ? undefined : asWindow(raw.window))
+  },
+  'loop.update': (raw) => {
+    const loop = asString(raw.loop)
+    if (!LOOP_ID.test(loop)) throw new Error('loop.update names a loop by its id.')
+    updateLoop(asString(raw.workspaceId), loop, asLoopPatch(raw))
+  },
+  'room.update': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.update names a room by its id.')
+    updateLoop(asString(raw.workspaceId), room, asLoopPatch(raw))
   },
   'element.setMode': (raw) => {
     const workspaceId = asString(raw.workspaceId)
@@ -995,6 +1007,26 @@ export function reopenLoop(workspaceId: string, loopId: string, window?: number)
     return { ...current, grids: back.grids, loops: back.loops }
   })
   return frame!
+}
+
+/** Updates a room's `desc`, `brief`, or `systemPrompt` across any tab. */
+export function updateLoop(workspaceId: string, loopId: string, patch: LoopPatch, now = Date.now()): void {
+  update((state) => {
+    const tabId = findRoomTab(state, loopId) ?? workspaceId
+    return withLoops(state, tabId, withLoopUpdated(state.loops[tabId] ?? NO_LOOPS, loopId, patch, now))
+  })
+}
+
+function asLoopPatch(raw: Record<string, unknown>): LoopPatch {
+  const desc = raw.desc === undefined ? undefined : asString(raw.desc)
+  const brief = raw.brief === undefined ? undefined : asString(raw.brief)
+  const systemPrompt =
+    raw.systemPrompt === undefined ? undefined : raw.systemPrompt === null ? null : asString(raw.systemPrompt)
+  return {
+    ...(desc !== undefined ? { desc } : {}),
+    ...(brief !== undefined ? { brief } : {}),
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+  }
 }
 
 /**

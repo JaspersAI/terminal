@@ -1259,3 +1259,11 @@ test('a loop agent is told to equip research/room analysts with needed ready con
     assert.match(rules, /research\/save-analyst/)
   }
 })
+
+test('the orchestrator is told to refine and expand rough, terse, or cross-room prompts into explicit self-contained instructions when starting or updating a room', () => {
+  assert.match(
+    ROUTER_RULES,
+    /refine and expand rough, terse, voice-transcribed, or cross-room prompts into explicit, self-contained instructions/i,
+  )
+  assert.match(ROUTER_RULES, /unpack any referenced rooms, panels, or data first/i)
+})

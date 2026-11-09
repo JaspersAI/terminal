@@ -864,3 +864,23 @@ test('withLoopUpdated updates open and closed room instructions and preserves id
   assert.equal(updatedClosed.closed?.[0]?.loop.systemPrompt, 'Updated closed system')
   assert.equal(updatedClosed.closed?.[0]?.loop.lastActiveAt, 60)
 })
+
+test('a room handoff with brief and no message shows the refined brief in the room transcript while keeping only the raw prompt as user-typed', async () => {
+  const { handedBy, handedTurn, saidByUser } = await import('../agent/typed.ts')
+  const { transcript } = await import('../agent/transcript.ts')
+  const rawPrompt = 'spinout a browser and research every profile referenced in room 87'
+  const brief = 'Open LinkedIn in core/browser and review 3 months of activity for all 13 FLWS executives.'
+  const written = handoffWritten({ message: undefined, brief, systemPrompt: 'Check each profile in order.' })
+  const handed = handedBy(rawPrompt, undefined, written)
+  assert.deepEqual(handed, {
+    typed: rawPrompt,
+    written: brief,
+  })
+  const turn = { role: 'user' as const, text: handedTurn(handed.typed ?? '', handed.written!) }
+  assert.equal(saidByUser([turn], 'room 87'), true)
+  assert.equal(saidByUser([turn], 'all 13 FLWS executives'), false)
+  assert.deepEqual(
+    transcript([turn, { role: 'assistant', text: 'Started.', toolCalls: [], raw: null }], 5).map((e) => e.question),
+    [brief],
+  )
+})
