@@ -100,6 +100,11 @@ export function wakeJaspers(graceMs?: number): void {
   session().wake(graceMs)
 }
 
+/** Remaining milliseconds while Jaspers token refreshes are held off for sleep or wake (0 when ready, Infinity while sleeping). */
+export function jaspersWakeDelayMs(): number {
+  return made ? made.wakeDelayMs() : 0
+}
+
 /** A fetch that goes out as the account: the bearer added, a 401, 402, or 403 renewed once and sent again, a refusal thrown in the service's words. */
 export const asAccount: FetchLike = (url, init) => session().fetch(url, init)
 
