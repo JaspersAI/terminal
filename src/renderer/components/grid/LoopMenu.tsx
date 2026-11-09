@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react'
 import { endedAs, type Exchange } from '../../../shared/agent/transcript'
-import type { Loop } from '../../../shared/loops/loops'
-import { loopTitle } from '../../../shared/loops/loops'
+import { editedInstructionsPrompt, loopTitle, type Loop } from '../../../shared/loops/loops'
 import { menuOf } from '../../../shared/loops/menu'
 import { useAppState } from '../../lib/state'
 import { PAGE } from '../composer/request'
+import { sendToRoom } from './LoopBox'
 import { send } from './send'
 import { useLoopStatus } from './status'
 
@@ -41,9 +41,34 @@ export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose 
   /** The oldest exchange read, while there may be more before it. */
   const [earlier, setEarlier] = useState<number | null>(null)
   const [confirming, setConfirming] = useState(false)
+  const [editingInstructions, setEditingInstructions] = useState(false)
+  const [briefDraft, setBriefDraft] = useState(loop.brief)
+  const [systemDraft, setSystemDraft] = useState(loop.systemPrompt ?? '')
   const root = useRef<HTMLDivElement>(null)
   const reading = useRef(0)
   const status = useLoopStatus(workspaceId, loop.id)
+
+  useEffect(() => {
+    if (!editingInstructions) {
+      setBriefDraft(loop.brief)
+      setSystemDraft(loop.systemPrompt ?? '')
+    }
+  }, [loop.brief, loop.systemPrompt, editingInstructions])
+
+  function saveInstructions(andRun: boolean): void {
+    send({
+      type: 'room.update',
+      workspaceId,
+      room: loop.id,
+      brief: briefDraft,
+      systemPrompt: systemDraft,
+    })
+    setEditingInstructions(false)
+    if (andRun) {
+      const prompt = editedInstructionsPrompt(briefDraft, systemDraft)
+      if (prompt) sendToRoom({ workspaceId, on: elementId }, loop.id, prompt)
+    }
+  }
 
   /** Reads a page of the work's log, as its box reads it (every key the app holds masked), newest first. */
   const read = useCallback(
@@ -116,6 +141,12 @@ export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose 
       onKeyDown={(event) => {
         if (event.key !== 'Escape') return
         event.stopPropagation()
+        if (editingInstructions) {
+          setEditingInstructions(false)
+          setBriefDraft(loop.brief)
+          setSystemDraft(loop.systemPrompt ?? '')
+          return
+        }
         onClose()
       }}
       // Above the edges that resize and the bar's buttons, and inside the tile: it scrolls when the tile is short.
@@ -165,6 +196,88 @@ export function LoopMenu({ workspaceId, elementId, loop, opener, hangs, onClose 
           </button>
         )}
       </div>
+      <section data-menu-instructions className="border-b border-border p-2">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <h3 className="text-muted-foreground">Instructions</h3>
+          {!editingInstructions && (
+            <button
+              type="button"
+              data-menu-edit-instructions
+              onClick={() => {
+                setBriefDraft(loop.brief)
+                setSystemDraft(loop.systemPrompt ?? '')
+                setEditingInstructions(true)
+              }}
+              className="text-muted-foreground underline hover:text-foreground"
+            >
+              {menu.brief || menu.systemPrompt ? 'Edit' : 'Add'}
+            </button>
+          )}
+        </div>
+        {editingInstructions ? (
+          <div className="flex flex-col gap-1.5">
+            <textarea
+              data-menu-brief-input
+              aria-label="Room instructions"
+              rows={3}
+              value={briefDraft}
+              placeholder="Instructions for what this room's agent should do…"
+              onChange={(event) => setBriefDraft(event.target.value)}
+              className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
+            />
+            <textarea
+              data-menu-system-prompt-input
+              aria-label="Room system prompt"
+              rows={2}
+              value={systemDraft}
+              placeholder="System prompt (optional)…"
+              onChange={(event) => setSystemDraft(event.target.value)}
+              className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
+            />
+            <div className="flex flex-wrap items-center gap-1">
+              <button
+                type="button"
+                data-menu-apply-instructions
+                onClick={() => saveInstructions(true)}
+                className="border border-primary bg-primary px-2 py-0.5 text-primary-foreground"
+              >
+                Save &amp; run
+              </button>
+              <button
+                type="button"
+                data-menu-save-instructions
+                onClick={() => saveInstructions(false)}
+                className="border border-border px-2 py-0.5 hover:bg-muted"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                data-menu-cancel-instructions
+                onClick={() => {
+                  setEditingInstructions(false)
+                  setBriefDraft(loop.brief)
+                  setSystemDraft(loop.systemPrompt ?? '')
+                }}
+                className="px-1.5 py-0.5 text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : menu.brief || menu.systemPrompt ? (
+          <div className="space-y-1">
+            {menu.brief && <p className="whitespace-pre-wrap break-words">{menu.brief}</p>}
+            {menu.systemPrompt && menu.systemPrompt !== menu.brief && (
+              <p className="whitespace-pre-wrap break-words text-muted-foreground">
+                <span className="font-medium">System prompt:</span> {menu.systemPrompt}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-muted-foreground">No instructions set</p>
+        )}
+      </section>
       <section className="border-b border-border p-2">
         <h3 className="mb-1 text-muted-foreground">Told of</h3>
         {menu.plugins.length === 0 ? (
