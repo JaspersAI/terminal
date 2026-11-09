@@ -619,6 +619,7 @@ test('initializeHostWithRetry waits for ready before init, retries once on boot 
   // 1. First child wedges before sending ready (boot timeout); second child boots and answers init.
   const discarded: string[] = []
   const retries: string[] = []
+  const timeoutsArmed: number[] = []
   let spawned = 0
   await initializeHostWithRetry({
     id: 'massive',
@@ -628,7 +629,8 @@ test('initializeHostWithRetry waits for ready before init, retries once on boot 
     initMs: 30_000,
     canRetry: () => true,
     onRetry: (attempt, why) => retries.push(`${attempt}:${why}`),
-    makeTimeout: () => {
+    makeTimeout: (ms) => {
+      timeoutsArmed.push(ms)
       const controller = new AbortController()
       if (spawned === 1) {
         const err = new Error('The operation was aborted due to timeout')
@@ -658,6 +660,8 @@ test('initializeHostWithRetry waits for ready before init, retries once on boot 
     },
   })
   assert.equal(spawned, 2)
+  // Attempt 1 timed out during boot (10s), so its 30s init timer was never armed; attempt 2 armed boot (10s) then init (30s).
+  assert.deepEqual(timeoutsArmed, [10_000, 10_000, 30_000])
   assert.deepEqual(retries, ['1:start took longer than 30 s'])
   assert.deepEqual(discarded, ['1:plugin host did not start: start took longer than 30 s'])
 

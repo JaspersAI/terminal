@@ -179,9 +179,12 @@ export async function runInHost(id: string, name: string, args: unknown, workspa
     const host = await hostFor(id)
     host.running++
     host.usedAt = Date.now()
-    const timeout = awakeTimeout(SOURCE_MS)
+    let timeout: { signal: AbortSignal; dispose: () => void } | null = null
+    let ready = false
     try {
       await host.ready
+      ready = true
+      timeout = awakeTimeout(SOURCE_MS)
       // The plugin's declared secrets ride with each run, for ${secret:KEY} in its fetches; the values
       // stay in the plugin's own process, which is where an MCP server's env already puts them.
       return await host.rpc.request(
@@ -190,7 +193,7 @@ export async function runInHost(id: string, name: string, args: unknown, workspa
         timeout.signal,
       )
     } catch (err) {
-      if (attempt === 0 && (isReloadAbort(err) || isStartupAbort(err)) && builds.has(id) && !quitting) {
+      if (attempt === 0 && (isReloadAbort(err) || (!ready && isStartupAbort(err))) && builds.has(id) && !quitting) {
         spawnedAt.delete(id)
         continue
       }
@@ -198,7 +201,7 @@ export async function runInHost(id: string, name: string, args: unknown, workspa
         throw new Error(`${id}/${name} took longer than ${SOURCE_MS / 60_000} minutes.`)
       throw err
     } finally {
-      timeout.dispose()
+      timeout?.dispose()
       host.running--
       host.usedAt = Date.now()
     }

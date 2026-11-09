@@ -512,10 +512,11 @@ export async function initializeHostWithRetry(options: InitializeHostOptions): P
   for (let attempt = 0; ; attempt++) {
     const current = options.spawnAttempt(attempt)
     const bootTimeout = options.makeTimeout(options.bootMs)
-    const initTimeout = options.makeTimeout(options.initMs)
+    let initTimeout: { signal: AbortSignal; dispose: () => void } | null = null
     try {
       await untilAborted(current.boot, bootTimeout.signal)
       bootTimeout.dispose()
+      initTimeout = options.makeTimeout(options.initMs)
       await current.rpc.request(
         'init',
         { id: options.id, code: options.code, capabilities: options.capabilities },
@@ -536,7 +537,7 @@ export async function initializeHostWithRetry(options: InitializeHostOptions): P
       throw new Error(message)
     } finally {
       bootTimeout.dispose()
-      initTimeout.dispose()
+      initTimeout?.dispose()
     }
   }
 }
