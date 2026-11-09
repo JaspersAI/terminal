@@ -46,7 +46,16 @@ import {
   type Loop,
   type LoopSpec,
 } from '../shared/loops/loops'
-import { archiveTabRooms, closedLoop, globalSeq, reopenAcrossTabs, withoutLoop } from '../shared/loops/closed'
+import {
+  archiveTabRooms,
+  archiveTabTasks,
+  closedLoop,
+  closedWithout,
+  globalSeq,
+  reopenAcrossTabs,
+  withoutLoop,
+  withoutRoomTasks,
+} from '../shared/loops/closed'
 import { readBudget } from '../shared/agent/budget'
 import { isTheme } from '../shared/app/theme'
 import { EYE_CONSENT, readEye, readFeedbackText } from '../shared/app/eye'
@@ -813,14 +822,16 @@ export function deleteWorkspace(id: string): void {
     const loops = { ...state.loops }
     const closingLoops = loops[id] ?? NO_LOOPS
     delete loops[id]
-    loops[neighborId] = archiveTabRooms(closingLoops, closingGrids, id, loops[neighborId] ?? NO_LOOPS, Date.now())
+    const now = Date.now()
+    loops[neighborId] = archiveTabRooms(closingLoops, closingGrids, id, loops[neighborId] ?? NO_LOOPS, now)
+    const tasks = archiveTabTasks(state.tasks, closingLoops, closingGrids, id, neighborId, now)
     return {
       ...state,
       workspaces,
       currentWorkspaceId: state.currentWorkspaceId === id ? neighborId : state.currentWorkspaceId,
       grids,
       loops,
-      tasks: state.tasks.filter((t) => t.workspaceId !== id),
+      tasks,
     }
   })
 }
@@ -979,38 +990,59 @@ export function closeLoop(workspaceId: string, loopId: string): void {
 
 /**
  * Reopens a closed room onto `workspaceId` in a window: the one its frame was in when that is open,
- * else the main window. Its frame comes back with the tiles that were inside it, and its conversation goes on.
+ * else the main window. When the room is currently open on another tab, closes it there first so it
+ * moves onto `workspaceId` with its tiles, conversation, and scheduled tasks.
  */
 export function reopenLoop(workspaceId: string, loopId: string, window?: number): GridElement {
   const state = getState()
   const sourceTabId = Object.keys(state.loops).find((id) => closedLoop(state.loops[id] ?? NO_LOOPS, loopId))
   const shut = sourceTabId ? closedLoop(state.loops[sourceTabId] ?? NO_LOOPS, loopId) : undefined
-  if (!shut) throw new Error(`${loopName(loopId)} is not closed.`)
-  const where = window ?? (isOpenWindow(state.windows, shut.window) ? shut.window : MAIN_WINDOW)
+  const openOtherTabId =
+    shut === undefined
+      ? Object.keys(state.loops).find(
+          (id) => id !== workspaceId && (state.loops[id]?.list ?? []).some((one) => one.id === loopId),
+        )
+      : undefined
+  const openFrame = openOtherTabId ? frameOf(state.grids[openOtherTabId] ?? {}, loopId) : undefined
+  if (!shut && !openFrame) throw new Error(`${loopName(loopId)} is not closed.`)
+  const savedWindow = shut?.window ?? openFrame!.window
+  const where = window ?? (isOpenWindow(state.windows, savedWindow) ? savedWindow : MAIN_WINDOW)
   getGrid(workspaceId, where)
   let frame: GridElement | undefined
   update((current) => {
-    const back = reopenAcrossTabs(current.grids, current.loops, workspaceId, loopId, where, Date.now())
+    const back = reopenAcrossTabs(current.grids, current.loops, workspaceId, loopId, where, Date.now(), current.tasks)
     frame = back.frame
-    return { ...current, grids: back.grids, loops: back.loops }
+    return { ...current, grids: back.grids, loops: back.loops, tasks: back.tasks }
   })
+  if (openOtherTabId && openFrame) {
+    dismissSecretRequest({ workspaceId: openOtherTabId, on: openFrame.element.id })
+    syncPluginViewErrors()
+  }
   return frame!
 }
 
 /**
  * Deletes a room for good, open or closed, across any tab: an open one's frame goes, with every tile
- * inside it, and its record. What follows a room leaving the tree, its run stopped and its conversation
- * forgotten, is done where every way one goes is seen (`watchLoops`).
+ * inside it, its record, and any scheduled tasks targeting it. What follows a room leaving the tree,
+ * its run stopped and its conversation forgotten, is done where every way one goes is seen (`watchLoops`).
  */
 export function deleteLoop(workspaceId: string, loopId: string): void {
   const tabId = findRoomTab(getState(), loopId) ?? workspaceId
   const frame = frameOf(getGrids(tabId), loopId)
   if (frame) {
+    const before = getGrids(tabId)
     changeGridOf(
       tabId,
       frame.element.id,
       (grid) => removeElement(grid, frame.element.id),
-      (next) => withLoops(next, tabId, withoutLoop(next.loops[tabId] ?? NO_LOOPS, loopId)),
+      (next) => {
+        const currentLoops = next.loops[tabId] ?? NO_LOOPS
+        const closed = closedWithout(currentLoops, before, next.grids[tabId] ?? {}, Date.now())
+        const shut = closedLoop(closed, loopId)
+        const tasks = shut ? withoutRoomTasks(next.tasks, shut, tabId) : next.tasks
+        const stripped = withLoops(next, tabId, withoutLoop(currentLoops, loopId))
+        return tasks === next.tasks ? stripped : { ...stripped, tasks }
+      },
     )
     dismissSecretRequest({ workspaceId: tabId, on: frame.element.id })
     syncPluginViewErrors()
@@ -1019,14 +1051,17 @@ export function deleteLoop(workspaceId: string, loopId: string): void {
   update((state) => {
     const nextLoops = { ...state.loops }
     let changed = false
+    let tasks = state.tasks
     for (const [id, loops] of Object.entries(state.loops)) {
+      const shut = closedLoop(loops, loopId)
+      if (shut) tasks = withoutRoomTasks(tasks, shut, id)
       const stripped = withoutLoop(loops, loopId)
       if (stripped !== loops) {
         nextLoops[id] = stripped
         changed = true
       }
     }
-    return changed ? { ...state, loops: nextLoops } : state
+    return changed || tasks !== state.tasks ? { ...state, loops: nextLoops, tasks } : state
   })
 }
 

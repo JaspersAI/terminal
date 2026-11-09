@@ -820,8 +820,8 @@ export function gone(prev: Record<string, Loops>, next: Record<string, Loops>): 
 
 /** The chats of the rooms that were open and are not: closed, deleted, or their tab was closed. What they were doing stops. */
 export function shut(prev: Record<string, Loops>, next: Record<string, Loops>): string[] {
-  return Object.entries(prev).flatMap(([workspaceId, had]) => {
-    const open = new Set((next[workspaceId]?.list ?? []).map((one) => one.id))
-    return had.list.filter((one) => !open.has(one.id)).map((one) => loopChat(workspaceId, one))
-  })
+  const open = new Set(Object.values(next).flatMap((now) => now.list.map((one) => one.id)))
+  return Object.entries(prev).flatMap(([workspaceId, had]) =>
+    had.list.filter((one) => !open.has(one.id)).map((one) => loopChat(workspaceId, one)),
+  )
 }
