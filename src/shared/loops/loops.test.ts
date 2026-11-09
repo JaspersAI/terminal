@@ -10,6 +10,7 @@ import {
   frameOf,
   LOOP_EXCLUDED_TOOLS,
   ORCHESTRATOR_TOOLS,
+  ROOM_TITLE_MAX,
   VIEW_TOOLS,
   loopChat,
   loopName,
@@ -33,6 +34,7 @@ import {
   viewPlugin,
   withLoopFor,
   withLoopAsked,
+  withLoopTitle,
   withPlugin,
   withoutTileless,
   type Loop,
@@ -78,11 +80,65 @@ const at = (x: number, y: number, w: number, h: number): Partial<GridElement> =>
 const shape = (g: Grid) =>
   g.elements.map((e) => [e.id, e.loop ?? null, e.parent ?? null, [e.rect.x, e.rect.y, e.rect.w, e.rect.h]])
 
-test('a room is called room_ and the number its counter gave it, and titled Room N in the UI', () => {
+test('a room is called room_ and the number its counter gave it, and titled Room N in the UI unless given a custom title', () => {
   assert.equal(loopName('f3'), 'room_3')
   assert.equal(loopName('f12'), 'room_12')
   assert.equal(loopTitle('f3'), 'Room 3')
   assert.equal(loopTitle('f38'), 'Room 38')
+  assert.equal(loopTitle(loop('f3', 'note')), 'Room 3')
+  assert.equal(loopTitle({ ...loop('f3', 'note'), title: 'Macro Rates' }), 'Macro Rates')
+})
+
+test('withLoopTitle sets, normalizes, caps, and clears custom titles on open and closed rooms, and readLoops persists them', () => {
+  const base: Loops = {
+    seq: 2,
+    list: [loop('f1', 'Rates'), loop('f2', 'FX')],
+    closed: [
+      {
+        loop: loop('f3', 'Commodities'),
+        window: 1,
+        elements: [{ id: 'e1', panelId: 'p1', loop: 'f3', rect: { x: 0, y: 0, w: 4, h: 4 }, z: 1, mode: 'tiled' }],
+        panels: [
+          {
+            id: 'p1',
+            elementId: 'e1',
+            content: frame,
+            state: {},
+            output: null,
+            summary: null,
+            text: null,
+            refreshedAt: null,
+          },
+        ],
+      },
+    ],
+  }
+  const namedOpen = withLoopTitle(base, 'f1', '  Macro   Rates  ')
+  assert.equal(namedOpen.list[0]?.title, 'Macro Rates')
+  assert.equal(loopTitle(namedOpen.list[0]!), 'Macro Rates')
+  // Unchanged title or unknown room returns the same object.
+  assert.equal(withLoopTitle(namedOpen, 'f1', 'Macro Rates'), namedOpen)
+  assert.equal(withLoopTitle(namedOpen, 'f99', 'Other'), namedOpen)
+  assert.equal(withLoopTitle(base, 'f2', ''), base)
+  assert.equal(withLoopTitle(base, 'f2', 'Room 2'), base)
+
+  // Capped at ROOM_TITLE_MAX.
+  const long = withLoopTitle(base, 'f2', 'x'.repeat(ROOM_TITLE_MAX + 25))
+  assert.equal(long.list[1]?.title?.length, ROOM_TITLE_MAX)
+
+  // Clearing or entering the default Room N / room_N resets title back to undefined.
+  for (const reset of ['', '   ', 'Room 1', 'room 1', 'room_1']) {
+    const cleared = withLoopTitle(namedOpen, 'f1', reset)
+    assert.equal(cleared.list[0]?.title, undefined, reset)
+    assert.equal('title' in cleared.list[0]!, false, reset)
+  }
+
+  // Closed rooms can also be renamed and round-tripped through readLoops.
+  const namedClosed = withLoopTitle(namedOpen, 'f3', 'Gold Desk')
+  assert.equal(namedClosed.closed?.[0]?.loop.title, 'Gold Desk')
+  const roundTripped = readLoops(namedClosed.list, namedClosed.seq, namedClosed.closed)
+  assert.equal(roundTripped.list[0]?.title, 'Macro Rates')
+  assert.equal(roundTripped.closed?.[0]?.loop.title, 'Gold Desk')
 })
 
 test('everything on a grid is a tile but the docked chat', () => {
@@ -507,8 +563,12 @@ test('a plugin told of is kept for the loop, once', () => {
   assert.equal(withPlugin(loops, 'f9', 'news'), loops)
 })
 
-test('a room is named by its name however it is written, or by its id', () => {
-  const list = [loop('f1', 'Note'), loop('f12', 'Backtest FLWS')]
+test('a room is named by its name however it is written, by its custom title, or by its id', () => {
+  const list = [
+    { ...loop('f1', 'Note'), title: 'Macro Rates' },
+    loop('f12', 'Backtest FLWS'),
+    { ...loop('f2', 'Other'), title: 'Room 12' },
+  ]
   for (const text of [
     'room_12',
     ' @room_12 ',
@@ -521,7 +581,16 @@ test('a room is named by its name however it is written, or by its id', () => {
     'f12',
   ])
     assert.equal(named(list, text)?.id, 'f12', text)
-  for (const text of ['room_2', 'room_0', 'room', 'Backtest FLWS', '12', 'f0', 'room_12x'])
+  for (const text of [
+    'Macro Rates',
+    '  macro   rates ',
+    '@Macro Rates',
+    '@macro_rates',
+    '@macro-rates',
+    '"Macro Rates"',
+  ])
+    assert.equal(named(list, text)?.id, 'f1', text)
+  for (const text of ['room_3', 'room_0', 'room', 'Backtest FLWS', '12', 'f0', 'room_12x'])
     assert.equal(named(list, text), undefined, text)
 })
 
@@ -599,8 +668,12 @@ test('a name a file saved from before loops were numbered is left behind: a loop
   assert.deepEqual(read.list, [{ id: 'f1', desc: 'A note', brief: '', plugins: [], skills: [], createdAt: 0 }])
 })
 
-test('a typed message that starts with a room\u2019s @name is for that room, and says something after the name', () => {
-  const all = [loop('f1', 'Note'), loop('f2', 'Note'), loop('f12', 'Backtest FLWS')]
+test('a typed message that starts with a room\u2019s @name or @title is for that room, and says something after the name', () => {
+  const all = [
+    { ...loop('f1', 'Note'), title: 'Macro Rates' },
+    { ...loop('f2', 'Note'), title: 'FX Watch' },
+    loop('f12', 'Backtest FLWS'),
+  ]
   const to = (input: string): [string, string] | null => {
     const found = addressed(all, input)
     return found && [found.loop.id, found.message]
@@ -611,6 +684,11 @@ test('a typed message that starts with a room\u2019s @name is for that room, and
   assert.deepEqual(to('  @ROOM12   use two years  '), ['f12', 'use two years'])
   assert.deepEqual(to('@Room 12 use two years'), ['f12', 'use two years'])
   assert.deepEqual(to('@room-2 hi'), ['f2', 'hi'])
+  // Custom room titles can be addressed directly with @, or with underscores/dashes or quotes.
+  assert.deepEqual(to('@Macro Rates add 2Y yield'), ['f1', 'add 2Y yield'])
+  assert.deepEqual(to('@macro_rates add 2Y yield'), ['f1', 'add 2Y yield'])
+  assert.deepEqual(to('@macro-rates add 2Y yield'), ['f1', 'add 2Y yield'])
+  assert.deepEqual(to('@"Macro Rates" add 2Y yield'), ['f1', 'add 2Y yield'])
   // The whole number decides, never a start of it.
   assert.equal(to('@room_1x hi'), null)
   // A message of several lines is kept whole, and a /command after the address is that room's.
@@ -620,6 +698,7 @@ test('a typed message that starts with a room\u2019s @name is for that room, and
   // For no room by name: nothing after it, a number no room has, a name not at the start, an id.
   assert.equal(to('@room_1'), null)
   assert.equal(to('@room_1   '), null)
+  assert.equal(to('@Macro Rates'), null)
   assert.equal(to('@room_9 hi'), null)
   assert.equal(to('hi @room_1'), null)
   assert.equal(to('room_1 hi'), null)

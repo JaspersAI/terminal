@@ -68,7 +68,7 @@ const readRoom: Tool = {
     properties: {
       room: {
         type: 'string',
-        description: 'Its name, like room_3.',
+        description: 'Its name, like room_3, or its custom title.',
       },
       loop: {
         type: 'string',
@@ -103,7 +103,7 @@ const searchRoomsTool: Tool = {
   name: 'search_rooms',
   readsOnly: true,
   description:
-    'Searches all rooms saved in memory across the terminal (open on any tab or closed) by keyword, ordered chronologically by their last activity. Matches room names (like room_3), descriptions, briefs/system prompts, plugins, skills, view summaries/text, and conversation history.',
+    'Searches all rooms saved in memory across the terminal (open on any tab or closed) by keyword, ordered chronologically by their last activity. Matches room names (like room_3), custom titles, descriptions, briefs/system prompts, plugins, skills, view summaries/text, and conversation history.',
   parameters: {
     type: 'object',
     properties: {
@@ -151,9 +151,10 @@ const searchRoomsTool: Tool = {
       `Rooms matching ${query ? JSON.stringify(query) : 'all'} (${matches.length} of ${entries.length}, most recently active first):`,
       ...matches.map((entry) => {
         const where = entry.open ? `open in ${entry.workspaceName}` : 'closed in memory'
+        const title = entry.loop.title ? ` (${JSON.stringify(entry.loop.title)})` : ''
         const plugins = entry.loop.plugins.length > 0 ? `, plugins: ${entry.loop.plugins.join(', ')}` : ''
         const model = entry.loop.model ? `, model: ${entry.loop.model}` : ''
-        return `- ${loopName(entry.loop.id)} [${where}]: ${JSON.stringify(entry.loop.desc)}${plugins}${model}`
+        return `- ${loopName(entry.loop.id)}${title} [${where}]: ${JSON.stringify(entry.loop.desc)}${plugins}${model}`
       }),
     ].join('\n')
   },

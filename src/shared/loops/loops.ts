@@ -34,6 +34,8 @@ export interface Loop {
    * and its log are filed under. Users and models call it by its name, room_1 (`loopName` / `roomName`).
    */
   id: string
+  /** Optional custom title set by the user in the UI. When absent, the room is titled Room N. */
+  title?: string
   /** One line saying what the work is. */
   desc: string
   /** What its agent was set to do, in words written for it. Empty for a tile nobody asked for in words. */
@@ -85,6 +87,7 @@ export interface Loops {
 export const NO_LOOPS: Loops = { seq: 0, list: [] }
 
 export const DESC_MAX = 80
+export const ROOM_TITLE_MAX = 80
 
 /** What is known of a tile when its loop is made for it: its view's title and plugin, and what it shows. */
 export interface TileSeen {
@@ -148,9 +151,51 @@ export function loopName(id: string): string {
   return `room_${loopNumber(id)}`
 }
 
-/** What a room is titled in the UI: Room 3 for f3. */
-export function loopTitle(id: string): string {
-  return `Room ${loopNumber(id)}`
+/** What a room is titled in the UI: its custom title when set, or Room 3 for f3. */
+export function loopTitle(loop: string | Pick<Loop, 'id' | 'title'>): string {
+  if (typeof loop === 'object') {
+    const custom = loop.title?.trim()
+    if (custom) return custom
+    return `Room ${loopNumber(loop.id)}`
+  }
+  return `Room ${loopNumber(loop)}`
+}
+
+/** Normalizes a custom room title, or returns undefined when blank or equal to the room's default Room N / room_N name. */
+export function normalizeLoopTitle(id: string, rawTitle: string): string | undefined {
+  const cleaned = rawTitle.trim().replace(/\s+/g, ' ').slice(0, ROOM_TITLE_MAX).trim()
+  if (!cleaned) return undefined
+  const n = loopNumber(id)
+  if (new RegExp(`^(?:(?:room|loop)[\\s_#-]*|f)${n}$`, 'i').test(cleaned)) return undefined
+  return cleaned
+}
+
+/** Sets or clears a room's custom title on an open or closed room record. Returns the same object when unchanged. */
+export function withLoopTitle(loops: Loops, loopId: string, rawTitle: string): Loops {
+  const nextTitle = normalizeLoopTitle(loopId, rawTitle)
+  const apply = (loop: Loop): Loop => {
+    if (loop.title === nextTitle) return loop
+    const { title: _prev, ...rest } = loop
+    return nextTitle ? { ...rest, title: nextTitle } : rest
+  }
+  const openTarget = loops.list.find((one) => one.id === loopId)
+  if (openTarget) {
+    const updated = apply(openTarget)
+    return updated === openTarget
+      ? loops
+      : { ...loops, list: loops.list.map((one) => (one.id === loopId ? updated : one)) }
+  }
+  const closedTarget = loops.closed?.find((one) => one.loop.id === loopId)
+  if (closedTarget && loops.closed) {
+    const updated = apply(closedTarget.loop)
+    return updated === closedTarget.loop
+      ? loops
+      : {
+          ...loops,
+          closed: loops.closed.map((one) => (one.loop.id === loopId ? { ...one, loop: updated } : one)),
+        }
+  }
+  return loops
 }
 
 /** The plugin of the Jaspers deep research agent: its research rooms. */
@@ -212,24 +257,70 @@ export function statusOf(working: boolean, asking: boolean): LoopStatus {
   return asking ? 'asking' : working ? 'working' : 'idle'
 }
 
+function titleSlug(value: string): string {
+  return value
+    .trim()
+    .replace(/[\s_-]+/g, ' ')
+    .toLowerCase()
+}
+
+function unquote(value: string): string {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1).trim()
+  }
+  return value
+}
+
 /**
  * The room a model or a user names: by its name, room_3 (or legacy loop_3), however it is written
- * (@room_3, room 3, Room #3, room3, @loop_3, loop_3), or by its id, f3.
+ * (@room_3, room 3, Room #3, room3, @loop_3, loop_3), by its id, f3, or by its custom title.
  */
 export function named(loops: readonly Loop[], text: string): Loop | undefined {
-  const number = /^@?(?:(?:room|loop)[\s_#-]*|f)([1-9]\d*)$/i.exec(text.trim())?.[1]
-  return number === undefined ? undefined : loops.find((one) => one.id === `f${number}`)
+  const trimmed = text.trim()
+  const number = /^@?(?:(?:room|loop)[\s_#-]*|f)([1-9]\d*)$/i.exec(trimmed)?.[1]
+  if (number !== undefined) {
+    const byNumber = loops.find((one) => one.id === `f${number}`)
+    if (byNumber) return byNumber
+  }
+  const stripped = unquote(trimmed.replace(/^@/, '').trim())
+  if (!stripped) return undefined
+  const slug = titleSlug(stripped)
+  return loops.find((one) => one.title !== undefined && titleSlug(one.title) === slug)
 }
 
 /**
  * The room a typed message is for, and the message without its address: it starts with that room's
- * name behind an @, @room_3 (or @loop_3), and says something after it. Null when the message is for
- * no room by name, which leaves it the orchestrator's.
+ * name or custom title behind an @, @room_3 (or @loop_3 or @Custom Title), and says something after
+ * it. Null when the message is for no room by name, which leaves it the orchestrator's.
  */
 export function addressed(loops: readonly Loop[], input: string): { loop: Loop; message: string } | null {
-  const match = /^@(?:room|loop)[ _-]?([1-9]\d*)\s+(\S[\s\S]*)$/i.exec(input.trim())
-  const loop = match ? loops.find((one) => one.id === `f${match[1]}`) : undefined
-  return loop ? { loop, message: match![2]! } : null
+  const trimmed = input.trim()
+  const match = /^@(?:room|loop)[ _-]?([1-9]\d*)\s+(\S[\s\S]*)$/i.exec(trimmed)
+  const byNumber = match ? loops.find((one) => one.id === `f${match[1]}`) : undefined
+  if (byNumber) return { loop: byNumber, message: match![2]! }
+  if (!trimmed.startsWith('@')) return null
+  const quoted = /^@(?:"([^"]+)"|'([^']+)')\s+(\S[\s\S]*)$/.exec(trimmed)
+  if (quoted) {
+    const target = quoted[1] ?? quoted[2] ?? ''
+    const slug = titleSlug(target)
+    const found = loops.find((one) => one.title !== undefined && titleSlug(one.title) === slug)
+    if (found) return { loop: found, message: quoted[3]! }
+  }
+  const titled = loops
+    .filter((one): one is Loop & { title: string } => Boolean(one.title?.trim()))
+    .sort((a, b) => b.title.length - a.title.length)
+  for (const one of titled) {
+    const parts = one.title
+      .trim()
+      .split(/[\s_-]+/)
+      .filter(Boolean)
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    if (parts.length === 0) continue
+    const pattern = new RegExp(`^@${parts.join('[\\s_-]+')}\\s+(\\S[\\s\\S]*)$`, 'i')
+    const hit = pattern.exec(trimmed)
+    if (hit) return { loop: one, message: hit[1]! }
+  }
+  return null
 }
 
 /** A workspace's loops with one more plugin its agent is told of. The same object when it already is, or there is no such loop. */
@@ -321,9 +412,11 @@ function readRecord(raw: unknown, taken: readonly Loop[]): Loop | null {
   const one = raw as Record<string, unknown>
   if (typeof one.id !== 'string' || !LOOP_ID.test(one.id) || taken.some((had) => had.id === one.id)) return null
   if (typeof one.desc !== 'string') return null
+  const title = typeof one.title === 'string' ? normalizeLoopTitle(one.id, one.title) : undefined
   const log = Array.isArray(one.log) ? one.log.filter(isChange).map(({ at, change }) => ({ at, change })) : []
   return {
     id: one.id,
+    ...(title ? { title } : {}),
     desc: one.desc,
     brief: typeof one.brief === 'string' ? one.brief : '',
     plugins: strings(one.plugins),

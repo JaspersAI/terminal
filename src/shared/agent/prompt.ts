@@ -210,6 +210,11 @@ export function describeCatalog(state: AppState): string {
  * it is, and its tile, which the grid map shows with the views inside it. It is how a request is known
  * to belong to work that exists.
  */
+function loopLabel(loop: Pick<Loop, 'id' | 'title'>): string {
+  const custom = loop.title?.trim()
+  return custom ? `${loopName(loop.id)} (${JSON.stringify(custom)})` : loopName(loop.id)
+}
+
 export function describeLoops(
   state: AppState,
   workspaceId: string,
@@ -222,7 +227,7 @@ export function describeLoops(
     .flatMap(([tabId, list]) =>
       list.map(
         (one) =>
-          `${loopName(one.id)} (in ${tabNameOf.get(tabId)!}, ${statusOf(one, tabId)}): ${JSON.stringify(one.desc)}`,
+          `${loopLabel(one)} (in ${tabNameOf.get(tabId)!}, ${statusOf(one, tabId)}): ${JSON.stringify(one.desc)}`,
       ),
     )
   const closed = Object.values(state.closedLoops).flat()
@@ -231,7 +236,7 @@ export function describeLoops(
     closed.length === 0
       ? []
       : [
-          `Closed work, which reopen_room brings back: ${closed.map((one) => `${loopName(one.id)}, ${JSON.stringify(one.desc)}`).join('; ')}.`,
+          `Closed work, which reopen_room brings back: ${closed.map((one) => `${loopLabel(one)}, ${JSON.stringify(one.desc)}`).join('; ')}.`,
         ]
   if (loops.length === 0) return ['Work on this workspace: none.', ...otherLine, ...shut].join('\n')
   const grids = state.grids[workspaceId] ?? {}
@@ -239,7 +244,7 @@ export function describeLoops(
     'Work on this workspace, each piece with a tile and an agent of its own:',
     ...loops.map((one) => {
       const tile = frameOf(grids, one.id)?.element.id ?? 'none'
-      return `- ${loopName(one.id)}, ${statusOf(one, workspaceId)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
+      return `- ${loopLabel(one)}, ${statusOf(one, workspaceId)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
     }),
     ...otherLine,
     ...shut,
@@ -525,7 +530,7 @@ function describeFocus(
   if (panel?.content.kind === 'frame') {
     const tag = grid.elements.find((e) => e.id === elementId)?.loop
     const work = state.loops[workspaceId]?.find((one) => one.id === tag)
-    return `Focused element ${elementId}, the tile of ${work ? loopName(work.id) : 'a piece of work'}.`
+    return `Focused element ${elementId}, the tile of ${work ? loopLabel(work) : 'a piece of work'}.`
   }
   if (panel?.content.kind !== 'view') return `Focused element ${elementId} is not a view.`
   return [
@@ -567,7 +572,7 @@ export function describeTiles(
 ): string {
   const grids = state.grids[workspaceId] ?? {}
   const frame = frameOf(grids, loop.id)
-  const yours = `Your tile, of ${loopName(loop.id)}`
+  const yours = `Your tile, of ${loopLabel(loop)}`
   if (!frame) return `${yours}: none.`
   const grid = grids[frame.window]!
   const { id, mode, rect } = frame.element
@@ -610,7 +615,7 @@ export function describeLoop(
   instructionsFor: (viewId: string) => string | undefined,
 ): string {
   return [
-    `${loopName(loop.id)}: ${loop.desc}`,
+    `${loopLabel(loop)}: ${loop.desc}`,
     `status: ${status}`,
     ...(loop.model ? [`model: ${loop.model}`] : []),
     ...(loop.brief ? [`brief: ${loop.brief}`] : []),

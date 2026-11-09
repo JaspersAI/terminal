@@ -43,6 +43,7 @@ import {
   NO_LOOPS,
   withLoopFor,
   withLoopAsked,
+  withLoopTitle,
   type Loop,
   type LoopSpec,
 } from '../shared/loops/loops'
@@ -176,6 +177,16 @@ const HANDLERS: Record<Action['type'], Handler> = {
     const room = asString(raw.room)
     if (!LOOP_ID.test(room)) throw new Error('room.reopen names a room by its id.')
     reopenLoop(asString(raw.workspaceId), room, raw.window === undefined ? undefined : asWindow(raw.window))
+  },
+  'loop.rename': (raw) => {
+    const loop = asString(raw.loop)
+    if (!LOOP_ID.test(loop)) throw new Error('loop.rename names a loop by its id.')
+    renameLoop(asString(raw.workspaceId), loop, asString(raw.title ?? raw.name ?? ''))
+  },
+  'room.rename': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.rename names a room by its id.')
+    renameLoop(asString(raw.workspaceId), room, asString(raw.title ?? raw.name ?? ''))
   },
   'element.setMode': (raw) => {
     const workspaceId = asString(raw.workspaceId)
@@ -968,6 +979,14 @@ export function removeChecked(workspaceId: string, elementId: string): void {
   // that asked it, which stops when its work closes (`watchLoops`).
   dismissSecretRequest({ workspaceId, on: elementId })
   syncPluginViewErrors()
+}
+
+/** Sets or clears a room's custom title on whichever tab holds it (open or closed). */
+export function renameLoop(workspaceId: string, loopId: string, rawTitle: string): void {
+  update((state) => {
+    const tabId = findRoomTab(state, loopId) ?? workspaceId
+    return withLoops(state, tabId, withLoopTitle(state.loops[tabId] ?? NO_LOOPS, loopId, rawTitle))
+  })
 }
 
 /** Closes a room: its frame goes, with every tile inside it, and the room is kept in memory to reopen. One that is not open is nothing to do. */
