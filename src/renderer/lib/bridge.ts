@@ -9,65 +9,70 @@ import { dispatch, get, subscribe } from './state'
 // dispatches to main. Nothing here validates: main does, against the view's schema, wherever the
 // write came from. A plugin view in an iframe will reach this same object through a relay.
 
-export const hostBridge: Bridge = {
-  peek(path) {
-    return read(parsePath(path))
-  },
+export function hostBridgeFor(workspaceId?: string): Bridge {
+  const resolveWorkspaceId = (): string => workspaceId ?? get().currentWorkspaceId
+  return {
+    peek(path) {
+      return read(parsePath(path), resolveWorkspaceId())
+    },
 
-  async get(path) {
-    return read(parsePath(path))
-  },
+    async get(path) {
+      return read(parsePath(path), resolveWorkspaceId())
+    },
 
-  subscribe(path, listener) {
-    const parsed = parsePath(path)
-    let last = read(parsed)
-    listener(last)
-    return subscribe(() => {
-      const next = read(parsed)
-      // Every push replaces the whole tree, so most of them say nothing about this path; and it
-      // arrives deserialized, so an object here is never the reference it was: compare by value, or
-      // every listener on an object path hears every push.
-      if (sameValue(next, last)) return
-      last = next
-      listener(next)
-    })
-  },
+    subscribe(path, listener) {
+      const parsed = parsePath(path)
+      let last = read(parsed, resolveWorkspaceId())
+      listener(last)
+      return subscribe(() => {
+        const next = read(parsed, resolveWorkspaceId())
+        // Every push replaces the whole tree, so most of them say nothing about this path; and it
+        // arrives deserialized, so an object here is never the reference it was: compare by value, or
+        // every listener on an object path hears every push.
+        if (sameValue(next, last)) return
+        last = next
+        listener(next)
+      })
+    },
 
-  async setState(panel, path, value) {
-    await dispatch({ type: 'panel.setState', workspaceId: panel.workspaceId, panelId: panel.id, path, value })
-  },
+    async setState(panel, path, value) {
+      await dispatch({ type: 'panel.setState', workspaceId: panel.workspaceId, panelId: panel.id, path, value })
+    },
 
-  async publish(panel, output) {
-    await dispatch({ type: 'panel.publish', workspaceId: panel.workspaceId, panelId: panel.id, output })
-  },
+    async publish(panel, output) {
+      await dispatch({ type: 'panel.publish', workspaceId: panel.workspaceId, panelId: panel.id, output })
+    },
 
-  async publishText(panel, text) {
-    await dispatch({ type: 'panel.publishText', workspaceId: panel.workspaceId, panelId: panel.id, text })
-  },
+    async publishText(panel, text) {
+      await dispatch({ type: 'panel.publishText', workspaceId: panel.workspaceId, panelId: panel.id, text })
+    },
 
-  // A built-in view is always on the workspace on screen.
-  async runSource(source, args, options) {
-    return runSourceIn(get().currentWorkspaceId, source, args, options)
-  },
+    // Scoped to the view's own workspace tab, even while that tab is mounted off screen.
+    async runSource(source, args, options) {
+      return runSourceIn(resolveWorkspaceId(), source, args, options)
+    },
 
-  async datasetRows(datasetId) {
-    return unwrap(window.app.sources.rows(datasetId))
-  },
+    async datasetRows(datasetId) {
+      return unwrap(window.app.sources.rows(datasetId))
+    },
 
-  // Only here. The relay a plugin's iframe talks to does not carry this method.
-  async query(sql, limit) {
-    return unwrap(window.app.store.query(sql, limit))
-  },
+    // Only here. The relay a plugin's iframe talks to does not carry this method.
+    async query(sql, limit) {
+      return unwrap(window.app.store.query(sql, limit))
+    },
 
-  async openLink(url) {
-    // Main opens https only and says so otherwise.
-    return unwrap(window.app.openExternal(url))
-  },
+    async openLink(url) {
+      // Main opens https only and says so otherwise.
+      return unwrap(window.app.openExternal(url))
+    },
 
-  async copyText(text) {
-    return unwrap(window.app.copyText(text))
-  },
+    async copyText(text) {
+      return unwrap(window.app.copyText(text))
+    },
+  }
 }
+
+export const hostBridge: Bridge = hostBridgeFor()
 
 /** A source run for a view on a given workspace. The relay names its frame's workspace, whatever the frame says. */
 export async function runSourceIn(
@@ -93,9 +98,9 @@ async function unwrap<T>(call: Promise<T>): Promise<T> {
  * by a moment when an element closes, so a path that no longer resolves reads as undefined here
  * rather than throwing at whoever is listening.
  */
-function read(path: StorePath): unknown {
+function read(path: StorePath, workspaceId: string = get().currentWorkspaceId): unknown {
   try {
-    return readPath(get(), get().currentWorkspaceId, path)
+    return readPath(get(), workspaceId, path)
   } catch {
     return undefined
   }

@@ -19,7 +19,7 @@ import { SecretField } from '../components/composer/SecretField'
 import { completeSlash, slashMatches } from '../components/composer/slash'
 import { SlashMenu } from '../components/composer/SlashMenu'
 import { Transcript } from '../components/composer/Transcript'
-import { useAppState } from '../lib/state'
+import { currentWorkspace, useAppState } from '../lib/state'
 import type { ViewProps } from './index'
 
 /**
@@ -30,6 +30,7 @@ import type { ViewProps } from './index'
  */
 export function Chat({ panel }: ViewProps): ReactElement {
   const workspaceId = panel.workspaceId
+  const tabActive = useAppState((s) => currentWorkspace(s).id === workspaceId)
   const hasVoice = useAppState((s) => s.voice !== null)
   const secretRequest = useAppState((s) => askedIn(s.secretRequests))
   const question = useAppState((s) => askedIn(s.questions))
@@ -56,8 +57,8 @@ export function Chat({ panel }: ViewProps): ReactElement {
   const told = notices.find((one) => one.chat === workspaceId)?.id ?? null
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
 
-  const more = useEarlier({ request, workspaceId, when: true, said: told, welcome })
-  useNoticeTimer(notice?.id ?? null)
+  const more = useEarlier({ request, workspaceId, when: tabActive, said: told, welcome })
+  useNoticeTimer(tabActive ? (notice?.id ?? null) : null)
   usePublish(panel, { exchanges: earlier.length, busy: working })
 
   function submit(event: FormEvent<HTMLFormElement>): void {
@@ -93,12 +94,12 @@ export function Chat({ panel }: ViewProps): ReactElement {
   }
 
   useEffect(() => {
-    if (secretRequest === null && question === null) input.current?.focus()
-  }, [secretRequest, question])
+    if (tabActive && secretRequest === null && question === null) input.current?.focus()
+  }, [tabActive, secretRequest, question])
 
   return (
     <div
-      id="docked-chat"
+      id={tabActive ? 'docked-chat' : undefined}
       onDragOver={drop.onDragOver}
       onDragLeave={drop.onDragLeave}
       onDrop={drop.onDrop}
@@ -112,12 +113,14 @@ export function Chat({ panel }: ViewProps): ReactElement {
         </div>
       )}
       {secretRequest !== null ? (
-        <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} />
+        <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} active={tabActive} />
       ) : (
-        question !== null && <QuestionField key={question.id} question={question} />
+        question !== null && (
+          <QuestionField key={question.id} question={question} shown={tabActive} active={tabActive} />
+        )
       )}
       <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
-        {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
+        {tabActive && menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
         <div className="flex h-6 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground">
           <AttachButton compact onFiles={attachments.attach} disabled={busy} />
           {attachments.files.map((file) => (
@@ -146,9 +149,9 @@ export function Chat({ panel }: ViewProps): ReactElement {
             value={draft}
             placeholder="command the terminal from here"
             role="combobox"
-            aria-expanded={menuOpen}
-            aria-controls={menuOpen ? 'slash-menu' : undefined}
-            aria-activedescendant={menuOpen ? `slash-option-${active}` : undefined}
+            aria-expanded={tabActive && menuOpen}
+            aria-controls={tabActive && menuOpen ? 'slash-menu' : undefined}
+            aria-activedescendant={tabActive && menuOpen ? `slash-option-${active}` : undefined}
             aria-autocomplete="list"
             onKeyDown={menuKey}
             onPaste={(event) => pasteLinks(event, attachments.attach)}
@@ -171,7 +174,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
           )}
           <button
             type="button"
-            id="docked-chat-voice"
+            id={tabActive ? 'docked-chat-voice' : undefined}
             aria-label={phase === 'recording' ? 'Stop listening' : 'Voice input'}
             title={
               !hasVoice
@@ -197,7 +200,12 @@ export function Chat({ panel }: ViewProps): ReactElement {
       </form>
       {(earlier.length > 0 || shown.length > 0) && (
         <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
-          <button type="button" id="docked-chat-clear" onClick={clear} className="underline hover:text-foreground">
+          <button
+            type="button"
+            id={tabActive ? 'docked-chat-clear' : undefined}
+            onClick={clear}
+            className="underline hover:text-foreground"
+          >
             Clear
           </button>
         </p>
