@@ -1251,3 +1251,11 @@ test('excel-export/export-tables is described with multi-sheet batching guidance
     /- excel-export\/export-tables: .* — takes tables: \{ title, columns\[\], rows\[\] \}\[\], \[filename\] \(for multi-sheet workbooks, pass 1–2 tables per round with the same filename; each call adds or updates sheets by title\)/,
   )
 })
+
+test('a loop agent is told to equip research/room analysts with needed ready connections such as earningscall/server via research/save-analyst before starting or posting to the room', () => {
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /research\/room/)
+    assert.match(rules, /earningscall\/server/)
+    assert.match(rules, /research\/save-analyst/)
+  }
+})
