@@ -109,6 +109,118 @@ export interface LoopSpec {
   chat?: string
 }
 
+export interface LoopPatch {
+  desc?: string
+  brief?: string
+  systemPrompt?: string | null
+}
+
+/**
+ * The refined instructions Central hands to a room's run as `written`: `message` when given, else
+ * `brief`, else `systemPrompt`. Keeping this separate from `typed` preserves the user's raw prompt
+ * above `HANDED` while showing the refined instructions in the room's conversation and timeline.
+ */
+export function handoffWritten(spec: {
+  message?: string | null
+  brief?: string | null
+  systemPrompt?: string | null
+}): string | undefined {
+  for (const raw of [spec.message, spec.brief, spec.systemPrompt]) {
+    const trimmed = typeof raw === 'string' ? raw.trim() : ''
+    if (trimmed) return trimmed
+  }
+  return undefined
+}
+
+/**
+ * Formats the refined room instructions (`brief`, `message`, and `systemPrompt`) shown in `code`
+ * when asking the user to confirm starting a room.
+ */
+export function startInstructions(
+  brief?: string | null,
+  systemPrompt?: string | null,
+  message?: string | null,
+): string | undefined {
+  const b = typeof brief === 'string' ? brief.trim() : ''
+  const m = typeof message === 'string' ? message.trim() : ''
+  const s = typeof systemPrompt === 'string' ? systemPrompt.trim() : ''
+  const parts: string[] = []
+  if (b) parts.push(b)
+  if (m && m !== b) parts.push(m)
+  if (s && s !== b && s !== m) {
+    parts.push(parts.length > 0 ? `System prompt:\n${s}` : s)
+  }
+  return parts.length > 0 ? parts.join('\n\n') : undefined
+}
+
+/**
+ * Formats the tool return string for `create_room` (`Started`) and `update_room` (`Sent to`),
+ * including the refined instructions passed on to the room when present.
+ */
+export function handoffSummary(prefix: 'Started' | 'Sent to', loopId: string, instructions?: string | null): string {
+  const trimmed = typeof instructions === 'string' ? instructions.trim() : ''
+  return trimmed ? `${prefix} ${loopName(loopId)}:\n${trimmed}` : `${prefix} ${loopName(loopId)}.`
+}
+
+/**
+ * Builds the follow-up message sent to a room's agent when the user edits and applies the room's
+ * instructions (`brief` and `systemPrompt`) in the UI.
+ */
+export function editedInstructionsPrompt(brief: string, systemPrompt?: string | null): string | null {
+  const b = brief.trim()
+  const s = typeof systemPrompt === 'string' ? systemPrompt.trim() : ''
+  if (!b && !s) return null
+  if (b && s && b !== s) return `Updated room instructions:\n${b}\n\nSystem prompt:\n${s}`
+  if (b) return `Updated room instructions:\n${b}`
+  return `Updated room system prompt:\n${s}`
+}
+
+function patchLoopRecord(loop: Loop, patch: LoopPatch, now?: number): Loop {
+  const nextDesc = patch.desc !== undefined && patch.desc.trim() ? patch.desc.trim().slice(0, DESC_MAX) : loop.desc
+  const nextBrief = patch.brief !== undefined ? patch.brief.trim() : loop.brief
+  const nextSystemPrompt =
+    patch.systemPrompt !== undefined
+      ? typeof patch.systemPrompt === 'string' && patch.systemPrompt.trim()
+        ? patch.systemPrompt.trim()
+        : undefined
+      : loop.systemPrompt
+  if (nextDesc === loop.desc && nextBrief === loop.brief && nextSystemPrompt === loop.systemPrompt) {
+    return loop
+  }
+  const { systemPrompt: _prevSystem, ...rest } = loop
+  return {
+    ...rest,
+    desc: nextDesc,
+    brief: nextBrief,
+    ...(nextSystemPrompt ? { systemPrompt: nextSystemPrompt } : {}),
+    ...(now !== undefined ? { lastActiveAt: now } : {}),
+  }
+}
+
+/** Updates a room's `desc`, `brief`, and `systemPrompt` on an open or closed room record. */
+export function withLoopUpdated(loops: Loops, loopId: string, patch: LoopPatch, now?: number): Loops {
+  const openIndex = loops.list.findIndex((one) => one.id === loopId)
+  if (openIndex >= 0) {
+    const current = loops.list[openIndex]!
+    const updated = patchLoopRecord(current, patch, now)
+    if (updated === current) return loops
+    return {
+      ...loops,
+      list: loops.list.map((one, idx) => (idx === openIndex ? updated : one)),
+    }
+  }
+  if (!loops.closed) return loops
+  const closedIndex = loops.closed.findIndex((one) => one.loop.id === loopId)
+  if (closedIndex < 0) return loops
+  const currentClosed = loops.closed[closedIndex]!
+  const updatedLoop = patchLoopRecord(currentClosed.loop, patch, now)
+  if (updatedLoop === currentClosed.loop) return loops
+  return {
+    ...loops,
+    closed: loops.closed.map((one, idx) => (idx === closedIndex ? { ...one, loop: updatedLoop } : one)),
+  }
+}
+
 /** A tab's rooms with one more, made as the orchestrator asked, under the next id: its desc cut. */
 export function withLoopAsked(loops: Loops, spec: LoopSpec, now: number, minSeq = 0): { loops: Loops; loop: Loop } {
   const seq = Math.max(loops.seq, minSeq) + 1

@@ -33,8 +33,13 @@ import {
   viewPlugin,
   withLoopFor,
   withLoopAsked,
+  withLoopUpdated,
   withPlugin,
   withoutTileless,
+  editedInstructionsPrompt,
+  handoffSummary,
+  handoffWritten,
+  startInstructions,
   type Loop,
   type Loops,
 } from './loops.ts'
@@ -761,4 +766,101 @@ test('asksForLoop ignores text inside attached_file blocks and addressed routes 
   assert.equal(asksForLoop(`Start a new loop for this.\n\n${attached}`), true)
   const list = [loop('f3', 'Screener')]
   assert.deepEqual(addressed(list, `@loop_3\n\n${attached}`), { loop: list[0], message: attached })
+})
+
+test('handoffWritten picks the refined message, brief, or systemPrompt passed to a room', () => {
+  assert.equal(
+    handoffWritten({ message: '  Check Q3 filings  ', brief: 'General brief', systemPrompt: 'Role' }),
+    'Check Q3 filings',
+  )
+  assert.equal(
+    handoffWritten({ message: '   ', brief: '  Unpack all 13 executives  ', systemPrompt: 'Role' }),
+    'Unpack all 13 executives',
+  )
+  assert.equal(handoffWritten({ brief: '', systemPrompt: '  Act as a credit analyst  ' }), 'Act as a credit analyst')
+  assert.equal(handoffWritten({ message: ' ', brief: ' ', systemPrompt: null }), undefined)
+})
+
+test('startInstructions formats refined room instructions and systemPrompt for confirmation', () => {
+  assert.equal(
+    startInstructions('Research all 13 executives from FLWS.', 'Visit each profile in order.'),
+    'Research all 13 executives from FLWS.\n\nSystem prompt:\nVisit each profile in order.',
+  )
+  assert.equal(
+    startInstructions('Research all 13 executives.', 'Research all 13 executives.'),
+    'Research all 13 executives.',
+  )
+  assert.equal(
+    startInstructions('Research all 13 executives.', undefined, 'Start with the CEO.'),
+    'Research all 13 executives.\n\nStart with the CEO.',
+  )
+  assert.equal(startInstructions('', '   ', undefined), undefined)
+})
+
+test('handoffSummary includes the refined instructions passed on to the room', () => {
+  assert.equal(
+    handoffSummary('Started', 'f89', 'Research all 13 executives on LinkedIn.'),
+    'Started room_89:\nResearch all 13 executives on LinkedIn.',
+  )
+  assert.equal(handoffSummary('Started', 'f89', '   '), 'Started room_89.')
+  assert.equal(
+    handoffSummary('Sent to', 'f12', 'Filter to the last 3 months.'),
+    'Sent to room_12:\nFilter to the last 3 months.',
+  )
+  assert.equal(handoffSummary('Sent to', 'f12', undefined), 'Sent to room_12.')
+})
+
+test('editedInstructionsPrompt builds the follow-up message when the user corrects room instructions', () => {
+  assert.equal(
+    editedInstructionsPrompt('Research all 13 executives.', 'Do not stop until 3 months of activity are read.'),
+    'Updated room instructions:\nResearch all 13 executives.\n\nSystem prompt:\nDo not stop until 3 months of activity are read.',
+  )
+  assert.equal(
+    editedInstructionsPrompt('Research all 13 executives.', ''),
+    'Updated room instructions:\nResearch all 13 executives.',
+  )
+  assert.equal(
+    editedInstructionsPrompt('  ', 'Only check 90 days.'),
+    'Updated room system prompt:\nOnly check 90 days.',
+  )
+  assert.equal(editedInstructionsPrompt('  ', '  '), null)
+})
+
+test('withLoopUpdated updates open and closed room instructions and preserves identity when unchanged', () => {
+  const openLoop: Loop = {
+    ...loop('f1', 'Initial desc'),
+    brief: 'Old brief',
+    systemPrompt: 'Old system',
+  }
+  const closedEntry = {
+    loop: { ...loop('f2', 'Closed desc'), brief: 'Closed brief', systemPrompt: 'Closed system' },
+    window: 1,
+    elements: grid([1, frame, 'f2']).elements,
+    panels: grid([1, frame, 'f2']).panels,
+  }
+  const state: Loops = { seq: 2, list: [openLoop], closed: [closedEntry] }
+
+  assert.equal(withLoopUpdated(state, 'f9', { brief: 'Nope' }, 50), state)
+  assert.equal(withLoopUpdated(state, 'f1', { brief: 'Old brief', systemPrompt: 'Old system' }, 50), state)
+
+  const updatedOpen = withLoopUpdated(
+    state,
+    'f1',
+    { desc: 'y'.repeat(DESC_MAX + 10), brief: '  New brief  ', systemPrompt: '  ' },
+    50,
+  )
+  assert.equal(updatedOpen.list[0]?.desc, 'y'.repeat(DESC_MAX))
+  assert.equal(updatedOpen.list[0]?.brief, 'New brief')
+  assert.equal('systemPrompt' in (updatedOpen.list[0] ?? {}), false)
+  assert.equal(updatedOpen.list[0]?.lastActiveAt, 50)
+
+  const updatedClosed = withLoopUpdated(
+    updatedOpen,
+    'f2',
+    { brief: 'Updated closed brief', systemPrompt: 'Updated closed system' },
+    60,
+  )
+  assert.equal(updatedClosed.closed?.[0]?.loop.brief, 'Updated closed brief')
+  assert.equal(updatedClosed.closed?.[0]?.loop.systemPrompt, 'Updated closed system')
+  assert.equal(updatedClosed.closed?.[0]?.loop.lastActiveAt, 60)
 })
