@@ -1,6 +1,7 @@
-import type { ReactElement } from 'react'
+import { useRef, type ReactElement } from 'react'
 import { chatElement, EMPTY_GRID } from '../../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
+import { mountedTabIds } from '../../../shared/tabs/tabs'
 import { errorMessage } from '../../lib/errors'
 import { currentWorkspace, dispatch, useAppState, windowWorkspaces } from '../../lib/state'
 import { Composer } from '../composer/Composer'
@@ -27,6 +28,8 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
   const app = useAppState()
   const current = currentWorkspace(app)
   const tabs = windowWorkspaces(app)
+  const mountedRef = useRef<readonly string[]>([])
+  mountedRef.current = mountedTabIds(mountedRef.current, tabs, current.id)
   const docked = useDockedChat(current.id, MAIN_WINDOW)
   const orbOpen = useOrbOpen()
   const totalRooms =
@@ -93,8 +96,10 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
         </div>
       </header>
       <div className="relative min-h-0 flex-1">
-        {/* Keyed by id so elements from one tab never take over another's views. */}
-        <GridLayer key={current.id} workspaceId={current.id} windowNumber={MAIN_WINDOW} />
+        {/* Kept mounted once visited in stable order so switching or reordering tabs never unmounts or reloads rooms. */}
+        {mountedRef.current.map((tabId) => (
+          <GridLayer key={tabId} workspaceId={tabId} windowNumber={MAIN_WINDOW} active={tabId === current.id} />
+        ))}
         {orbOpen && <FloatingOrb />}
       </div>
       <TabBar workspaces={tabs} currentId={current.id} />

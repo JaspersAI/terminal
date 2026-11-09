@@ -181,6 +181,8 @@ export interface TileBox {
   read: boolean
   /** Whether the log may have exchanges ahead of `earlier`. */
   more: boolean
+  /** Where the reader scrolled in the conversation when off its end, or null while following the bottom. */
+  scrollTop: number | null
 }
 
 export const IDLE_BOX: TileBox = {
@@ -191,6 +193,7 @@ export const IDLE_BOX: TileBox = {
   earlier: [],
   read: false,
   more: true,
+  scrollTop: null,
 }
 
 export function placeKey(place: Place): string {
@@ -294,7 +297,11 @@ export function boxesKept(
 export function tileBoxSent(box: TileBox, place: Place, ask: string, question: string): TileBox {
   const dropped = !box.expanded && over(box.live).size > 0
   const live = boxSent(boxFresh(box.live, box.expanded), ask, place.workspaceId, question)
-  return { ...box, draft: '', live, ...(dropped ? { read: false } : {}) }
+  return { ...box, draft: '', live, scrollTop: null, ...(dropped ? { read: false } : {}) }
+}
+
+export function tileBoxScrolled(box: TileBox, scrollTop: number | null): TileBox {
+  return box.scrollTop === scrollTop ? box : { ...box, scrollTop }
 }
 
 export function tileBoxSettled(box: TileBox, ask: string, reply: string, error: string | null): TileBox {

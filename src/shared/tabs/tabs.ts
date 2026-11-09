@@ -190,3 +190,29 @@ export function tabsForWindow<T extends { id: string; window?: number }>(
   const mainTabs = workspaces.filter((w) => w.window === undefined || w.window === 1)
   return mainTabs.length > 0 ? mainTabs : workspaces.slice(0, 1)
 }
+
+/**
+ * Returns the tab IDs whose grid layers stay mounted in a window, in the order they were first
+ * visited:
+ * - Every previously mounted tab that still belongs to the window (`tabs`) stays in its existing
+ *   slot, so switching or reordering tabs in the bar never unmounts or reorders DOM nodes (which
+ *   would reload iframes and reset scroll positions).
+ * - When `currentId` is in `tabs` and has not been mounted yet, it is appended at the end.
+ * - When a tab is closed or moved out of `tabs`, it is dropped so its views unmount cleanly.
+ * - Returns `previous` unchanged when the list of mounted IDs is identical.
+ */
+export function mountedTabIds(
+  previous: readonly string[],
+  tabs: readonly { id: string }[],
+  currentId: string,
+): readonly string[] {
+  const valid = new Set(tabs.map((t) => t.id))
+  const next = previous.filter((id) => valid.has(id))
+  if (valid.has(currentId) && !next.includes(currentId)) {
+    next.push(currentId)
+  }
+  if (next.length === previous.length && next.every((id, i) => id === previous[i])) {
+    return previous
+  }
+  return next
+}

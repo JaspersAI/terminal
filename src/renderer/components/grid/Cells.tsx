@@ -43,6 +43,7 @@ interface Props {
   windowNumber: number
   size: GridSize
   cells: Record<string, string>
+  active?: boolean
 }
 
 /** Where the cursor is: the cell being typed in, and what has been typed so far. */
@@ -64,7 +65,7 @@ interface Selecting {
   moved: boolean
 }
 
-export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactElement {
+export function Cells({ workspaceId, windowNumber, size, cells, active = true }: Props): ReactElement {
   const [editing, setEditing] = useState<Editing | null>(null)
   /** The cell the pointer is over, so an empty cell still shows it can be typed in. */
   const [hovered, setHovered] = useState<string | null>(null)
@@ -78,6 +79,13 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
   /** Whether the pointer is dragging a reference right now, as distinct from arrow-key pointing with the button up. */
   const dragging = useRef(false)
   const selecting = useRef<Selecting | null>(null)
+
+  useEffect(() => {
+    if (!active) {
+      setSelection(null)
+      setHovered(null)
+    }
+  }, [active])
 
   /** Saves what was typed, unless it is what was there already, and leaves the cell. */
   const commit = (next: string | null): void => {
@@ -140,7 +148,7 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
   // and Escape lets it go. Heard ahead of the composer's keys, since a selection on screen is what those
   // mean at that moment, and only while there is one: with nothing selected this layer hears no keys at all.
   useEffect(() => {
-    if (!selection) return
+    if (!active || !selection) return
     const down = (event: KeyboardEvent): void => {
       if (event.isComposing || event.keyCode === 229) return
       // A field, menu, or modal dialog has the keyboard to itself.
@@ -179,7 +187,7 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
     }
     window.addEventListener('keydown', down, true)
     return () => window.removeEventListener('keydown', down, true)
-  }, [selection, size, cells, workspaceId, windowNumber])
+  }, [active, selection, size, cells, workspaceId, windowNumber])
 
   /** The cells to draw: those that hold something, the one being typed in, and the one under the pointer. */
   const shown = Object.keys(cells)
@@ -287,7 +295,7 @@ export function Cells({ workspaceId, windowNumber, size, cells }: Props): ReactE
       {selectedRect && (
         <div
           aria-hidden
-          id="cell-selection"
+          id={active ? 'cell-selection' : undefined}
           className="pointer-events-none border border-primary bg-primary/10"
           style={{
             gridColumn: `${selectedRect.x + 1} / span ${selectedRect.w}`,

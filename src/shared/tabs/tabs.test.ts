@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   formatTabLabel,
   isTabColor,
+  mountedTabIds,
   reorderTabs,
   TAB_CHAR_DEFAULT,
   TAB_PALETTE,
@@ -90,4 +91,26 @@ test('tabsForWindow isolates a detached tab into its Terminal (copy) window whil
     tabsForWindow(all, 2).map((t) => t.id),
     ['t2'],
   )
+})
+
+test('mountedTabIds keeps visited tabs mounted in stable first-visit order across switches and reorders and drops closed tabs', () => {
+  const tabs = [{ id: 't1' }, { id: 't2' }, { id: 't3' }]
+  const m1 = mountedTabIds([], tabs, 't1')
+  assert.deepEqual(m1, ['t1'])
+
+  // Switching to t2 mounts t2 while keeping t1 mounted in its original slot.
+  const m2 = mountedTabIds(m1, tabs, 't2')
+  assert.deepEqual(m2, ['t1', 't2'])
+
+  // Switching back to t1 preserves the exact array reference and order so iframes never reload.
+  const m3 = mountedTabIds(m2, tabs, 't1')
+  assert.equal(m3, m2)
+
+  // Reordering tabs in the bar does not reorder mounted grid layers.
+  const reordered = [{ id: 't2' }, { id: 't3' }, { id: 't1' }]
+  assert.equal(mountedTabIds(m3, reordered, 't1'), m2)
+
+  // Closing t1 drops it while keeping t2 mounted.
+  const afterClose = [{ id: 't2' }, { id: 't3' }]
+  assert.deepEqual(mountedTabIds(m3, afterClose, 't2'), ['t2'])
 })

@@ -20,10 +20,15 @@ export function useIncomingDrag(
   workspaceId: string,
   windowNumber: number,
   layer: RefObject<HTMLElement | null>,
+  active = true,
 ): Ghost | null {
   const [ghost, setGhost] = useState<Ghost | null>(null)
 
   useEffect(() => {
+    if (!active) {
+      setGhost(null)
+      return
+    }
     /** Where the carried element would land, from the pointer's client pixels. Null when nothing fits. */
     const place = (over: DragOver): { elementId: string; rect: Rect } | null => {
       const box = layer.current?.getBoundingClientRect()
@@ -64,7 +69,7 @@ export function useIncomingDrag(
       offLeave()
       offDrop()
     }
-  }, [workspaceId, windowNumber, layer])
+  }, [workspaceId, windowNumber, layer, active])
 
   return ghost
 }

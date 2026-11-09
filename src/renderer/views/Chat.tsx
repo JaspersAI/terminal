@@ -19,7 +19,7 @@ import { SecretField } from '../components/composer/SecretField'
 import { completeSlash, slashMatches } from '../components/composer/slash'
 import { SlashMenu } from '../components/composer/SlashMenu'
 import { Transcript } from '../components/composer/Transcript'
-import { useAppState } from '../lib/state'
+import { currentWorkspace, useAppState } from '../lib/state'
 import type { ViewProps } from './index'
 
 /**
@@ -30,6 +30,7 @@ import type { ViewProps } from './index'
  */
 export function Chat({ panel }: ViewProps): ReactElement {
   const workspaceId = panel.workspaceId
+  const activeTab = useAppState((s) => currentWorkspace(s).id === workspaceId)
   const hasVoice = useAppState((s) => s.voice !== null)
   const secretRequest = useAppState((s) => askedIn(s.secretRequests))
   const question = useAppState((s) => askedIn(s.questions))
@@ -56,8 +57,8 @@ export function Chat({ panel }: ViewProps): ReactElement {
   const told = notices.find((one) => one.chat === workspaceId)?.id ?? null
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
 
-  const more = useEarlier({ request, workspaceId, when: true, said: told, welcome })
-  useNoticeTimer(notice?.id ?? null)
+  const more = useEarlier({ request, workspaceId, when: activeTab, said: told, welcome })
+  useNoticeTimer(activeTab ? (notice?.id ?? null) : null)
   usePublish(panel, { exchanges: earlier.length, busy: working })
 
   function submit(event: FormEvent<HTMLFormElement>): void {
@@ -93,29 +94,37 @@ export function Chat({ panel }: ViewProps): ReactElement {
   }
 
   useEffect(() => {
-    if (secretRequest === null && question === null) input.current?.focus()
-  }, [secretRequest, question])
+    if (activeTab && secretRequest === null && question === null) input.current?.focus()
+  }, [activeTab, secretRequest, question])
 
   return (
     <div
-      id="docked-chat"
+      id={activeTab ? 'docked-chat' : undefined}
       onDragOver={drop.onDragOver}
       onDragLeave={drop.onDragLeave}
       onDrop={drop.onDrop}
       className="flex h-full flex-col"
     >
-      <Transcript earlier={earlier} onEarlier={more} live={shown} onStop={stop} className="min-h-0 flex-1 px-3 py-3" />
+      <Transcript
+        named={activeTab}
+        earlier={earlier}
+        onEarlier={more}
+        live={shown}
+        onStop={stop}
+        className="min-h-0 flex-1 px-3 py-3"
+      />
       {notice && (
         <div className="shrink-0 border-t border-border px-3 py-2">
           <p className="text-xs text-muted-foreground">{notice.plugin}</p>
           <p className="text-sm break-words">{notice.text}</p>
         </div>
       )}
-      {secretRequest !== null ? (
-        <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} />
-      ) : (
-        question !== null && <QuestionField key={question.id} question={question} />
-      )}
+      {activeTab &&
+        (secretRequest !== null ? (
+          <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} />
+        ) : (
+          question !== null && <QuestionField key={question.id} question={question} />
+        ))}
       <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
         {menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
         <div className="flex h-6 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground">
@@ -171,7 +180,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
           )}
           <button
             type="button"
-            id="docked-chat-voice"
+            id={activeTab ? 'docked-chat-voice' : undefined}
             aria-label={phase === 'recording' ? 'Stop listening' : 'Voice input'}
             title={
               !hasVoice
@@ -197,7 +206,12 @@ export function Chat({ panel }: ViewProps): ReactElement {
       </form>
       {(earlier.length > 0 || shown.length > 0) && (
         <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
-          <button type="button" id="docked-chat-clear" onClick={clear} className="underline hover:text-foreground">
+          <button
+            type="button"
+            id={activeTab ? 'docked-chat-clear' : undefined}
+            onClick={clear}
+            className="underline hover:text-foreground"
+          >
             Clear
           </button>
         </p>
