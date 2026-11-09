@@ -810,7 +810,18 @@ export function resolveRefreshTarget(
   const localFrame = localLoop ? frameOf(localGrids, localLoop.id)?.element.id : undefined
   if (localFrame) return { workspaceId: preferredWorkspaceId, id: localFrame }
 
-  if (allowCrossTab) {
+  const localClosed = loopsByTab[preferredWorkspaceId]?.closed ?? []
+  const isClosedLocally =
+    named(
+      localClosed.map((c) => c.loop),
+      trimmed,
+    ) !== undefined ||
+    localClosed.some(
+      (c) =>
+        c.elements.some((e) => e.id === trimmed) || c.panels.some((p) => p.id === trimmed || p.elementId === trimmed),
+    )
+
+  if (allowCrossTab && !isClosedLocally) {
     for (const [tabId, loops] of Object.entries(loopsByTab)) {
       if (tabId === preferredWorkspaceId) continue
       const match = named(loops.list, trimmed)

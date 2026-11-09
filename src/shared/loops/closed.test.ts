@@ -422,4 +422,35 @@ test('reopening a room stamps refreshedAt on data views and migrates its schedul
   assert.equal(migrated[3], tasks[3])
   assert.equal(typeof migrateReopenedRoomTasks, 'function')
   assert.equal(closedHoldingAcrossTabs({ 'tab-source': closed }, 'tab-target', 'e2')?.loop.id, 'f1')
+
+  // Chained renames (e1 -> e3, e3 -> e4) substitute each token in instructions once rather than cascading e1 -> e3 -> e4.
+  const chainedShut = {
+    loop: loop('f1', 'chained'),
+    window: 1,
+    elements: [element(1, { loop: 'f1' }), element(3, { loop: 'f1', parent: 'e1' })],
+    panels: [panel(1, frame), panel(3, chart)],
+  }
+  const chainedTasks = [
+    {
+      id: 't5',
+      workspaceId: 'tab-source',
+      instructions: 'Compare e1 with e3 in room_1',
+      call: null,
+    },
+  ]
+  const chainedMigrated = migrateReopenedRoomTasks(
+    chainedTasks,
+    'tab-source',
+    'tab-target',
+    chainedShut,
+    new Map([
+      ['e1', 'e3'],
+      ['e3', 'e4'],
+    ]),
+    new Map([
+      ['p1', 'p3'],
+      ['p3', 'p4'],
+    ]),
+  )
+  assert.equal(chainedMigrated[0]!.instructions, 'Compare e3 with e4 in room_1')
 })

@@ -497,4 +497,22 @@ test('resolvePanelWorkspace prefers the caller workspace and falls back to a uni
   assert.equal(resolvePanelWorkspace(state.grids, WS, 'e96'), 'ws-2')
   assert.equal(resolvePanelWorkspace(state.grids, WS, 'p96'), 'ws-2')
   assert.equal(resolvePanelWorkspace(state.grids, WS, 'e404'), WS)
+  // When e96 belongs to a closed room on WS, resolvePanelWorkspace stays on WS rather than resolving to ws-2's e96.
+  assert.equal(
+    resolvePanelWorkspace(state.grids, WS, 'e96', {
+      [WS]: {
+        seq: 1,
+        list: [],
+        closed: [
+          {
+            loop: { id: 'f1', desc: 'closed', brief: '', plugins: [], skills: [], createdAt: 1 },
+            window: 1,
+            elements: [{ id: 'e96', panelId: 'p96', rect: { x: 0, y: 0, w: 4, h: 4 }, z: 1, mode: 'tiled' }],
+            panels: [],
+          },
+        ],
+      },
+    }),
+    WS,
+  )
 })

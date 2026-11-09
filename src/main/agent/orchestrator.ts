@@ -5,8 +5,8 @@ import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { taskNote } from '../../shared/agent/transcript'
 import { WELCOME_PREFACE } from '../../shared/agent/welcome'
 import { EXCHANGES_MAX } from '../../shared/data/store'
-import { closedHoldingAcrossTabs } from '../../shared/loops/closed'
-import { addressed, LOOP_ID, loopName, named } from '../../shared/loops/loops'
+import { closedHolding, closedHoldingAcrossTabs } from '../../shared/loops/closed'
+import { addressed, LOOP_ID, loopName, named, NO_LOOPS } from '../../shared/loops/loops'
 import { signsIn } from '../../shared/llm/providers'
 import type { Turn } from '../../shared/llm/llm'
 import { panelTargetOfCall, TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
@@ -214,16 +214,24 @@ function closedTarget(call: TaskCall, workspaceId: string): string | null {
   if (!panelTarget) return null
   const target = panelTarget.panelId
   const state = getState()
-  for (const [tabId, grids] of Object.entries(state.grids)) {
+  const isOpenOn = (tabId: string): boolean => {
+    const grids = state.grids[tabId] ?? {}
     const tabLoops = state.loops[tabId]
-    if (
+    return (
       Object.values(grids).some(
         (grid) => grid.elements.some((e) => e.id === target) || grid.panels.some((p) => p.id === target),
       ) ||
       (tabLoops !== undefined && named(tabLoops.list, target) !== undefined)
-    ) {
-      return null
-    }
+    )
+  }
+  if (isOpenOn(panelTarget.workspaceId)) return null
+  const localClosed = closedHolding(state.loops[panelTarget.workspaceId] ?? NO_LOOPS, target)
+  if (localClosed) {
+    const name = loopName(localClosed.loop.id)
+    return `Skipped: ${target} is in ${name}, which is closed. It refreshes again once ${name} is reopened from Rooms.`
+  }
+  for (const tabId of Object.keys(state.grids)) {
+    if (tabId !== panelTarget.workspaceId && isOpenOn(tabId)) return null
   }
   const closed = closedHoldingAcrossTabs(state.loops, panelTarget.workspaceId, target)
   if (!closed) return null

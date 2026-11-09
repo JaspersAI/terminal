@@ -5,7 +5,7 @@
 
 // The extension is explicit because Node's test runner resolves this import at run time.
 import type { Grid, Panel } from './grid/grid.ts'
-import { loopName } from './loops/loops.ts'
+import { loopName, type Loops } from './loops/loops.ts'
 import { skillListing } from './skills/skills.ts'
 import type { AppState, ConnectionInfo } from './state'
 
@@ -208,18 +208,29 @@ function connectionSummary(c: ConnectionInfo): ConnectionSummary {
 
 /**
  * Resolves which workspace holds `panelId` (an element or panel id): `preferredWorkspaceId` when it
- * has the panel, or the single other workspace that holds `panelId` when it is unique across tabs.
+ * has the panel (open or in a closed room on that tab), or the single other workspace that holds
+ * `panelId` when it is unique across tabs.
  */
 export function resolvePanelWorkspace(
   gridsByTab: Record<string, Record<number, Grid>>,
   preferredWorkspaceId: string,
   panelId: string,
+  loopsByTab?: Record<string, Loops>,
 ): string {
   const trimmed = panelId.trim()
   const hasPanel = (grids: Record<number, Grid> | undefined): boolean =>
     grids !== undefined &&
     Object.values(grids).some((grid) => grid.panels.some((p) => p.id === trimmed || p.elementId === trimmed))
   if (hasPanel(gridsByTab[preferredWorkspaceId])) return preferredWorkspaceId
+  const localClosed = loopsByTab?.[preferredWorkspaceId]?.closed ?? []
+  if (
+    localClosed.some(
+      (c) =>
+        c.elements.some((e) => e.id === trimmed) || c.panels.some((p) => p.id === trimmed || p.elementId === trimmed),
+    )
+  ) {
+    return preferredWorkspaceId
+  }
   const matches = Object.keys(gridsByTab).filter(
     (tabId) => tabId !== preferredWorkspaceId && hasPanel(gridsByTab[tabId]),
   )

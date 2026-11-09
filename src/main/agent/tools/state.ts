@@ -135,9 +135,10 @@ export const stateTools: Tool[] = [
           ownTile(context, path.panelId)
         }
       }
+      const mainState = getState()
       const effectiveWorkspaceId =
         loop === undefined && (path.kind === 'panel' || path.kind === 'panelEntry') && path.workspaceId === undefined
-          ? resolvePanelWorkspace(getState().grids, workspaceId, path.panelId)
+          ? resolvePanelWorkspace(mainState.grids, workspaceId, path.panelId, mainState.loops)
           : workspaceId
       await syncPathPanels(effectiveWorkspaceId, path, signal)
       const state = toPublic(getState())
@@ -195,9 +196,12 @@ export const stateTools: Tool[] = [
       if (context.loop !== undefined && path.workspaceId !== undefined && path.workspaceId !== context.workspaceId)
         throw new Error("set reaches only this work's own tiles, on its own workspace.")
       ownTile(context, path.panelId)
+      const mainState = getState()
       const workspace =
         path.workspaceId ??
-        (context.loop === undefined ? resolvePanelWorkspace(getState().grids, workspaceId, path.panelId) : workspaceId)
+        (context.loop === undefined
+          ? resolvePanelWorkspace(mainState.grids, workspaceId, path.panelId, mainState.loops)
+          : workspaceId)
       if (input.old !== undefined || input.new !== undefined) {
         if (input.value !== undefined) {
           throw new Error('Pass either value or old and new to set, not both.')

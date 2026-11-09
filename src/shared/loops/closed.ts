@@ -374,12 +374,7 @@ export interface MigratableTask {
 }
 
 function replaceIdTokens(text: string, renames: ReadonlyMap<string, string>): string {
-  let out = text
-  for (const [oldId, newId] of renames) {
-    if (oldId === newId) continue
-    out = out.replace(new RegExp(`\\b${oldId}\\b`, 'g'), newId)
-  }
-  return out
+  return text.replace(/\b([ep][1-9]\d*)\b/g, (token) => renames.get(token) ?? token)
 }
 
 /**

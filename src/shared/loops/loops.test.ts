@@ -790,4 +790,35 @@ test('resolveRefreshTarget resolves rooms and unique elements across tabs when c
     workspaceId: 'tab-a',
     id: 'room_33',
   })
+
+  // When e96 is in a closed room on tab-a, resolveRefreshTarget stays on tab-a instead of resolving to tab-b's e96.
+  const loopsWithClosedOnA: Record<string, Loops> = {
+    ...loopsByTab,
+    'tab-a': {
+      ...loopsByTab['tab-a']!,
+      closed: [
+        {
+          loop: loop('f2', 'Closed on A'),
+          window: 1,
+          elements: [
+            { id: 'e90', panelId: 'p90', rect: { x: 0, y: 0, w: 4, h: 4 }, z: 1, mode: 'tiled', loop: 'f2' },
+            {
+              id: 'e96',
+              panelId: 'p96',
+              parent: 'e90',
+              rect: { x: 0, y: 0, w: 4, h: 4 },
+              z: 1,
+              mode: 'tiled',
+              loop: 'f2',
+            },
+          ],
+          panels: [],
+        },
+      ],
+    },
+  }
+  assert.deepEqual(resolveRefreshTarget(gridsByTab, loopsWithClosedOnA, 'tab-a', 'e96', true), {
+    workspaceId: 'tab-a',
+    id: 'e96',
+  })
 })
