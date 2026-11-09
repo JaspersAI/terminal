@@ -990,9 +990,9 @@ export function reopenLoop(workspaceId: string, loopId: string, window?: number)
   getGrid(workspaceId, where)
   let frame: GridElement | undefined
   update((current) => {
-    const back = reopenAcrossTabs(current.grids, current.loops, workspaceId, loopId, where, Date.now())
+    const back = reopenAcrossTabs(current.grids, current.loops, workspaceId, loopId, where, Date.now(), current.tasks)
     frame = back.frame
-    return { ...current, grids: back.grids, loops: back.loops }
+    return { ...current, grids: back.grids, loops: back.loops, tasks: back.tasks ?? current.tasks }
   })
   return frame!
 }

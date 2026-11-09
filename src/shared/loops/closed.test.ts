@@ -5,9 +5,11 @@ import { gone, loopName, readLoops, showsChat, shut, type Loop, type Loops } fro
 import {
   archiveTabRooms,
   closedHolding,
+  closedHoldingAcrossTabs,
   closedWithout,
   globalRoomLog,
   loopLog,
+  migrateReopenedRoomTasks,
   reopenAcrossTabs,
   reopened,
   searchRooms,
@@ -343,4 +345,81 @@ test('unifyTabRooms deduplicates colliding room ids across legacy workspaces whi
     [['f3', 't2/f1']],
   )
   assert.equal(unified.grids['t2']![1]!.elements.find((e) => e.id === 'e1')?.loop, 'f3')
+})
+
+test('reopening a room stamps refreshedAt on data views and migrates its scheduled tasks across tabs and renumbered ids', () => {
+  const before = workspace()
+  const after = withoutFrame(before, 'e1')
+  const closed = closedWithout(both, before, after, 50)
+  const targetGrids: Record<number, Grid> = {
+    1: {
+      ...EMPTY_GRID,
+      elements: [
+        element(1, { loop: 'f9', rect: { x: 0, y: 0, w: 4, h: 4 } }),
+        element(2, { loop: 'f9', parent: 'e1', rect: { x: 0, y: 0, w: 16, h: 12 } }),
+      ],
+      panels: [panel(1, frame), panel(2, { kind: 'view', view: 'core/note' })],
+      seq: 2,
+    },
+  }
+  const tasks = [
+    {
+      id: 't1',
+      workspaceId: 'tab-source',
+      instructions: 'Refresh FLWS chart (e2) every 10 seconds',
+      call: { tool: 'refresh_element', input: { elementId: 'e2' } },
+    },
+    {
+      id: 't2',
+      workspaceId: 'tab-source',
+      instructions: 'Refresh room_1 view panels/e2/text and summarize changes',
+      call: null,
+    },
+    {
+      id: 't3',
+      workspaceId: 'tab-source',
+      instructions: 'Update SQL on panels/e2/state/sql',
+      call: { tool: 'set', input: { path: 'workspaces/tab-source/panels/e2/state/sql', value: 'SELECT 1' } },
+    },
+    {
+      id: 't4',
+      workspaceId: 'tab-source',
+      instructions: 'Refresh unrelated room_2 (e3) on source tab',
+      call: { tool: 'refresh_element', input: { elementId: 'e3' } },
+    },
+  ]
+
+  const reopenedResult = reopenAcrossTabs(
+    { 'tab-source': after, 'tab-target': targetGrids },
+    { 'tab-source': closed, 'tab-target': { seq: 9, list: [loop('f9', 'notes')] } },
+    'tab-target',
+    'f1',
+    1,
+    200,
+    tasks,
+  )
+
+  // e1 and e2 clashed on tab-target, so they were renumbered to e3 (frame) and e4 (view).
+  const reopenedView = reopenedResult.grids['tab-target']![1]!.panels.find((p) => p.elementId === 'e4')!
+  assert.equal(reopenedView.refreshedAt, 200)
+
+  const migrated = reopenedResult.tasks!
+  assert.equal(migrated[0]!.workspaceId, 'tab-target')
+  assert.deepEqual(migrated[0]!.call, { tool: 'refresh_element', input: { elementId: 'e4' } })
+  assert.equal(migrated[0]!.instructions, 'Refresh FLWS chart (e4) every 10 seconds')
+
+  assert.equal(migrated[1]!.workspaceId, 'tab-target')
+  assert.equal(migrated[1]!.instructions, 'Refresh room_1 view panels/e4/text and summarize changes')
+
+  assert.equal(migrated[2]!.workspaceId, 'tab-target')
+  assert.deepEqual(migrated[2]!.call, {
+    tool: 'set',
+    input: { path: 'workspaces/tab-target/panels/e4/state/sql', value: 'SELECT 1' },
+  })
+  assert.equal(migrated[2]!.instructions, 'Update SQL on panels/e4/state/sql')
+
+  // Unrelated task on tab-source stays on tab-source untouched.
+  assert.equal(migrated[3], tasks[3])
+  assert.equal(typeof migrateReopenedRoomTasks, 'function')
+  assert.equal(closedHoldingAcrossTabs({ 'tab-source': closed }, 'tab-target', 'e2')?.loop.id, 'f1')
 })
