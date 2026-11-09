@@ -426,6 +426,14 @@ test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text an
     'https://www.bloomberg.com/markets',
   )
   assert.equal(unwrapBotChallengeUrl(challengeNoParam), 'https://www.bloomberg.com/')
+  assert.equal(
+    unwrapBotChallengeUrl('https://www.bloomberg.com/tosv2.html?url=%2F%5Cevil.com', 'https://www.bloomberg.com/live'),
+    'https://www.bloomberg.com/live',
+  )
+  assert.equal(
+    unwrapBotChallengeUrl('https://www.bloomberg.com/tosv2.html?url=L1xldmlsLmNvbQ=='),
+    'https://www.bloomberg.com/',
+  )
   assert.deepEqual(readBrowserState({ url: challengeMarkets }), { url: 'https://www.bloomberg.com/markets' })
 
   assert.equal(
