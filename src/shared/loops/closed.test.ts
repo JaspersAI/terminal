@@ -211,6 +211,9 @@ test('a reopened loop keeps its name, and takes new ids when one of its own was 
   const reopenedZoomed = reopened(withoutFrame(zoomed, 'e1'), closedZoomed, 'f1', 1, 90)
   assert.equal(reopenedZoomed.frame.zoom, 1.25)
   assert.equal(reopenedZoomed.grids[1]!.elements.find((e) => e.id === 'e1')?.zoom, 1.25)
+  // Data and plugin views inside a reopened room get refreshedAt stamped with now, while frames, notes, and browsers do not.
+  assert.equal(reopenedZoomed.grids[1]!.panels.find((p) => p.elementId === 'e2')?.refreshedAt, 90)
+  assert.equal(reopenedZoomed.grids[1]!.panels.find((p) => p.elementId === 'e1')?.refreshedAt, null)
 })
 
 test('the room log lists every room, open and closed, ordered by last activity first, and globalRoomLog + searchRooms span all tabs', () => {

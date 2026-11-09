@@ -1000,6 +1000,11 @@ const NON_DATA_CORE_VIEWS = new Set([
   'core/browser',
 ])
 
+/** Whether a panel holds a data or plugin view that fetches again when woken or reopened. */
+export function isRefreshableView(panel: Pick<Panel, 'content'>): boolean {
+  return panel.content.kind === 'view' && !NON_DATA_CORE_VIEWS.has(panel.content.view)
+}
+
 /**
  * Stamps `refreshedAt` on data and plugin views in `grid` after system wake so mounted views
  * without a scheduled refresh task fetch fresh data, while skipping browsers, apps, static core
@@ -1009,7 +1014,7 @@ export function refreshGridOnWake(grid: Grid, at: number, skipIds?: ReadonlySet<
   let changed = false
   const elementsById = new Map(grid.elements.map((e) => [e.id, e]))
   const panels = grid.panels.map((panel) => {
-    if (panel.content.kind !== 'view' || NON_DATA_CORE_VIEWS.has(panel.content.view)) return panel
+    if (!isRefreshableView(panel)) return panel
     const element = elementsById.get(panel.elementId)
     if (
       skipIds &&

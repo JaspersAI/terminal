@@ -8,6 +8,7 @@
 
 // The extensions are explicit because Node's test runner resolves these imports at run time.
 import {
+  isRefreshableView,
   layoutOf,
   MIN_CELLS,
   resolvePlacement,
@@ -176,6 +177,7 @@ export function reopened(
     ...p,
     id: panelIds.get(p.id) ?? p.id,
     elementId: ids.get(p.elementId) ?? p.elementId,
+    ...(isRefreshableView(p) ? { refreshedAt: now } : {}),
   }))
   // A maximized tile would cover it: it goes back to its own cells, as it does for a placement.
   const shown = grid.elements.map((e) => (e.parent === undefined && e.mode === 'maximized' ? restored(e) : e))
