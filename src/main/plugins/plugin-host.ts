@@ -383,7 +383,19 @@ function serve(host: Host, capabilities: Capability[]): void {
   const { id, rpc, files, llm, watches } = host
   rpc.handle('llm.complete', (params, signal) => {
     need('llm')
-    return llm.complete(params, signal)
+    const { streamId, text, thinking } = asRecord(params)
+    const stream =
+      typeof streamId === 'number'
+        ? {
+            ...(text === true
+              ? { onText: (delta: string) => rpc.notify('llm.stream', { streamId, text: delta }) }
+              : {}),
+            ...(thinking === true
+              ? { onThinking: (delta: string) => rpc.notify('llm.stream', { streamId, thinking: delta }) }
+              : {}),
+          }
+        : undefined
+    return llm.complete(params, signal, stream)
   })
   const tools = createTools({ connections: () => getState().connections, call: callTool, ask: askForMissingSecret })
   rpc.handle('tools.connections', (params) => {

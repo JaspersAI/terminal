@@ -93,10 +93,36 @@ export function createContextFactory(rpc: Rpc, capabilities: Capability[], plugi
     },
   }
 
+  const streams = new Map<number, { onText?: (delta: string) => void; onThinking?: (delta: string) => void }>()
+  let nextStream = 1
+  rpc.onNotification('llm.stream', (params) => {
+    const { streamId, text, thinking } = params as { streamId: number; text?: string; thinking?: string }
+    const stream = streams.get(streamId)
+    if (!stream) return
+    if (typeof text === 'string') stream.onText?.(text)
+    if (typeof thinking === 'string') stream.onThinking?.(thinking)
+  })
+
   const llm: BackendContext['llm'] = {
-    async complete({ signal, ...request }) {
+    async complete({ signal, onText, onThinking, ...request }) {
       need('llm')
-      return (await rpc.request('llm.complete', request, signal)) as Completion
+      if (!onText && !onThinking) return (await rpc.request('llm.complete', request, signal)) as Completion
+      const streamId = nextStream++
+      streams.set(streamId, { onText, onThinking })
+      try {
+        return (await rpc.request(
+          'llm.complete',
+          {
+            ...request,
+            streamId,
+            ...(onText ? { text: true } : {}),
+            ...(onThinking ? { thinking: true } : {}),
+          },
+          signal,
+        )) as Completion
+      } finally {
+        streams.delete(streamId)
+      }
     },
   }
 

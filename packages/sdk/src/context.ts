@@ -54,6 +54,10 @@ export interface LlmRequest {
   /** Default 16000, at most 32000. */
   maxTokens?: number
   signal?: AbortSignal
+  /** Called with each piece of the reply's text as it arrives. */
+  onText?: (delta: string) => void
+  /** Called with each piece of the model's thinking as it arrives, where the provider sends it. */
+  onThinking?: (delta: string) => void
 }
 
 export interface Llm {

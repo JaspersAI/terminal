@@ -439,3 +439,65 @@ test('ctx.web is refused to a plugin that did not declare it', async () => {
     /declare "web" in capabilities/,
   )
 })
+
+const STREAMING_LLM = `
+const { definePlugin, defineSource } = require('@jaspers-ai/sdk')
+const { z } = require('zod')
+module.exports = definePlugin({
+  id: 'asker',
+  capabilities: ['llm'],
+  sources: {
+    ask: defineSource({
+      description: 'Ask the model',
+      input: z.object({ prompt: z.string() }),
+      run: async (args, ctx) => {
+        const texts = []
+        const thoughts = []
+        const reply = await ctx.llm.complete({
+          system: 'Be brief.',
+          turns: [{ role: 'user', text: args.prompt }],
+          onText: (delta) => texts.push(delta),
+          onThinking: (delta) => thoughts.push(delta),
+        })
+        return { reply: reply.text, texts, thoughts }
+      },
+    }),
+  },
+})
+`
+
+test('ctx.llm.complete streams text and thinking pieces from main to the plugin host', async () => {
+  const { main } = start()
+  const seen: unknown[] = []
+  main.handle('llm.complete', async (params) => {
+    seen.push(params)
+    const { streamId } = params as { streamId: number }
+    main.notify('llm.stream', { streamId, thinking: 'Check 10-K.' })
+    main.notify('llm.stream', { streamId, text: 'Hello ' })
+    main.notify('llm.stream', { streamId, text: 'world.' })
+    main.notify('llm.stream', { streamId: streamId + 99, text: 'other' })
+    return {
+      text: 'Hello world.',
+      toolCalls: [],
+      stopReason: 'end_turn',
+      usage: { input: 5, output: 2 },
+      raw: null,
+    }
+  })
+  await main.request('init', { id: 'asker', code: STREAMING_LLM, capabilities: ['llm'] })
+  const out = await main.request('source.run', { name: 'ask', args: { prompt: 'hi' } })
+  assert.deepEqual(out, {
+    reply: 'Hello world.',
+    texts: ['Hello ', 'world.'],
+    thoughts: ['Check 10-K.'],
+  })
+  assert.deepEqual(seen, [
+    {
+      system: 'Be brief.',
+      turns: [{ role: 'user', text: 'hi' }],
+      streamId: 1,
+      text: true,
+      thinking: true,
+    },
+  ])
+})
