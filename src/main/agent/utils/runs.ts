@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import { stepped, STOPPED, type AgentEvent, type AgentOrigin } from '../../../shared/agent/agent'
 import { mask } from '../../../shared/agent/transcript'
 import type { Place } from '../../../shared/agent/asking'
+import { isSleepWakeError } from '../../../shared/tasks/tasks'
 import { clearAnswered } from './questions'
 import { noteRequest, noteRun } from './record'
 import { knownSecrets } from './settings'
@@ -144,7 +145,12 @@ export function ended(entry: Live, work: Promise<string>): Promise<string> {
         emit({ kind: 'stopped', runId: entry.runId })
         throw new Error(STOPPED)
       }
-      emit({ kind: 'failed', runId: entry.runId, message: err instanceof Error ? err.message : String(err) })
+      const message = err instanceof Error ? err.message : String(err)
+      if (entry.origin === 'task' && isSleepWakeError(message)) {
+        emit({ kind: 'stopped', runId: entry.runId })
+        throw err
+      }
+      emit({ kind: 'failed', runId: entry.runId, message })
       throw err
     })
     .finally(() => end(entry))

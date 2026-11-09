@@ -76,8 +76,12 @@ export async function request({
     const began = Date.now()
     const asked = { round, attempt, label, provider: config.provider.id, model: config.model }
     try {
-      const wakeWait = signsIn(config.provider) ? jaspersWakeDelayMs() : 0
-      if (wakeWait > 0 && Number.isFinite(wakeWait)) {
+      while (signsIn(config.provider)) {
+        const wakeWait = jaspersWakeDelayMs()
+        if (wakeWait <= 0) break
+        if (!Number.isFinite(wakeWait)) {
+          throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+        }
         await sleep(wakeWait, signal)
       }
       const reply = await complete(config, system, history, tools, {

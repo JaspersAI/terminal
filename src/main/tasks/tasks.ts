@@ -285,7 +285,7 @@ function deferAfterSleepWake(): void {
     startAfterGrace(remaining, true)
     return
   }
-  if (started) {
+  if (started || !grace) {
     startAfterGrace(WAKE_GRACE_MS, true)
   }
 }
