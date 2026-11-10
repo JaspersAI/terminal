@@ -4,7 +4,7 @@ import { WorkingProvider, type BridgeRequest } from '@jaspers-ai/sdk/host'
 import { viewErrorMessage } from '../../../shared/grid/grid'
 import { liveKeyOf } from '../../../shared/plugins/live'
 import { viewSandbox } from '../../../shared/plugins/plugins'
-import { hostBridge, runSourceIn } from '../../lib/bridge'
+import { hostBridgeFor, runSourceIn } from '../../lib/bridge'
 import { subscribeLive } from '../../lib/live'
 import { useAppState } from '../../lib/state'
 import { BUILT_IN_VIEWS } from '../../views'
@@ -47,6 +47,7 @@ export function ViewHost({
   onZoomGesture,
 }: Props): ReactElement | null {
   const panel = useMemo(() => ({ id: panelId, workspaceId }), [panelId, workspaceId])
+  const bridge = useMemo(() => hostBridgeFor(workspaceId), [workspaceId])
   const views = useAppState((s) => s.views)
   const plugins = useAppState((s) => s.plugins)
   const plugin = views[view]?.plugin
@@ -76,7 +77,7 @@ export function ViewHost({
   const View = BUILT_IN_VIEWS[view]
   if (!View) return null
   return (
-    <BridgeProvider value={hostBridge}>
+    <BridgeProvider value={bridge}>
       <PanelProvider value={panel}>
         <WorkingProvider value={working}>
           <View panel={panel} />
@@ -124,6 +125,7 @@ function PluginView({
   onZoomGesture,
 }: FrameProps): ReactElement {
   const frame = useRef<HTMLIFrameElement>(null)
+  const bridge = useMemo(() => hostBridgeFor(workspaceId), [workspaceId])
   const initialWorking = useRef(working)
   const workingNow = useRef(working)
   workingNow.current = working
@@ -208,10 +210,7 @@ function PluginView({
       }
       try {
         const key = liveKeyOf(path)
-        subscriptions.set(
-          subId,
-          key !== null ? subscribeLive(plugin, key, deliver) : hostBridge.subscribe(path, deliver),
-        )
+        subscriptions.set(subId, key !== null ? subscribeLive(plugin, key, deliver) : bridge.subscribe(path, deliver))
       } catch (err) {
         post({ id, error: { message: err instanceof Error ? err.message : String(err) } })
         return
@@ -229,23 +228,23 @@ function PluginView({
         case 'store.get': {
           const path = String(params['path'])
           const key = liveKeyOf(path)
-          return key !== null ? window.app.live.get(plugin, key) : hostBridge.get(path)
+          return key !== null ? window.app.live.get(plugin, key) : bridge.get(path)
         }
         case 'panel.setState':
-          return hostBridge.setState(panel, params['path'] as string[], params['value'])
+          return bridge.setState(panel, params['path'] as string[], params['value'])
         case 'panel.publish':
-          return hostBridge.publish(panel, params['output'] as Record<string, unknown>)
+          return bridge.publish(panel, params['output'] as Record<string, unknown>)
         case 'panel.publishText':
-          return hostBridge.publishText(panel, params['text'] as string | null)
+          return bridge.publishText(panel, params['text'] as string | null)
         case 'source.run':
           // The frame's own workspace, never one the frame names: a plugin's code reads it as ctx.workspace.
           return runSourceIn(workspaceId, String(params['source']), params['args'], { fresh: params['fresh'] === true })
         case 'dataset.rows':
-          return hostBridge.datasetRows(String(params['datasetId']))
+          return bridge.datasetRows(String(params['datasetId']))
         case 'link.open':
-          return hostBridge.openLink(String(params['url']))
+          return bridge.openLink(String(params['url']))
         case 'clipboard.write':
-          return hostBridge.copyText(params['text'] as string)
+          return bridge.copyText(params['text'] as string)
         case 'voice.start':
           if (!microphone) throw new Error(`Declare "microphone" in ${plugin}'s capabilities to listen.`)
           if (!(await window.app.voice.requestMicrophone())) {
@@ -280,7 +279,7 @@ function PluginView({
       // A view that goes away while listening lets go of the microphone.
       if (recorder.active) void recorder.stop()
     }
-  }, [workspaceId, plugin, name, panelId, microphone])
+  }, [workspaceId, bridge, plugin, name, panelId, microphone])
 
   // Nothing in the SDK reads this yet; it is the half of the protocol the host owns.
   useEffect(() => {

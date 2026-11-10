@@ -20,6 +20,7 @@ import {
   tileBoxOf,
   tileBoxOlder,
   tileBoxRead,
+  tileBoxScrolled,
   tileBoxSeen,
   tileBoxSent,
   tileBoxSettled,
@@ -350,4 +351,26 @@ test('a tile box summarizes attached_file blocks in sent and heard questions', (
   assert.equal(sentRows[0]!.question, 'Analyze\n[Attached: sheet.xlsx]')
   const heardRows = boxHeard([], start('run1', 'e1', { request: prompt }), HERE)
   assert.equal(heardRows[0]!.question, 'Analyze\n[Attached: sheet.xlsx]')
+})
+
+test('a tile box remembers its conversation scroll position across tab switches and folds until a new message is sent', () => {
+  let boxes: ReadonlyMap<string, TileBox> = new Map()
+  assert.equal(tileBoxOf(boxes, HERE).scrollTop, null)
+
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, true))
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxScrolled(box, 240))
+  assert.equal(tileBoxOf(boxes, HERE).scrollTop, 240)
+
+  // Unchanged scroll offset preserves the box reference.
+  const beforeSame = tileBoxOf(boxes, HERE)
+  assert.equal(tileBoxScrolled(beforeSame, 240), beforeSame)
+
+  // Folding and reopening the conversation keeps the saved scroll position.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, false))
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, true))
+  assert.equal(tileBoxOf(boxes, HERE).scrollTop, 240)
+
+  // Sending a new prompt returns the conversation to following the bottom.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSent(box, HERE, 'a1', 'next question'))
+  assert.equal(tileBoxOf(boxes, HERE).scrollTop, null)
 })

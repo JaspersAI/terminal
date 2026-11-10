@@ -32,6 +32,7 @@ import {
   tileBoxOf,
   tileBoxOlder,
   tileBoxRead,
+  tileBoxScrolled,
   tileBoxSent,
   tileBoxSettled,
   withTileBox,
@@ -92,6 +93,8 @@ interface Props {
   called: string
   /** True for a deep research loop, whose field invites follow-up questions rather than view commands. */
   chat: boolean
+  /** Whether the tile's workspace tab is the active tab in this window. */
+  active?: boolean
   /** True while another element is maximized over the tile: nothing in the box can be read then. */
   covered: boolean
   /** True while the tile has no view in it yet: with nothing to make room for, what the box shows open is the tile. */
@@ -135,6 +138,7 @@ export function LoopBox({
   label,
   called,
   chat,
+  active = true,
   covered,
   fills,
   need,
@@ -155,7 +159,13 @@ export function LoopBox({
   })
   const drop = useFileDrop(attachments.attach)
   const tileBox = useTileBox(place)
-  const { expanded: open, draft, live, earlier, more } = tileBox
+  const { expanded: open, draft, live, earlier, more, scrollTop } = tileBox
+  const onScrollTopChange = useCallback(
+    (nextScrollTop: number | null) => {
+      updateTileBox(place, (b) => tileBoxScrolled(b, nextScrollTop))
+    },
+    [place],
+  )
   // The rows as they stand, for what happens between draws: stopping a request, reading the log.
   const now = useRef<LiveExchange[]>(live)
   now.current = live
@@ -251,7 +261,7 @@ export function LoopBox({
   return (
     <div
       ref={box}
-      id={`loop-box-${elementId}`}
+      id={active ? `loop-box-${elementId}` : undefined}
       data-loop-box
       data-open={open}
       // It can hold the keyboard itself, so a press on what it shows keeps the keyboard in it.
@@ -272,18 +282,22 @@ export function LoopBox({
     >
       {secret !== null ? (
         <div className="border border-border">
-          <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} />
+          <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} active={active} />
         </div>
       ) : question !== null ? (
         <div className="border border-border">
-          <QuestionField key={question.id} question={question} shown={!covered} />
+          <QuestionField key={question.id} question={question} shown={!covered} active={active} />
         </div>
       ) : need !== null ? (
         <div className="border border-border">
-          <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} />
+          <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} active={active} />
         </div>
       ) : (
-        <form id={`loop-form-${elementId}`} onSubmit={submit} className="flex shrink-0 items-center gap-1">
+        <form
+          id={active ? `loop-form-${elementId}` : undefined}
+          onSubmit={submit}
+          className="flex shrink-0 items-center gap-1"
+        >
           <div
             style={zoom !== 1 ? { height: `${1.5 * zoom}rem` } : undefined}
             className="flex h-6 min-w-0 flex-1 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground"
@@ -307,7 +321,7 @@ export function LoopBox({
               </span>
             ))}
             <input
-              id={`loop-input-${elementId}`}
+              id={active ? `loop-input-${elementId}` : undefined}
               name="loop-prompt"
               aria-label={`Message ${label}`}
               autoComplete="off"
@@ -338,10 +352,10 @@ export function LoopBox({
           </div>
           <button
             type="button"
-            id={`loop-expand-${elementId}`}
+            id={active ? `loop-expand-${elementId}` : undefined}
             data-loop-expand
             aria-expanded={open}
-            aria-controls={`loop-box-${elementId}`}
+            aria-controls={active ? `loop-box-${elementId}` : undefined}
             aria-label={open ? 'Fold the conversation' : 'Open the conversation'}
             title={open ? 'Collapse conversation' : 'Expand conversation'}
             onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
@@ -362,6 +376,8 @@ export function LoopBox({
             onEarlier={older}
             live={live}
             onStop={stop}
+            scrollTop={scrollTop}
+            onScrollTopChange={onScrollTopChange}
             className="mt-1 min-h-0 flex-1 overflow-y-auto border border-border px-2 py-1.5"
           />
         ) : (
