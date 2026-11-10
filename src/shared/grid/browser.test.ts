@@ -29,9 +29,12 @@ import {
   isVideoPageUrl,
   normalizeBounds,
   normalizeBrowserUrl,
+  ORB_OVERLAY_PAD,
+  orbOverlayBounds,
   readBrowserState,
   scaleBounds,
   shouldShowBrowser,
+  shouldShowOrbOverlay,
   unwrapBotChallengeUrl,
 } from './browser.ts'
 import { EMPTY_GRID, layoutOf, placeFramed, placeView, setMode, setRect, setZoom, withLayout } from './grid.ts'
@@ -622,4 +625,68 @@ test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text an
   assert.equal(ffNav.webdriver, false)
   assert.equal(ffNav.userAgentData, undefined)
   assert.equal(ffWin.chrome, undefined)
+})
+
+test('orbOverlayBounds pads the native Orb view for unclipped light vibration and shouldShowOrbOverlay only activates when overlapping a visible browser view or mid-drag', () => {
+  assert.equal(ORB_OVERLAY_PAD, 28)
+  const bounds = orbOverlayBounds(1100, 600, 84)
+  assert.deepEqual(bounds, {
+    x: 1100 - 28,
+    y: 600 - 28,
+    width: 84 + 56,
+    height: 84 + 56,
+  })
+
+  // When the Orb sits in the bottom-right corner and the browser tile is on the left, do not stack the native overlay.
+  assert.equal(
+    shouldShowOrbOverlay({
+      visible: true,
+      dragging: false,
+      orbBounds: bounds,
+      browserBounds: [{ x: 0, y: 40, width: 600, height: 700 }],
+    }),
+    false,
+  )
+
+  // When the Orb overlaps a visible browser tile, activate the native overlay so the Orb stays in front.
+  assert.equal(
+    shouldShowOrbOverlay({
+      visible: true,
+      dragging: false,
+      orbBounds: bounds,
+      browserBounds: [{ x: 800, y: 400, width: 400, height: 300 }],
+    }),
+    true,
+  )
+
+  // While an active native-overlay drag is in progress, keep it visible until pointer release even after leaving the browser tile.
+  assert.equal(
+    shouldShowOrbOverlay({
+      visible: true,
+      dragging: true,
+      orbBounds: bounds,
+      browserBounds: [{ x: 0, y: 40, width: 600, height: 700 }],
+    }),
+    true,
+  )
+
+  // When Orb mode is off or browser bounds are zero-sized, never show the native overlay.
+  assert.equal(
+    shouldShowOrbOverlay({
+      visible: false,
+      dragging: true,
+      orbBounds: bounds,
+      browserBounds: [{ x: 800, y: 400, width: 400, height: 300 }],
+    }),
+    false,
+  )
+  assert.equal(
+    shouldShowOrbOverlay({
+      visible: true,
+      dragging: false,
+      orbBounds: bounds,
+      browserBounds: [{ x: 800, y: 400, width: 0, height: 300 }],
+    }),
+    false,
+  )
 })
