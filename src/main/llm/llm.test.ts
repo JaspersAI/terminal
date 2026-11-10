@@ -1327,8 +1327,37 @@ test('a stream that enters a runaway place_view loop after laying out a 2x2 grid
     output: [
       { type: 'function_call', call_id: 'r1', name: 'get', arguments: '{"path":"views"}' },
       { type: 'function_call', call_id: 'r2', name: 'get', arguments: '{"path":"views"}' },
+      { type: 'function_call', call_id: 'r3', name: 'get', arguments: '{"path":"vi' },
     ],
   })
   assert.equal(trimmedResponses.stopReason, 'completed')
-  assert.equal(trimmedResponses.toolCalls.length, 1)
+  assert.deepEqual(trimmedResponses.toolCalls, [{ id: 'r1', name: 'get', input: { path: 'views' } }])
+
+  // When the chunk completing a trimmed call also carries finish_reason: 'length', the stream still reports 'tool_calls'.
+  const lenStream = openaiStream()
+  lenStream.push({
+    choices: [
+      { delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'get', arguments: '{"path":"views"}' } }] } },
+    ],
+  })
+  lenStream.push({
+    choices: [
+      {
+        delta: { tool_calls: [{ index: 1, id: 'c2', function: { name: 'get', arguments: '{"path":"views"}' } }] },
+        finish_reason: 'length',
+      },
+    ],
+  })
+  assert.equal(readOpenai(lenStream.done()).stopReason, 'tool_calls')
+
+  // When an earlier duplicate was trimmed but the final call is a different tool cut off at max_tokens, stopReason stays 'max_tokens'.
+  const cutTailAnthropic = readAnthropic({
+    content: [
+      { type: 'tool_use', id: 'a1', name: 'get', input: { path: 'views' } },
+      { type: 'tool_use', id: 'a2', name: 'get', input: { path: 'views' } },
+      { type: 'tool_use', id: 'a3', name: 'set', input: {} },
+    ],
+    stop_reason: 'max_tokens',
+  })
+  assert.equal(cutTailAnthropic.stopReason, 'max_tokens')
 })

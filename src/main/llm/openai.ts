@@ -225,14 +225,13 @@ export function readOpenai(data: OpenAiResponse): Completion {
   const choice = data.choices?.[0]
   const message = choice?.message ?? {}
   const rawCalls = message.tool_calls ?? []
-  const trimmed = trimToolCalls(
-    rawCalls.map((c) => ({
-      id: c.id,
-      name: c.function.name,
-      input: parseArguments(c.function.arguments),
-      raw: c,
-    })),
-  )
+  const parsed = rawCalls.map((c) => ({
+    id: c.id,
+    name: c.function.name,
+    input: parseArguments(c.function.arguments),
+    raw: c,
+  }))
+  const trimmed = trimToolCalls(parsed)
   const calls = trimmed.map((c) => c.raw)
   const input = data.usage?.prompt_tokens ?? 0
   const completion = data.usage?.completion_tokens ?? 0
@@ -240,7 +239,9 @@ export function readOpenai(data: OpenAiResponse): Completion {
   const fromTotal = data.usage?.total_tokens !== undefined ? Math.max(0, data.usage.total_tokens - input) : 0
   const rawStop = choice?.finish_reason ?? ''
   const stopReason =
-    trimmed.length > 0 && trimmed.length < rawCalls.length && cutShort(rawStop) === 'length' ? 'tool_calls' : rawStop
+    trimmed.length > 0 && trimmed[trimmed.length - 1] !== parsed[parsed.length - 1] && cutShort(rawStop) === 'length'
+      ? 'tool_calls'
+      : rawStop
   return {
     text: message.content ?? '',
     toolCalls: trimmed.map(({ id, name, input: parsedInput }) => ({
@@ -332,7 +333,7 @@ export function openaiStream(
             for (const [idx] of sorted) {
               if (!keptIndices.has(idx)) calls.delete(idx)
             }
-            finish ||= 'tool_calls'
+            if (!finish || cutShort(finish) === 'length') finish = 'tool_calls'
             looped = true
           }
         }

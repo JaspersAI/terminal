@@ -226,15 +226,15 @@ export function responsesStream(
 /** A Responses reply as a completion: the messages' text, the function calls by call id, why it stopped, and every item to send back. */
 export function readResponse(data: ResponsesReply): Completion {
   const rawOutput = data.output ?? []
-  const rawCallItems = rawOutput.filter((item) => item.type === 'function_call')
-  const trimmed = trimToolCalls(
-    rawCallItems.map((item) => ({
+  const parsed = rawOutput
+    .filter((item) => item.type === 'function_call')
+    .map((item) => ({
       id: item.call_id ?? '',
       name: item.name ?? '',
       input: parseArguments(item.arguments ?? ''),
       item,
-    })),
-  )
+    }))
+  const trimmed = trimToolCalls(parsed)
   const keptItems = new Set(trimmed.map((t) => t.item))
   const output = rawOutput.filter((item) => item.type !== 'function_call' || keptItems.has(item))
   const text = output
@@ -250,7 +250,9 @@ export function readResponse(data: ResponsesReply): Completion {
     .join('\n\n')
   const rawStop = data.incomplete_details?.reason ?? data.status ?? ''
   const stopReason =
-    trimmed.length > 0 && trimmed.length < rawCallItems.length && cutShort(rawStop) === 'length' ? 'completed' : rawStop
+    trimmed.length > 0 && trimmed[trimmed.length - 1] !== parsed[parsed.length - 1] && cutShort(rawStop) === 'length'
+      ? 'completed'
+      : rawStop
   return {
     text,
     toolCalls: trimmed.map(({ id, name, input }) => ({ id, name, input })),
