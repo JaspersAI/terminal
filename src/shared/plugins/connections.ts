@@ -6,6 +6,7 @@
 // imports.
 
 import { serviceUrl } from '../app/jaspers.ts'
+import { messageOf } from '../rpc.ts'
 import type { ConnectionInfo } from '../state'
 import { isPluginId } from './id.ts'
 
@@ -196,13 +197,16 @@ export function offersTool(connection: Connection, tool: string): boolean {
 }
 
 const AUTH_FAILURE = /\b(?:401|403)\b|unauthoriz|forbidden|insufficient_scope/i
+const OFFLINE_OR_SLEEP_FAILURE =
+  /\b(?:enotfound|eai_again|enetunreach|ehostunreach|enetdown|err_internet_disconnected|while the computer is sleeping or waking)\b/i
 const STALE_HTTP_SESSION =
   /error posting to endpoint|failed to open sse stream|sse stream disconnected|session (?:not found|expired|id)|(?:invalid|missing|unknown|no valid) session|mcp-session-id|not initialized|fetch failed|socket hang up|econnreset|econnrefused/i
 
 /**
  * Whether an error from a call on a connection means an HTTP session or transport died under it and
- * the connection should be established again. Auth refusals (401/403/OAuth) and ordinary tool errors
- * are left alone; stdio connections have no HTTP session to renew.
+ * the connection should be established again. Auth refusals (401/403/OAuth), offline DNS/network or
+ * sleep/wake errors, and ordinary tool errors are left alone; stdio connections have no HTTP session
+ * to renew.
  */
 export function isStaleHttpSession(err: unknown, connection: Connection): boolean {
   if (!connection.url || !(err instanceof Error)) return false
@@ -215,10 +219,11 @@ export function isStaleHttpSession(err: unknown, connection: Connection): boolea
     return false
   }
   const code = (err as { code?: unknown }).code
-  if (code === 401 || code === 403 || AUTH_FAILURE.test(err.message)) return false
+  const message = messageOf(err)
+  if (code === 401 || code === 403 || AUTH_FAILURE.test(message) || OFFLINE_OR_SLEEP_FAILURE.test(message)) return false
   if (err instanceof TypeError) return true
   if (typeof code === 'number' && (code === 400 || code === 404 || (code >= 500 && code < 600))) return true
-  return STALE_HTTP_SESSION.test(err.message)
+  return STALE_HTTP_SESSION.test(message)
 }
 
 /**
