@@ -278,6 +278,11 @@ export function releaseVoice(): void {
   // No-op: voice uses press-once to listen, press-again to process.
 }
 
+/** Normalized 0..1 live microphone energy while recording, or 0 when idle. */
+export function voiceLevel(): number {
+  return recorder.level()
+}
+
 /** Silently aborts an in-progress press when the user drags the Orb to move it instead of toggling voice. */
 export function cancelVoice(): void {
   if (!pressed && !recorder.active) return

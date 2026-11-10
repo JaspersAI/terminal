@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react'
 import logo from '../../assets/jaspers-logo-black.png'
 import { useAppState } from '../../lib/state'
-import { useRequest } from './request'
+import { orbBaseScale, orbVibration } from './orb-motion'
+import { useRequest, voiceLevel } from './request'
 import { Spring } from './spring'
 
 /** How far the orb drifts toward a hovering pointer, in px. */
@@ -28,18 +29,74 @@ export function FloatingOrb(): ReactElement {
   }))
   const button = useRef<HTMLButtonElement>(null)
   const gloss = useRef<HTMLSpanElement>(null)
+  const haloRef = useRef<HTMLSpanElement>(null)
+  const waveRef = useRef<HTMLSpanElement>(null)
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
   const springRef = useRef<Spring | null>(null)
   const spring = (springRef.current ??= new Spring((v) => {
+    const tx = v.x.toFixed(2)
+    const ty = v.y.toFixed(2)
     if (button.current) {
-      button.current.style.transform = `translate(${v.x.toFixed(2)}px, ${v.y.toFixed(2)}px) scale(${v.scale.toFixed(4)})`
+      button.current.style.transform = `translate(${tx}px, ${ty}px) scale(${v.scale.toFixed(4)})`
     }
-    if (gloss.current) {
+    if (haloRef.current) {
+      haloRef.current.style.translate = `${tx}px ${ty}px`
+    }
+    if (waveRef.current) {
+      waveRef.current.style.translate = `${tx}px ${ty}px`
+    }
+    if (gloss.current && phaseRef.current === 'idle') {
       gloss.current.style.setProperty('--gloss', `${(32 + v.x * 3).toFixed(1)}% ${(26 + v.y * 3).toFixed(1)}%`)
     }
   }))
-  const scale = phase === 'recording' ? 1.18 : phase === 'opening' ? 0.92 : phase === 'idle' && hovering ? 1.08 : 1
-  useEffect(() => spring.set({ scale }), [spring, scale])
+  const baseScale = orbBaseScale(phase, hovering)
+  useEffect(() => spring.set({ scale: baseScale }), [spring, baseScale])
   useEffect(() => () => spring.stop(), [spring])
+
+  // Continuous luminous light vibration while the orb is active (opening, recording, transcribing, thinking).
+  useEffect(() => {
+    if (phase === 'idle') {
+      if (haloRef.current) {
+        haloRef.current.style.opacity = '0'
+        haloRef.current.style.scale = '1'
+      }
+      if (waveRef.current) {
+        waveRef.current.style.opacity = '0'
+        waveRef.current.style.scale = '1'
+      }
+      if (gloss.current) {
+        gloss.current.style.setProperty('--gloss', '32% 26%')
+        gloss.current.style.setProperty('--orb-spec', '0.5')
+        gloss.current.style.setProperty('--orb-rim', '0.2')
+        gloss.current.style.setProperty('--orb-rim-bottom', '0.14')
+      }
+      return
+    }
+    let frame = 0
+    const startAt = performance.now()
+    const tick = (now: number): void => {
+      const vibe = orbVibration(phase, now - startAt, phase === 'recording' ? voiceLevel() : 0)
+      spring.set({ scale: orbBaseScale(phase, false) + vibe.scaleOffset })
+      if (haloRef.current) {
+        haloRef.current.style.scale = vibe.haloScale.toFixed(4)
+        haloRef.current.style.opacity = vibe.haloOpacity.toFixed(3)
+      }
+      if (waveRef.current) {
+        waveRef.current.style.scale = vibe.waveScale.toFixed(4)
+        waveRef.current.style.opacity = vibe.waveOpacity.toFixed(3)
+      }
+      if (gloss.current) {
+        gloss.current.style.setProperty('--gloss', `${vibe.glossX.toFixed(1)}% ${vibe.glossY.toFixed(1)}%`)
+        gloss.current.style.setProperty('--orb-spec', Math.min(0.82, 0.46 + vibe.rimGlow * 0.4).toFixed(3))
+        gloss.current.style.setProperty('--orb-rim', vibe.rimGlow.toFixed(3))
+        gloss.current.style.setProperty('--orb-rim-bottom', (vibe.rimGlow * 0.78).toFixed(3))
+      }
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [phase, spring])
 
   const stateRef = useRef({ hasVoice, toggleVoice })
   stateRef.current = { hasVoice, toggleVoice }
@@ -147,15 +204,33 @@ export function FloatingOrb(): ReactElement {
     if (hasVoice) toggleVoice('orb')
   }
 
-  const look = phase === 'recording' ? 'ring-8 ring-primary/15' : phase === 'idle' ? '' : 'animate-pulse'
+  const activeShadow =
+    phase === 'idle'
+      ? 'shadow-[0_14px_24px_-10px_rgba(0,0,0,0.6)] hover:shadow-[0_22px_34px_-12px_rgba(0,0,0,0.55)]'
+      : 'shadow-[0_0_22px_3px_rgba(255,255,255,0.32),0_14px_24px_-10px_rgba(0,0,0,0.6)]'
 
   return (
     <div
       id="floating-voice-orb"
       data-floating-orb
-      style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
+      data-orb-phase={phase}
+      style={{ left: `${pos.x}px`, top: `${pos.y}px`, width: `${ORB_DIAMETER_PX}px`, height: `${ORB_DIAMETER_PX}px` }}
       className="fixed z-50 select-none"
     >
+      <span
+        ref={waveRef}
+        aria-hidden
+        data-orb-wave
+        style={{ opacity: 0 }}
+        className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.55)_0%,rgba(255,255,255,0.28)_50%,rgba(255,255,255,0.08)_72%,rgba(255,255,255,0)_100%)] blur-md"
+      />
+      <span
+        ref={haloRef}
+        aria-hidden
+        data-orb-halo
+        style={{ opacity: 0 }}
+        className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,0.85)_36%,rgba(255,255,255,0.45)_62%,rgba(255,255,255,0.14)_80%,rgba(255,255,255,0)_100%)] shadow-[0_0_24px_6px_rgba(255,255,255,0.45)] blur-[3px]"
+      />
       <button
         ref={button}
         type="button"
@@ -181,13 +256,13 @@ export function FloatingOrb(): ReactElement {
           setHovering(false)
           spring.set({ x: 0, y: 0 })
         }}
-        className={`relative touch-none select-none overflow-hidden rounded-full bg-primary shadow-[0_14px_24px_-10px_rgba(0,0,0,0.6)] transition-shadow duration-300 hover:shadow-[0_22px_34px_-12px_rgba(0,0,0,0.55)] ${look}`}
+        className={`relative touch-none select-none overflow-hidden rounded-full bg-[#111111] transition-shadow duration-300 ${activeShadow}`}
       >
         <img src={logo} alt="" draggable={false} className="pointer-events-none h-full w-full object-cover" />
         <span
           ref={gloss}
           aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle_at_var(--gloss,32%_26%),rgba(255,255,255,0.5),rgba(255,255,255,0.06)_42%,rgba(0,0,0,0)_70%)] shadow-[inset_0_-6px_10px_rgba(255,255,255,0.14),inset_0_6px_10px_rgba(255,255,255,0.2)]"
+          className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle_at_var(--gloss,32%_26%),rgba(255,255,255,var(--orb-spec,0.5)),rgba(255,255,255,0.06)_42%,rgba(0,0,0,0)_70%)] shadow-[inset_0_-6px_10px_rgba(255,255,255,var(--orb-rim-bottom,0.14)),inset_0_6px_10px_rgba(255,255,255,var(--orb-rim,0.2))]"
         />
       </button>
     </div>
