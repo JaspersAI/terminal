@@ -159,10 +159,11 @@ export function shouldRetrySourceRun(
   source: string,
   args?: unknown,
   sources?: unknown,
+  error?: string | null,
 ): boolean {
   if (registry === 'connections') {
-    if (sources !== undefined || args !== undefined) {
-      return shouldRetryOnConnections(source, args, sources, previous, next)
+    if (sources !== undefined || args !== undefined || error !== undefined) {
+      return shouldRetryOnConnections(source, args, sources, previous, next, error)
     }
     if (!isRecord(next)) return false
     const prevMap = isRecord(previous) ? previous : {}
@@ -184,7 +185,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function relevantSourceSpecs(
   target: string,
   sources: unknown,
-): Record<string, { plugin: unknown; connection: unknown; tool: unknown; internal: boolean }> {
+): Record<string, { plugin: unknown; connection: unknown; tool: unknown; internal: boolean; usesTools: boolean }> {
   const clean = target.trim()
   if (!clean || !isRecord(sources)) return {}
   if (isRecord(sources[clean])) {
@@ -195,13 +196,17 @@ function relevantSourceSpecs(
         connection: entry['connection'] ?? null,
         tool: entry['tool'] ?? null,
         internal: entry['internal'] === true,
+        usesTools: entry['usesTools'] === true,
       },
     }
   }
   const parts = clean.split('/').filter(Boolean)
   const plugin = parts[0] ?? ''
   const connPrefix = parts.length === 3 ? `${parts[0]}/${parts[1]}` : null
-  const out: Record<string, { plugin: unknown; connection: unknown; tool: unknown; internal: boolean }> = {}
+  const out: Record<
+    string,
+    { plugin: unknown; connection: unknown; tool: unknown; internal: boolean; usesTools: boolean }
+  > = {}
   for (const [id, raw] of Object.entries(sources)) {
     if (!isRecord(raw)) continue
     if (
@@ -214,6 +219,7 @@ function relevantSourceSpecs(
         connection: raw['connection'] ?? null,
         tool: raw['tool'] ?? null,
         internal: raw['internal'] === true,
+        usesTools: raw['usesTools'] === true,
       }
     }
   }
@@ -230,6 +236,15 @@ export function shouldRetryOnSources(target: string, prev: unknown, next: unknow
   if (Object.keys(nextRel).length === 0) return false
   const prevRel = relevantSourceSpecs(target, prev)
   return stableStringify(prevRel) !== stableStringify(nextRel)
+}
+
+function errorNamesConnection(error: string, id: string, conn: Record<string, unknown>): boolean {
+  if (error.includes(id)) return true
+  const connPlugin =
+    typeof conn['plugin'] === 'string' && conn['plugin'] !== '' ? conn['plugin'] : (id.split('/')[0] ?? '')
+  if (!connPlugin) return false
+  const escaped = connPlugin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^a-z0-9-])${escaped}([^a-z0-9-]|$)`, 'i').test(error)
 }
 
 /**
@@ -249,32 +264,26 @@ export function shouldRetryOnConnections(
   const parts = clean.split('/').filter(Boolean)
   const plugin = parts[0] ?? ''
   const connPrefix = parts.length === 3 ? `${parts[0]}/${parts[1]}` : null
+  const errText = typeof error === 'string' ? error.trim() : ''
+  const errMatchesAnyInNext =
+    errText !== '' && Object.entries(next).some(([id, raw]) => isRecord(raw) && errorNamesConnection(errText, id, raw))
 
   const matchesConnection = (id: string, conn: Record<string, unknown>): boolean => {
     if (clean === 'core/mcp') {
       const requested = isRecord(args) && typeof args['connection'] === 'string' ? args['connection'].trim() : ''
       return !requested || id === requested || id.endsWith(`/${requested}`)
     }
+    if (errText !== '' && errorNamesConnection(errText, id, conn)) {
+      return true
+    }
     if (isRecord(sources) && isRecord(sources[clean])) {
       const entry = sources[clean]
       const declaredConn =
         typeof entry['connection'] === 'string' && entry['connection'] !== '' ? entry['connection'] : null
       if (declaredConn !== null) return id === declaredConn
+      if (entry['usesTools'] === true) return !errMatchesAnyInNext
       const sourcePlugin = typeof entry['plugin'] === 'string' && entry['plugin'] !== '' ? entry['plugin'] : plugin
-      if (conn['plugin'] === sourcePlugin || id.startsWith(`${sourcePlugin}/`)) return true
-      if (typeof error === 'string' && error !== '') {
-        const lower = error.toLowerCase()
-        const connPlugin = typeof conn['plugin'] === 'string' ? conn['plugin'].toLowerCase() : ''
-        if (
-          lower.includes(id.toLowerCase()) ||
-          (connPlugin !== '' && lower.includes(connPlugin)) ||
-          lower.includes('ready connections') ||
-          lower.includes('connection_unavailable')
-        ) {
-          return true
-        }
-      }
-      return false
+      return conn['plugin'] === sourcePlugin || id.startsWith(`${sourcePlugin}/`)
     }
     if (isRecord(sources) && parts.length === 2) {
       for (const raw of Object.values(sources)) {
@@ -362,6 +371,8 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
     fresh.current = false
     failed.current = false
     failedError.current = null
+    const sourcesAtStart = latestSources.current ?? bridge.peek?.('sources')
+    const connectionsAtStart = latestConnections.current ?? bridge.peek?.('connections')
     setResult((previous) => beginSourceRun(previous, sameQuery))
     void (async () => {
       try {
@@ -378,8 +389,18 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
         )
       } catch (err) {
         if (!live) return
+        const message = err instanceof Error ? err.message : String(err)
+        const currentSources = latestSources.current ?? bridge.peek?.('sources')
+        const currentConnections = latestConnections.current ?? bridge.peek?.('connections')
+        if (
+          shouldRetryOnSources(target, sourcesAtStart, currentSources) ||
+          shouldRetryOnConnections(target, args, currentSources, connectionsAtStart, currentConnections, message)
+        ) {
+          setNonce((n) => n + 1)
+          return
+        }
         failed.current = true
-        failedError.current = err instanceof Error ? err.message : String(err)
+        failedError.current = message
         setResult((previous) => failSourceRun(previous, err, sameQuery))
       }
     })()
@@ -407,7 +428,6 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
       if (failed.current && shouldRetryOnSources(latestTarget.current, prev, next)) {
         failed.current = false
         failedError.current = null
-        fresh.current = true
         setNonce((n) => n + 1)
       }
     })
@@ -423,7 +443,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
         shouldRetryOnConnections(
           latestTarget.current,
           latestArgs.current,
-          latestSources.current,
+          latestSources.current ?? bridge.peek?.('sources'),
           prev,
           next,
           failedError.current,
@@ -431,7 +451,6 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
       ) {
         failed.current = false
         failedError.current = null
-        fresh.current = true
         setNonce((n) => n + 1)
       }
     })

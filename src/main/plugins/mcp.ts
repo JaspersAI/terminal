@@ -103,10 +103,7 @@ export function connect(id: string, retry = 0): Promise<void> {
  * ids when a filter is given (triggering a reconnect for any errored connection eligible to retry on
  * call), or for all currently connecting servers when unfiltered.
  */
-export async function waitForConnections(
-  wanted: readonly string[] | null = null,
-  signal?: AbortSignal,
-): Promise<void> {
+export async function waitForConnections(wanted: readonly string[] | null = null, signal?: AbortSignal): Promise<void> {
   const pending: Promise<void>[] = []
   if (wanted !== null && wanted !== undefined) {
     for (const id of wanted) {
