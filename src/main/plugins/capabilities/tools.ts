@@ -18,10 +18,10 @@ export interface ToolsDeps {
     args: Record<string, unknown>,
     opts: { signal: AbortSignal; timeoutMs: number },
   ): Promise<unknown>
-  /** Waits for pending startup plugin builds and in-flight connection handshakes to settle. */
-  settle?(connections?: readonly string[]): Promise<void>
   /** Asks the user for a connection's missing key and waits; throws when they do not give it. */
   ask?(connection: string): Promise<void>
+  /** Waits for pending plugin registrations and connecting MCP servers to settle before reading or calling tools. */
+  settle?(connections?: readonly string[] | null, signal?: AbortSignal): Promise<void>
 }
 
 /** Search tools on a large filing set can take most of a minute; a slow one is not a dead one. */
@@ -37,37 +37,47 @@ export function createTools(deps: ToolsDeps) {
   }
 
   const pick = (raw: unknown): ConnectionInfo[] => {
-    const list = wantedIds(raw)
-    const wanted = list ? new Set(list) : null
+    const wantedList = wantedIds(raw)
+    const wanted = wantedList ? new Set(wantedList) : null
     return Object.values(deps.connections()).filter((c) => wanted === null || wanted.has(c.id))
   }
 
   // A connection the plugin names that is missing its key asks the user first, so an analyst starting
   // on it waits for the key instead of starting without the connection's tools and its server's guide.
   // Asking for everything names nothing, and holds nothing up. A refusal leaves the connection as it is.
-  const askNamed = async (raw: unknown): Promise<void> => {
-    await deps.settle?.(wantedIds(raw))
+  const askNamed = async (raw: unknown): Promise<boolean> => {
     const filter = wantedIds(raw)
-    if (!deps.ask || !filter) return
+    if (!deps.ask || !filter) return false
+    let asked = false
     for (const c of Object.values(deps.connections())) {
-      if (filter.includes(c.id) && c.status === 'needs-secret') await deps.ask(c.id).catch(() => undefined)
+      if (filter.includes(c.id) && c.status === 'needs-secret') {
+        asked = true
+        await deps.ask(c.id).catch(() => undefined)
+      }
     }
+    return asked
   }
 
   return {
     async connections(
       raw: unknown,
+      signal?: AbortSignal,
     ): Promise<{ id: string; status: ConnectionInfo['status']; instructions: string | null }[]> {
-      await askNamed(raw)
+      const wanted = wantedIds(raw)
+      await deps.settle?.(wanted, signal)
+      if (await askNamed(raw)) await deps.settle?.(wanted, signal)
       return pick(raw).map((c) => ({ id: c.id, status: c.status, instructions: c.instructions }))
     },
 
     async list(
       raw: unknown,
+      signal?: AbortSignal,
     ): Promise<
       { id: string; connection: string; name: string; description: string; parameters: Record<string, unknown> }[]
     > {
-      await askNamed(raw)
+      const wanted = wantedIds(raw)
+      await deps.settle?.(wanted, signal)
+      if (await askNamed(raw)) await deps.settle?.(wanted, signal)
       return pick(raw)
         .filter((c) => c.status === 'ready')
         .flatMap((c) =>
@@ -91,15 +101,13 @@ export function createTools(deps: ToolsDeps) {
           isError: true,
         }
       }
-      const parsedArgs = record(args)
       const connectionId = id.slice(0, slash)
       const toolName = id.slice(slash + 1)
-      if (!deps.connections()[connectionId] || deps.connections()[connectionId]?.status === 'connecting') {
-        await deps.settle?.([connectionId])
-      }
+      const parsedArgs = record(args)
       const isAgentsPoll = id === 'agents/research/status' || id === 'agents/research/documents'
       const pollKey = isAgentsPoll ? `${id}\n${stableStringify(parsedArgs)}` : null
       try {
+        await deps.settle?.([connectionId], signal)
         const result = (await deps.call(connectionId, toolName, parsedArgs, {
           signal,
           timeoutMs: CALL_TIMEOUT_MS,

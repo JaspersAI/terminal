@@ -24,6 +24,7 @@ import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { isSleepWakeError } from '../../shared/tasks/tasks'
 import { call } from '../plugins/mcp'
 import { runInHost } from '../plugins/plugin-host'
+import { hasPendingPluginRegistration, waitForPluginRegistration } from '../plugins/plugins'
 import { getSource, type RegisteredSource } from '../plugins/registry'
 import { getState } from '../state'
 import { sourceEvent } from '../../shared/app/eye-events'
@@ -71,6 +72,9 @@ export async function runSource(
   args: unknown,
   options: RunOptions = {},
 ): Promise<RunResult & { text: string }> {
+  if (hasPendingPluginRegistration()) {
+    await waitForPluginRegistration(options.signal)
+  }
   const source = getSource(id)
   if (!source) throw new Error(`Unknown source ${id}.`)
   const def = source.def
@@ -113,6 +117,7 @@ export async function runSource(
           )
         : await runFunction(source, preparedArgs, workspaceId, options.raw))
     } catch (error) {
+      cache.delete(key)
       const rawMessage = messageOf(error)
       const message = isMcpSource(def) ? withParameters(rawMessage, declared()) : rawMessage
       if (!isSleepWakeError(message)) {

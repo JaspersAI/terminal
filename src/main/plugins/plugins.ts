@@ -8,6 +8,7 @@ import { describeSource } from '../../shared/plugins/install'
 import {
   classifyPluginWatchPath,
   createPluginBuildQueue,
+  createPluginRegistrationGate,
   samePluginBuild,
   type ValidatedPlugin,
 } from '../../shared/plugins/plugins'
@@ -49,44 +50,43 @@ const timers = new Map<string, NodeJS.Timeout>()
 const codeChanged = new Set<string>()
 /** One build at a time per plugin, coalescing concurrent watcher rescans while preserving explicit rebuilds. */
 const buildQueue = createPluginBuildQueue({ build, remove })
+/** Holds dependent source and tool lookups until startup discovery and in-flight plugin registrations settle. */
+const registrationGate = createPluginRegistrationGate()
+let releaseStartup: (() => void) | null = null
 /** Last good build output per plugin so unchanged watcher rescans do not bump version or restart hosts. */
 const lastBuilt = new Map<string, { dir: string; code: string; bundle: string; stamp: string; shell: boolean }>()
-/** Active plugin builds, so a plugin backend asking for connections at startup waits for sibling plugins to register theirs. */
-const inFlightBuilds = new Set<Promise<void>>()
 let checkingUpdates: Promise<void> | null = null
 let updatesStarted = false
 
-/** Finds every plugin, builds it, and watches for changes. Once, at startup. */
-export function startPlugins(): void {
-  // Before the first build loads esbuild: a packaged app has to be told where its binary is.
-  useUnpackedEsbuild()
-  try {
-    fs.mkdirSync(homePluginsRoot(), { recursive: true })
-  } catch {
-    // Read-only or unavailable home: discover and watch whatever exists.
-  }
-  for (const [id, dir] of discover()) void load(id, dir)
-  watch()
-  startPluginUpdates()
+/** Marks startup plugin discovery as pending before shell PATH adoption begins. */
+export function deferPluginStartup(): void {
+  releaseStartup ??= registrationGate.deferStartup()
 }
 
-/** Waits for any currently running plugin builds to finish registering their connections. */
-export async function waitForPluginBuilds(timeoutMs = 5_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (inFlightBuilds.size > 0) {
-    const remaining = deadline - Date.now()
-    if (remaining <= 0) return
-    let timer: NodeJS.Timeout | undefined
-    const limit = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, remaining)
-      timer.unref?.()
-    })
+export function hasPendingPluginRegistration(): boolean {
+  return registrationGate.hasPending()
+}
+
+export function waitForPluginRegistration(signal?: AbortSignal): Promise<void> {
+  return registrationGate.wait(signal)
+}
+
+/** Finds every plugin, builds it, and watches for changes. Once, at startup. */
+export function startPlugins(): void {
+  try {
+    // Before the first build loads esbuild: a packaged app has to be told where its binary is.
+    useUnpackedEsbuild()
     try {
-      await Promise.race([Promise.allSettled([...inFlightBuilds]), limit])
-    } finally {
-      if (timer) clearTimeout(timer)
+      fs.mkdirSync(homePluginsRoot(), { recursive: true })
+    } catch {
+      // Read-only or unavailable home: discover and watch whatever exists.
     }
-    if (Date.now() >= deadline) return
+    for (const [id, dir] of discover()) void load(id, dir)
+    watch()
+    startPluginUpdates()
+  } finally {
+    releaseStartup?.()
+    releaseStartup = null
   }
 }
 
@@ -100,95 +100,103 @@ export function bundlePath(id: string): string {
  * registered before and says why, since a half-written file is the usual reason to be here.
  */
 function load(id: string, dir: string, fromWatch = false): Promise<void> {
-  const task = buildQueue.load(id, dir, fromWatch).finally(() => {
-    inFlightBuilds.delete(task)
-  })
-  inFlightBuilds.add(task)
-  return task
+  return buildQueue.load(id, dir, fromWatch)
 }
 
 async function build(id: string, dir: string, fromWatch = false): Promise<void> {
-  const previousBuilt = lastBuilt.get(id)
-  const isReady = getState().plugins[id]?.status === 'ready'
-  const stamp = pluginCodeStamp(dir)
-  const shell = hasShellApproval(dir)
-  if (
-    fromWatch &&
-    isReady &&
-    previousBuilt &&
-    previousBuilt.dir === dir &&
-    previousBuilt.stamp === stamp &&
-    previousBuilt.shell === shell
-  ) {
-    registerPluginSkills(id, dir)
-    return
-  }
-  const wasReady = fromWatch && isReady
-  if (!wasReady) begin(id, dir)
-  registerPluginSkills(id, dir)
+  const finishRegistration = registrationGate.begin()
   try {
-    const outPath = bundlePath(id)
-    const code = await bundlePlugin(dir, outPath)
-    let bundle = ''
-    try {
-      bundle = fs.readFileSync(outPath, 'utf8')
-    } catch {
-      // Bundle file was not readable; proceed with registration.
-    }
-    if (getState().plugins[id]?.status === 'ready' && samePluginBuild(previousBuilt, { dir, code, bundle, shell })) {
-      lastBuilt.set(id, { dir, code, bundle, stamp, shell })
+    const previousBuilt = lastBuilt.get(id)
+    const isReady = getState().plugins[id]?.status === 'ready'
+    const stamp = pluginCodeStamp(dir)
+    const shell = hasShellApproval(dir)
+    if (
+      fromWatch &&
+      isReady &&
+      previousBuilt &&
+      previousBuilt.dir === dir &&
+      previousBuilt.stamp === stamp &&
+      previousBuilt.shell === shell
+    ) {
+      registerPluginSkills(id, dir)
       return
     }
-    const validated = evaluatePlugin(code, id)
-    // A plugin the assistant built is held to what the user approved: anything wider is this build's
-    // error, and the last good registration stays, as after any failed build.
-    const refused = checkEnvelope(validated, dir)
-    if (refused) throw new Error(refused)
-    lastBuilt.set(id, { dir, code, bundle, stamp, shell })
-    // Its connections first, so a source's line in the prompt finds the connection it runs on.
-    registerConnections(id, dir, validated.connections)
-    registerPlugin(id, validated.sources, viewDefs(validated))
-    const currentPlugin = getState().plugins[id]
-    const version = (currentPlugin?.version ?? 0) + 1
-    const values = secretValues(id)
-    const nextProvenance = provenance(dir, currentPlugin?.install?.available ?? null)
-    const host = validated.hasBackend
-      ? currentPlugin?.host && currentPlugin.host !== 'none'
-        ? currentPlugin.host
-        : validated.start !== null
-          ? 'starting'
-          : 'idle'
-      : 'none'
-    setPluginInfo(id, {
-      ...nextProvenance,
-      dir,
-      status: 'ready',
-      version,
-      sources: Object.keys(validated.sources).map((name) => `${id}/${name}`),
-      views: Object.keys(validated.views).map((name) => `${id}/${name}`),
-      errors: [],
-      capabilities: validated.capabilities,
-      frames: validated.frames,
-      secrets: Object.entries(validated.secrets).map(([key, { label, optional }]) => ({
-        key,
-        label,
-        set: values[key] !== undefined,
-        ...(optional ? { optional } : {}),
-      })),
-      connections: Object.keys(validated.connections).map((name) => `${id}/${name}`),
-      host,
-    })
-    console.log(`plugins: ${id} ready (v${version})`)
-    // Code the plugin runs after registration runs in its own process, on this build: from now when
-    // the plugin defines start, and from its first source run when it does not.
-    if (validated.hasBackend)
-      await startHost(id, { code, dir, capabilities: validated.capabilities, eager: validated.start !== null, shell })
-    else await removeHost(id, 'the plugin has no code of its own to run')
-  } catch (err) {
-    lastBuilt.delete(id)
-    const errors = messages(err)
-    setPluginInfo(id, { status: 'error', errors })
-    console.warn(`plugins: ${id} ${errors[0]}`)
+    const wasReady = fromWatch && isReady
+    if (!wasReady) begin(id, dir)
+    registerPluginSkills(id, dir)
+    try {
+      const outPath = bundlePath(id)
+      const code = await bundlePlugin(dir, outPath)
+      let bundle = ''
+      try {
+        bundle = fs.readFileSync(outPath, 'utf8')
+      } catch {
+        // Bundle file was not readable; proceed with registration.
+      }
+      if (getState().plugins[id]?.status === 'ready' && samePluginBuild(previousBuilt, { dir, code, bundle, shell })) {
+        lastBuilt.set(id, { dir, code, bundle, stamp, shell })
+        return
+      }
+      const validated = evaluatePlugin(code, id)
+      // A plugin the assistant built is held to what the user approved: anything wider is this build's
+      // error, and the last good registration stays, as after any failed build.
+      const refused = checkEnvelope(validated, dir)
+      if (refused) throw new Error(refused)
+      lastBuilt.set(id, { dir, code, bundle, stamp, shell })
+      // Its connections first, so a source's line in the prompt finds the connection it runs on.
+      registerConnections(id, dir, validated.connections)
+      registerPlugin(id, validated.sources, viewDefs(validated), validated.capabilities)
+      const currentPlugin = getState().plugins[id]
+      const version = (currentPlugin?.version ?? 0) + 1
+      const values = secretValues(id)
+      const nextProvenance = provenance(dir, currentPlugin?.install?.available ?? null)
+      const host = validated.hasBackend
+        ? currentPlugin?.host && currentPlugin.host !== 'none'
+          ? currentPlugin.host
+          : validated.start !== null
+            ? 'starting'
+            : 'idle'
+        : 'none'
+      setPluginInfo(id, {
+        ...nextProvenance,
+        dir,
+        status: 'ready',
+        version,
+        sources: Object.keys(validated.sources).map((name) => `${id}/${name}`),
+        views: Object.keys(validated.views).map((name) => `${id}/${name}`),
+        errors: [],
+        capabilities: validated.capabilities,
+        frames: validated.frames,
+        secrets: Object.entries(validated.secrets).map(([key, { label, optional }]) => ({
+          key,
+          label,
+          set: values[key] !== undefined,
+          ...(optional ? { optional } : {}),
+        })),
+        connections: Object.keys(validated.connections).map((name) => `${id}/${name}`),
+        host,
+      })
+      console.log(`plugins: ${id} ready (v${version})`)
+      finishRegistration()
+      // Code the plugin runs after registration runs in its own process, on this build: from now when
+      // the plugin defines start, and from its first source run when it does not.
+      if (validated.hasBackend)
+        await startHost(id, {
+          code,
+          dir,
+          capabilities: validated.capabilities,
+          eager: validated.start !== null,
+          shell,
+        })
+      else await removeHost(id, 'the plugin has no code of its own to run')
+    } catch (err) {
+      lastBuilt.delete(id)
+      const errors = messages(err)
+      setPluginInfo(id, { status: 'error', errors })
+      console.warn(`plugins: ${id} ${errors[0]}`)
+    }
+  } finally {
+    finishRegistration()
   }
 }
 

@@ -20,14 +20,14 @@ import { askForMissingSecret } from '../actions'
 import { hasShellApproval } from './shell-approval'
 import { createTools } from './capabilities/tools'
 import { jaspersHome } from '../home'
-import { call as callTool, waitForConnecting } from './mcp'
-import { waitForPluginBuilds } from './plugins'
+import { call as callTool, waitForConnections } from './mcp'
 import { complete } from '../llm/llm'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { clearLive, deleteLive, hasLive, setLive } from './live'
 import { secretValues } from './connections'
 import { fileNotice } from '../app/notices'
 import { setPluginInfo } from './plugin-info'
+import { waitForPluginRegistration } from './plugins'
 import { activateSkill, readSkillFile, skillCatalog } from '../skills/skills'
 import { getProviderConfig } from '../secrets'
 import { getState, toPublic } from '../state'
@@ -548,19 +548,19 @@ function serve(host: Host, capabilities: Capability[]): void {
   const tools = createTools({
     connections: () => getState().connections,
     call: callTool,
-    settle: async (ids) => {
-      await waitForPluginBuilds()
-      await waitForConnecting(ids)
-    },
     ask: askForMissingSecret,
+    settle: async (connections, signal) => {
+      await waitForPluginRegistration(signal)
+      await waitForConnections(connections, signal)
+    },
   })
-  rpc.handle('tools.connections', (params) => {
+  rpc.handle('tools.connections', (params, signal) => {
     need('tools')
-    return tools.connections(params)
+    return tools.connections(params, signal)
   })
-  rpc.handle('tools.list', (params) => {
+  rpc.handle('tools.list', (params, signal) => {
     need('tools')
-    return tools.list(params)
+    return tools.list(params, signal)
   })
   rpc.handle('tools.call', (params, signal) => {
     need('tools')

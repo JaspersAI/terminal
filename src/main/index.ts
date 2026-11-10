@@ -13,7 +13,7 @@ import { registerSkillInstallIpc } from './skills/skill-install'
 import { registerLiveIpc } from './plugins/live-ipc'
 import { flush } from './persist'
 import { killAllHosts, quittingHosts, stopAllHosts, suspendHosts, wakeHosts } from './plugins/plugin-host'
-import { startPlugins } from './plugins/plugins'
+import { deferPluginStartup, startPlugins } from './plugins/plugins'
 import { registerBuiltins } from './plugins/registry'
 import { startSkills } from './skills/skills'
 import { datasetRows, runSource } from './data/sources'
@@ -106,6 +106,7 @@ app.whenReady().then(async () => {
   startInbox()
   // Before the plugins, since a stdio connection's command is looked up on PATH when it connects,
   // and an app opened from Finder has launchd's PATH rather than the user's.
+  deferPluginStartup()
   void adoptShellPath().finally(() => startPlugins())
   const wakeAll = (): void => {
     wakeEye()

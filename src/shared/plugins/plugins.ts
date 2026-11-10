@@ -638,3 +638,53 @@ export function createPluginBuildQueue(handlers: {
     },
   }
 }
+
+export interface PluginRegistrationGate {
+  /** Holds callers until initial startup plugin discovery has queued every discovered plugin build. */
+  deferStartup(): () => void
+  /** Holds callers until one plugin build has finished registering its connections and sources. */
+  begin(): () => void
+  /** Whether startup discovery or any plugin registration is currently in flight. */
+  hasPending(): boolean
+  /** Waits until all pending startup discovery and plugin registrations have settled. */
+  wait(signal?: AbortSignal): Promise<void>
+}
+
+/**
+ * Coordinates startup plugin discovery and per-plugin registration so dependent source runs and
+ * `ctx.tools` lookups wait until peer plugins have registered their connections and sources.
+ */
+export function createPluginRegistrationGate(): PluginRegistrationGate {
+  const pending = new Set<Promise<void>>()
+
+  function hold(): () => void {
+    let release!: () => void
+    const promise = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let done = false
+    pending.add(promise)
+    return () => {
+      if (done) return
+      done = true
+      pending.delete(promise)
+      release()
+    }
+  }
+
+  return {
+    deferStartup: hold,
+    begin: hold,
+    hasPending() {
+      return pending.size > 0
+    },
+    async wait(signal?: AbortSignal) {
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason ?? 'Aborted'))
+      }
+      while (pending.size > 0) {
+        await untilAborted(Promise.allSettled([...pending]), signal)
+      }
+    },
+  }
+}
