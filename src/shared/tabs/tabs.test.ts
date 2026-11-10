@@ -3,6 +3,8 @@ import { test } from 'node:test'
 import {
   formatTabLabel,
   isTabColor,
+  newTabButtonStyle,
+  PLUS_WIDTH_PX,
   reorderTabs,
   TAB_CHAR_DEFAULT,
   TAB_PALETTE,
@@ -61,6 +63,24 @@ test('TAB_PALETTE provides 32 distinct colors and tabSwatchStyle applies darker 
     tabSwatchStyle(color, true, false).backgroundColor,
   )
   assert.notEqual(tabSwatchStyle(color, false, true).backgroundColor, tabSwatchStyle(color, true, true).backgroundColor)
+})
+
+test('newTabButtonStyle gives the new-tab plus button a prominent high-contrast swatch in light and dark modes', () => {
+  assert.equal(PLUS_WIDTH_PX, 28)
+
+  const lightIdle = newTabButtonStyle(false, false)
+  const lightHover = newTabButtonStyle(false, true)
+  assert.equal(lightIdle.backgroundColor, '#d4d4d8')
+  assert.equal(lightIdle.color, '#171717')
+  assert.equal(lightIdle.borderColor, '#a1a1aa')
+  assert.notEqual(lightHover.backgroundColor, lightIdle.backgroundColor)
+
+  const darkIdle = newTabButtonStyle(true, false)
+  const darkHover = newTabButtonStyle(true, true)
+  assert.equal(darkIdle.backgroundColor, '#3f3f46')
+  assert.equal(darkIdle.color, '#fafafa')
+  assert.equal(darkIdle.borderColor, '#52525b')
+  assert.notEqual(darkHover.backgroundColor, darkIdle.backgroundColor)
 })
 
 test('reorderTabs moves a tab to the target index and preserves the array when unchanged', () => {

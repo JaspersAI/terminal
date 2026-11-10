@@ -5,6 +5,7 @@
 
 export const TAB_CHAR_DEFAULT = 16
 export const TAB_CHAR_STEPS: readonly number[] = [16, 12, 8, 6, 4]
+export const PLUS_WIDTH_PX = 28
 const CHAR_PX = 6
 const TAB_PAD_PX = 20
 
@@ -154,6 +155,24 @@ export function tabSwatchStyle(
         color: '#cbd5e1',
         borderColor: darkStroke,
       }
+}
+
+/**
+ * High-contrast swatch for the new-tab ("+") button in the bottom tab bar so the button and its
+ * plus icon stand out clearly against the bar background in both light and dark themes.
+ */
+export function newTabButtonStyle(
+  dark: boolean,
+  hovered: boolean = false,
+): { backgroundColor: string; color: string; borderColor: string } {
+  if (!dark) {
+    return hovered
+      ? { backgroundColor: '#c8c8d0', color: '#0a0a0a', borderColor: '#71717a' }
+      : { backgroundColor: '#d4d4d8', color: '#171717', borderColor: '#a1a1aa' }
+  }
+  return hovered
+    ? { backgroundColor: '#52525b', color: '#ffffff', borderColor: '#71717a' }
+    : { backgroundColor: '#3f3f46', color: '#fafafa', borderColor: '#52525b' }
 }
 
 /** Moves tab `id` to `toIndex`, returning the same array reference if nothing moved. */

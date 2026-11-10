@@ -8,7 +8,15 @@ import {
   type ReactElement,
 } from 'react'
 import { WORKSPACE_NAME_MAX, type Workspace } from '../../../shared/state'
-import { formatTabLabel, TAB_PALETTE, tabCharLimit, tabSwatchStyle, tabWidthPx } from '../../../shared/tabs/tabs'
+import {
+  formatTabLabel,
+  newTabButtonStyle,
+  PLUS_WIDTH_PX,
+  TAB_PALETTE,
+  tabCharLimit,
+  tabSwatchStyle,
+  tabWidthPx,
+} from '../../../shared/tabs/tabs'
 import { useColorScheme } from '../../lib/color-scheme'
 import { errorMessage } from '../../lib/errors'
 import { dispatch } from '../../lib/state'
@@ -25,7 +33,6 @@ interface ContextMenuState {
   confirmingDelete: boolean
 }
 
-const PLUS_WIDTH_PX = 24
 const HORIZONTAL_PAD_PX = 32
 const DETACH_DRAG_Y_PX = 40
 
@@ -43,6 +50,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const [plusHovered, setPlusHovered] = useState(false)
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
@@ -108,7 +116,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
   }
 
   const count = Math.max(1, workspaces.length)
-  // Exact width inside the 16px left and 16px right pane margins, minus the 24px "+" tab and 2px gaps.
+  // Exact width inside the 16px left and 16px right pane margins, minus the "+" tab and 2px gaps.
   const available = Math.max(120, barWidth - HORIZONTAL_PAD_PX - PLUS_WIDTH_PX - count * 2)
   const charLimit = tabCharLimit(available, count)
   const naturalWidth = tabWidthPx(charLimit)
@@ -203,6 +211,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
   }
 
   const menuTab = menu ? workspaces.find((w) => w.id === menu.tabId) : undefined
+  const plusSwatch = newTabButtonStyle(isDark, plusHovered)
 
   return (
     <div
@@ -279,10 +288,22 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
         id="new-tab-button"
         aria-label="New tab"
         title="New tab"
+        style={{
+          width: `${PLUS_WIDTH_PX}px`,
+          backgroundColor: plusSwatch.backgroundColor,
+          color: plusSwatch.color,
+          borderColor: plusSwatch.borderColor,
+        }}
+        onPointerEnter={() => setPlusHovered(true)}
+        onPointerLeave={() => setPlusHovered(false)}
+        onFocus={() => setPlusHovered(true)}
+        onBlur={() => setPlusHovered(false)}
         onClick={() => run(() => dispatch({ type: 'tab.create' }))}
-        className="flex h-5 w-6 shrink-0 items-center justify-center rounded-b-md border-x border-b border-border bg-muted/50 text-[10px] leading-none text-muted-foreground hover:bg-muted hover:text-foreground"
+        className="flex h-5 shrink-0 cursor-pointer items-center justify-center rounded-b-md border-x border-b transition-colors"
       >
-        +
+        <svg viewBox="0 0 12 12" fill="none" aria-hidden className="h-3.5 w-3.5 stroke-current stroke-[2]">
+          <path d="M6 1.5v9M1.5 6h9" />
+        </svg>
       </button>
 
       {menu && menuTab && (
