@@ -350,3 +350,18 @@ test('a follow-up request steered into an active run joins its trail and drops i
   assert.equal(list[0]?.ask, 'a')
   assert.deepEqual(list[0]?.steps, ['Added: and focus on the biggest growing ones'])
 })
+
+test('answered and failed stamp completion timestamps on finished live exchanges while working exchanges have at null', () => {
+  let list = two()
+  assert.equal(list[0]?.at, null)
+  assert.equal(list[1]?.at, null)
+  list = answered(list, 'b', 'Second is done.', 1_700_000_001_000)
+  list = failed(list, 'a', 'No key.', 1_700_000_002_000)
+  assert.deepEqual(
+    list.map((one) => [one.ask, one.at]),
+    [
+      ['b', 1_700_000_001_000],
+      ['a', 1_700_000_002_000],
+    ],
+  )
+})

@@ -17,6 +17,7 @@ import {
   IDLE_BOX,
   isTitleTap,
   roomRenameChange,
+  roomUpdatedAt,
   shouldReadTileBox,
   shouldToggleHeaderMode,
   tileBoxExpanded,
@@ -396,4 +397,33 @@ test('clicking or double-clicking a room title opens rename without triggering h
   assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, ''), '')
   assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'Room 3'), '')
   assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'room_3'), '')
+})
+
+test('boxHeard and boxSettled stamp completion timestamps, and roomUpdatedAt resolves the latest timestamp across room metadata, panels, and exchanges', () => {
+  let rows = boxHeard(boxSent([], 'a1', 'w1', 'q'), start('run1', 'e1', { ask: 'a1' }), HERE)
+  assert.equal(rows[0]?.at, null)
+  rows = boxHeard(rows, { kind: 'done', runId: 'run1', text: 'Done.' }, HERE, 1_700_000_005_000)
+  assert.equal(rows[0]?.at, 1_700_000_005_000)
+
+  const settled = boxSettled(boxSent([], 'a2', 'w1', '/new'), 'a2', 'Started over.', null, 1_700_000_006_000)
+  assert.equal(settled[0]?.at, 1_700_000_006_000)
+
+  assert.equal(roomUpdatedAt(undefined, []), null)
+  assert.equal(roomUpdatedAt({ createdAt: 0 }, []), null)
+  assert.equal(roomUpdatedAt({ createdAt: 100 }, []), 100)
+  assert.equal(roomUpdatedAt({ createdAt: 100, lastActiveAt: 250 }, [{ refreshedAt: 200 }]), 250)
+  assert.equal(roomUpdatedAt({ createdAt: 100, lastActiveAt: 250 }, [{ refreshedAt: 400 }]), 400)
+  assert.equal(
+    roomUpdatedAt(
+      { createdAt: 100, lastActiveAt: 250 },
+      [{ refreshedAt: 400 }],
+      [{ at: 500 }],
+      [{ at: 300 }, { at: null }],
+    ),
+    500,
+  )
+  assert.equal(
+    roomUpdatedAt({ createdAt: 100, lastActiveAt: 250 }, [{ refreshedAt: 400 }], [{ at: 500 }], [{ at: 650 }]),
+    650,
+  )
 })

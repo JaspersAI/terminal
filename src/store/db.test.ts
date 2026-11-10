@@ -348,8 +348,8 @@ test("a workspace's chat is kept an exchange at a time, and read back a page at 
   // The newest page, then the one before it, asked for by the oldest id in hand.
   const last = db.exchanges('ws-1', 2)
   assert.deepEqual(last, [
-    { id: ids[3], question: 'd', answer: 'D' },
-    { id: ids[4], question: 'e', answer: 'E' },
+    { id: ids[3], at: 3, question: 'd', answer: 'D' },
+    { id: ids[4], at: 4, question: 'e', answer: 'E' },
   ])
   const before = db.exchanges('ws-1', 2, last[0]!.id)
   assert.deepEqual(
@@ -395,10 +395,10 @@ test('what was said unasked keeps what it was, a reply keeps its sources, and on
   assert.deepEqual(
     db.exchanges('ws-1', 10).map(({ id: _id, ...rest }) => rest),
     [
-      { question: '', answer: 'SPY crossed 760.', task: 't3' },
-      { question: '', answer: 'Hi.', welcome: true },
-      { question: 'Who?', answer: 'Apple.[^c1]', citations: [source] },
-      { question: 'Thanks', answer: 'Any time.' },
+      { at: 1, question: '', answer: 'SPY crossed 760.', task: 't3' },
+      { at: 2, question: '', answer: 'Hi.', welcome: true },
+      { at: 3, question: 'Who?', answer: 'Apple.[^c1]', citations: [source] },
+      { at: 4, question: 'Thanks', answer: 'Any time.' },
     ],
   )
   db.close()

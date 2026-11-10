@@ -69,7 +69,10 @@ export function recordSessionExchange(exchange: Exchange, at = Date.now()): void
   const idx = storedSessions.findIndex((s) => s.id === activeSessionId)
   if (idx < 0) return
   const current = storedSessions[idx]!
-  const nextExchanges = [...current.exchanges, { ...exchange, id: exchange.id ?? current.exchanges.length + 1 }]
+  const nextExchanges = [
+    ...current.exchanges,
+    { ...exchange, id: exchange.id ?? current.exchanges.length + 1, at: exchange.at ?? at },
+  ]
   const firstQuestion = nextExchanges.find((e) => e.question.trim() && !e.welcome)?.question.trim()
   const title = firstQuestion ? firstQuestion.replace(/\s+/g, ' ').slice(0, 80) : current.title || 'Terminal session'
   storedSessions = storedSessions.map((s, i) =>

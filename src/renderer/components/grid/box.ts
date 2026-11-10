@@ -20,7 +20,7 @@ export const WAITING = 'Waiting its turn'
  * The rows after something main said about a run: one on this tile is followed from its start to its
  * end. A tile is its workspace's: a run on another workspace's tile of the same id is not this box's.
  */
-export function boxHeard(list: LiveExchange[], event: AgentEvent, place: Place): LiveExchange[] {
+export function boxHeard(list: LiveExchange[], event: AgentEvent, place: Place, at = Date.now()): LiveExchange[] {
   if (event.kind === 'start') {
     const here = event.workspaceId === place.workspaceId && event.on === place.on
     if (!here || list.some((one) => one.runId === event.runId)) return list
@@ -41,6 +41,7 @@ export function boxHeard(list: LiveExchange[], event: AgentEvent, place: Place):
         steps: [],
         thinking: null,
         working: true,
+        at: null,
         error: null,
         handed: false,
         hidden: false,
@@ -49,10 +50,10 @@ export function boxHeard(list: LiveExchange[], event: AgentEvent, place: Place):
   }
   const row = list.find((one) => one.runId === event.runId)
   if (!row) return list
-  if (event.kind === 'done') return answered(list, row.ask, event.text)
-  if (event.kind === 'failed') return failed(list, row.ask, event.message)
+  if (event.kind === 'done') return answered(list, row.ask, event.text, at)
+  if (event.kind === 'failed') return failed(list, row.ask, event.message, at)
   // Stopped: the row goes, and the log has what it got done.
-  if (event.kind === 'stopped') return answered(list, row.ask, '')
+  if (event.kind === 'stopped') return answered(list, row.ask, '', at)
   return heard(list, event)
 }
 
@@ -68,12 +69,18 @@ export function boxSent(list: LiveExchange[], ask: string, workspaceId: string, 
  * it waited (nothing came back), answered without one, as /new is, or refused before one began. A
  * request that began is ended by its run's events, and this changes nothing.
  */
-export function boxSettled(list: LiveExchange[], ask: string, reply: string, error: string | null): LiveExchange[] {
+export function boxSettled(
+  list: LiveExchange[],
+  ask: string,
+  reply: string,
+  error: string | null,
+  at = Date.now(),
+): LiveExchange[] {
   const row = list.find((one) => one.ask === ask)
   if (!row || row.runId !== null) return list
   // It never began, so it has no trail: what it said while it waited goes.
   const bare = list.map((one) => (one === row ? { ...one, steps: [] } : one))
-  return error === null ? answered(bare, ask, reply) : failed(bare, ask, error)
+  return error === null ? answered(bare, ask, reply, at) : failed(bare, ask, error, at)
 }
 
 /**
@@ -191,6 +198,44 @@ export function roomRenameChange(loop: Pick<Loop, 'id' | 'title'>, draft: string
   const next = normalizeLoopTitle(loop.id, draft)
   if (next === loop.title) return null
   return next ?? ''
+}
+
+/**
+ * The latest timestamp at which a room's work product or conversation was produced or updated,
+ * across the room's record (`lastActiveAt`, `createdAt`, `log`), its panels' `refreshedAt`, and
+ * its exchanges (`earlier` and finished `live` rows), or `null` when none is a positive timestamp.
+ */
+export function roomUpdatedAt(
+  loop: Pick<Loop, 'createdAt' | 'lastActiveAt' | 'log'> | undefined,
+  panels: readonly { refreshedAt: number | null }[],
+  earlier: readonly { at?: number }[] = [],
+  live: readonly { at?: number | null }[] = [],
+): number | null {
+  if (!loop && panels.length === 0 && earlier.length === 0 && live.length === 0) return null
+  const candidates: number[] = []
+  if (loop) {
+    if (typeof loop.lastActiveAt === 'number' && Number.isFinite(loop.lastActiveAt) && loop.lastActiveAt > 0) {
+      candidates.push(loop.lastActiveAt)
+    }
+    if (typeof loop.createdAt === 'number' && Number.isFinite(loop.createdAt) && loop.createdAt > 0) {
+      candidates.push(loop.createdAt)
+    }
+    for (const entry of loop.log ?? []) {
+      if (typeof entry.at === 'number' && Number.isFinite(entry.at) && entry.at > 0) candidates.push(entry.at)
+    }
+  }
+  for (const panel of panels) {
+    if (typeof panel.refreshedAt === 'number' && Number.isFinite(panel.refreshedAt) && panel.refreshedAt > 0) {
+      candidates.push(panel.refreshedAt)
+    }
+  }
+  for (const ex of earlier) {
+    if (typeof ex.at === 'number' && Number.isFinite(ex.at) && ex.at > 0) candidates.push(ex.at)
+  }
+  for (const ex of live) {
+    if (typeof ex.at === 'number' && Number.isFinite(ex.at) && ex.at > 0) candidates.push(ex.at)
+  }
+  return candidates.length > 0 ? Math.max(...candidates) : null
 }
 
 /** What a window keeps of a tile's box across workspace switches while the tile is on a grid. */

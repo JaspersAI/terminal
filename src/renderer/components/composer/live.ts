@@ -37,6 +37,8 @@ export interface LiveExchange {
   thinking: string | null
   /** Whether its run is still in flight. This says a run is over, never the text on screen. */
   working: boolean
+  /** When its run finished or failed, milliseconds since the epoch, or null while working. */
+  at: number | null
   /** Why it failed. */
   error: string | null
   /** Its run ended by handing the request to work in a tile, which answers there: the box has nothing to keep up. */
@@ -66,6 +68,7 @@ export function sent(list: LiveExchange[], ask: string, workspaceId: string, que
       steps: [],
       thinking: null,
       working: true,
+      at: null,
       error: null,
       handed: false,
       hidden: false,
@@ -129,14 +132,14 @@ export function heard(list: LiveExchange[], event: AgentEvent): LiveExchange[] {
  * The list once a request's run has ended with its reply. A run that ends with nothing to say was
  * stopped: it goes, and the chat's log has what it got done.
  */
-export function answered(list: LiveExchange[], ask: string, reply: string): LiveExchange[] {
+export function answered(list: LiveExchange[], ask: string, reply: string, at = Date.now()): LiveExchange[] {
   if (!reply) return list.filter((one) => one.ask !== ask)
-  return ended(list, ask, (one) => ({ ...one, answer: reply, thinking: null, working: false, hidden: false }))
+  return ended(list, ask, (one) => ({ ...one, answer: reply, thinking: null, working: false, at, hidden: false }))
 }
 
 /** The list once a request's run has failed: the message sits under its question, with the trail above it. */
-export function failed(list: LiveExchange[], ask: string, message: string): LiveExchange[] {
-  return ended(list, ask, (one) => ({ ...one, thinking: null, working: false, error: message, hidden: false }))
+export function failed(list: LiveExchange[], ask: string, message: string, at = Date.now()): LiveExchange[] {
+  return ended(list, ask, (one) => ({ ...one, thinking: null, working: false, at, error: message, hidden: false }))
 }
 
 /**
