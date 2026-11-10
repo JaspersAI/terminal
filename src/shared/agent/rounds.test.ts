@@ -6,14 +6,17 @@ import {
   callLine,
   DEFERRED_FOR_ADDED,
   handoffReply,
+  keepRawCalls,
   LAST_ROUND,
   MAX_ROUNDS,
   saidOf,
   shouldDeferForAdded,
   thoughtLine,
+  trimToolCalls,
   writingLine,
   WRITING_EVERY_MS,
 } from './rounds.ts'
+import { EMPTY_GRID, placeView } from '../grid/grid.ts'
 import { STEPS_MAX } from './agent.ts'
 
 const names = (groups: { name: string }[][]): string[][] => groups.map((group) => group.map((call) => call.name))
@@ -181,4 +184,111 @@ test('shouldDeferForAdded defers a round when any call would ask the user, hand 
   assert.equal(shouldDeferForAdded([call('ask_user')], readsCall), true)
   assert.equal(shouldDeferForAdded([call('read_a'), call('create_loop')], readsCall), true)
   assert.match(DEFERRED_FOR_ADDED, /user added to the request/)
+})
+
+test('trimToolCalls keeps a 2x2 chart layout and drops runaway full-grid place_view loops and duplicate calls', () => {
+  const fourCharts = [
+    {
+      id: 't1',
+      name: 'place_view',
+      input: { rect: { x: 0, y: 0, w: 8, h: 6 }, state: { symbol: 'AMEX:SPY' }, view: 'tradingview/chart' },
+    },
+    {
+      id: 't2',
+      name: 'place_view',
+      input: { rect: { x: 8, y: 0, w: 8, h: 6 }, state: { symbol: 'NASDAQ:QQQ' }, view: 'tradingview/chart' },
+    },
+    {
+      id: 't3',
+      name: 'place_view',
+      input: { rect: { x: 0, y: 6, w: 8, h: 6 }, state: { symbol: 'AMEX:DIA' }, view: 'tradingview/chart' },
+    },
+    {
+      id: 't4',
+      name: 'place_view',
+      input: { rect: { x: 8, y: 6, w: 8, h: 6 }, state: { symbol: 'AMEX:IWM' }, view: 'tradingview/chart' },
+    },
+  ]
+  const runawayTail = [
+    { id: 't5', name: 'place_view', input: { rect: { x: 0, y: 0, w: 16, h: 12 }, state: {}, view: 'core/chat' } },
+    { id: 't6', name: 'place_view', input: { rect: { x: 0, y: 0, w: 16, h: 12 }, state: {}, view: 'core/plugins' } },
+    { id: 't7', name: 'place_view', input: { rect: { x: 0, y: 0, w: 16, h: 12 }, state: {}, view: 'core/tasks' } },
+    { id: 't8', name: 'place_view', input: { rect: { x: 0, y: 0, w: 16, h: 12 }, state: {}, view: 'core/inbox' } },
+  ]
+  assert.deepEqual(
+    trimToolCalls([...fourCharts, ...runawayTail]).map((c) => c.id),
+    ['t1', 't2', 't3', 't4'],
+  )
+
+  // Even after only two sub-grid charts, a sudden full-grid place_view without replace is dropped with the rest of the tail.
+  assert.deepEqual(
+    trimToolCalls([...fourCharts.slice(0, 2), ...runawayTail]).map((c) => c.id),
+    ['t1', 't2'],
+  )
+
+  // Duplicate non-empty tool calls in the same round are dropped.
+  assert.deepEqual(
+    trimToolCalls([
+      { id: 's1', name: 'run_source', input: { source: 'yfinance/quote', input: { symbol: 'SPY' } } },
+      { id: 's2', name: 'run_source', input: { source: 'yfinance/quote', input: { symbol: 'QQQ' } } },
+      { id: 's3', name: 'run_source', input: { source: 'yfinance/quote', input: { symbol: 'SPY' } } },
+    ]).map((c) => c.id),
+    ['s1', 's2'],
+  )
+})
+
+test('trimToolCalls keeps at most one failing place_view when the grid is already full, and allows place_view after remove_element frees space', () => {
+  const fullGrid = placeView(EMPTY_GRID, { content: { kind: 'view', view: 'tradingview/chart' }, size: 'full' }).grid
+  const threeAttempts = [
+    { id: 't1', name: 'place_view', input: { view: 'tradingview/chart', state: { symbol: 'SPY' } } },
+    { id: 't2', name: 'place_view', input: { view: 'tradingview/chart', state: { symbol: 'QQQ' } } },
+    { id: 't3', name: 'place_view', input: { view: 'tradingview/chart', state: { symbol: 'DIA' } } },
+  ]
+  // Only the first failing call is kept so the model hears grid_full once instead of hitting a failure streak.
+  assert.deepEqual(
+    trimToolCalls(threeAttempts, fullGrid).map((c) => c.id),
+    ['t1'],
+  )
+
+  // When remove_element or replace frees the full grid first, the subsequent placements fit and stay.
+  assert.deepEqual(
+    trimToolCalls([{ id: 'r1', name: 'remove_element', input: { elementId: 'e1' } }, ...threeAttempts], fullGrid).map(
+      (c) => c.id,
+    ),
+    ['r1', 't1', 't2', 't3'],
+  )
+  assert.deepEqual(
+    trimToolCalls(
+      [
+        {
+          id: 't1',
+          name: 'place_view',
+          input: { view: 'tradingview/chart', state: { symbol: 'SPY' }, replace: 'e1', size: 'quarter' },
+        },
+        { id: 't2', name: 'place_view', input: { view: 'tradingview/chart', state: { symbol: 'QQQ' } } },
+      ],
+      fullGrid,
+    ).map((c) => c.id),
+    ['t1', 't2'],
+  )
+})
+
+test('keepRawCalls filters dropped tool call items from raw provider payloads while preserving thinking and text', () => {
+  const kept = new Set(['t1', 't2'])
+  assert.deepEqual(
+    keepRawCalls(
+      [
+        { type: 'thinking', thinking: 'Laying out charts.' },
+        { type: 'tool_use', id: 't1', name: 'place_view', input: {} },
+        { type: 'tool_use', id: 't2', name: 'place_view', input: {} },
+        { type: 'tool_use', id: 't3', name: 'place_view', input: {} },
+      ],
+      kept,
+    ),
+    [
+      { type: 'thinking', thinking: 'Laying out charts.' },
+      { type: 'tool_use', id: 't1', name: 'place_view', input: {} },
+      { type: 'tool_use', id: 't2', name: 'place_view', input: {} },
+    ],
+  )
 })

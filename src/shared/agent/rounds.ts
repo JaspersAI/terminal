@@ -2,6 +2,23 @@
 // request over, what of the model's reply is said as it arrives, what of its thinking is worth a
 // status line, and how a call it makes is said there. Pure.
 
+import { sameValue } from '../data/hash.ts'
+import {
+  EDGE_ANCHORS,
+  EMPTY_GRID,
+  GRID_FULL,
+  NAMED_SIZES,
+  placeView,
+  readRectInput,
+  removeElement,
+  setRect,
+  type Anchor,
+  type Grid,
+  type GridSize,
+  type Rect,
+  type Size,
+} from '../grid/grid.ts'
+import { notPlaced } from '../loops/loops.ts'
 import { MCP_SOURCE, readAppState } from '../plugins/apps.ts'
 import { everyText } from '../tasks/tasks.ts'
 import { plain, toolWords, type AgentOrigin } from './agent.ts'
@@ -23,6 +40,225 @@ export const DEFERRED_FOR_ADDED =
  */
 export function shouldDeferForAdded<T>(calls: readonly T[], readsOnly: (call: T) => boolean): boolean {
   return calls.some((call) => !readsOnly(call))
+}
+
+/**
+ * Trims duplicate tool calls and runaway or excess `place_view` calls in a single model round:
+ * - Drops any tool call with non-empty arguments that repeats an earlier call's name and input in the same round.
+ * - Simulates grid changes (`remove_element`, `move_element`, `resize_element`, `place_view`) across the round:
+ *   once earlier `place_view` calls in the round have placed views, drops any subsequent `place_view` call
+ *   that names an unplaceable view (`notPlaced`), resets to a full-grid placement without `replace` after
+ *   sub-grid placements, or cannot fit because the round's earlier placements filled the grid (`GRID_FULL`),
+ *   along with any further `place_view` calls without `replace` in that round.
+ * - When the grid is already full before any `place_view` in the round succeeds, keeps at most the first
+ *   `place_view` call so the model receives `GRID_FULL` once rather than failing repeatedly in a streak.
+ */
+export function trimToolCalls<T extends { id: string; name: string; input: Record<string, unknown> }>(
+  calls: readonly T[],
+  grid: Grid = EMPTY_GRID,
+): T[] {
+  if (calls.length <= 1) return [...calls]
+  const kept: T[] = []
+  let simGrid = grid
+  let placedInRound = 0
+  let hadSubGridPlace = false
+  let fullFailedInRound = 0
+  let dropRemainingPlaceViews = false
+
+  for (const call of calls) {
+    if (
+      Object.keys(call.input).length > 0 &&
+      kept.some((earlier) => earlier.name === call.name && sameValue(earlier.input, call.input))
+    ) {
+      if (call.name === 'place_view') dropRemainingPlaceViews = true
+      continue
+    }
+    if (call.name === 'remove_element') {
+      const id = resolveSimElementId(simGrid, call.input.elementId, call.input.panelId, call.input.id)
+      if (id) {
+        try {
+          simGrid = removeElement(simGrid, id).grid
+          dropRemainingPlaceViews = false
+        } catch {
+          // Leave validation errors for the real tool execution.
+        }
+      }
+      kept.push(call)
+      continue
+    }
+    if (call.name === 'move_element' || call.name === 'resize_element') {
+      const id = resolveSimElementId(simGrid, call.input.elementId, call.input.panelId, call.input.id)
+      const rect = readRectInput(unstringValue(call.input.rect), simGrid.size)
+      if (id && rect && call.input.window === undefined) {
+        try {
+          simGrid = setRect(simGrid, id, rect, call.name === 'move_element').grid
+          dropRemainingPlaceViews = false
+        } catch {
+          // Leave validation errors for the real tool execution.
+        }
+      }
+      kept.push(call)
+      continue
+    }
+    if (call.name !== 'place_view') {
+      kept.push(call)
+      continue
+    }
+
+    const view = typeof call.input.view === 'string' ? call.input.view.trim() : ''
+    const replaceRaw = typeof call.input.replace === 'string' ? call.input.replace.trim() : ''
+    const hasReplace = replaceRaw.length > 0
+
+    if (dropRemainingPlaceViews && !hasReplace) continue
+
+    if ((placedInRound > 0 || fullFailedInRound > 0) && notPlaced(view) !== null) {
+      dropRemainingPlaceViews = true
+      continue
+    }
+
+    if (hasReplace) {
+      const replaceId = resolveSimElementId(simGrid, replaceRaw)
+      if (replaceId && simGrid.elements.some((e) => e.id === replaceId)) {
+        const size = readSizeValue(call.input.size)
+        const anchor = readAnchorValue(call.input.anchor, simGrid)
+        const rect = readRectInput(unstringValue(call.input.rect), simGrid.size)
+        try {
+          simGrid = placeView(simGrid, {
+            content: { kind: 'view', view: view || 'core/table' },
+            replace: replaceId,
+            ...(size ? { size } : {}),
+            ...(anchor ? { anchor } : {}),
+            ...(rect ? { rect } : {}),
+          }).grid
+        } catch {
+          // Keep the call so the real tool reports any error.
+        }
+      }
+      placedInRound++
+      kept.push(call)
+      continue
+    }
+
+    const size = readSizeValue(call.input.size)
+    const anchor = readAnchorValue(call.input.anchor, simGrid)
+    const rect = readRectInput(unstringValue(call.input.rect), simGrid.size)
+    const asksFullGrid = isFullGridPlacement(size, rect, simGrid.size)
+
+    if (placedInRound > 0 && asksFullGrid && (hadSubGridPlace || placedInRound >= 2)) {
+      dropRemainingPlaceViews = true
+      continue
+    }
+
+    try {
+      const placed = placeView(simGrid, {
+        content: { kind: 'view', view: view || 'core/table' },
+        ...(size ? { size } : {}),
+        ...(anchor ? { anchor } : {}),
+        ...(rect ? { rect } : {}),
+      })
+      simGrid = placed.grid
+      placedInRound++
+      if (placed.element.rect.w < simGrid.size.cols || placed.element.rect.h < simGrid.size.rows) {
+        hadSubGridPlace = true
+      }
+      kept.push(call)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message === GRID_FULL) {
+        dropRemainingPlaceViews = true
+        if (placedInRound === 0 && fullFailedInRound === 0) {
+          fullFailedInRound = 1
+          kept.push(call)
+        }
+        continue
+      }
+      kept.push(call)
+    }
+  }
+  return kept
+}
+
+/** Filters `raw` provider items so dropped tool calls are omitted while keeping thinking, reasoning, and text items. */
+export function keepRawCalls(raw: unknown[] | null, keptIds: ReadonlySet<string>): unknown[] | null {
+  if (!raw) return null
+  const filtered = raw.filter((item) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return true
+    const record = item as Record<string, unknown>
+    if (record.type === 'tool_use' && typeof record.id === 'string') return keptIds.has(record.id)
+    if (record.type === 'function_call' && typeof record.call_id === 'string') return keptIds.has(record.call_id)
+    if (typeof record.function === 'object' && record.function !== null && typeof record.id === 'string') {
+      return keptIds.has(record.id)
+    }
+    return true
+  })
+  return filtered.length > 0 ? filtered : null
+}
+
+function unstringValue(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw
+  const text = raw.trim()
+  if (!text.startsWith('{') && !text.startsWith('[')) return raw
+  try {
+    return JSON.parse(text)
+  } catch {
+    return raw
+  }
+}
+
+function readSizeValue(raw: unknown): Size | undefined {
+  if (raw === undefined || raw === null) return undefined
+  const value = unstringValue(raw)
+  const named = NAMED_SIZES.find((s) => s === value)
+  if (named) return named
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as { w?: unknown }).w === 'number' &&
+    typeof (value as { h?: unknown }).h === 'number'
+  ) {
+    return { w: (value as { w: number }).w, h: (value as { h: number }).h }
+  }
+  return undefined
+}
+
+function readAnchorValue(raw: unknown, grid: Grid): Anchor | undefined {
+  if (raw === undefined || raw === null) return undefined
+  const value = unstringValue(raw)
+  const edge = EDGE_ANCHORS.find((a) => a === value)
+  if (edge) return edge
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    for (const side of ['beside', 'below', 'above'] as const) {
+      if (typeof record[side] === 'string') {
+        const target = resolveSimElementId(grid, record[side])
+        if (target && grid.elements.some((e) => e.id === target)) {
+          return { [side]: target } as Anchor
+        }
+        return 'auto'
+      }
+    }
+  }
+  return undefined
+}
+
+function resolveSimElementId(grid: Grid, ...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const id = typeof value === 'string' ? value.trim() : ''
+    if (!id) continue
+    if (grid.elements.some((e) => e.id === id)) return id
+    const panel = grid.panels.find((p) => p.id === id)
+    if (panel) return panel.elementId
+    return id
+  }
+  return undefined
+}
+
+function isFullGridPlacement(size: Size | undefined, rect: Rect | null, gridSize: GridSize): boolean {
+  if (rect) return rect.x === 0 && rect.y === 0 && rect.w >= gridSize.cols && rect.h >= gridSize.rows
+  if (size === 'full') return true
+  if (typeof size === 'object' && size !== null) return size.w >= gridSize.cols && size.h >= gridSize.rows
+  return false
 }
 
 /**

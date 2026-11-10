@@ -2,6 +2,7 @@ import {
   arrange,
   DEFAULT_SIZE,
   EDGE_ANCHORS,
+  EMPTY_GRID,
   freeRects,
   layoutOf,
   MIN_CELLS,
@@ -12,6 +13,7 @@ import {
   setRect,
   type Anchor,
   type ElementMode,
+  type Grid,
   type GridSize,
   type PanelContent,
   type Preset,
@@ -19,6 +21,7 @@ import {
   type Rect,
   type Size,
 } from '../../../shared/grid/grid'
+import { MAIN_WINDOW } from '../../../shared/grid/windows'
 import { elementTarget, frameOf, notPlaced, resolveRefreshTarget } from '../../../shared/loops/loops'
 import { asWindow, placeChecked, REFRESH_SETTLE_MS, refreshChecked, removeChecked, settlePanel } from '../../actions'
 import { loopsOf, notOwnFrame, ownTile } from '../../loops/loops'
@@ -351,6 +354,26 @@ export function gridTools(context?: ToolContext): Tool[] {
     },
   ]
   return tools
+}
+
+/**
+ * The layout that `place_view` acts on for `context`: the layout inside the room's frame when
+ * `context.loop` is set, the main window's own layout when the workspace exists, or `EMPTY_GRID`.
+ */
+export function placementGrid(context?: Pick<ToolContext, 'workspaceId' | 'loop'>): Grid {
+  if (!context) return EMPTY_GRID
+  try {
+    const grids = getGrids(context.workspaceId)
+    if (context.loop !== undefined) {
+      const frame = frameOf(grids, context.loop)
+      if (!frame) return EMPTY_GRID
+      const grid = getGrid(context.workspaceId, frame.window)
+      return layoutOf(grid, frame.element.id)
+    }
+    return layoutOf(getGrid(context.workspaceId, MAIN_WINDOW))
+  } catch {
+    return EMPTY_GRID
+  }
 }
 
 function asViewId(value: unknown): string {
