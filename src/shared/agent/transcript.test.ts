@@ -170,7 +170,7 @@ test('an exchange read from the log is masked like one read off a thread, and ke
     answer: 'Used ***.[^k1]',
     citations: [{ id: 'k1', title: 'Key ***', quote: '***' }],
   })
-  const unasked = { id: 8, question: '', answer: 'Hi.', welcome: true as const }
+  const unasked = { id: 8, at: 1_700_000_000_000, question: '', answer: 'Hi.', welcome: true as const }
   assert.deepEqual(maskExchange(unasked, []), unasked)
 })
 

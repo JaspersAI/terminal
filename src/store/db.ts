@@ -328,7 +328,7 @@ export function openStore(file: string): Store {
     'insert into exchanges (chat, at, question, answer, task, welcome, citations, steps, error) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
   )
   const readExchanges = db.prepare(
-    'select id, question, answer, task, welcome, citations, steps, error from exchanges where chat = ? and id < ? order by id desc limit ?',
+    'select id, at, question, answer, task, welcome, citations, steps, error from exchanges where chat = ? and id < ? order by id desc limit ?',
   )
   const insertNotification = db.prepare('insert into notifications (at, source, text) values (?, ?, ?)')
   const readNotifications = db.prepare(
@@ -423,6 +423,7 @@ export function openStore(file: string): Store {
       const take = Math.max(1, Math.min(limit, EXCHANGES_MAX))
       const rows = readExchanges.all(chat, before ?? Number.MAX_SAFE_INTEGER, take) as unknown as {
         id: number
+        at: number
         question: string
         answer: string
         task: string | null
@@ -435,6 +436,7 @@ export function openStore(file: string): Store {
       // mark an exchange does not have is left out, as it is on one read off a thread.
       return rows.reverse().map((row) => ({
         id: row.id,
+        at: row.at,
         question: row.question,
         answer: row.answer,
         ...(row.task === null ? {} : { task: row.task }),

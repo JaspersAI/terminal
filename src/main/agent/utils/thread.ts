@@ -204,7 +204,7 @@ export function file(chat: string, history: Turn[], steps: string[] = []): void 
   const exchange = lastExchange(history, secrets)
   if (!exchange) return
   const now = Date.now()
-  const masked = maskExchange({ ...exchange, steps }, secrets)
+  const masked = maskExchange({ ...exchange, at: now, steps }, secrets)
   void fileExchange(chat, now, masked)
   if (chat === CENTRAL_CHAT) {
     recordSessionExchange(masked, now)
@@ -218,7 +218,7 @@ export function file(chat: string, history: Turn[], steps: string[] = []): void 
 export function fileFailed(chat: string, question: string, steps: string[], error: string): void {
   if (forgotten.has(chat)) return
   const now = Date.now()
-  const masked = maskExchange({ question, answer: '', steps, error }, knownSecrets())
+  const masked = maskExchange({ at: now, question, answer: '', steps, error }, knownSecrets())
   void fileExchange(chat, now, masked)
   if (chat === CENTRAL_CHAT) {
     recordSessionExchange(masked, now)
@@ -232,7 +232,7 @@ export function fileFailed(chat: string, question: string, steps: string[], erro
 export function fileDirectExchange(chat: string, question: string, answer: string): void {
   if (forgotten.has(chat)) return
   const now = Date.now()
-  const masked = maskExchange({ question, answer, steps: [] }, knownSecrets())
+  const masked = maskExchange({ at: now, question, answer, steps: [] }, knownSecrets())
   void fileExchange(chat, now, masked)
   if (chat === CENTRAL_CHAT) {
     recordSessionExchange(masked, now)

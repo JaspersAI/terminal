@@ -23,6 +23,8 @@ export interface Exchange {
    * off a thread has none.
    */
   id?: number
+  /** When the exchange was filed in the chat's log, milliseconds since the epoch. */
+  at?: number
   question: string
   answer: string
   /** The scheduled task whose run said the answer, like t3. */
@@ -140,11 +142,12 @@ export function lastExchange(turns: Turn[], secrets: string[] = []): Exchange | 
  * masked in it all the same.
  */
 export function maskExchange(
-  { id, question, answer, task, welcome, citations, steps, error }: Exchange,
+  { id, at, question, answer, task, welcome, citations, steps, error }: Exchange,
   secrets: string[],
 ): Exchange {
   return {
     ...(id === undefined ? {} : { id }),
+    ...(typeof at === 'number' && Number.isFinite(at) ? { at } : {}),
     question: mask(question, secrets),
     answer: mask(answer, secrets),
     ...(task ? { task } : {}),
