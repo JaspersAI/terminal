@@ -242,6 +242,7 @@ export function shouldRetryOnConnections(
   sources: unknown,
   prev: unknown,
   next: unknown,
+  error?: string | null,
 ): boolean {
   const clean = target.trim()
   if (!clean || !isRecord(next)) return false
@@ -260,7 +261,20 @@ export function shouldRetryOnConnections(
         typeof entry['connection'] === 'string' && entry['connection'] !== '' ? entry['connection'] : null
       if (declaredConn !== null) return id === declaredConn
       const sourcePlugin = typeof entry['plugin'] === 'string' && entry['plugin'] !== '' ? entry['plugin'] : plugin
-      return conn['plugin'] === sourcePlugin || id.startsWith(`${sourcePlugin}/`)
+      if (conn['plugin'] === sourcePlugin || id.startsWith(`${sourcePlugin}/`)) return true
+      if (typeof error === 'string' && error !== '') {
+        const lower = error.toLowerCase()
+        const connPlugin = typeof conn['plugin'] === 'string' ? conn['plugin'].toLowerCase() : ''
+        if (
+          lower.includes(id.toLowerCase()) ||
+          (connPlugin !== '' && lower.includes(connPlugin)) ||
+          lower.includes('ready connections') ||
+          lower.includes('connection_unavailable')
+        ) {
+          return true
+        }
+      }
+      return false
     }
     if (isRecord(sources) && parts.length === 2) {
       for (const raw of Object.values(sources)) {
@@ -314,6 +328,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
   /** Set before a nonce bump that means fetch again: the run it causes skips main's cache. */
   const fresh = useRef(false)
   const failed = useRef(false)
+  const failedError = useRef<string | null>(null)
   const lastQuery = useRef<string | null>(null)
   const latestTarget = useRef(target)
   latestTarget.current = target
@@ -335,6 +350,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
     if (!target) {
       lastQuery.current = null
       failed.current = false
+      failedError.current = null
       setResult(IDLE)
       return
     }
@@ -345,6 +361,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
     const wantFresh = fresh.current
     fresh.current = false
     failed.current = false
+    failedError.current = null
     setResult((previous) => beginSourceRun(previous, sameQuery))
     void (async () => {
       try {
@@ -353,6 +370,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
         // A later request has already started: its answer is the one that counts.
         if (!live) return
         failed.current = false
+        failedError.current = null
         setResult(
           run.kind === 'dataset'
             ? { data: rows, loading: false, error: null, datasetId: run.datasetId, meta: run.meta }
@@ -361,6 +379,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
       } catch (err) {
         if (!live) return
         failed.current = true
+        failedError.current = err instanceof Error ? err.message : String(err)
         setResult((previous) => failSourceRun(previous, err, sameQuery))
       }
     })()
@@ -387,6 +406,7 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
       }
       if (failed.current && shouldRetryOnSources(latestTarget.current, prev, next)) {
         failed.current = false
+        failedError.current = null
         fresh.current = true
         setNonce((n) => n + 1)
       }
@@ -400,9 +420,17 @@ export function useData(target: string, ...rest: [unknown?]): unknown {
       }
       if (
         failed.current &&
-        shouldRetryOnConnections(latestTarget.current, latestArgs.current, latestSources.current, prev, next)
+        shouldRetryOnConnections(
+          latestTarget.current,
+          latestArgs.current,
+          latestSources.current,
+          prev,
+          next,
+          failedError.current,
+        )
       ) {
         failed.current = false
+        failedError.current = null
         fresh.current = true
         setNonce((n) => n + 1)
       }

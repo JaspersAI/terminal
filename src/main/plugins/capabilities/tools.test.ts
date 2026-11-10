@@ -204,3 +204,43 @@ test('agents/research status and documents polls return the last good payload on
   assert.deepEqual(await tools.call({ id: 'agents/research/status', args: { tickers: ['TSLA'] } }, signal), goodStatus)
   assert.deepEqual(await tools.call({ id: 'agents/research/documents', args: {} }, signal), goodDocs)
 })
+
+test('connections, list, and call wait for startup plugin builds and in-flight connection handshakes to settle', async () => {
+  let ready = false
+  const settled: Array<readonly string[] | undefined> = []
+  const tools = createTools({
+    connections: (): Record<string, ConnectionInfo> =>
+      ready
+        ? {
+            'yfinance/server': connection('yfinance/server', 'ready', ['get_price_history', 'get_quote']),
+          }
+        : {},
+    settle: async (ids) => {
+      settled.push(ids)
+      ready = true
+    },
+    call: async (conn, tool) => ({
+      content: [{ type: 'text', text: `${conn}:${tool}` }],
+    }),
+  })
+  const signal = new AbortController().signal
+
+  assert.deepEqual(
+    (await tools.list({})).map((t) => t.id),
+    ['yfinance/server/get_price_history', 'yfinance/server/get_quote'],
+  )
+  assert.deepEqual(settled, [undefined])
+
+  ready = false
+  assert.deepEqual(await tools.connections({ connections: ['yfinance/server'] }), [
+    { id: 'yfinance/server', status: 'ready', instructions: null },
+  ])
+  assert.deepEqual(settled, [undefined, ['yfinance/server']])
+
+  ready = false
+  assert.deepEqual(await tools.call({ id: 'yfinance/server/get_price_history', args: { symbol: 'NVDA' } }, signal), {
+    text: 'yfinance/server:get_price_history',
+    isError: false,
+  })
+  assert.deepEqual(settled, [undefined, ['yfinance/server'], ['yfinance/server']])
+})

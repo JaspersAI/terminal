@@ -454,4 +454,43 @@ test('failed source calls retry only when their own source or connection becomes
     ),
     true,
   )
+
+  // A function source (connection: null) in another plugin that failed waiting on yfinance / ready connections
+  // retries when yfinance/server becomes ready, while ignoring unrelated connections like screener-mcp/jaspers.
+  const withBacktester = {
+    ...withYfinance,
+    'backtester/equity': {
+      id: 'backtester/equity',
+      plugin: 'backtester',
+      connection: null,
+      tool: null,
+      internal: false,
+      description: 'Backtest equity curves',
+      parameterNames: 'symbols',
+    },
+  }
+  const missingYfinanceErr =
+    "The yfinance history tool is not among the ready connections' tools (none). Is the yfinance plugin installed and ready?"
+  assert.equal(
+    shouldRetryOnConnections(
+      'backtester/equity',
+      { symbols: ['NVDA', 'META', 'PLTR'] },
+      withBacktester,
+      connScreenerReady,
+      connYfinanceReady,
+      missingYfinanceErr,
+    ),
+    true,
+  )
+  assert.equal(
+    shouldRetryOnConnections(
+      'fred/info',
+      { series: 'DGS10' },
+      withBacktester,
+      connConnecting,
+      connScreenerReady,
+      'HTTP 500 from api.stlouisfed.org',
+    ),
+    false,
+  )
 })
