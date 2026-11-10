@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   checkLiveKey,
   checkLiveValue,
+  cleanResearchThreadStatus,
   liveKeyOf,
   normalizeAgentsLiveSet,
   normalizeResearchPostArgs,
@@ -303,4 +304,18 @@ test('normalizeResearchPostArgs keeps the user question in text and moves multi-
       to: ['basic'],
     },
   )
+})
+
+test('cleanResearchThreadStatus strips turn counters in the chat thread and restores them in the Process view', () => {
+  assert.deepEqual(cleanResearchThreadStatus('working · turn 6', false), {
+    text: 'working',
+    processStatus: 'working · turn 6',
+  })
+  assert.deepEqual(cleanResearchThreadStatus('working', true, 'working · turn 6'), {
+    text: 'working · turn 6',
+    processStatus: 'working · turn 6',
+  })
+  assert.deepEqual(cleanResearchThreadStatus('10:42 PM', false, 'working · turn 6'), {
+    text: '10:42 PM',
+  })
 })

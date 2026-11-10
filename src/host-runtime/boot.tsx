@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BridgeProvider, PanelProvider, type Bridge, type PanelRef } from '@jaspers-ai/sdk'
 import { createIframeBridge, WorkingProvider } from '@jaspers-ai/sdk/host'
 import { clampZoom, ZOOM_DEFAULT } from '../shared/grid/grid'
+import { cleanResearchThreadStatus } from '../shared/plugins/live'
 import { mathSegments, mathSymbolClass, mathTextClass, type MathNode } from '../renderer/components/composer/markdown'
 import { watchDocumentUse } from '../renderer/lib/eye'
 
@@ -45,6 +46,7 @@ export async function boot(): Promise<void> {
   const root = document.getElementById('root')
   if (!root) return
   watchPluginMath(root)
+  watchResearchRoom(root)
   try {
     const bridge = createIframeBridge()
     // Relative to this page, so it is the plugin's own bundle: jaspers-plugin://<id>/bundle.js.
@@ -208,6 +210,109 @@ function applyDocumentZoom(raw: unknown): void {
 }
 
 const SKIP_MATH_PARENTS = 'code, pre, textarea, input, script, style, .jp-math'
+
+/**
+ * Upgrades older installed `research/room` views (`v4.1.x`) so the chat thread shows only user
+ * questions and final analyst answers while a `Process` toggle in `.rs-bar` switches to `.rs-process`.
+ */
+function watchResearchRoom(root: HTMLElement): void {
+  let syncing = false
+  let showProcess = false
+  const sync = (): void => {
+    if (syncing) return
+    syncing = true
+    try {
+      const bar = root.querySelector<HTMLElement>('.rs-bar')
+      const scroll = root.querySelector<HTMLElement>('.rs-scroll')
+      const container = scroll?.querySelector<HTMLElement>('.rs-thread, .rs-process') ?? null
+      const roomsLink = bar?.querySelector<HTMLButtonElement>('button.rs-link') ?? null
+      if (!bar || !container || !roomsLink) {
+        showProcess = false
+        return
+      }
+      // Native v4.2.0+ already renders its own Process button without data-rs-process-toggle.
+      const nativeBtn = [...bar.querySelectorAll<HTMLButtonElement>('button')].find(
+        (btn) => !btn.hasAttribute('data-rs-process-toggle') && btn.textContent?.trim() === 'Process',
+      )
+      if (nativeBtn) return
+
+      let toggle = bar.querySelector<HTMLButtonElement>('button[data-rs-process-toggle]')
+      if (!toggle) {
+        toggle = document.createElement('button')
+        toggle.type = 'button'
+        toggle.setAttribute('data-rs-process-toggle', '')
+        toggle.textContent = 'Process'
+        toggle.addEventListener('click', () => {
+          showProcess = !showProcess
+          sync()
+        })
+        const anchor = bar.querySelector<HTMLElement>('.rs-api') ?? bar.lastElementChild
+        if (anchor) bar.insertBefore(toggle, anchor)
+        else bar.appendChild(toggle)
+      }
+      const pressed = String(showProcess)
+      if (toggle.getAttribute('aria-pressed') !== pressed) toggle.setAttribute('aria-pressed', pressed)
+      const nextBtnClass = showProcess ? 'rs-btn rs-btn-on' : 'rs-btn'
+      if (toggle.className !== nextBtnClass) toggle.className = nextBtnClass
+
+      const nextContainerClass = showProcess ? 'rs-process' : 'rs-thread'
+      if (container.className !== nextContainerClass) container.className = nextContainerClass
+
+      for (const userMsg of container.querySelectorAll<HTMLElement>('.rs-msg.rs-you')) {
+        const via = userMsg.querySelector<HTMLElement>('.rs-meta > .rs-muted')
+        if (via && via.hidden !== !showProcess) via.hidden = !showProcess
+      }
+
+      for (const msg of container.querySelectorAll<HTMLElement>('.rs-msg:not(.rs-you)')) {
+        const metaSpans = msg.querySelectorAll<HTMLElement>(':scope > .rs-meta > span')
+        const statusSpan = metaSpans[2]
+        if (statusSpan) {
+          const cleaned = cleanResearchThreadStatus(
+            statusSpan.textContent ?? '',
+            showProcess,
+            statusSpan.dataset['processStatus'],
+          )
+          if (statusSpan.textContent !== cleaned.text) statusSpan.textContent = cleaned.text
+          if (cleaned.processStatus) statusSpan.dataset['processStatus'] = cleaned.processStatus
+          else delete statusSpan.dataset['processStatus']
+        }
+
+        const trail = msg.querySelector<HTMLDetailsElement>(':scope > details.rs-trail')
+        if (trail) {
+          if (trail.hidden !== !showProcess) trail.hidden = !showProcess
+          if (showProcess && !trail.open) trail.open = true
+        }
+
+        for (const child of msg.querySelectorAll<HTMLElement>(
+          ':scope > .rs-md, :scope > .rs-copy, :scope > .rs-sources, :scope > .rs-files',
+        )) {
+          if (child.hidden !== showProcess) child.hidden = showProcess
+        }
+
+        const isWorking = (statusSpan?.textContent ?? '').trim().startsWith('working')
+        for (const p of msg.querySelectorAll<HTMLElement>(':scope > p.rs-muted:not([data-rs-working])')) {
+          if (!showProcess && p.textContent === 'Reading the question…') p.textContent = 'Researching…'
+        }
+        const hasAnswer = msg.querySelector(':scope > .rs-md') !== null
+        const existingWorking = msg.querySelector<HTMLElement>(':scope > p[data-rs-working]')
+        const needsWorking = !showProcess && isWorking && Boolean(trail) && !hasAnswer
+        if (needsWorking && !existingWorking) {
+          const p = document.createElement('p')
+          p.className = 'rs-muted'
+          p.setAttribute('data-rs-working', '')
+          p.textContent = 'Researching…'
+          msg.appendChild(p)
+        } else if (!needsWorking && existingWorking) {
+          existingWorking.remove()
+        }
+      }
+    } finally {
+      syncing = false
+    }
+  }
+  const observer = new MutationObserver(sync)
+  observer.observe(root, { childList: true, subtree: true, characterData: true })
+}
 
 /** Upgrades inline and display LaTeX math inside plugin markdown containers (`.md-doc`, `.ag-md`, `.rs-md`). */
 function watchPluginMath(root: HTMLElement): void {
