@@ -1284,4 +1284,51 @@ test('a stream that enters a runaway place_view loop after laying out a 2x2 grid
     server.closeAllConnections()
     await new Promise((resolve) => server.close(resolve))
   }
+
+  // Non-streamed replies that hit length/max_tokens/max_output_tokens during a trimmed runaway tail report normal tool completion.
+  const trimmedOpenai = readOpenai({
+    choices: [
+      {
+        message: {
+          content: null,
+          tool_calls: [
+            ...charts,
+            {
+              index: 4,
+              id: 't5',
+              type: 'function',
+              function: {
+                name: 'place_view',
+                arguments: JSON.stringify({ rect: { x: 0, y: 0, w: 16, h: 12 }, state: {}, view: 'core/plugins' }),
+              },
+            },
+          ],
+        },
+        finish_reason: 'length',
+      },
+    ],
+  })
+  assert.equal(trimmedOpenai.stopReason, 'tool_calls')
+  assert.equal(trimmedOpenai.toolCalls.length, 4)
+
+  const trimmedAnthropic = readAnthropic({
+    content: [
+      { type: 'tool_use', id: 'a1', name: 'get', input: { path: 'views' } },
+      { type: 'tool_use', id: 'a2', name: 'get', input: { path: 'views' } },
+    ],
+    stop_reason: 'max_tokens',
+  })
+  assert.equal(trimmedAnthropic.stopReason, 'tool_use')
+  assert.equal(trimmedAnthropic.toolCalls.length, 1)
+
+  const trimmedResponses = readResponse({
+    status: 'incomplete',
+    incomplete_details: { reason: 'max_output_tokens' },
+    output: [
+      { type: 'function_call', call_id: 'r1', name: 'get', arguments: '{"path":"views"}' },
+      { type: 'function_call', call_id: 'r2', name: 'get', arguments: '{"path":"views"}' },
+    ],
+  })
+  assert.equal(trimmedResponses.stopReason, 'completed')
+  assert.equal(trimmedResponses.toolCalls.length, 1)
 })

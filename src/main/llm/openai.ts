@@ -2,6 +2,7 @@ import { post, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
 import { getAttachedImages } from '../agent/attachments.ts'
 import { trimToolCalls } from '../../shared/agent/rounds.ts'
+import { cutShort } from '../../shared/agent/stop.ts'
 import { marksCache } from '../../shared/llm/providers.ts'
 import type { Completion, CompleteOptions, Effort, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
@@ -237,6 +238,9 @@ export function readOpenai(data: OpenAiResponse): Completion {
   const completion = data.usage?.completion_tokens ?? 0
   const reasoning = data.usage?.completion_tokens_details?.reasoning_tokens ?? 0
   const fromTotal = data.usage?.total_tokens !== undefined ? Math.max(0, data.usage.total_tokens - input) : 0
+  const rawStop = choice?.finish_reason ?? ''
+  const stopReason =
+    trimmed.length > 0 && trimmed.length < rawCalls.length && cutShort(rawStop) === 'length' ? 'tool_calls' : rawStop
   return {
     text: message.content ?? '',
     toolCalls: trimmed.map(({ id, name, input: parsedInput }) => ({
@@ -244,7 +248,7 @@ export function readOpenai(data: OpenAiResponse): Completion {
       name,
       input: parsedInput,
     })),
-    stopReason: choice?.finish_reason ?? '',
+    stopReason,
     usage: {
       input,
       output: Math.max(completion + reasoning, fromTotal),

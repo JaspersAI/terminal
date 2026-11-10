@@ -266,10 +266,47 @@ test('trimToolCalls keeps at most one failing place_view when the grid is alread
           input: { view: 'tradingview/chart', state: { symbol: 'SPY' }, replace: 'e1', size: 'quarter' },
         },
         { id: 't2', name: 'place_view', input: { view: 'tradingview/chart', state: { symbol: 'QQQ' } } },
+        {
+          id: 't3',
+          name: 'place_view',
+          input: { view: 'core/plugins', rect: { x: 0, y: 0, w: 16, h: 12 }, state: {} },
+        },
       ],
       fullGrid,
     ).map((c) => c.id),
     ['t1', 't2'],
+  )
+  assert.deepEqual(
+    trimToolCalls([
+      {
+        id: 't1',
+        name: 'place_view',
+        input: { view: 'tradingview/chart', state: { symbol: 'SPY' }, replace: 'e1', size: 'quarter' },
+      },
+      {
+        id: 't2',
+        name: 'place_view',
+        input: { view: 'core/plugins', rect: { x: 0, y: 0, w: 16, h: 12 }, state: {} },
+      },
+    ]).map((c) => c.id),
+    ['t1'],
+  )
+
+  // A leading unplaceable view (core/note or core/chat) is kept once to surface its refusal without consuming grid cells.
+  assert.deepEqual(
+    trimToolCalls([
+      { id: 'n1', name: 'place_view', input: { view: 'core/note', state: { text: 'summary' } } },
+      { id: 'n2', name: 'place_view', input: { view: 'core/chat', state: {} } },
+      { id: 't1', name: 'place_view', input: { view: 'tradingview/chart', state: { symbol: 'SPY' }, size: 'full' } },
+    ]).map((c) => c.id),
+    ['n1'],
+  )
+  assert.deepEqual(
+    trimToolCalls([
+      { id: 'n1', name: 'place_view', input: { view: 'core/note', state: { text: 'summary' } } },
+      { id: 't1', name: 'place_view', input: { view: 'tradingview/chart', state: { symbol: 'SPY' }, size: 'full' } },
+    ]).map((c) => c.id),
+    ['n1', 't1'],
   )
 })
 

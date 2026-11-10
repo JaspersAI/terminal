@@ -3,6 +3,7 @@ import type { ProviderConfig } from '../secrets'
 import { getAttachedImages } from '../agent/attachments.ts'
 import { INSTRUCTIONS, LARGE, WHOLE_MAX as ASIDE_WHOLE_MAX } from '../../shared/agent/aside.ts'
 import { trimToolCalls } from '../../shared/agent/rounds.ts'
+import { cutShort } from '../../shared/agent/stop.ts'
 import { added } from '../../shared/agent/transcript.ts'
 import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
@@ -389,25 +390,27 @@ async function send(
  */
 export function readAnthropic(data: AnthropicResponse): Completion {
   const rawContent = data.content ?? []
+  const rawToolBlocks = rawContent.filter((b) => b.type === 'tool_use')
   const trimmed = trimToolCalls(
-    rawContent
-      .filter((b) => b.type === 'tool_use')
-      .map((b) => ({
-        id: b.id ?? '',
-        name: b.name ?? '',
-        input: isRecord(b.input) ? b.input : {},
-        block: b,
-      })),
+    rawToolBlocks.map((b) => ({
+      id: b.id ?? '',
+      name: b.name ?? '',
+      input: isRecord(b.input) ? b.input : {},
+      block: b,
+    })),
   )
   const keptBlocks = new Set(trimmed.map((t) => t.block))
   const content = rawContent.filter((b) => b.type !== 'tool_use' || keptBlocks.has(b))
+  const rawStop = data.stop_reason ?? ''
+  const stopReason =
+    trimmed.length > 0 && trimmed.length < rawToolBlocks.length && cutShort(rawStop) === 'length' ? 'tool_use' : rawStop
   return {
     text: content
       .filter((b) => b.type === 'text')
       .map((b) => b.text ?? '')
       .join(''),
     toolCalls: trimmed.map(({ id, name, input }) => ({ id, name, input })),
-    stopReason: data.stop_reason ?? '',
+    stopReason,
     usage: readUsage(data.usage ?? {}),
     raw: content,
   }
@@ -511,7 +514,8 @@ export function anthropicStream(
         }
         case 'message_delta': {
           const delta = isRecord(event.delta) ? event.delta : {}
-          if (typeof delta.stop_reason === 'string' && delta.stop_reason) reply.stop_reason = delta.stop_reason
+          if (!looped && typeof delta.stop_reason === 'string' && delta.stop_reason)
+            reply.stop_reason = delta.stop_reason
           // Cumulative, so the last one is the total rather than something to add up.
           if (isRecord(event.usage)) reply.usage = { ...reply.usage, ...counted(event.usage) }
           return
