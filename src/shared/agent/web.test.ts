@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { canonical, remember, wasGiven } from './web.ts'
+import type { Turn } from '../llm/llm.ts'
+import { answeredIn, canonical, refusalMessage, remember, wasGiven } from './web.ts'
 
 const typed =
   (...turns: string[]) =>
@@ -43,4 +44,99 @@ test('only so many answered addresses are kept, the newest ones', () => {
   // Answered again, an address is new again.
   remember(given, ['https://b.test/', 'https://d.test/'], 2)
   assert.deepEqual([...given], ['https://b.test/', 'https://d.test/'])
+})
+
+test('an address a search answered is read without its query or closing slash, while added queries and paths are not', () => {
+  const given = new Set<string>()
+  remember(given, [
+    'https://www.bbb.org/us/ny/jericho/profile/retail-florist/1-800-flowers-0121-24583/customer-reviews?page=2',
+    'https://sec.gov/about/',
+  ])
+  const nobody = typed()
+  assert.equal(
+    wasGiven(
+      'https://www.bbb.org/us/ny/jericho/profile/retail-florist/1-800-flowers-0121-24583/customer-reviews',
+      given,
+      nobody,
+    ),
+    true,
+  )
+  assert.equal(wasGiven('https://sec.gov/about', given, nobody), true)
+  assert.equal(
+    wasGiven(
+      'https://www.bbb.org/us/ny/jericho/profile/retail-florist/1-800-flowers-0121-24583/customer-reviews?page=3',
+      given,
+      nobody,
+    ),
+    false,
+  )
+  assert.equal(wasGiven('https://www.bbb.org/us/ny/jericho/profile', given, nobody), false)
+})
+
+test('addresses search_web answered earlier in a thread are found, while other tools and failed calls are ignored', () => {
+  const turns: Turn[] = [
+    { role: 'user', text: 'check reviews' },
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: [
+        { id: 's1', name: 'search_web', input: { query: 'reviews' } },
+        { id: 's2', name: 'search_web', input: { query: 'failed' } },
+        { id: 'g1', name: 'get', input: { path: 'panels/e1/text' } },
+      ],
+      raw: null,
+    },
+    {
+      role: 'tool',
+      results: [
+        {
+          callId: 's1',
+          output: [
+            '1. First Place',
+            '   https://exa.ai/library/place/52zkhnqswtw',
+            '   Snippet one',
+            '2. Second Place',
+            '   https://reviews.birdeye.com/1-800-flowers-168612800250471',
+            '   Snippet two',
+          ].join('\n'),
+          isError: false,
+        },
+        {
+          callId: 's2',
+          output: '1. Ignored\n   https://ignored.test/fail',
+          isError: true,
+        },
+        {
+          callId: 'g1',
+          output: '1. Not a search\n   https://untrusted.test/page',
+          isError: false,
+        },
+      ],
+    },
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: [{ id: 's1', name: 'get', input: { path: 'panels/e1/text' } }],
+      raw: null,
+    },
+    {
+      role: 'tool',
+      results: [{ callId: 's1', output: '1. Reused id\n   https://untrusted.test/reused', isError: false }],
+    },
+  ]
+  assert.deepEqual(answeredIn(turns), [
+    'https://exa.ai/library/place/52zkhnqswtw',
+    'https://reviews.birdeye.com/1-800-flowers-168612800250471',
+  ])
+})
+
+test('a refusal names the address and says not to guess or retry it', () => {
+  const withSearch = refusalMessage('https://exa.ai/library/place/f648j9772rf', true)
+  assert.match(withSearch, /fetch_page reads only an address search_web answered or the user typed/)
+  assert.match(withSearch, /https:\/\/exa\.ai\/library\/place\/f648j9772rf/)
+  assert.match(withSearch, /Do not guess or retry/)
+
+  const withoutSearch = refusalMessage('https://exa.ai/library/place/f648j9772rf', false)
+  assert.match(withoutSearch, /no search provider is set/)
+  assert.match(withoutSearch, /https:\/\/exa\.ai\/library\/place\/f648j9772rf/)
 })
