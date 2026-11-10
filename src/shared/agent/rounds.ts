@@ -59,6 +59,7 @@ export function trimToolCalls<T extends { id: string; name: string; input: Recor
 ): T[] {
   if (calls.length <= 1) return [...calls]
   const kept: T[] = []
+  const droppedDuplicates = new Set<string>()
   let simGrid = grid
   let placedInRound = 0
   let hadSubGridPlace = false
@@ -67,10 +68,12 @@ export function trimToolCalls<T extends { id: string; name: string; input: Recor
   let dropRemainingPlaceViews = false
 
   for (const call of calls) {
-    if (
-      Object.keys(call.input).length > 0 &&
-      kept.some((earlier) => earlier.name === call.name && sameValue(earlier.input, call.input))
-    ) {
+    const emptyInput = Object.keys(call.input).length === 0
+    if (emptyInput && droppedDuplicates.has(call.name)) {
+      continue
+    }
+    if (!emptyInput && kept.some((earlier) => earlier.name === call.name && sameValue(earlier.input, call.input))) {
+      droppedDuplicates.add(call.name)
       if (call.name === 'place_view') dropRemainingPlaceViews = true
       continue
     }

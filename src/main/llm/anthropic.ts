@@ -390,20 +390,22 @@ async function send(
  */
 export function readAnthropic(data: AnthropicResponse): Completion {
   const rawContent = data.content ?? []
-  const rawToolBlocks = rawContent.filter((b) => b.type === 'tool_use')
-  const trimmed = trimToolCalls(
-    rawToolBlocks.map((b) => ({
+  const parsed = rawContent
+    .filter((b) => b.type === 'tool_use')
+    .map((b) => ({
       id: b.id ?? '',
       name: b.name ?? '',
       input: isRecord(b.input) ? b.input : {},
       block: b,
-    })),
-  )
+    }))
+  const trimmed = trimToolCalls(parsed)
   const keptBlocks = new Set(trimmed.map((t) => t.block))
   const content = rawContent.filter((b) => b.type !== 'tool_use' || keptBlocks.has(b))
   const rawStop = data.stop_reason ?? ''
   const stopReason =
-    trimmed.length > 0 && trimmed.length < rawToolBlocks.length && cutShort(rawStop) === 'length' ? 'tool_use' : rawStop
+    trimmed.length > 0 && trimmed[trimmed.length - 1] !== parsed[parsed.length - 1] && cutShort(rawStop) === 'length'
+      ? 'tool_use'
+      : rawStop
   return {
     text: content
       .filter((b) => b.type === 'text')
@@ -506,7 +508,7 @@ export function anthropicStream(
                 if (!keptIndices.has(idx)) delete blocks[idx]
               }
               openBlocks.clear()
-              reply.stop_reason ||= 'tool_use'
+              if (!reply.stop_reason || cutShort(reply.stop_reason) === 'length') reply.stop_reason = 'tool_use'
               looped = true
             }
           }

@@ -255,8 +255,11 @@ async function loop({
         const trimmed = trimToolCalls(reply.toolCalls, placementGrid(context))
         if (trimmed.length < reply.toolCalls.length) {
           const keptIds = new Set(trimmed.map((call) => call.id))
+          const tailTrimmed = trimmed[trimmed.length - 1] !== reply.toolCalls[reply.toolCalls.length - 1]
           const stopReason =
-            trimmed.length > 0 && cutShort(reply.stopReason) === 'length' ? 'tool_calls' : reply.stopReason
+            trimmed.length > 0 && tailTrimmed && cutShort(reply.stopReason) === 'length'
+              ? 'tool_calls'
+              : reply.stopReason
           reply = { ...reply, toolCalls: trimmed, stopReason, raw: keepRawCalls(reply.raw, keptIds) }
         }
       }
