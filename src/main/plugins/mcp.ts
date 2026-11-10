@@ -83,6 +83,9 @@ const oauthFetch = refreshOnce(fetch)
 /** The servers that sign their users in through Jaspers, by address, once each has said so. Not knowing is not kept: a server that could not be asked is asked again next time. */
 const throughJaspers = new Set<string>()
 
+/** How long `waitForConnections` waits for in-flight connection handshakes before letting a tool list or status check proceed with what is ready. */
+const CONNECT_SETTLE_MS = 15_000
+
 /**
  * Builds the client for one connection, or says what it is still waiting for. Safe to call again at
  * any time: whatever was connected is closed first.
@@ -96,30 +99,37 @@ export function connect(id: string, retry = 0): Promise<void> {
 }
 
 /**
- * Waits for in-flight connection handshakes (either the named `ids` or every connection currently
- * connecting, bounded by `timeoutMs`) so a plugin backend calling `ctx.tools.list()` at launch does
- * not read an empty tool list while local MCP servers are still completing their startup handshake.
+ * Waits for in-flight MCP connection handshakes (`connecting`) to settle: for the named connection
+ * ids when a filter is given (triggering a reconnect for any errored connection eligible to retry on
+ * call), or for all currently connecting servers when unfiltered.
  */
-export async function waitForConnecting(ids?: readonly string[], timeoutMs = 5_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    const pending =
-      ids && ids.length > 0
-        ? ids.map((id) => connecting.get(id)).filter((p): p is Promise<void> => p !== undefined)
-        : [...connecting.values()]
-    const remaining = deadline - Date.now()
-    if (pending.length === 0 || remaining <= 0) return
-    let timer: NodeJS.Timeout | undefined
-    const limit = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, remaining)
-      timer.unref?.()
-    })
-    try {
-      await Promise.race([Promise.allSettled(pending), limit])
-    } finally {
-      if (timer) clearTimeout(timer)
+export async function waitForConnections(
+  wanted: readonly string[] | null = null,
+  signal?: AbortSignal,
+): Promise<void> {
+  const pending: Promise<void>[] = []
+  if (wanted !== null && wanted !== undefined) {
+    for (const id of wanted) {
+      const inflight = connecting.get(id)
+      if (inflight) {
+        pending.push(inflight)
+      } else if (!clients.has(id) && getState().connections[id]?.status === 'error') {
+        pending.push(reconnect(id))
+      }
     }
-    if (Date.now() >= deadline) return
+  } else {
+    pending.push(...connecting.values())
+  }
+  if (pending.length === 0) return
+  let timer: NodeJS.Timeout | null = null
+  const cap = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, CONNECT_SETTLE_MS)
+    timer.unref?.()
+  })
+  try {
+    await untilAborted(Promise.race([Promise.allSettled(pending).then(() => undefined), cap]), signal)
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 

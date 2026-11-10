@@ -97,6 +97,8 @@ export interface SourceInfo {
   internal: boolean
   /** What it takes, as names: required first, then the optional ones in brackets. */
   parameterNames: string
+  /** True when a function source's plugin declares the `tools` capability and may call peer MCP connections. */
+  usesTools?: boolean
 }
 
 /**

@@ -5,6 +5,7 @@ import { QUERY_LIMIT_DEFAULT, QUERY_LIMIT_MAX } from '../../../shared/data/store
 import { findConnectionTool, resolveConnectionSource, sourceParameters } from '../../../shared/data/tool-parameters'
 import { MCP_SOURCE } from '../../../shared/plugins/apps'
 import { appOf, showApp } from '../../plugins/apps'
+import { hasPendingPluginRegistration, waitForPluginRegistration } from '../../plugins/plugins'
 import { allSources, getSource, type RegisteredSource } from '../../plugins/registry'
 import { runSource } from '../../data/sources'
 import { getState } from '../../state'
@@ -168,6 +169,9 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
       /** Runs a source with normalized input, returning its text and dataset metadata and showing a loop app when available. */
       async run(input, { workspaceId, signal, unread, loop }) {
         const id = asPathString(input.source).trim()
+        if (!getSource(id) && hasPendingPluginRegistration()) {
+          await waitForPluginRegistration(signal)
+        }
         const source = find(id)
         const { plugin, connection } = source
         const state = getState()
@@ -235,8 +239,11 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
         required: ['source'],
       },
       /** Describes a source or a targeted generic MCP tool, including its full parameter schema. */
-      async run(input) {
+      async run(input, { signal }) {
         const id = asPathString(input.source).trim()
+        if (!getSource(id) && hasPendingPluginRegistration()) {
+          await waitForPluginRegistration(signal)
+        }
         const state = getState()
         const { def, connection } = find(id)
         if (id === MCP_SOURCE) {

@@ -21,7 +21,7 @@ import { mapToolResult } from '../../shared/data/datasets'
 import { APP_VIEW, appSummary } from '../../shared/plugins/apps'
 import { qualifyConnection } from '../../shared/plugins/plugins'
 import { messageOf } from '../../shared/rpc'
-import { isMcpSource, type SourceDef } from '@jaspers-ai/sdk/define'
+import { isMcpSource, type Capability, type SourceDef } from '@jaspers-ai/sdk/define'
 import { call } from './mcp'
 import { getState, subscribe, update } from '../state'
 
@@ -59,6 +59,8 @@ export interface RegisteredSource {
   def: SourceDef
   /** The connection an MCP source runs on, as <plugin>/<name>; null for a function source. */
   connection: string | null
+  /** True when a function source's plugin declares `tools` and may invoke peer MCP connections. */
+  usesTools?: boolean
 }
 
 const views = new Map<string, ViewDef>()
@@ -84,11 +86,16 @@ export function registerSources(plugin: string | null, defs: Record<string, Sour
  * Everything one plugin brings, swapped in together. A rebuild replaces both halves at once, so
  * nothing ever sees the new views beside the old sources, and one push carries the change.
  */
-export function registerPlugin(plugin: string, sourceDefs: Record<string, SourceDef>, viewDefs: ViewDef[]): void {
+export function registerPlugin(
+  plugin: string,
+  sourceDefs: Record<string, SourceDef>,
+  viewDefs: ViewDef[],
+  capabilities: readonly Capability[] = [],
+): void {
   dropViews(plugin)
   dropSources(plugin)
   // Sources first: a view's `renders` is read back through them.
-  putSources(plugin, sourceDefs)
+  putSources(plugin, sourceDefs, capabilities)
   putViews(viewDefs)
   project()
 }
@@ -131,7 +138,7 @@ export function viewInfos(): Record<string, ViewInfo> {
 export function sourceInfos(): Record<string, SourceInfo> {
   const infos: Record<string, SourceInfo> = {}
   const connections = currentConnections()
-  for (const { id, plugin, def, connection } of sources.values()) {
+  for (const { id, plugin, def, connection, usesTools } of sources.values()) {
     // An MCP source's parameters are its server's, which it only has once connected; a function
     // source's are its own schema and are known as soon as it is registered.
     const tool =
@@ -147,6 +154,7 @@ export function sourceInfos(): Record<string, SourceInfo> {
       tool: isMcpSource(def) ? def.tool : null,
       internal: def.internal === true,
       parameterNames: parameterNames(sourceParameters(def, tool)),
+      ...(usesTools ? { usesTools: true } : {}),
     }
   }
   return infos
@@ -468,10 +476,22 @@ function putViews(defs: ViewDef[]): void {
   for (const def of defs) views.set(def.id, def)
 }
 
-function putSources(plugin: string | null, defs: Record<string, SourceDef>): void {
+function putSources(
+  plugin: string | null,
+  defs: Record<string, SourceDef>,
+  capabilities: readonly Capability[] = [],
+): void {
+  const hasTools = capabilities.includes('tools')
   for (const [name, def] of Object.entries(defs)) {
     const id = `${plugin ?? 'core'}/${name}`
-    sources.set(id, { id, plugin, def, connection: isMcpSource(def) ? qualifyConnection(plugin, def.mcp) : null })
+    const mcp = isMcpSource(def)
+    sources.set(id, {
+      id,
+      plugin,
+      def,
+      connection: mcp ? qualifyConnection(plugin, def.mcp) : null,
+      ...(!mcp && hasTools ? { usesTools: true } : {}),
+    })
     idOfDef.set(def, id)
   }
 }

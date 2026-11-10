@@ -205,42 +205,52 @@ test('agents/research status and documents polls return the last good payload on
   assert.deepEqual(await tools.call({ id: 'agents/research/documents', args: {} }, signal), goodDocs)
 })
 
-test('connections, list, and call wait for startup plugin builds and in-flight connection handshakes to settle', async () => {
-  let ready = false
-  const settled: Array<readonly string[] | undefined> = []
-  const tools = createTools({
-    connections: (): Record<string, ConnectionInfo> =>
-      ready
-        ? {
-            'yfinance/server': connection('yfinance/server', 'ready', ['get_price_history', 'get_quote']),
-          }
-        : {},
-    settle: async (ids) => {
-      settled.push(ids)
-      ready = true
-    },
-    call: async (conn, tool) => ({
-      content: [{ type: 'text', text: `${conn}:${tool}` }],
-    }),
-  })
-  const signal = new AbortController().signal
+test('list, connections, and call wait for peer plugins and connecting MCP servers to settle before reading tools', async () => {
+  let state: Record<string, ConnectionInfo> = {
+    'yfinance/server': connection('yfinance/server', 'connecting', []),
+  }
+  const settledFor: Array<readonly string[] | null | undefined> = []
 
+  const tools = createTools({
+    connections: () => state,
+    call: async (conn, tool, args) => {
+      assert.equal(state[conn]?.status, 'ready')
+      return { content: [{ type: 'text', text: `${conn}/${tool}:${JSON.stringify(args)}` }] }
+    },
+    settle: async (wanted) => {
+      settledFor.push(wanted)
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      state = {
+        'yfinance/server': connection('yfinance/server', 'ready', ['get_price_history', 'get_quote'], 'Use ticker.'),
+      }
+    },
+  })
+
+  // Unfiltered list() waits for connecting peer connections instead of returning [] while yfinance/server initializes.
+  const listed = await tools.list({})
   assert.deepEqual(
-    (await tools.list({})).map((t) => t.id),
+    listed.map((t) => t.id),
     ['yfinance/server/get_price_history', 'yfinance/server/get_quote'],
   )
-  assert.deepEqual(settled, [undefined])
+  assert.deepEqual(settledFor, [undefined])
 
-  ready = false
-  assert.deepEqual(await tools.connections({ connections: ['yfinance/server'] }), [
-    { id: 'yfinance/server', status: 'ready', instructions: null },
-  ])
-  assert.deepEqual(settled, [undefined, ['yfinance/server']])
+  // Reset to connecting and verify connections() and call() also settle first.
+  state = {
+    'yfinance/server': connection('yfinance/server', 'connecting', []),
+  }
+  const conns = await tools.connections({ connections: ['yfinance/server'] })
+  assert.deepEqual(conns, [{ id: 'yfinance/server', status: 'ready', instructions: 'Use ticker.' }])
 
-  ready = false
-  assert.deepEqual(await tools.call({ id: 'yfinance/server/get_price_history', args: { symbol: 'NVDA' } }, signal), {
-    text: 'yfinance/server:get_price_history',
+  state = {
+    'yfinance/server': connection('yfinance/server', 'connecting', []),
+  }
+  const called = await tools.call(
+    { id: 'yfinance/server/get_price_history', args: { symbol: 'NVDA' } },
+    new AbortController().signal,
+  )
+  assert.deepEqual(called, {
+    text: 'yfinance/server/get_price_history:{"symbol":"NVDA"}',
     isError: false,
   })
-  assert.deepEqual(settled, [undefined, ['yfinance/server'], ['yfinance/server']])
+  assert.deepEqual(settledFor, [undefined, ['yfinance/server'], ['yfinance/server']])
 })

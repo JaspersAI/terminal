@@ -4,6 +4,7 @@ import {
   classifyPluginWatchPath,
   createAwakeTimeout,
   createPluginBuildQueue,
+  createPluginRegistrationGate,
   initializeHostWithRetry,
   isReloadAbort,
   isStartupAbort,
@@ -775,4 +776,48 @@ test('createPluginBuildQueue coalesces concurrent watcher rescans while preservi
   releaseSecond()
   await p2
   assert.deepEqual(events, ['build:fred:/plugins/fred:explicit', 'build:fred:/plugins/fred:explicit'])
+})
+
+test('createPluginRegistrationGate holds callers across deferred startup and concurrent plugin registrations', async () => {
+  const gate = createPluginRegistrationGate()
+  assert.equal(gate.hasPending(), false)
+  await gate.wait()
+
+  const order: string[] = []
+  const finishStartup = gate.deferStartup()
+  assert.equal(gate.hasPending(), true)
+
+  let finishBacktester!: () => void
+  let finishYfinance!: () => void
+  const waiting = gate.wait().then(() => {
+    order.push('settled')
+  })
+
+  // Startup discovers backtester and yfinance before releasing the startup barrier.
+  finishBacktester = gate.begin()
+  finishYfinance = gate.begin()
+  order.push('discovered')
+  finishStartup()
+  assert.equal(gate.hasPending(), true)
+
+  // backtester finishes registering first, while yfinance is still bundling.
+  finishBacktester()
+  order.push('backtester-registered')
+  assert.equal(gate.hasPending(), true)
+
+  // Once yfinance registers its connections and sources, the gate resolves.
+  finishYfinance()
+  order.push('yfinance-registered')
+  assert.equal(gate.hasPending(), false)
+  await waiting
+  assert.deepEqual(order, ['discovered', 'backtester-registered', 'yfinance-registered', 'settled'])
+
+  // An aborted caller stops waiting immediately without clearing the in-flight registration.
+  const finishSlow = gate.begin()
+  const controller = new AbortController()
+  controller.abort(new Error('stopped'))
+  await assert.rejects(gate.wait(controller.signal), /stopped/)
+  assert.equal(gate.hasPending(), true)
+  finishSlow()
+  assert.equal(gate.hasPending(), false)
 })
