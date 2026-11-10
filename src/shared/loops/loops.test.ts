@@ -736,8 +736,9 @@ test('a typed message that starts with a room\u2019s @name or @title is for that
   assert.equal(to('@f1 hi'), null)
 })
 
-test('the note is no agent’s to place: its words go in the reply, and any other view is placed', () => {
+test('the note and the docked chat are no agent’s to place: words go in the reply, chat is docked by the user, and any other view is placed', () => {
   assert.match(notPlaced('core/note')!, /^A note is not placed by work: .* said in your reply/)
+  assert.match(notPlaced('core/chat')!, /^The chat is the global conversation, which the user docks from the composer/)
   assert.equal(notPlaced('core/table'), null)
   assert.equal(notPlaced('watchlist/quotes'), null)
 })

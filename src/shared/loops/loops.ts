@@ -937,12 +937,18 @@ export const NOTE_VIEW = 'core/note'
 /**
  * Why a loop's agent may not place this view, in words for its model, or null when it may. The note
  * is no agent's to place: a model left to itself writes its status and its findings into one, a call
- * and a view for words that belong in its reply, which the user reads in its tile. The views are for
- * what the plugins show. A note already on the grid is driven and read as any tile is.
+ * and a view for words that belong in its reply, which the user reads in its tile. The docked chat is
+ * the global conversation, which the user docks from the composer. The views are for what the plugins
+ * show. A note already on the grid is driven and read as any tile is.
  */
 export function notPlaced(view: string): string | null {
-  if (view !== NOTE_VIEW) return null
-  return 'A note is not placed by work: a status, a plan, or a finding is said in your reply, which the user reads in your tile. The views are for what the plugins show.'
+  if (view === NOTE_VIEW) {
+    return 'A note is not placed by work: a status, a plan, or a finding is said in your reply, which the user reads in your tile. The views are for what the plugins show.'
+  }
+  if (view === CHAT_VIEW) {
+    return "The chat is the global conversation, which the user docks from the composer: it is not this work's to place."
+  }
+  return null
 }
 
 /** What the user is offered when the orchestrator would start a loop: start it, or not. */
