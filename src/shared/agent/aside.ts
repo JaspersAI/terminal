@@ -106,12 +106,15 @@ export function setAside(
 ): { turns: Turn[]; sending: Sending; aside: number; saved: number } | null {
   const calls = callsIn(turns)
   const requestKept = activeKept(turns, sending.asked, calls, kept)
+  const newest = newestRound(turns)
+  const prevKept = newest > sending.asked ? activeKept(turns.slice(0, newest), sending.asked, calls, kept) : kept
   const keptInRequest = long(turns, sending.asked, sending.aside, calls, kept).filter(
-    (result) => !standsAside(result, calls, requestKept),
+    (result) => !standsAside(result, calls, prevKept),
   )
   const whole = [...keptInRequest, ...long(turns, sending.aside, turns.length, calls, kept)]
   if (whole.reduce((total, result) => total + result.output.length, 0) <= WHOLE_MAX) return null
-  return butNewest(turns, sending, calls, requestKept, keptWhole(turns, sending.asked, calls, requestKept))
+  const newlyAside = keptInRequest.filter((result) => standsAside(result, calls, requestKept))
+  return butNewest(turns, sending, calls, requestKept, keptWhole(turns, sending.asked, calls, requestKept), newlyAside)
 }
 
 /**
@@ -244,9 +247,10 @@ function butNewest(
   calls: ReadonlyMap<string, ToolCall>,
   kept: ReadonlySet<string>,
   from: number = newestRound(turns),
+  extra: ToolResult[] = [],
 ): { turns: Turn[]; sending: Sending; aside: number; saved: number } | null {
   const newest = Math.max(from, sending.aside)
-  const read = long(turns, sending.aside, newest, calls, kept)
+  const read = [...extra, ...long(turns, sending.aside, newest, calls, kept)]
   if (read.length === 0) return null
   return {
     turns: withoutThinking(turns),

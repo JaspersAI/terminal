@@ -771,3 +771,40 @@ test('a round that calls read_again alongside a short non-standing-aside call li
   ]
   assert.equal(setAside(withShortCall, put.sending), null)
 })
+
+test('when a later search_web round pushes active-request search_web outputs past WHOLE_MAX after aside already advanced, setAside strips thinking and sets aside earlier rounds', () => {
+  const used = { type: 'tool_use', id: 's2', name: 'search_web', input: { query: 'later' } }
+  const turns: Turn[] = [
+    asked('go'),
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: [
+        { id: 's1', name: 'search_web', input: { query: 'first' } },
+        { id: 'c1', name: 'run_source', input: {} },
+      ],
+      raw: null,
+    },
+    {
+      role: 'tool',
+      results: [
+        { callId: 's1', output: big(350_000, 'a'), isError: false },
+        { callId: 'c1', output: big(200_000, 'b'), isError: false },
+      ],
+    },
+    calling('c2', 'run_source'),
+    answer('c2', big(50_000, 'c')),
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: [{ id: 's2', name: 'search_web', input: { query: 'later' } }],
+      raw: [{ type: 'thinking', thinking: 'hm', signature: 'sig' }, used],
+    },
+    answer('s2', big(60_000, 'd')),
+  ]
+  const made = setAside(turns, { asked: 0, aside: 4 })!
+  assert.ok(made)
+  assert.deepEqual(made.sending, { asked: 0, aside: 6 })
+  assert.equal(made.aside, 2)
+  assert.deepEqual((made.turns[5] as Assistant).raw, [used])
+})
