@@ -76,6 +76,7 @@ export function answeredIn(turns: Turn[]): string[] {
   const addresses: string[] = []
   for (const turn of turns) {
     if (turn.role === 'assistant') {
+      searchIds.clear()
       for (const call of turn.toolCalls) {
         if (call.name === 'search_web') searchIds.add(call.id)
       }

@@ -113,6 +113,16 @@ test('addresses search_web answered earlier in a thread are found, while other t
         },
       ],
     },
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: [{ id: 's1', name: 'get', input: { path: 'panels/e1/text' } }],
+      raw: null,
+    },
+    {
+      role: 'tool',
+      results: [{ callId: 's1', output: '1. Reused id\n   https://untrusted.test/reused', isError: false }],
+    },
   ]
   assert.deepEqual(answeredIn(turns), [
     'https://exa.ai/library/place/52zkhnqswtw',
