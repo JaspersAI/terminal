@@ -455,30 +455,63 @@ test('failed source calls retry only when their own source or connection becomes
     true,
   )
 
-  // A function source (connection: null) in another plugin that failed waiting on yfinance / ready connections
-  // retries when yfinance/server becomes ready, while ignoring unrelated connections like screener-mcp/jaspers.
+  // A dependent function source in a plugin that declares the `tools` capability (such as backtester/run)
+  // or whose failure message names a missing peer connection/tool retries when that peer connection becomes ready
+  // or populates its tools, while unrelated HTTP function sources (fred/info) still do not.
   const withBacktester = {
     ...withYfinance,
-    'backtester/equity': {
-      id: 'backtester/equity',
+    'backtester/run': {
+      id: 'backtester/run',
       plugin: 'backtester',
       connection: null,
       tool: null,
       internal: false,
-      description: 'Backtest equity curves',
-      parameterNames: 'symbols',
+      description: 'Run portfolio backtest',
+      parameterNames: 'tickers',
+      usesTools: true,
+    },
+    'backtester/legacy': {
+      id: 'backtester/legacy',
+      plugin: 'backtester',
+      connection: null,
+      tool: null,
+      internal: false,
+      description: 'Run portfolio backtest',
+      parameterNames: 'tickers',
     },
   }
-  const missingYfinanceErr =
-    "The yfinance history tool is not among the ready connections' tools (none). Is the yfinance plugin installed and ready?"
   assert.equal(
     shouldRetryOnConnections(
-      'backtester/equity',
-      { symbols: ['NVDA', 'META', 'PLTR'] },
+      'backtester/run',
+      { tickers: ['NVDA', 'META', 'PLTR'] },
       withBacktester,
       connScreenerReady,
       connYfinanceReady,
-      missingYfinanceErr,
+    ),
+    true,
+  )
+  // Even without usesTools on the source entry, an error naming the peer plugin or ready connections retries when that connection becomes ready.
+  const missingYfinanceError =
+    "The yfinance history tool is not among the ready connections' tools (none). Is the yfinance plugin installed and ready?"
+  assert.equal(
+    shouldRetryOnConnections(
+      'backtester/legacy',
+      { tickers: ['NVDA', 'META', 'PLTR'] },
+      withBacktester,
+      connConnecting,
+      connScreenerReady,
+      missingYfinanceError,
+    ),
+    false,
+  )
+  assert.equal(
+    shouldRetryOnConnections(
+      'backtester/legacy',
+      { tickers: ['NVDA', 'META', 'PLTR'] },
+      withBacktester,
+      connScreenerReady,
+      connYfinanceReady,
+      missingYfinanceError,
     ),
     true,
   )
@@ -492,5 +525,25 @@ test('failed source calls retry only when their own source or connection becomes
       'HTTP 500 from api.stlouisfed.org',
     ),
     false,
+  )
+  // If yfinance/server first appears with empty tools and then populates its tools list, both backtester/run and backtester/legacy retry.
+  const connYfinanceEmptyTools = {
+    ...connScreenerReady,
+    'yfinance/server': {
+      id: 'yfinance/server',
+      plugin: 'yfinance',
+      status: 'ready',
+      tools: [],
+    },
+  }
+  assert.equal(
+    shouldRetryOnConnections(
+      'backtester/run',
+      { tickers: ['NVDA', 'META', 'PLTR'] },
+      withBacktester,
+      connYfinanceEmptyTools,
+      connYfinanceReady,
+    ),
+    true,
   )
 })
