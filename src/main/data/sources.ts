@@ -21,6 +21,7 @@ import { withParameters } from '../../shared/data/tool-parameters'
 import { guardedFetch } from '../../shared/plugins/guarded-fetch'
 import { messageOf } from '../../shared/rpc'
 import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
+import { isSleepWakeError } from '../../shared/tasks/tasks'
 import { call } from '../plugins/mcp'
 import { runInHost } from '../plugins/plugin-host'
 import { getSource, type RegisteredSource } from '../plugins/registry'
@@ -114,21 +115,23 @@ export async function runSource(
     } catch (error) {
       const rawMessage = messageOf(error)
       const message = isMcpSource(def) ? withParameters(rawMessage, declared()) : rawMessage
-      // A run that failed is worth keeping: what a source stopped answering is half of what changed.
-      file(source.id, preparedArgs, key, workspaceId, {
-        rows: null,
-        meta: null,
-        text: null,
-        error: message,
-      })
-      recordEye(
-        sourceEvent(source.id, {
-          workspace: workspaceId,
-          ms: Date.now() - startedAt,
-          ok: false,
+      if (!isSleepWakeError(message)) {
+        // A run that failed is worth keeping: what a source stopped answering is half of what changed.
+        file(source.id, preparedArgs, key, workspaceId, {
+          rows: null,
+          meta: null,
+          text: null,
           error: message,
-        }),
-      )
+        })
+        recordEye(
+          sourceEvent(source.id, {
+            workspace: workspaceId,
+            ms: Date.now() - startedAt,
+            ok: false,
+            error: message,
+          }),
+        )
+      }
       throw error instanceof Error && error.message === message ? error : new Error(message, { cause: error })
     }
 

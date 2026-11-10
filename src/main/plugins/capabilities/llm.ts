@@ -2,6 +2,7 @@ import { untilAborted } from '../../../shared/abort.ts'
 import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../../shared/llm/llm.ts'
 import { createLimiter, isRetryable, retryWait } from '../../../shared/llm/limits.ts'
 import { signsIn } from '../../../shared/llm/providers.ts'
+import { isSleepWakeError } from '../../../shared/tasks/tasks.ts'
 import { ProviderError } from '../../llm/http.ts'
 import type { ProviderConfig } from '../../secrets'
 
@@ -26,6 +27,7 @@ export interface LlmDeps {
   ): Promise<Completion>
   usage(input: number, output: number): void
   wait(ms: number): Promise<void>
+  wakeDelayMs?: () => number
   random?: () => number
 }
 
@@ -60,15 +62,25 @@ export function createLlm(deps: LlmDeps): {
           deps.complete(config, request.system, request.turns, request.tools, options)
         let reply: Completion
         for (let attempt = 0; ; attempt++) {
+          while (signsIn(config.provider)) {
+            const wakeWait = deps.wakeDelayMs?.() ?? 0
+            if (wakeWait <= 0) break
+            if (!Number.isFinite(wakeWait)) {
+              throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+            }
+            await untilAborted(deps.wait(wakeWait), signal)
+          }
           try {
             reply = await call()
             break
           } catch (err) {
             if (signal.aborted) throw err
             const message = err instanceof Error ? err.message : String(err)
-            const wait = isRetryable(message)
-              ? retryWait(attempt, err instanceof ProviderError ? err.retryAfterMs : null, deps.random)
-              : null
+            const wakingRetry = isSleepWakeError(message) && Number.isFinite(deps.wakeDelayMs?.() ?? 0)
+            const wait =
+              isRetryable(message) || wakingRetry
+                ? retryWait(attempt, err instanceof ProviderError ? err.retryAfterMs : null, deps.random)
+                : null
             if (wait === null) throw err
             await untilAborted(deps.wait(wait), signal)
             if (signal.aborted) throw err
