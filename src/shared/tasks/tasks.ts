@@ -609,6 +609,69 @@ export function shortLocal(at: number, now: number, timeZone: string): string {
   return full.slice(0, 10) === formatLocal(now, timeZone).slice(0, 10) ? full.slice(11) : full
 }
 
+function resolveTimeZone(timeZone?: string): string {
+  const candidate = timeZone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: candidate })
+    return candidate
+  } catch {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  }
+}
+
+function zoneAbbrev(date: Date, timeZone: string): string {
+  try {
+    const generic =
+      new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortGeneric' })
+        .formatToParts(date)
+        .find((p) => p.type === 'timeZoneName')?.value ?? ''
+    if (/^[A-Z]{2,5}$/.test(generic)) return generic
+  } catch {
+    // Fall back to short zone name below.
+  }
+  return (
+    new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'short' })
+      .formatToParts(date)
+      .find((p) => p.type === 'timeZoneName')?.value ?? 'UTC'
+  )
+}
+
+/**
+ * Formats an epoch timestamp in the user's system timezone (or `timeZone`) as
+ * `YYYY-MM-DD <12h><am|pm> <TZ>` (e.g., `2026-11-10 10am PT` on the hour and `2026-11-10 7:25am PT`
+ * when minutes are non-zero). Returns `''` for non-finite or non-positive timestamps.
+ */
+export function formatLocalStamp(at: number, timeZone?: string): string {
+  if (typeof at !== 'number' || !Number.isFinite(at) || at <= 0) return ''
+  const zone = resolveTimeZone(timeZone)
+  const date = new Date(at)
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '00'
+  const hour24 = Number(get('hour')) % 24
+  const hour12 = hour24 % 12 || 12
+  const ampm = hour24 < 12 ? 'am' : 'pm'
+  const minute = get('minute')
+  const clock = minute === '00' ? `${hour12}${ampm}` : `${hour12}:${minute}${ampm}`
+  return `${get('year')}-${get('month')}-${get('day')} ${clock} ${zoneAbbrev(date, zone)}`
+}
+
+/**
+ * Formats an epoch timestamp in the user's system timezone (or `timeZone`) as
+ * `as of YYYY-MM-DD <12h><am|pm> <TZ>` (e.g., `as of 2026-11-10 10am PT`).
+ */
+export function formatAsOf(at: number, timeZone?: string): string {
+  const stamp = formatLocalStamp(at, timeZone)
+  return stamp ? `as of ${stamp}` : ''
+}
+
 /**
  * A time the model or the user wrote: nothing or "now" for now, a number as it is, a string as
  * Date.parse reads it (a date-time without an offset is local time). Anything else says the format.

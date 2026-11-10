@@ -15,7 +15,9 @@ import {
   dueTasks,
   earliestNext,
   everyText,
+  formatAsOf,
   formatLocal,
+  formatLocalStamp,
   isDue,
   isSleepWakeError,
   isWakeLag,
@@ -754,4 +756,35 @@ test('scheduled tasks defer during sleep and post-wake auth grace instead of fai
     }),
     null,
   )
+})
+
+test('formatAsOf and formatLocalStamp format timestamps as "as of YYYY-MM-DD <12h><am|pm> <TZ>" in system time', () => {
+  // 2026-11-10 18:00:00 UTC is 10:00 AM PT (America/Los_Angeles) and 1:00 PM ET (America/New_York).
+  const tenAmPt = Date.UTC(2026, 10, 10, 18, 0, 0)
+  assert.equal(formatLocalStamp(tenAmPt, 'America/Los_Angeles'), '2026-11-10 10am PT')
+  assert.equal(formatAsOf(tenAmPt, 'America/Los_Angeles'), 'as of 2026-11-10 10am PT')
+  assert.equal(formatAsOf(tenAmPt, 'America/New_York'), 'as of 2026-11-10 1pm ET')
+  assert.equal(formatAsOf(tenAmPt, 'UTC'), 'as of 2026-11-10 6pm UTC')
+
+  // Non-zero minutes are included as HH:MMam/pm.
+  const sevenTwentyFiveAmPt = Date.UTC(2026, 10, 10, 15, 25, 0)
+  assert.equal(formatAsOf(sevenTwentyFiveAmPt, 'America/Los_Angeles'), 'as of 2026-11-10 7:25am PT')
+
+  // Midnight (12am) and noon (12pm).
+  const midnightPt = Date.UTC(2026, 10, 10, 8, 0, 0)
+  const noonPt = Date.UTC(2026, 10, 10, 20, 0, 0)
+  assert.equal(formatAsOf(midnightPt, 'America/Los_Angeles'), 'as of 2026-11-10 12am PT')
+  assert.equal(formatAsOf(noonPt, 'America/Los_Angeles'), 'as of 2026-11-10 12pm PT')
+
+  // Non-US IANA zone where shortGeneric is verbose falls back to short abbreviation.
+  assert.equal(formatAsOf(tenAmPt, 'Europe/London'), 'as of 2026-11-10 6pm GMT')
+
+  // Default timezone (omitted) and invalid timezone string do not throw.
+  assert.match(formatAsOf(tenAmPt), /^as of 2026-11-\d{2} \d{1,2}(?::\d{2})?(?:am|pm) \S+$/)
+  assert.match(formatAsOf(tenAmPt, 'Invalid/Time_Zone'), /^as of 2026-11-\d{2} \d{1,2}(?::\d{2})?(?:am|pm) \S+$/)
+
+  // Non-finite or non-positive timestamps return empty string.
+  assert.equal(formatLocalStamp(0, 'America/Los_Angeles'), '')
+  assert.equal(formatAsOf(0, 'America/Los_Angeles'), '')
+  assert.equal(formatAsOf(Number.NaN, 'America/Los_Angeles'), '')
 })
