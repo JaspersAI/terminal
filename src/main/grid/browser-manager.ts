@@ -557,13 +557,13 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       hasError: active.error !== null,
     })
     if (show && win && clipped) {
+      active.view.setBounds(clipped)
+      active.view.setVisible(true)
       if (entry.attachedWindow !== win.number || entry.attachedView !== active.view) {
         win.attach(active.view)
         entry.attachedWindow = win.number
         entry.attachedView = active.view
       }
-      active.view.setBounds(clipped)
-      active.view.setVisible(true)
     } else {
       active.view.setBounds(fallbackBounds)
       detachFromWindow(entry)

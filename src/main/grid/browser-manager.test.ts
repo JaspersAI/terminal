@@ -214,6 +214,7 @@ function createHarness(
     placed,
     views,
     attached,
+    windows,
     viewports,
     sent,
     published,
@@ -921,6 +922,36 @@ test('recovers from Bloomberg tosv2.html bot-challenge redirects, preserves unwr
   const bgWokenView = views.at(-1)!
   assert.notEqual(bgWokenView, view)
   assert.ok(bgWokenView.bounds && bgWokenView.bounds.width > 0 && bgWokenView.bounds.height > 0)
+
+  manager.closeAll()
+})
+
+test('attaches browser views with their clipped bounds and visible state already set so window attach hooks observe live geometry', async () => {
+  const { manager, placed, views, windows } = createHarness()
+  const observedOnAttach: { visible: boolean; bounds: BrowserBounds | null }[] = []
+  const win1 = windows.get(1)!
+  const origAttach = win1.attach.bind(win1)
+  win1.attach = (view) => {
+    const fake = view as FakeView
+    observedOnAttach.push({
+      visible: fake.visible,
+      bounds: fake.bounds ? { ...fake.bounds } : null,
+    })
+    origAttach(view)
+  }
+
+  await manager.sync(1, 'ws-1', placed.panel.id, { x: 16, y: 60, width: 680, height: 420 }, true)
+  assert.deepEqual(observedOnAttach[0], {
+    visible: true,
+    bounds: { x: 16, y: 60, width: 680, height: 420 },
+  })
+
+  // Opening a popup tab attaches the new view with its clipped bounds and visible=true already applied.
+  views[0]!.events.onOpenWindow?.('https://www.bloomberg.com/markets')
+  assert.deepEqual(observedOnAttach[1], {
+    visible: true,
+    bounds: { x: 16, y: 60, width: 680, height: 420 },
+  })
 
   manager.closeAll()
 })
