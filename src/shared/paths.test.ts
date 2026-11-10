@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { EMPTY_GRID, failPanel, placeView, publishText } from './grid/grid.ts'
-import { formatPath, panelErrorAt, parsePath, readPath, showPathValue, textPart } from './paths.ts'
+import {
+  formatPath,
+  panelErrorAt,
+  panelTextMeta,
+  panelTextMetaAt,
+  parsePath,
+  readPath,
+  showPathValue,
+  textPart,
+} from './paths.ts'
 import { skill } from './skills/skill-fixture.ts'
 import type { AppState } from './state.ts'
 import { EYE_OFF } from './app/eye.ts'
@@ -229,6 +238,47 @@ test('a long text reads a part at a time, each saying where it sits and where th
   assert.deepEqual(textPart('abcdefghij', 4, 4), { from: 4, to: 8, length: 10, next: 8, text: 'efgh' })
   assert.deepEqual(textPart('abcdefghij', 8, 4), { from: 8, to: 10, length: 10, text: 'ij' })
   assert.deepEqual(textPart('abcdefghij', 25, 4), { from: 10, to: 10, length: 10, text: '' })
+})
+
+test('panelTextMeta includes url and title from a browser panel output or state so text reads and set-aside notes identify the page', () => {
+  const basePanel = fixture().grids[WS]![1]!.panels[0]!
+  assert.deepEqual(panelTextMeta(basePanel), {})
+  assert.deepEqual(
+    panelTextMeta({
+      ...basePanel,
+      state: { url: 'https://example.com/profile/activity' },
+      output: {
+        url: 'https://example.com/profile/activity',
+        title: 'Profile Activity | Example',
+        loading: false,
+        error: null,
+      },
+    }),
+    {
+      url: 'https://example.com/profile/activity',
+      title: 'Profile Activity | Example',
+    },
+  )
+  assert.deepEqual(
+    panelTextMeta({
+      ...basePanel,
+      state: { url: 'https://example.com/profile' },
+      output: null,
+    }),
+    {
+      url: 'https://example.com/profile',
+    },
+  )
+  const state = fixture()
+  state.grids[WS]![1]!.panels[0]!.output = {
+    url: 'https://example.com/profile/activity',
+    title: 'Profile Activity | Example',
+  }
+  assert.deepEqual(panelTextMetaAt(state, WS, parsePath('panels/e1/text')), {
+    url: 'https://example.com/profile/activity',
+    title: 'Profile Activity | Example',
+  })
+  assert.deepEqual(panelTextMetaAt(state, WS, parsePath('panels')), {})
 })
 
 test('a key that is not there reads as undefined, not an error', () => {

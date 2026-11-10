@@ -1259,3 +1259,10 @@ test('a loop agent is told to equip research/room analysts with needed ready con
     assert.match(rules, /research\/save-analyst/)
   }
 })
+
+test('loop rules instruct the agent to call read_again on set-aside tool results rather than guessing or attributing items from memory', () => {
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /read_again/)
+    assert.match(rules, /\[Set aside:/)
+  }
+})

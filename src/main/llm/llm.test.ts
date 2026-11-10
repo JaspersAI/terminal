@@ -13,7 +13,7 @@ import {
 } from './anthropic.ts'
 import { openaiBody, openaiStream, readOpenai } from './openai.ts'
 import { readResponse, responsesBody, responsesStream } from './responses.ts'
-import { sent as asSent } from '../../shared/agent/aside.ts'
+import { sent as asSent, WHOLE_MAX as ASIDE_WHOLE_MAX } from '../../shared/agent/aside.ts'
 
 // Items as the Responses API returns them for a reasoning model that calls a tool.
 const REASONING = { id: 'rs_1', type: 'reasoning', summary: [], encrypted_content: 'gAAAA-sealed' }
@@ -271,9 +271,13 @@ test('a tool loop marks the stable prefix before the first long tool answer, and
   // Message 2 is tu_1's set-aside note (before tu_2's 5,000-char live answer); message 6 is the final user/tool turn.
   assert.deepEqual(marked, [2, 6])
 
-  // When the newest round's answer exceeds WHOLE_MAX (60,000), it will be set aside on the very next round,
+  // When the newest round's answer exceeds WHOLE_MAX, it will be set aside on the very next round,
   // so the cache mark stays on the user/tool message before it instead of paying cache_write on the mega-output.
-  const mega: Turn[] = [{ role: 'user', text: 'Download 10-K.' }, call('tu_1'), answer('tu_1', 'x'.repeat(70_000))]
+  const mega: Turn[] = [
+    { role: 'user', text: 'Download 10-K.' },
+    call('tu_1'),
+    answer('tu_1', 'x'.repeat(ASIDE_WHOLE_MAX + 10_000)),
+  ]
   const { body: megaBody } = anthropicRequest('claude-opus-5', ['S'], mega, [GET], LOOP, NONE, 32_000)
   const megaMessages = megaBody.messages as { role: string; content: Record<string, unknown>[] }[]
   const megaMarked = megaMessages

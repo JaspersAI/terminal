@@ -1,4 +1,4 @@
-import { startOf } from '../../shared/agent/aside'
+import { READ_AGAIN, startOf } from '../../shared/agent/aside'
 import { dayOf, overBudget } from '../../shared/agent/budget'
 import { afterRound, handoffReply, MAX_ROUNDS, shouldDeferForAdded } from '../../shared/agent/rounds'
 import {
@@ -282,7 +282,8 @@ async function loop({
       // state rides on the last turn of the round, so it is said once. A run stopped under its calls
       // takes nothing: what was added then is left for the run after it.
       const joined = signal.aborted ? [] : [...earlyJoined, ...(added?.() ?? [])]
-      const next = afterRound(round, most, limit, prompt.round(), joined.length)
+      const readingAgain = reply.toolCalls.length > 0 && reply.toolCalls.every((call) => call.name === READ_AGAIN)
+      const next = afterRound(round, most, limit, prompt.round(), joined.length, readingAgain)
       most = next.most
       history.push({ role: 'tool', results, ...(joined.length === 0 ? { context: next.riding } : {}) })
       joined.forEach((turn, at) => {

@@ -28,7 +28,7 @@ export const LARGE = 1500
  * High enough that a few steps' findings are in view together, low enough that a round does not
  * carry everything the run ever fetched.
  */
-export const WHOLE_MAX = 60_000
+export const WHOLE_MAX = 400_000
 /**
  * How much of a conversation is left once the round just run has answers withheld. Withholding
  * changes what a provider has cached, so it has to be rare: a third gone is a while before more has
@@ -186,11 +186,25 @@ function findCall(turns: Turn[], id: string): { call: ToolCall; answer: string |
   return null
 }
 
+/** Every call id a `read_again` call asks for: a single id, comma-separated ids in `call`, or an array in `calls`. */
+export function readAgainTargets(call: ToolCall): string[] {
+  if (call.name !== READ_AGAIN) return []
+  const raw = call.input.calls ?? call.input.call ?? call.input.id
+  const parts = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : []
+  const ids: string[] = []
+  for (const part of parts) {
+    if (typeof part !== 'string') continue
+    const id = part
+      .trim()
+      .replace(/^"(.*)"$/, '$1')
+      .trim()
+    if (id && !ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
+
 function readAgainTarget(call: ToolCall): string | null {
-  if (call.name !== READ_AGAIN) return null
-  const given = call.input.call ?? call.input.id
-  const id = typeof given === 'string' ? given.trim().replace(/^"(.*)"$/, '$1') : ''
-  return id || null
+  return readAgainTargets(call)[0] ?? null
 }
 
 function originOf(callId: string, calls: ReadonlyMap<string, ToolCall>): ToolCall | undefined {
@@ -251,7 +265,8 @@ function standsAside(result: ToolResult, calls: ReadonlyMap<string, ToolCall>, k
 
 /**
  * Where the answers that stay whole begin: the newest round, or, when every call of a streak of newest
- * rounds reads an answer again, the round before that streak, which the model was reading when it asked.
+ * rounds reads an answer again or continues reading the next offset slice of a panel's text, the round
+ * before that streak, which the model was reading when it asked.
  */
 function keptWhole(turns: Turn[], calls: ReadonlyMap<string, ToolCall>): number {
   const newest = newestRound(turns)
@@ -259,12 +274,24 @@ function keptWhole(turns: Turn[], calls: ReadonlyMap<string, ToolCall>): number 
   let from = newest
   while (from >= 0) {
     const round = turns[from] as Answered
-    if (!round.results.every((result) => calls.get(result.callId)?.name === READ_AGAIN)) break
+    if (!round.results.every((result) => continuesReading(calls.get(result.callId)))) break
     const before = newestRound(turns.slice(0, from))
     if (before < 0) break
     from = before
   }
   return from
+}
+
+function continuesReading(call: ToolCall | undefined): boolean {
+  if (!call) return false
+  if (call.name === READ_AGAIN) return true
+  return (
+    call.name === 'get' &&
+    typeof call.input.path === 'string' &&
+    /(?:^|\/)panels\/[^/]+\/text$/.test(call.input.path.trim()) &&
+    typeof call.input.offset === 'number' &&
+    call.input.offset > 0
+  )
 }
 
 /** The last round of answers in a thread, or -1 in one with none. */
@@ -528,7 +555,7 @@ function asideNote(result: ToolResult, calls: ReadonlyMap<string, ToolCall>): st
   const call = originOf(result.callId, calls)
   const whose = call ? `${call.name}'s answer` : 'this answer'
   const id = call?.id ?? result.callId
-  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. read_again "${id}" brings it back. It began: ${result.output.slice(0, HEAD)}…]`
+  return `[Set aside: ${count(result.output.length)} characters of ${whose}, kept whole. Call read_again "${id}" before counting, quoting, or stating facts from it not already written in an earlier reply. It began: ${result.output.slice(0, HEAD)}…]`
 }
 
 /** What stands where an answer the model never read would have been. */

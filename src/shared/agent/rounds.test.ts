@@ -167,6 +167,11 @@ test('a request gets 40 rounds of tool calls, and a message added mid-run gives 
     most: MAX_ROUNDS + MAX_ROUNDS,
     riding: 'grid',
   })
+  // A round that only calls read_again at the round limit gets another round to finish reading set-aside answers.
+  assert.deepEqual(afterRound(MAX_ROUNDS, MAX_ROUNDS, MAX_ROUNDS, 'grid', 0, true), {
+    most: MAX_ROUNDS + 1,
+    riding: 'grid',
+  })
 })
 
 test('shouldDeferForAdded defers a round when any call would ask the user, hand off work, or mutate state', () => {
