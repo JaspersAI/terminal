@@ -43,7 +43,10 @@ import {
   NO_LOOPS,
   withLoopFor,
   withLoopAsked,
+  withLoopTitle,
+  withLoopUpdated,
   type Loop,
+  type LoopPatch,
   type LoopSpec,
 } from '../shared/loops/loops'
 import {
@@ -185,6 +188,26 @@ const HANDLERS: Record<Action['type'], Handler> = {
     const room = asString(raw.room)
     if (!LOOP_ID.test(room)) throw new Error('room.reopen names a room by its id.')
     reopenLoop(asString(raw.workspaceId), room, raw.window === undefined ? undefined : asWindow(raw.window))
+  },
+  'loop.rename': (raw) => {
+    const loop = asString(raw.loop)
+    if (!LOOP_ID.test(loop)) throw new Error('loop.rename names a loop by its id.')
+    renameLoop(asString(raw.workspaceId), loop, asString(raw.title ?? raw.name ?? ''))
+  },
+  'room.rename': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.rename names a room by its id.')
+    renameLoop(asString(raw.workspaceId), room, asString(raw.title ?? raw.name ?? ''))
+  },
+  'loop.update': (raw) => {
+    const loop = asString(raw.loop)
+    if (!LOOP_ID.test(loop)) throw new Error('loop.update names a loop by its id.')
+    updateLoop(asString(raw.workspaceId), loop, asLoopPatch(raw))
+  },
+  'room.update': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.update names a room by its id.')
+    updateLoop(asString(raw.workspaceId), room, asLoopPatch(raw))
   },
   'element.setMode': (raw) => {
     const workspaceId = asString(raw.workspaceId)
@@ -1005,6 +1028,14 @@ export function removeChecked(workspaceId: string, elementId: string): void {
   syncPluginViewErrors()
 }
 
+/** Sets or clears a room's custom title on whichever tab holds it (open or closed). */
+export function renameLoop(workspaceId: string, loopId: string, rawTitle: string): void {
+  update((state) => {
+    const tabId = findRoomTab(state, loopId) ?? workspaceId
+    return withLoops(state, tabId, withLoopTitle(state.loops[tabId] ?? NO_LOOPS, loopId, rawTitle))
+  })
+}
+
 /** Closes a room: its frame goes, with every tile inside it, and the room is kept in memory to reopen. One that is not open is nothing to do. */
 export function closeLoop(workspaceId: string, loopId: string): void {
   const tabId = findRoomTab(getState(), loopId) ?? workspaceId
@@ -1043,6 +1074,26 @@ export function reopenLoop(workspaceId: string, loopId: string, window?: number)
     syncPluginViewErrors()
   }
   return frame!
+}
+
+/** Updates a room's `desc`, `brief`, or `systemPrompt` across any tab. */
+export function updateLoop(workspaceId: string, loopId: string, patch: LoopPatch, now = Date.now()): void {
+  update((state) => {
+    const tabId = findRoomTab(state, loopId) ?? workspaceId
+    return withLoops(state, tabId, withLoopUpdated(state.loops[tabId] ?? NO_LOOPS, loopId, patch, now))
+  })
+}
+
+function asLoopPatch(raw: Record<string, unknown>): LoopPatch {
+  const desc = raw.desc === undefined ? undefined : asString(raw.desc)
+  const brief = raw.brief === undefined ? undefined : asString(raw.brief)
+  const systemPrompt =
+    raw.systemPrompt === undefined ? undefined : raw.systemPrompt === null ? null : asString(raw.systemPrompt)
+  return {
+    ...(desc !== undefined ? { desc } : {}),
+    ...(brief !== undefined ? { brief } : {}),
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+  }
 }
 
 /**

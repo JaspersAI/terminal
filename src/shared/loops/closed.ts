@@ -305,6 +305,7 @@ export function searchRooms<T extends LogEntry & { workspaceName?: string }>(
       `room ${n}`,
       `loop_${n}`,
       `loop ${n}`,
+      loop.title ?? '',
       loop.desc,
       loop.brief,
       loop.systemPrompt ?? '',

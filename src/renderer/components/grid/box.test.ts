@@ -15,7 +15,10 @@ import {
   boxSettled,
   canZoomLoop,
   IDLE_BOX,
+  isTitleTap,
+  roomRenameChange,
   shouldReadTileBox,
+  shouldToggleHeaderMode,
   tileBoxExpanded,
   tileBoxOf,
   tileBoxOlder,
@@ -373,4 +376,24 @@ test('a tile box remembers its conversation scroll position across tab switches 
   // Sending a new prompt returns the conversation to following the bottom.
   boxes = withTileBox(boxes, HERE, (box) => tileBoxSent(box, HERE, 'a1', 'next question'))
   assert.equal(tileBoxOf(boxes, HERE).scrollTop, null)
+})
+
+test('clicking or double-clicking a room title opens rename without triggering header maximize or blocking drag, and roomRenameChange commits only real changes', () => {
+  assert.equal(isTitleTap(100, 50, 102, 51, 0), true)
+  assert.equal(isTitleTap(100, 50, 108, 50, 0), false)
+  assert.equal(isTitleTap(100, 50, 100, 50, 2), false)
+
+  assert.equal(shouldToggleHeaderMode({ renaming: false, onButton: false, onTitle: false }), true)
+  assert.equal(shouldToggleHeaderMode({ renaming: true, onButton: false, onTitle: false }), false)
+  assert.equal(shouldToggleHeaderMode({ renaming: false, onButton: true, onTitle: false }), false)
+  assert.equal(shouldToggleHeaderMode({ renaming: false, onButton: false, onTitle: true }), false)
+
+  assert.equal(roomRenameChange({ id: 'f3' }, '  Macro   Rates '), 'Macro Rates')
+  assert.equal(roomRenameChange({ id: 'f3' }, ''), null)
+  assert.equal(roomRenameChange({ id: 'f3' }, 'Room 3'), null)
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'Macro Rates'), null)
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, '  Macro Rates  '), null)
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, ''), '')
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'Room 3'), '')
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'room_3'), '')
 })

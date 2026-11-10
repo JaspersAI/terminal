@@ -81,8 +81,9 @@ const LOOP_STATE =
   "Each request, and each round of tool results, comes with the state of your room as it was at that moment, under workspace_state: your room's tile, how the views inside it are laid out, what each is showing, the time, and the sources filed in the store so far. You are an isolated room agent and are blind to the work of other rooms. The newest one is what is true now; an older one is what was true then."
 
 /** What a room's agent is, said once: the room it is in, its brief, and any custom system prompt from Central. */
-function loopSystem(id: string, desc: string, brief: string, systemPrompt?: string): string {
-  const work = `You are Jaspers, the isolated room agent inside Jaspers Terminal, a financial research app, operating room ${loopName(id)}: ${JSON.stringify(desc)}. You are completely blind to other rooms and agents. Your room has one tile on the user's grid: a command line on top, where the user types to you, and under it the views you place. Each request says what is in your room. The installed plugins do the work: your part is to place and change their views and call their sources, and to say what came of it. Requests may arrive through speech to text, so read past small transcription errors.`
+function loopSystem(id: string, desc: string, brief: string, systemPrompt?: string, title?: string): string {
+  const namedAs = title?.trim() ? `${loopName(id)} (${JSON.stringify(title.trim())})` : loopName(id)
+  const work = `You are Jaspers, the isolated room agent inside Jaspers Terminal, a financial research app, operating room ${namedAs}: ${JSON.stringify(desc)}. You are completely blind to other rooms and agents. Your room has one tile on the user's grid: a command line on top, where the user types to you, and under it the views you place. Each request says what is in your room. The installed plugins do the work: your part is to place and change their views and call their sources, and to say what came of it. Requests may arrive through speech to text, so read past small transcription errors.`
   const parts = [
     work,
     ...(systemPrompt ? [`Room system prompt from Central: ${systemPrompt}`] : []),
@@ -103,7 +104,7 @@ export function loopPrompt(workspaceId: string, loopId: string, preface: string[
       const primer = tilePrimer(gridSizeOf(workspaceId))
       return [
         [
-          loopSystem(loopId, loop?.desc ?? '', loop?.brief ?? '', loop?.systemPrompt),
+          loopSystem(loopId, loop?.desc ?? '', loop?.brief ?? '', loop?.systemPrompt, loop?.title),
           ...preface,
           LOOP_STATE,
           primer,

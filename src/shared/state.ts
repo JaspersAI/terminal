@@ -361,6 +361,26 @@ export type Action =
   /** Reopens a closed room onto the target tab, in the window given or the main window. */
   | { type: 'loop.reopen'; workspaceId: string; loop: string; window?: number }
   | { type: 'room.reopen'; workspaceId: string; room: string; window?: number }
+  /** Sets or clears a room's custom title. An empty string or the default Room N / room_N resets it. */
+  | { type: 'loop.rename'; workspaceId: string; loop: string; title: string }
+  | { type: 'room.rename'; workspaceId: string; room: string; title: string }
+  /** Updates a room's description, brief, or systemPrompt instructions. */
+  | {
+      type: 'loop.update'
+      workspaceId: string
+      loop: string
+      desc?: string
+      brief?: string
+      systemPrompt?: string | null
+    }
+  | {
+      type: 'room.update'
+      workspaceId: string
+      room: string
+      desc?: string
+      brief?: string
+      systemPrompt?: string | null
+    }
   | { type: 'element.setMode'; workspaceId: string; elementId: string; mode: ElementMode }
   | { type: 'element.setZoom'; workspaceId: string; elementId: string; zoom: number }
   | { type: 'element.setRect'; workspaceId: string; elementId: string; rect: Rect }

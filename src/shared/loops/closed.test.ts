@@ -232,6 +232,7 @@ test('the room log lists every room, open and closed, ordered by last activity f
         createdAt: 20,
         log: [{ at: 35, change: 'closed' }],
         systemPrompt: 'Analyze margins',
+        title: 'Margin Deep Dive',
       }),
     ],
   )
@@ -265,6 +266,10 @@ test('the room log lists every room, open and closed, ordered by last activity f
   )
   assert.deepEqual(
     searchRooms(global, 'margins').map((e) => e.loop.id),
+    ['f2'],
+  )
+  assert.deepEqual(
+    searchRooms(global, 'Margin Deep').map((e) => e.loop.id),
     ['f2'],
   )
   assert.deepEqual(

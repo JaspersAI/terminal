@@ -48,3 +48,24 @@ test('work that is not there has no menu', () => {
   assert.equal(menuOf(state, WS, 'f9'), null)
   assert.equal(menuOf(state, 'elsewhere', 'f1'), null)
 })
+
+test("a tile's menu includes the room's brief and systemPrompt when set", () => {
+  const state = {
+    loops: {
+      [WS]: [
+        {
+          ...work('f1', []),
+          brief: 'Research all 13 executives from FLWS.',
+          systemPrompt: 'Check 3 months of activity.',
+        },
+      ],
+    },
+    plugins: {},
+    connections: {},
+  }
+  assert.deepEqual(menuOf(state, WS, 'f1'), {
+    plugins: [],
+    brief: 'Research all 13 executives from FLWS.',
+    systemPrompt: 'Check 3 months of activity.',
+  })
+})
