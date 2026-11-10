@@ -144,6 +144,14 @@ test('Google sign-in hosts present Electron’s unmodified identity with native 
     googleAuthUserAgent(cleanChromeUa, '44.3.0'),
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Electron/44.3.0 Safari/537.36',
   )
+  assert.equal(
+    googleAuthUserAgent(
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.169 Electron/44.10.0 Safari/537.36',
+      '44.10.0',
+      '0.14.5',
+    ),
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) jaspers-terminal/0.14.5 Chrome/152.0.7977.169 Electron/44.10.0 Safari/537.36',
+  )
 
   assert.equal(browserUserAgentForUrl('https://accounts.google.com/signin', rawUa), rawUa)
   assert.equal(browserUserAgentForUrl('https://www.linkedin.com/login', rawUa), cleanChromeUa)
@@ -641,6 +649,15 @@ test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text an
   assert.equal(fakeDocument.visibilityState, 'visible')
 
   // On Google sign-in hosts with Electron's unmodified User-Agent, native userAgentData is kept intact and window.chrome is not added.
+  const googleUaDataProto = {
+    get brands() {
+      return [
+        { brand: 'Not.A/Brand', version: '99' },
+        { brand: 'Electron', version: '44' },
+        { brand: 'Chromium', version: '136' },
+      ]
+    },
+  }
   const googleNavProto = {
     get userAgent() {
       return googleOverride.userAgent
@@ -649,7 +666,7 @@ test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text an
       return true
     },
     get userAgentData() {
-      return Object.create(uaDataProto)
+      return Object.create(googleUaDataProto)
     },
   }
   const googleNav = Object.create(googleNavProto) as {
