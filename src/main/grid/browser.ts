@@ -21,6 +21,9 @@ import {
   isBlankBrowserPopupUrl,
   isBrowserUrl,
   isPerimeterXCookieName,
+  ORB_OVERLAY_PAD,
+  orbOverlayBounds,
+  shouldShowOrbOverlay,
   type BrowserBounds,
   type BrowserEmulationOverride,
   type BrowserPageLink,
@@ -210,6 +213,7 @@ interface OrbOverlayEntry {
 const orbOverlays = new WeakMap<BrowserWindow, OrbOverlayEntry>()
 
 function orbHtml(): string {
+  const pad = ORB_OVERLAY_PAD
   return `<!doctype html>
 <html>
 <head>
@@ -224,19 +228,51 @@ function orbHtml(): string {
     overflow: hidden;
     user-select: none;
     -webkit-user-select: none;
+    pointer-events: none;
+  }
+  #stage {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  #wave, #halo {
+    position: absolute;
+    left: ${pad}px;
+    top: ${pad}px;
+    width: 84px;
+    height: 84px;
+    border-radius: 9999px;
+    pointer-events: none;
+    opacity: 0;
+    transform-origin: center center;
+  }
+  #wave {
+    background: radial-gradient(circle, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.28) 50%, rgba(255,255,255,0.08) 72%, rgba(255,255,255,0) 100%);
+    filter: blur(8px);
+  }
+  #halo {
+    background: radial-gradient(circle, rgba(255,255,255,0.85) 36%, rgba(255,255,255,0.45) 62%, rgba(255,255,255,0.14) 80%, rgba(255,255,255,0) 100%);
+    box-shadow: 0 0 24px 6px rgba(255,255,255,0.45);
+    filter: blur(3px);
   }
   #orb {
-    position: relative;
+    position: absolute;
+    left: ${pad}px;
+    top: ${pad}px;
     width: 84px;
     height: 84px;
     border-radius: 9999px;
     overflow: hidden;
     cursor: pointer;
-    background: #171717;
+    background: #111111;
     box-sizing: border-box;
+    pointer-events: auto;
+    transform-origin: center center;
+    box-shadow: 0 14px 24px -10px rgba(0,0,0,0.6);
   }
-  #orb.recording {
-    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.35);
+  #orb.active {
+    box-shadow: 0 0 22px 3px rgba(255,255,255,0.32), 0 14px 24px -10px rgba(0,0,0,0.6);
   }
   #orb img {
     width: 100%;
@@ -249,19 +285,71 @@ function orbHtml(): string {
     inset: 0;
     border-radius: 9999px;
     pointer-events: none;
-    background: radial-gradient(circle at 32% 26%, rgba(255,255,255,0.5), rgba(255,255,255,0.06) 42%, rgba(0,0,0,0) 70%);
-    box-shadow: inset 0 -6px 10px rgba(255,255,255,0.14), inset 0 6px 10px rgba(255,255,255,0.2);
+    background: radial-gradient(circle at var(--gloss, 32% 26%), rgba(255,255,255,var(--orb-spec,0.5)), rgba(255,255,255,0.06) 42%, rgba(0,0,0,0) 70%);
+    box-shadow: inset 0 -6px 10px rgba(255,255,255,var(--orb-rim-bottom,0.14)), inset 0 6px 10px rgba(255,255,255,var(--orb-rim,0.2));
   }
 </style>
 </head>
 <body>
-  <div id="orb">
-    <img id="logo" alt="" draggable="false" />
-    <span id="gloss"></span>
+  <div id="stage">
+    <span id="wave"></span>
+    <span id="halo"></span>
+    <div id="orb">
+      <img id="logo" alt="" draggable="false" />
+      <span id="gloss"></span>
+    </div>
   </div>
   <script>
     const orb = document.getElementById('orb');
+    const wave = document.getElementById('wave');
+    const halo = document.getElementById('halo');
+    const gloss = document.getElementById('gloss');
     let drag = null;
+    let currentPhase = 'idle';
+    let animFrame = 0;
+    let startAt = performance.now();
+
+    function stepVibration(now) {
+      if (currentPhase === 'idle') {
+        animFrame = 0;
+        return;
+      }
+      const t = Math.max(0, now - startAt) / 1000;
+      if (currentPhase === 'recording' || currentPhase === 'opening') {
+        const primary = 0.5 + 0.5 * Math.sin(t * 7.2);
+        const shimmer = 0.5 + 0.5 * Math.sin(t * 13.5 + 1.1);
+        const ripple = 0.5 + 0.5 * Math.cos(t * 4.6 + 0.6);
+        const energy = Math.min(1, 0.34 + 0.26 * primary + 0.16 * shimmer);
+        const baseScale = currentPhase === 'opening' ? 0.94 : 1.14;
+        const scaleOffset = (0.025 * primary + 0.015 * shimmer) * (currentPhase === 'opening' ? 0.5 : 1);
+        const gx = 32 + Math.sin(t * 4.8) * 7 + Math.cos(t * 9.3) * 2.5;
+        const gy = 26 + Math.cos(t * 3.9) * 6 + Math.sin(t * 8.1) * 2;
+        const rim = Math.min(0.85, 0.34 + 0.26 * energy);
+        orb.style.transform = 'scale(' + (baseScale + scaleOffset).toFixed(4) + ')';
+        halo.style.transform = 'scale(' + (1.08 + 0.12 * energy + 0.05 * primary).toFixed(4) + ')';
+        halo.style.opacity = Math.min(0.92, 0.42 + 0.34 * energy).toFixed(3);
+        wave.style.transform = 'scale(' + (1.16 + 0.18 * ripple + 0.08 * shimmer).toFixed(4) + ')';
+        wave.style.opacity = Math.min(0.78, 0.22 + 0.28 * (1 - ripple * 0.5)).toFixed(3);
+        gloss.style.setProperty('--gloss', gx.toFixed(1) + '% ' + gy.toFixed(1) + '%');
+        gloss.style.setProperty('--orb-spec', Math.min(0.82, 0.46 + rim * 0.4).toFixed(3));
+        gloss.style.setProperty('--orb-rim', rim.toFixed(3));
+        gloss.style.setProperty('--orb-rim-bottom', (rim * 0.78).toFixed(3));
+      } else {
+        const breath = 0.5 + 0.5 * Math.sin(t * 3.6);
+        const rim = 0.28 + 0.18 * breath;
+        orb.style.transform = 'scale(' + (1.04 + 0.02 * breath).toFixed(4) + ')';
+        halo.style.transform = 'scale(' + (1.06 + 0.08 * breath).toFixed(4) + ')';
+        halo.style.opacity = (0.28 + 0.24 * breath).toFixed(3);
+        wave.style.transform = 'scale(' + (1.12 + 0.12 * (1 - breath)).toFixed(4) + ')';
+        wave.style.opacity = (0.16 + 0.18 * breath).toFixed(3);
+        gloss.style.setProperty('--gloss', (32 + Math.sin(t * 2.4) * 5).toFixed(1) + '% ' + (26 + Math.cos(t * 2.4) * 4).toFixed(1) + '%');
+        gloss.style.setProperty('--orb-spec', (0.46 + rim * 0.4).toFixed(3));
+        gloss.style.setProperty('--orb-rim', rim.toFixed(3));
+        gloss.style.setProperty('--orb-rim-bottom', (rim * 0.78).toFixed(3));
+      }
+      animFrame = requestAnimationFrame(stepVibration);
+    }
+
     orb.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
@@ -282,14 +370,37 @@ function orbHtml(): string {
       const wasDragging = drag.dragging;
       drag = null;
       try { if (orb.hasPointerCapture(e.pointerId)) orb.releasePointerCapture(e.pointerId); } catch {}
-      if (!wasDragging) console.log('__ORB__:' + JSON.stringify({ kind: 'click' }));
+      console.log('__ORB__:' + JSON.stringify({ kind: wasDragging ? 'up' : 'click' }));
     };
     orb.addEventListener('pointerup', end);
-    orb.addEventListener('pointercancel', () => { drag = null; });
+    orb.addEventListener('pointercancel', () => {
+      if (!drag) return;
+      drag = null;
+      console.log('__ORB__:' + JSON.stringify({ kind: 'up' }));
+    });
     window.__updateOrb = (logoSrc, phase) => {
       const img = document.getElementById('logo');
       if (logoSrc && img.getAttribute('src') !== logoSrc) img.setAttribute('src', logoSrc);
-      orb.className = phase === 'recording' ? 'recording' : '';
+      const nextPhase = typeof phase === 'string' ? phase : 'idle';
+      if (currentPhase !== nextPhase) {
+        currentPhase = nextPhase;
+        startAt = performance.now();
+      }
+      orb.className = currentPhase === 'idle' ? '' : 'active';
+      if (currentPhase === 'idle') {
+        if (animFrame) { cancelAnimationFrame(animFrame); animFrame = 0; }
+        orb.style.transform = 'scale(1)';
+        halo.style.opacity = '0';
+        halo.style.transform = 'scale(1)';
+        wave.style.opacity = '0';
+        wave.style.transform = 'scale(1)';
+        gloss.style.setProperty('--gloss', '32% 26%');
+        gloss.style.setProperty('--orb-spec', '0.5');
+        gloss.style.setProperty('--orb-rim', '0.2');
+        gloss.style.setProperty('--orb-rim-bottom', '0.14');
+      } else if (!animFrame) {
+        animFrame = requestAnimationFrame(stepVibration);
+      }
     };
   </script>
 </body>
@@ -326,7 +437,7 @@ function getOrCreateOrbOverlay(win: BrowserWindow): OrbOverlayEntry {
     if (!msg.startsWith('__ORB__:')) return
     try {
       const payload = JSON.parse(msg.slice('__ORB__:'.length)) as {
-        kind: 'down' | 'move' | 'click'
+        kind: 'down' | 'move' | 'click' | 'up'
         dx?: number
         dy?: number
       }
@@ -341,10 +452,14 @@ function getOrCreateOrbOverlay(win: BrowserWindow): OrbOverlayEntry {
         const nextY = Math.max(40, Math.min(maxY, Math.round(entry.dragOrigin.y + (payload.dy ?? 0))))
         entry.state.x = nextX
         entry.state.y = nextY
-        entry.view.setBounds({ x: nextX, y: nextY, width: entry.state.size, height: entry.state.size })
+        entry.view.setBounds(orbOverlayBounds(nextX, nextY, entry.state.size))
         win.webContents.send('orb:pointer', { kind: 'move', x: nextX, y: nextY })
-      } else if (payload.kind === 'click') {
-        win.webContents.send('orb:pointer', { kind: 'click' })
+      } else if (payload.kind === 'click' || payload.kind === 'up') {
+        entry.dragOrigin = null
+        if (payload.kind === 'click') {
+          win.webContents.send('orb:pointer', { kind: 'click' })
+        }
+        syncOrbInWindow(win)
       }
     } catch {
       // ignore malformed message
@@ -370,18 +485,23 @@ function syncOrbInWindow(win: BrowserWindow): void {
   if (win.isDestroyed()) return
   const entry = orbOverlays.get(win)
   if (!entry || entry.view.webContents.isDestroyed()) return
-  const hasBrowserChildren = win.contentView.children.some((c) => c !== entry.view)
-  if (entry.state.visible && hasBrowserChildren) {
+  const orbBounds = orbOverlayBounds(entry.state.x, entry.state.y, entry.state.size)
+  const browserBounds = win.contentView.children
+    .filter((c) => c !== entry.view && c.getVisible())
+    .map((c) => c.getBounds())
+  if (
+    shouldShowOrbOverlay({
+      visible: entry.state.visible,
+      dragging: entry.dragOrigin !== null,
+      orbBounds,
+      browserBounds,
+    })
+  ) {
     const children = win.contentView.children
     if (children[children.length - 1] !== entry.view) {
       win.contentView.addChildView(entry.view)
     }
-    entry.view.setBounds({
-      x: Math.round(entry.state.x),
-      y: Math.round(entry.state.y),
-      width: Math.round(entry.state.size),
-      height: Math.round(entry.state.size),
-    })
+    entry.view.setBounds(orbBounds)
     entry.view.setVisible(true)
     applyOrbVisuals(entry)
   } else {
@@ -829,8 +949,15 @@ export function startBrowsers(): void {
 }
 
 export function registerBrowserIpc(): void {
-  ipcMain.handle('browser:sync', (event, workspaceId: unknown, panelId: unknown, bounds: unknown, visible: unknown) =>
-    manager().sync(windowNumberOf(event.sender), workspaceId, panelId, bounds, visible),
+  ipcMain.handle(
+    'browser:sync',
+    async (event, workspaceId: unknown, panelId: unknown, bounds: unknown, visible: unknown) => {
+      const winNum = windowNumberOf(event.sender)
+      const snap = await manager().sync(winNum, workspaceId, panelId, bounds, visible)
+      const win = winNum !== null ? windowOf(winNum) : null
+      if (win && !win.isDestroyed()) syncOrbInWindow(win)
+      return snap
+    },
   )
   ipcMain.handle('browser:navigate', (event, workspaceId: unknown, panelId: unknown, action: unknown, url: unknown) =>
     manager().navigate(windowNumberOf(event.sender), workspaceId, panelId, action, url),

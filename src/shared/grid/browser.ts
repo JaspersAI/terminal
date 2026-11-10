@@ -945,3 +945,40 @@ function isFiniteNumber(value: unknown): value is number {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+
+/** Transparent bleed around the native Orb `WebContentsView` so scale and luminous vibration halos never clip. */
+export const ORB_OVERLAY_PAD = 28
+
+/** Computes the padded window-coordinate bounds for the native Orb `WebContentsView`. */
+export function orbOverlayBounds(x: number, y: number, size: number): BrowserBounds {
+  const rx = Math.round(x)
+  const ry = Math.round(y)
+  const rsize = Math.max(0, Math.round(size))
+  return {
+    x: rx - ORB_OVERLAY_PAD,
+    y: ry - ORB_OVERLAY_PAD,
+    width: rsize + ORB_OVERLAY_PAD * 2,
+    height: rsize + ORB_OVERLAY_PAD * 2,
+  }
+}
+
+function rectsOverlap(a: BrowserBounds, b: BrowserBounds): boolean {
+  if (a.width <= 0 || a.height <= 0 || b.width <= 0 || b.height <= 0) return false
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+}
+
+/**
+ * Whether the native Orb overlay `WebContentsView` should be shown on top of the window:
+ * only when the Orb is open (`visible`) AND either an active drag is in progress on the overlay or
+ * the Orb's region overlaps at least one visible `core/browser` view.
+ */
+export function shouldShowOrbOverlay(options: {
+  visible: boolean
+  dragging: boolean
+  orbBounds: BrowserBounds
+  browserBounds: readonly BrowserBounds[]
+}): boolean {
+  if (!options.visible) return false
+  if (options.dragging) return true
+  return options.browserBounds.some((b) => rectsOverlap(options.orbBounds, b))
+}
