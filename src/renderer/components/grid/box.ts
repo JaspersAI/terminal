@@ -409,7 +409,7 @@ export function loopBoxSplitHeight(split: number | null, barHeightPx: number): s
   if (split === null || split <= 0) return undefined
   if (split >= 1) return 'calc(100% - 0.5rem)'
   const bar = Math.max(0, Math.round(barHeightPx))
-  return `calc(${bar}px + (100% - 0.5rem - ${bar}px) * ${split})`
+  return `calc(${bar}px + 0.75rem + (100% - 1.25rem - ${bar}px) * ${split})`
 }
 
 export function tileBoxSplit(box: TileBox, split: number | null): TileBox {

@@ -444,7 +444,7 @@ test('a tile box clamps its conversation split from 0% to 100%, keeps it across 
   assert.equal(loopBoxSplitHeight(null, 24), undefined)
   assert.equal(loopBoxSplitHeight(0, 24), undefined)
   assert.equal(loopBoxSplitHeight(1, 24), 'calc(100% - 0.5rem)')
-  assert.equal(loopBoxSplitHeight(0.25, 24), 'calc(24px + (100% - 0.5rem - 24px) * 0.25)')
+  assert.equal(loopBoxSplitHeight(0.25, 24), 'calc(24px + 0.75rem + (100% - 1.25rem - 24px) * 0.25)')
 
   let boxes: ReadonlyMap<string, TileBox> = new Map()
   boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, true))
