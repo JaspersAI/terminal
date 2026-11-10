@@ -197,6 +197,9 @@ export function runTask(task: TaskRequest): Promise<string> {
  */
 export function runTaskCall(call: TaskCall, workspaceId: string): Promise<string> {
   return withoutSecretPrompts(async () => {
+    if (jaspersWakeDelayMs() > 0) {
+      throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+    }
     if (EXCLUDED.has(call.tool)) throw new Error(`A task cannot call ${call.tool}.`)
     const tool = findTool(call.tool)
     if (!tool) throw new Error(`Unknown tool ${call.tool}.`)

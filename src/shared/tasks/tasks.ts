@@ -211,7 +211,7 @@ export function isWakeLag(expectedAt: number | null, now: number): boolean {
 
 /** Whether a failure came from a request made while the machine was sleeping or inside its post-wake auth grace window. */
 export function isSleepWakeError(message: string): boolean {
-  return /\bwhile the computer is sleeping or waking\b/i.test(message)
+  return /\bwhile the computer is sleeping or waking\b|\bconnection dropped across sleep\b/i.test(message)
 }
 
 /**
@@ -223,16 +223,39 @@ export function wakeGraceDelayMs(graceMs: number, authWakeDelayMs = 0): number {
   return Math.max(0, graceMs, authWakeDelayMs)
 }
 
+export type WakeGraceAction =
+  { action: 'wake-lag' } | { action: 'suspend' } | { action: 'wait'; delayMs: number } | { action: 'ready' }
+
+/**
+ * Decides what the scheduler's startup or post-wake grace timer should do when it fires:
+ * - If the grace timer itself fired late past `expectedAt` (`isWakeLag`), the machine slept again
+ *   before the grace window finished: notify wake handlers and restart the wake grace window.
+ * - If auth is suspended (`!Number.isFinite(authWakeDelayMs)`), stay disarmed.
+ * - If auth still has post-wake hold-off remaining (`authWakeDelayMs > 0`), wait that remaining duration.
+ * - Otherwise the grace window has elapsed while awake and tasks may arm.
+ */
+export function resolveWakeGrace(options: {
+  expectedAt: number | null
+  now: number
+  authWakeDelayMs?: number
+}): WakeGraceAction {
+  const { expectedAt, now, authWakeDelayMs = 0 } = options
+  if (isWakeLag(expectedAt, now)) return { action: 'wake-lag' }
+  if (!Number.isFinite(authWakeDelayMs)) return { action: 'suspend' }
+  if (authWakeDelayMs > 0) return { action: 'wait', delayMs: authWakeDelayMs }
+  return { action: 'ready' }
+}
+
 /**
  * Whether a task run that failed should be deferred until the machine finishes waking rather than
  * recorded as a failed run or surfaced as a notice.
  */
 export function shouldDeferTaskRun(
   run: Pick<TaskRun, 'ok' | 'result'>,
-  state: { started: boolean; wakeDelayMs?: number },
+  state: { started: boolean; wakeDelayMs?: number; sleptDuringRun?: boolean },
 ): boolean {
   if (run.ok) return false
-  return isSleepWakeError(run.result) || !state.started || (state.wakeDelayMs ?? 0) > 0
+  return isSleepWakeError(run.result) || !state.started || (state.wakeDelayMs ?? 0) > 0 || Boolean(state.sleptDuringRun)
 }
 
 /**
