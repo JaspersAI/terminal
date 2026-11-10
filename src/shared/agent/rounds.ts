@@ -63,6 +63,7 @@ export function trimToolCalls<T extends { id: string; name: string; input: Recor
   let placedInRound = 0
   let hadSubGridPlace = false
   let fullFailedInRound = 0
+  let refusedInRound = 0
   let dropRemainingPlaceViews = false
 
   for (const call of calls) {
@@ -111,25 +112,35 @@ export function trimToolCalls<T extends { id: string; name: string; input: Recor
 
     if (dropRemainingPlaceViews && !hasReplace) continue
 
-    if ((placedInRound > 0 || fullFailedInRound > 0) && notPlaced(view) !== null) {
-      dropRemainingPlaceViews = true
+    if (notPlaced(view) !== null) {
+      if (placedInRound > 0 || fullFailedInRound > 0 || refusedInRound > 0) {
+        dropRemainingPlaceViews = true
+        continue
+      }
+      refusedInRound = 1
+      kept.push(call)
       continue
     }
 
     if (hasReplace) {
       const replaceId = resolveSimElementId(simGrid, replaceRaw)
-      if (replaceId && simGrid.elements.some((e) => e.id === replaceId)) {
+      const hasTarget = replaceId !== undefined && simGrid.elements.some((e) => e.id === replaceId)
+      if (hasTarget || simGrid.elements.length === 0) {
         const size = readSizeValue(call.input.size)
         const anchor = readAnchorValue(call.input.anchor, simGrid)
         const rect = readRectInput(unstringValue(call.input.rect), simGrid.size)
         try {
-          simGrid = placeView(simGrid, {
+          const placed = placeView(simGrid, {
             content: { kind: 'view', view: view || 'core/table' },
-            replace: replaceId,
+            ...(hasTarget ? { replace: replaceId } : {}),
             ...(size ? { size } : {}),
             ...(anchor ? { anchor } : {}),
             ...(rect ? { rect } : {}),
-          }).grid
+          })
+          simGrid = placed.grid
+          if (placed.element.rect.w < simGrid.size.cols || placed.element.rect.h < simGrid.size.rows) {
+            hadSubGridPlace = true
+          }
         } catch {
           // Keep the call so the real tool reports any error.
         }

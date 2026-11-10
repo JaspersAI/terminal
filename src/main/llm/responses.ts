@@ -2,6 +2,7 @@ import { post, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
 import { getAttachedImages } from '../agent/attachments.ts'
 import { trimToolCalls } from '../../shared/agent/rounds.ts'
+import { cutShort } from '../../shared/agent/stop.ts'
 import type { Completion, CompleteOptions, Effort, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
   streams,
@@ -225,15 +226,14 @@ export function responsesStream(
 /** A Responses reply as a completion: the messages' text, the function calls by call id, why it stopped, and every item to send back. */
 export function readResponse(data: ResponsesReply): Completion {
   const rawOutput = data.output ?? []
+  const rawCallItems = rawOutput.filter((item) => item.type === 'function_call')
   const trimmed = trimToolCalls(
-    rawOutput
-      .filter((item) => item.type === 'function_call')
-      .map((item) => ({
-        id: item.call_id ?? '',
-        name: item.name ?? '',
-        input: parseArguments(item.arguments ?? ''),
-        item,
-      })),
+    rawCallItems.map((item) => ({
+      id: item.call_id ?? '',
+      name: item.name ?? '',
+      input: parseArguments(item.arguments ?? ''),
+      item,
+    })),
   )
   const keptItems = new Set(trimmed.map((t) => t.item))
   const output = rawOutput.filter((item) => item.type !== 'function_call' || keptItems.has(item))
@@ -248,10 +248,13 @@ export function readResponse(data: ResponsesReply): Completion {
     )
     .filter(Boolean)
     .join('\n\n')
+  const rawStop = data.incomplete_details?.reason ?? data.status ?? ''
+  const stopReason =
+    trimmed.length > 0 && trimmed.length < rawCallItems.length && cutShort(rawStop) === 'length' ? 'completed' : rawStop
   return {
     text,
     toolCalls: trimmed.map(({ id, name, input }) => ({ id, name, input })),
-    stopReason: data.incomplete_details?.reason ?? data.status ?? '',
+    stopReason,
     usage: {
       input: data.usage?.input_tokens ?? 0,
       output: data.usage?.output_tokens ?? 0,

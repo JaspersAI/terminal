@@ -251,6 +251,16 @@ async function loop({
         continue
       }
 
+      if (reply.toolCalls.length > 1) {
+        const trimmed = trimToolCalls(reply.toolCalls, placementGrid(context))
+        if (trimmed.length < reply.toolCalls.length) {
+          const keptIds = new Set(trimmed.map((call) => call.id))
+          const stopReason =
+            trimmed.length > 0 && cutShort(reply.stopReason) === 'length' ? 'tool_calls' : reply.stopReason
+          reply = { ...reply, toolCalls: trimmed, stopReason, raw: keepRawCalls(reply.raw, keptIds) }
+        }
+      }
+
       const short = cutShort(reply.stopReason)
       if (short === 'refusal') {
         const said = reply.text.trim()
@@ -299,13 +309,6 @@ async function loop({
         if (citations.length > 0 && !quiet) emit({ kind: 'citations', runId: entry.runId, citations })
         if (spent) outOfRounds?.()
         return text
-      }
-      if (reply.toolCalls.length > 1) {
-        const trimmed = trimToolCalls(reply.toolCalls, placementGrid(context))
-        if (trimmed.length < reply.toolCalls.length) {
-          const keptIds = new Set(trimmed.map((call) => call.id))
-          reply = { ...reply, toolCalls: trimmed, raw: keepRawCalls(reply.raw, keptIds) }
-        }
       }
       const earlierTurns = history.slice()
       history.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw })
