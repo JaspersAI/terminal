@@ -105,6 +105,10 @@ test('a turn that stalled on a silent stream or a gateway timeout is told apart 
 test('a turn interrupted by system sleep or wake is told apart from an awake turn timeout', () => {
   assert.equal(isRetryable(`Jaspers: ${SLEEP_INTERRUPTED_MESSAGE}`), true)
   assert.equal(isSleepInterrupted(`Jaspers: ${SLEEP_INTERRUPTED_MESSAGE}`), true)
+  assert.equal(
+    isSleepInterrupted('Jaspers: Cannot refresh Jaspers sign-in while the computer is sleeping or waking.'),
+    true,
+  )
   assert.equal(isSleepInterrupted('Jaspers: nothing arrived for 300 s', 988_927, 300_000), true)
   assert.equal(isSleepInterrupted('Jaspers: nothing arrived for 300 s', 323_770, 300_000), true)
   assert.equal(isSleepInterrupted('Jaspers: nothing arrived for 300 s', 300_100, 300_000, true), true)

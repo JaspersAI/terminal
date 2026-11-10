@@ -79,17 +79,17 @@ export async function request({
     // Said only while the reply arrives: it ends the moment the reply is over, however that was, so
     // no call is still being written while a retry is waited for.
     const call = says.calls ? writer(entry.runId) : null
+    while (signsIn(config.provider)) {
+      const wakeWait = jaspersWakeDelayMs()
+      if (wakeWait <= 0) break
+      if (!Number.isFinite(wakeWait)) {
+        throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+      }
+      await sleep(wakeWait, signal)
+    }
     const began = Date.now()
     const asked = { round, attempt, label, provider: config.provider.id, model: config.model }
     try {
-      while (signsIn(config.provider)) {
-        const wakeWait = jaspersWakeDelayMs()
-        if (wakeWait <= 0) break
-        if (!Number.isFinite(wakeWait)) {
-          throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
-        }
-        await sleep(wakeWait, signal)
-      }
       const reply = await complete(config, system, history, tools, {
         signal,
         stream: true,
@@ -141,7 +141,7 @@ export async function request({
         wakeLlm()
       }
       if (decision.action === 'throw') {
-        if (decision.sleepInterrupted && !/across sleep/i.test(message)) {
+        if (decision.sleepInterrupted && !/across sleep|\bwhile the computer is sleeping or waking\b/i.test(message)) {
           throw new ProviderError(`${config.provider.name}: ${SLEEP_INTERRUPTED_MESSAGE}`, status, retryAfterMs)
         }
         throw err

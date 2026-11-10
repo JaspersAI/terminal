@@ -22,6 +22,7 @@ import { createTools } from './capabilities/tools'
 import { jaspersHome } from '../home'
 import { call as callTool } from './mcp'
 import { complete } from '../llm/llm'
+import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { clearLive, deleteLive, hasLive, setLive } from './live'
 import { secretValues } from './connections'
 import { fileNotice } from '../app/notices'
@@ -334,6 +335,7 @@ function spawn(id: string, build: HostBuild): Host {
     complete,
     usage: (input, output) => addUsage(id, input, output),
     wait: delay,
+    wakeDelayMs: jaspersWakeDelayMs,
   })
   const now = Date.now()
   const host: Host = {

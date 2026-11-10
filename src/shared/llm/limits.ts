@@ -54,7 +54,7 @@ export function isTurnTimeout(message: string, elapsedMs?: number): boolean {
  * or a turn timeout whose wall-clock duration exceeded its timeout limit by at least `WAKE_GRACE_MS`.
  */
 export function isSleepInterrupted(message: string, elapsedMs?: number, limitMs = 300_000, sleeping = false): boolean {
-  if (/across sleep/i.test(message)) return true
+  if (/across sleep|\bwhile the computer is sleeping or waking\b/i.test(message)) return true
   if (!isTurnTimeout(message, elapsedMs)) return false
   if (sleeping) return true
   return elapsedMs !== undefined && elapsedMs >= limitMs + WAKE_GRACE_MS

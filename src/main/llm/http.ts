@@ -241,7 +241,7 @@ export async function* sse(
     clearTimeout(timer)
     timer = setTimeout(() => {
       if (Date.now() - heardAt >= currentLimit + WAKE_GRACE_MS) {
-        wakeLlm()
+        if (!sleeping) wakeLlm()
         quiet.abort(new Error(SLEEP_INTERRUPTED_MESSAGE))
         return
       }
@@ -254,7 +254,7 @@ export async function* sse(
       ? setInterval(() => {
           const now = Date.now()
           if (now - lastTick >= WAKE_GRACE_MS || now - heardAt >= currentLimit + WAKE_GRACE_MS) {
-            wakeLlm()
+            if (!sleeping) wakeLlm()
             quiet.abort(new Error(SLEEP_INTERRUPTED_MESSAGE))
             return
           }

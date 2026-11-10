@@ -148,6 +148,29 @@ test('suspending or waking immediately aborts in-flight streams and holds off wa
     await waiting
     assert.equal(settled, true)
     assert.equal(isLlmSleeping(), false)
+
+    // An overdue silence timer firing during a dark wake while suspended aborts the stream without clearing sleeping.
+    await serving(
+      (res) => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+      },
+      async (url) => {
+        suspendLlm()
+        const started = Date.now()
+        const realNow = Date.now
+        let jumped = false
+        setTimeout(() => {
+          jumped = true
+        }, 15)
+        Date.now = () => (jumped ? started + 20_000 : realNow())
+        try {
+          await assert.rejects(read(url, 30), /Test: .*across sleep/i)
+          assert.equal(isLlmSleeping(), true)
+        } finally {
+          Date.now = realNow
+        }
+      },
+    )
   } finally {
     wakeLlm(0)
   }

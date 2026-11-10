@@ -152,7 +152,7 @@ async function loop({
       putAway(history, sending, log)
       const available = offered(tools(), history)
       const spent = round > most
-      const partial = canCompletePartially(round, quiet, history, sending.asked)
+      const partial = entry.origin !== 'task' && canCompletePartially(round, quiet, history, sending.asked)
       const roundTimeoutMs = cuts > 0 ? RESTATED_TIMEOUT_MS : undefined
       const finishPartial = (text: string): string => {
         const citations = citedBy(text, history, context.workspaceId)
@@ -183,7 +183,7 @@ async function loop({
           timeoutMs: roundTimeoutMs,
           ...(cuts > 0 ? { effort: 'low' as const } : {}),
           restateOnTimeout: canRestateCut(available.length > 0, quiet, spent) || partial,
-          abortOnSleep: partial,
+          abortOnSleep: partial || entry.origin === 'task',
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)

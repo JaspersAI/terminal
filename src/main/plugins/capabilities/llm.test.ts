@@ -173,3 +173,51 @@ test('stream callbacks for text and thinking are forwarded to the provider when 
   assert.deepEqual(texts, ['First ', 'second.'])
   assert.deepEqual(thoughts, ['Check ', '10-K.'])
 })
+
+test('a Jaspers provider request waits out finite post-wake auth grace and rejects immediately while sleeping', async () => {
+  const jaspersConfig = {
+    provider: { id: 'jaspers', name: 'Jaspers' },
+    baseUrl: 'https://account.jsprai.com/v1',
+    model: 'gemini-4-argon',
+    token: null,
+  } as unknown as NonNullable<ReturnType<LlmDeps['config']>>
+
+  let wakeDelay = 6_000
+  let calls = 0
+  const { d, waits } = deps(async () => {
+    calls++
+    if (calls === 1) {
+      // Simulate wake grace restarting while the first attempt was in flight.
+      wakeDelay = 4_000
+      throw new ProviderError('Jaspers: Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+    }
+    return REPLY
+  })
+  const llm = createLlm({
+    ...d,
+    config: () => jaspersConfig,
+    wait: async (ms) => {
+      waits.push(ms)
+      wakeDelay = Math.max(0, wakeDelay - ms)
+    },
+    wakeDelayMs: () => wakeDelay,
+  })
+  const signal = new AbortController().signal
+  assert.equal(await llm.complete(request, signal), REPLY)
+  assert.equal(calls, 2)
+  assert.deepEqual(waits, [6_000, 2_000, 2_000])
+
+  // While the machine is sleeping (wakeDelayMs === Infinity), it rejects immediately without calling the provider.
+  let sleepCalls = 0
+  const sleepingLlm = createLlm({
+    ...d,
+    config: () => jaspersConfig,
+    complete: async () => {
+      sleepCalls++
+      return REPLY
+    },
+    wakeDelayMs: () => Number.POSITIVE_INFINITY,
+  })
+  await assert.rejects(sleepingLlm.complete(request, signal), /sleeping or waking/i)
+  assert.equal(sleepCalls, 0)
+})

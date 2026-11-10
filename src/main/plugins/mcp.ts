@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import path from 'node:path'
-import { untilAborted } from '../../shared/abort'
+import { sleep, untilAborted } from '../../shared/abort'
 import { accountBacked } from '../../shared/app/jaspers'
 import { prepareMcpArguments } from '../../shared/data/arguments'
 import { mapToolResult } from '../../shared/data/datasets'
@@ -278,6 +278,13 @@ export function wakeRetries(): void {
   if (!Number.isFinite(wait)) return
   wakeGrace = setTimeout(() => {
     wakeGrace = null
+    if (sleeping) return
+    const remaining = jaspersWakeDelayMs()
+    if (!Number.isFinite(remaining)) return
+    if (remaining > 0) {
+      wakeRetries()
+      return
+    }
     const due = [...pendingRetries.entries()]
     pendingRetries.clear()
     for (const [id, nextRetry] of due) {
@@ -575,6 +582,14 @@ async function asked<T>(
       const attempt = () => sentAgainIfRefused(() => send(current.client))
       if (!current.viaJaspers) return await attempt()
       try {
+        while (current.viaJaspers) {
+          const wakeWait = jaspersWakeDelayMs()
+          if (wakeWait <= 0) break
+          if (!Number.isFinite(wakeWait)) {
+            throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+          }
+          await sleep(wakeWait, signal)
+        }
         return await callAsAccount(attempt)
       } catch (err) {
         if (err instanceof SignedOutError) {
