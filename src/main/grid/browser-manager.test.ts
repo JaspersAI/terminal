@@ -513,7 +513,7 @@ test('synchronizes WebContents User-Agent for Google auth hosts and uses CDP ove
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) jaspers-terminal/0.11.1 Chrome/136.0.0.0 Electron/44.3.0 Safari/537.36'
   const cleanUa =
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36'
-  const firefoxUa = googleAuthUserAgent('darwin')
+  const googleAuthUa = googleAuthUserAgent(rawUa)
 
   let committedUrl = 'https://www.linkedin.com/login'
   let currentUa = cleanUa
@@ -533,14 +533,13 @@ test('synchronizes WebContents User-Agent for Google auth hosts and uses CDP ove
       },
     },
     rawUa,
-    'darwin',
   )
 
-  // Direct navigation to accounts.google.com sets the Firefox UA via setUserAgent before the request leaves.
+  // Direct navigation to accounts.google.com sets Electron's unmodified UA via setUserAgent before the request leaves.
   sync.onDidStartNavigation('https://accounts.google.com/v3/signin/identifier', true, false)
   assert.equal(sync.inFlightUrl(), 'https://accounts.google.com/v3/signin/identifier')
-  assert.equal(currentUa, firefoxUa)
-  assert.deepEqual(setUserAgentCalls, [firefoxUa])
+  assert.equal(currentUa, googleAuthUa)
+  assert.deepEqual(setUserAgentCalls, [googleAuthUa])
   assert.deepEqual(cdpOverrides, [])
 
   committedUrl = 'https://accounts.google.com/v3/signin/identifier'
@@ -567,11 +566,11 @@ test('synchronizes WebContents User-Agent for Google auth hosts and uses CDP ove
   assert.deepEqual(setUserAgentCalls, [])
   assert.deepEqual(cdpOverrides, [''])
 
-  // Redirect from mail.google.com into accounts.google.com applies Firefox via CDP without calling setUserAgent mid-redirect.
+  // Redirect from mail.google.com into accounts.google.com applies Electron's UA via CDP without calling setUserAgent mid-redirect.
   cdpOverrides.length = 0
   sync.onWillRedirect('https://accounts.google.com/ServiceLogin', true)
   assert.deepEqual(setUserAgentCalls, [])
-  assert.deepEqual(cdpOverrides, [firefoxUa])
+  assert.deepEqual(cdpOverrides, [googleAuthUa])
 
   // If that redirected navigation fails, the committed page's clean Chrome UA is restored.
   cdpOverrides.length = 0

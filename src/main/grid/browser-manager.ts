@@ -6,7 +6,6 @@ import {
   BROWSER_VIEW,
   browserEmulationOverrideForUrl,
   browserStanding,
-  browserUserAgent,
   browserUserAgentForUrl,
   clipBounds,
   DEFAULT_BROWSER_BOUNDS,
@@ -1328,20 +1327,26 @@ export function createBrowserUserAgentSync(
   target: BrowserUserAgentTarget,
   baseUserAgent: string,
   platform = 'darwin',
-  options?: { chromeVersion?: string; arch?: string },
+  options?: {
+    chromeVersion?: string
+    arch?: string
+    systemVersion?: string
+    arm64Translation?: boolean
+  },
 ): BrowserUserAgentSync {
-  const cleanUa = browserUserAgent(baseUserAgent)
   let cdpOverrideUa: string | null = null
   let lastEmulationUa: string | null = null
   let inFlightMainFrameUrl: string | undefined
 
-  const resolveUa = (url: string): string => browserUserAgentForUrl(url, cleanUa || baseUserAgent, platform)
+  const resolveUa = (url: string): string => browserUserAgentForUrl(url, baseUserAgent)
   const syncEmulation = (url: string): void => {
     if (!target.setEmulationOverride) return
-    const override = browserEmulationOverrideForUrl(url, cleanUa || baseUserAgent, {
+    const override = browserEmulationOverrideForUrl(url, baseUserAgent, {
       chromeVersion: options?.chromeVersion,
       platform,
       arch: options?.arch,
+      systemVersion: options?.systemVersion,
+      arm64Translation: options?.arm64Translation,
     })
     if (lastEmulationUa === override.userAgent) return
     lastEmulationUa = override.userAgent

@@ -163,20 +163,72 @@ export function isGoogleAuthUrl(raw: unknown): boolean {
   }
 }
 
-/** Consistent Firefox User-Agent presented to Google sign-in hosts so embedded sign-in is not rejected. */
-export function googleAuthUserAgent(platform = 'darwin'): string {
-  const os =
-    platform === 'darwin'
-      ? 'Macintosh; Intel Mac OS X 10.15'
-      : platform === 'win32'
-        ? 'Windows NT 10.0; Win64; x64'
-        : 'X11; Linux x86_64'
-  return `Mozilla/5.0 (${os}; rv:140.0) Gecko/20100101 Firefox/140.0`
+/**
+ * Returns Electron's own unmodified User-Agent for Google sign-in hosts (`accounts.google.com`,
+ * `accounts.youtube.com`). Google rejects sign-in when a Chromium runtime claims to be Firefox or
+ * stock desktop Chrome, and accepts Electron's native identity with matching Chromium client hints.
+ */
+export function googleAuthUserAgent(baseUserAgent = '', electronVersion = '44.10.0'): string {
+  const normalized = baseUserAgent.replace(/\s+/g, ' ').trim()
+  const safeElectron = electronVersion.trim() || '44.10.0'
+  if (normalized) {
+    if (/\bElectron\/[^\s]+/i.test(normalized)) return normalized
+    if (/\bSafari\/[^\s]+/i.test(normalized)) {
+      return normalized.replace(/\b(Safari\/[^\s]+)/i, `Electron/${safeElectron} $1`)
+    }
+    return `${normalized} Electron/${safeElectron}`
+  }
+  return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Electron/${safeElectron} Safari/537.36`
 }
 
-/** Resolves the User-Agent for a navigation target: Firefox on Google sign-in hosts, cleaned Chrome elsewhere. */
-export function browserUserAgentForUrl(url: unknown, baseUserAgent: string, platform = 'darwin'): string {
-  return isGoogleAuthUrl(url) ? googleAuthUserAgent(platform) : browserUserAgent(baseUserAgent)
+/** Resolves the User-Agent for a navigation target: Electron's own UA on Google sign-in hosts, cleaned Chrome elsewhere. */
+export function browserUserAgentForUrl(url: unknown, baseUserAgent: string): string {
+  return isGoogleAuthUrl(url) ? googleAuthUserAgent(baseUserAgent) : browserUserAgent(baseUserAgent)
+}
+
+export interface BrowserDesktopUserAgentMetadata {
+  platform: string
+  platformVersion: string
+  architecture: string
+  model: string
+  mobile: boolean
+}
+
+/**
+ * Chromium's desktop client-hint metadata (`Emulation.UserAgentMetadata`) so a CDP
+ * `Emulation.setUserAgentOverride` on Google sign-in hosts or during redirects does not blank
+ * `navigator.userAgentData` or drop `Sec-CH-UA*` headers.
+ */
+export function desktopUserAgentMetadata(
+  options: {
+    platform?: string
+    arch?: string
+    systemVersion?: string
+    arm64Translation?: boolean
+  } = {},
+): BrowserDesktopUserAgentMetadata {
+  const platform = options.platform ?? 'darwin'
+  const arch = options.arch ?? 'arm64'
+  const platformName = platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'Windows' : 'Linux'
+  const platformVersion =
+    platform === 'darwin'
+      ? (options.systemVersion?.trim() ?? '')
+      : platform === 'win32'
+        ? options.systemVersion?.trim() || '15.0.0'
+        : ''
+  const architecture =
+    arch === 'arm64' || arch === 'arm' || options.arm64Translation === true
+      ? 'arm'
+      : arch === 'x64' || arch === 'ia32'
+        ? 'x86'
+        : ''
+  return {
+    platform: platformName,
+    platformVersion,
+    architecture,
+    model: '',
+    mobile: false,
+  }
 }
 
 export interface BrowserUserAgentBrand {
@@ -184,14 +236,9 @@ export interface BrowserUserAgentBrand {
   version: string
 }
 
-export interface BrowserUserAgentMetadata {
+export interface BrowserUserAgentMetadata extends BrowserDesktopUserAgentMetadata {
   brands: BrowserUserAgentBrand[]
   fullVersionList: BrowserUserAgentBrand[]
-  platform: string
-  platformVersion: string
-  architecture: string
-  model: string
-  mobile: boolean
   bitness: string
   wow64: boolean
 }
@@ -200,7 +247,7 @@ export interface BrowserEmulationOverride {
   userAgent: string
   acceptLanguage: string
   platform: string
-  userAgentMetadata?: BrowserUserAgentMetadata
+  userAgentMetadata?: BrowserUserAgentMetadata | BrowserDesktopUserAgentMetadata
 }
 
 /** Builds Chromium `UserAgentMetadata` matching standard Google Chrome so `navigator.userAgentData` never exposes `Electron`. */
@@ -239,16 +286,28 @@ export function browserUserAgentMetadata(options?: {
 export function browserEmulationOverrideForUrl(
   url: unknown,
   baseUserAgent: string,
-  options?: { chromeVersion?: string; platform?: string; arch?: string },
+  options?: {
+    chromeVersion?: string
+    platform?: string
+    arch?: string
+    systemVersion?: string
+    arm64Translation?: boolean
+  },
 ): BrowserEmulationOverride {
   const platform = options?.platform ?? 'darwin'
-  const userAgent = browserUserAgentForUrl(url, baseUserAgent, platform)
+  const userAgent = browserUserAgentForUrl(url, baseUserAgent)
   const navPlatform = platform === 'win32' ? 'Win32' : platform === 'linux' ? 'Linux x86_64' : 'MacIntel'
   if (isGoogleAuthUrl(url)) {
     return {
       userAgent,
       acceptLanguage: 'en-US,en;q=0.9',
       platform: navPlatform,
+      userAgentMetadata: desktopUserAgentMetadata({
+        platform,
+        arch: options?.arch,
+        systemVersion: options?.systemVersion,
+        arm64Translation: options?.arm64Translation,
+      }),
     }
   }
   return {
@@ -308,20 +367,8 @@ export function browserStealthScript(options?: { chromeVersion?: string; platfor
     }
 
     const ua = (nav && nav.userAgent) || '';
-    const isFirefox = /\\bFirefox\\//i.test(ua);
-    if (isFirefox) {
-      if (navProto && 'userAgentData' in navProto) {
-        try { delete navProto.userAgentData; } catch {}
-      }
-      if (nav && 'userAgentData' in nav) {
-        try {
-          Object.defineProperty(nav, 'userAgentData', {
-            get: function userAgentData() { return undefined; },
-            configurable: true,
-          });
-        } catch {}
-      }
-    } else {
+    const isGoogleAuth = /\\bElectron\\//i.test(ua) || (typeof location !== 'undefined' && (location.hostname === 'accounts.google.com' || location.hostname === 'accounts.youtube.com'));
+    if (!isGoogleAuth) {
       const cleanBrands = (list, full) => {
         const fallback = full ? meta.fullVersionList : meta.brands;
         if (!Array.isArray(list) || list.length === 0) return fallback.map((b) => ({ ...b }));
@@ -671,7 +718,7 @@ export function isBlankBrowserPopupUrl(raw: unknown): boolean {
   return trimmed === '' || /^about:blank(?:[?#].*)?$/i.test(trimmed)
 }
 
-/** Rewrites outgoing request headers for `core/browser` so Google sign-in hosts receive a consistent Firefox identity without Chromium client hints while other sites receive the cleaned Chrome identity. */
+/** Rewrites outgoing request headers for `core/browser` so Google sign-in hosts receive Electron's unmodified identity with native client hints while other sites receive the cleaned Chrome identity. */
 export function browserRequestHeaders(
   headers: Record<string, string>,
   options: {
@@ -681,28 +728,24 @@ export function browserRequestHeaders(
     pageUrl?: string
     baseUserAgent?: string
     chromeVersion?: string
-    platform?: string
+    electronVersion?: string
   },
 ): Record<string, string> {
   const requestHeaders = { ...headers }
-  const firefoxUa = googleAuthUserAgent(options.platform)
   const uaKey = Object.keys(requestHeaders).find((key) => key.toLowerCase() === 'user-agent')
   const incomingUa = uaKey ? requestHeaders[uaKey] : undefined
+  const googleAuthUa = googleAuthUserAgent(options.baseUserAgent || incomingUa || '', options.electronVersion)
+  const hasElectronToken = typeof incomingUa === 'string' && /\bElectron\/[^\s]+/i.test(incomingUa)
   const isSubresource = options.resourceType !== undefined && options.resourceType !== 'mainFrame'
   const useGoogleAuth =
     isGoogleAuthUrl(options.url) ||
     (isSubresource &&
       (isGoogleAuthUrl(options.referrer) ||
         isGoogleAuthUrl(options.pageUrl) ||
-        (!options.pageUrl && incomingUa === firefoxUa)))
+        (!options.pageUrl && (incomingUa === googleAuthUa || hasElectronToken))))
 
   if (useGoogleAuth) {
-    for (const key of Object.keys(requestHeaders)) {
-      if (key.toLowerCase().startsWith('sec-ch-ua')) {
-        delete requestHeaders[key]
-      }
-    }
-    requestHeaders[uaKey ?? 'User-Agent'] = firefoxUa
+    requestHeaders[uaKey ?? 'User-Agent'] = googleAuthUa
     return requestHeaders
   }
 
@@ -713,7 +756,7 @@ export function browserRequestHeaders(
     if (typeof value !== 'string') continue
     const lower = key.toLowerCase()
     if (lower === 'user-agent') {
-      requestHeaders[key] = value === firefoxUa && cleanBaseUa ? cleanBaseUa : browserUserAgent(value)
+      requestHeaders[key] = value === googleAuthUa && cleanBaseUa ? cleanBaseUa : browserUserAgent(value)
     } else if (lower === 'sec-ch-ua') {
       requestHeaders[key] = browserClientHintHeader(value, majorChrome)
     } else if (lower === 'sec-ch-ua-full-version-list') {

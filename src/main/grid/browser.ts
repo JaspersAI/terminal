@@ -1,4 +1,5 @@
 import {
+  app,
   ipcMain,
   session,
   WebContentsView,
@@ -189,6 +190,7 @@ const nativeViews = new WeakMap<ManagedBrowserView, WebContentsView>()
 const watchedWindows = new WeakSet<BrowserWindow>()
 const inFlightUrlsByWebContentsId = new Map<number, string>()
 let configuredSession: Session | null = null
+let rawSessionUserAgent = ''
 let activeManager: BrowserManager | null = null
 
 interface OrbOverlayState {
@@ -411,10 +413,12 @@ function browserSession(): Session {
   if (configuredSession) return configuredSession
   const partition = session.fromPartition(BROWSER_PARTITION)
   const rawUa = partition.getUserAgent()
+  rawSessionUserAgent = rawUa
   const cleanUa = browserUserAgent(rawUa)
   if (cleanUa) partition.setUserAgent(cleanUa, 'en-US,en;q=0.9')
   void clearPerimeterXCookies(partition)
   const fullChrome = process.versions.chrome || '136.0.0.0'
+  const electronVersion = process.versions.electron || '44.10.0'
   partition.webRequest.onBeforeSendHeaders((details, callback) => {
     let pageUrl =
       details.webContentsId !== undefined ? inFlightUrlsByWebContentsId.get(details.webContentsId) : undefined
@@ -426,9 +430,9 @@ function browserSession(): Session {
       referrer: details.referrer,
       resourceType: details.resourceType,
       pageUrl,
-      baseUserAgent: cleanUa || rawUa,
+      baseUserAgent: rawUa,
       chromeVersion: fullChrome,
-      platform: process.platform,
+      electronVersion,
     })
     callback({ requestHeaders })
   })
@@ -459,14 +463,19 @@ function createNativeView(
   let stealthScriptRegistered = false
   const { webContents } = raw
   const fullChrome = process.versions.chrome || '136.0.0.0'
+  const systemVersion = process.platform === 'darwin' ? (process.getSystemVersion?.() ?? '') : undefined
+  const arm64Translation = app.runningUnderARM64Translation === true
   const stealthScript = browserStealthScript({
     chromeVersion: fullChrome,
     platform: process.platform,
     arch: process.arch,
   })
-  const baseUa = browserUserAgent(part.getUserAgent()) || webContents.getUserAgent()
-  const startUa = browserUserAgentForUrl(initialUrl, baseUa, process.platform)
+  const baseUa = rawSessionUserAgent || webContents.getUserAgent() || part.getUserAgent()
+  const startUa = browserUserAgentForUrl(initialUrl, baseUa)
   if (startUa && webContents.getUserAgent() !== startUa) webContents.setUserAgent(startUa)
+  if (adoptedWebContents && isBrowserUrl(initialUrl)) {
+    inFlightUrlsByWebContentsId.set(webContents.id, initialUrl)
+  }
 
   const syncBackgroundThrottling = (): void => {
     if (webContents.isDestroyed()) return
@@ -531,7 +540,12 @@ function createNativeView(
     },
     baseUa,
     process.platform,
-    { chromeVersion: fullChrome, arch: process.arch },
+    {
+      chromeVersion: fullChrome,
+      arch: process.arch,
+      systemVersion,
+      arm64Translation,
+    },
   )
   webContents.debugger.on('detach', () => {
     stealthScriptRegistered = false
@@ -542,6 +556,8 @@ function createNativeView(
       chromeVersion: fullChrome,
       platform: process.platform,
       arch: process.arch,
+      systemVersion,
+      arm64Translation,
     }),
   )
   webContents.on('dom-ready', () => {
