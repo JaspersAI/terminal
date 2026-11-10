@@ -8,7 +8,14 @@ import {
   shouldRetrySourceRun,
   shownSourceData,
 } from '../../../packages/sdk/src/hooks.ts'
-import { asTable, canShareInFlight, createInFlightMap, extractRows, mapToolResult } from './datasets.ts'
+import {
+  asTable,
+  canShareInFlight,
+  createInFlightMap,
+  extractRows,
+  isDatasetStillGood,
+  mapToolResult,
+} from './datasets.ts'
 
 test('an array of objects is the rows, with nothing around them', () => {
   assert.deepEqual(extractRows([{ ticker: 'AAA' }, { ticker: 'BBB' }]), {
@@ -236,6 +243,13 @@ test('concurrent shareable source calls for the same key share one execution, wh
   assert.deepEqual(await Promise.all([p1, p2, pFresh]), [1, 1, 2])
   // Once settled, a later call runs anew.
   assert.equal(await inFlight.run('k1', true, exec), 3)
+
+  // A cached dataset within TTL is valid until a panel refresh or room reopen stamps a newer refreshedAt.
+  assert.equal(isDatasetStillGood({ at: 1_000, ttlMs: 60_000 }, 20_000, null), true)
+  assert.equal(isDatasetStillGood({ at: 1_000, ttlMs: 60_000 }, 20_000, 500), true)
+  assert.equal(isDatasetStillGood({ at: 1_000, ttlMs: 60_000 }, 20_000, 1_000), true)
+  assert.equal(isDatasetStillGood({ at: 1_000, ttlMs: 60_000 }, 20_000, 1_500), false)
+  assert.equal(isDatasetStillGood({ at: 1_000, ttlMs: 60_000 }, 62_000, null), false)
 })
 
 test('shouldRetrySourceRun retries a failed source only when a connection becomes ready or the source itself is registered', () => {

@@ -967,18 +967,21 @@ export function watchedViewPanels(grid: Grid, panelId: string): Panel[] {
 
 /**
  * Whether the view panel(s) affected by a placement, state write, or refresh have settled: true as
- * soon as any watched view records a runtime error or every watched view publishes new output.
+ * soon as any watched view records a runtime error or every watched view publishes new output or text.
  */
 export function panelTargetsSettled(
   grid: Grid,
   panelId: string,
   beforeOutputs: ReadonlyMap<string, unknown>,
+  beforeTexts?: ReadonlyMap<string, string | null>,
 ): { settled: boolean; error: string | null } {
   const targets = watchedViewPanels(grid, panelId)
   if (targets.length === 0) return { settled: true, error: null }
   const failed = targets.find((p) => Boolean(p.error))
   if (failed?.error) return { settled: true, error: failed.error }
-  const allPublished = targets.every((p) => p.output !== beforeOutputs.get(p.id))
+  const allPublished = targets.every(
+    (p) => p.output !== beforeOutputs.get(p.id) || (beforeTexts !== undefined && p.text !== beforeTexts.get(p.id)),
+  )
   return { settled: allPublished, error: null }
 }
 
@@ -1000,6 +1003,11 @@ const NON_DATA_CORE_VIEWS = new Set([
   'core/browser',
 ])
 
+/** Whether a panel holds a data or plugin view that fetches again when woken or reopened. */
+export function isRefreshableView(panel: Pick<Panel, 'content'>): boolean {
+  return panel.content.kind === 'view' && !NON_DATA_CORE_VIEWS.has(panel.content.view)
+}
+
 /**
  * Stamps `refreshedAt` on data and plugin views in `grid` after system wake so mounted views
  * without a scheduled refresh task fetch fresh data, while skipping browsers, apps, static core
@@ -1009,7 +1017,7 @@ export function refreshGridOnWake(grid: Grid, at: number, skipIds?: ReadonlySet<
   let changed = false
   const elementsById = new Map(grid.elements.map((e) => [e.id, e]))
   const panels = grid.panels.map((panel) => {
-    if (panel.content.kind !== 'view' || NON_DATA_CORE_VIEWS.has(panel.content.view)) return panel
+    if (!isRefreshableView(panel)) return panel
     const element = elementsById.get(panel.elementId)
     if (
       skipIds &&

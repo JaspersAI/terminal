@@ -2,12 +2,14 @@ import {
   canShareInFlight,
   createInFlightMap,
   extractRows,
+  isDatasetStillGood,
   mapToolResult,
   type Dataset,
   type RunResult,
 } from '../../shared/data/datasets'
 import { stableStringify } from '../../shared/data/hash'
 import type { RunRecord } from '../../shared/data/store'
+import { isRefreshableView } from '../../shared/grid/grid'
 import { isMcpSource, type BackendContext, type FunctionSourceSpec } from '@jaspers-ai/sdk/define'
 import {
   mergeWorkbookTables,
@@ -82,7 +84,7 @@ export async function runSource(
     mcpArgs ?? (source.id === 'excel-export/export-tables' ? mergeWorkbookTables(workbooks, workspaceId, args) : args)
   // A server answers the same whoever asks; a plugin's code may answer each workspace its own way.
   const key = stableStringify(isMcpSource(def) ? [source.id, mcpArgs] : [source.id, preparedArgs, workspaceId])
-  const cached = options.fresh ? null : stillGood(key)
+  const cached = options.fresh ? null : stillGood(key, workspaceId)
   if (cached) {
     // A server's answer is shared between workspaces, and its citations sit in what was around the rows.
     keepCitations(workspaceId, cached.meta)
@@ -252,14 +254,32 @@ function builtInContext(hosts: string[], workspace: string | null): BackendConte
   }
 }
 
-function stillGood(key: string): Dataset | null {
+function stillGood(key: string, workspaceId: string | null = null): Dataset | null {
   const id = cache.get(key)
   const dataset = id ? datasets.get(id) : undefined
   if (!dataset) return null
-  if (Date.now() - dataset.at <= dataset.ttlMs) return dataset
-  // Expired: nothing new is served from it, but a view may still be reading it; the sweep takes it.
+  if (isDatasetStillGood(dataset, Date.now(), workspaceRefreshedAt(workspaceId))) return dataset
+  // Expired or older than a panel refresh on this workspace: nothing new is served from it.
   cache.delete(key)
   return null
+}
+
+function workspaceRefreshedAt(workspaceId: string | null): number | null {
+  if (!workspaceId) return null
+  try {
+    const grids = getState().grids[workspaceId]
+    if (!grids) return null
+    let latest: number | null = null
+    for (const grid of Object.values(grids)) {
+      for (const panel of grid.panels) {
+        if (panel.refreshedAt === null || !isRefreshableView(panel)) continue
+        if (latest === null || panel.refreshedAt > latest) latest = panel.refreshedAt
+      }
+    }
+    return latest
+  } catch {
+    return null
+  }
 }
 
 /**

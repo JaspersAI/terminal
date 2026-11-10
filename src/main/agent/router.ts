@@ -1,7 +1,17 @@
 import { handedBy } from '../../shared/agent/typed'
 import { asksForLoop, loopName, named, NO, notStarted, START, startQuestion, type Loop } from '../../shared/loops/loops'
 import { checkModel } from '../../shared/tasks/tasks'
-import { askUserFor, asWindow, closeLoop, createLoop, deleteLoop, detachTab, reopenLoop, roomForLoop } from '../actions'
+import {
+  askUserFor,
+  asWindow,
+  closeLoop,
+  createLoop,
+  deleteLoop,
+  detachTab,
+  reopenLoop,
+  roomForLoop,
+  settlePanel,
+} from '../actions'
 import { gridSizeOf } from '../grid/grid'
 import { findRoomTab } from '../loops/loops'
 import { getState, toPublic } from '../state'
@@ -74,18 +84,24 @@ const closeRoomTool: Tool = {
 const reopenRoomTool: Tool = {
   name: 'reopen_room',
   description:
-    'Reopens a room that was closed and saved in memory: its tile comes back with its views on the current tab, where it was when there is room, and its agent goes on with its conversation. When the user asks for a closed room back.',
+    'Reopens a room that was closed and saved in memory (or moves an open room from another tab onto the current tab): its tile comes back with its views on the current tab, where it was when there is room, and its agent goes on with its conversation. When the user asks for a closed room back or to bring a room from another tab onto this tab.',
   parameters: { type: 'object', properties: { room: ROOM, loop: ROOM, window: WINDOW } },
-  async run(input, { workspaceId }) {
+  async run(input, context) {
+    const { workspaceId } = context
     const wanted = asRoomArg(input)
     const state = toPublic(getState())
     const allClosed = Object.values(state.closedLoops).flat()
-    const loop = named(state.closedLoops[workspaceId] ?? [], wanted) ?? named(allClosed, wanted)
+    const otherOpen = Object.entries(state.loops)
+      .filter(([tabId]) => tabId !== workspaceId)
+      .flatMap(([, list]) => list)
+    const loop =
+      named(state.closedLoops[workspaceId] ?? [], wanted) ?? named(allClosed, wanted) ?? named(otherOpen, wanted)
     if (!loop) {
-      const have = allClosed.map((one) => loopName(one.id)).join(', ') || 'none'
+      const have = [...allClosed, ...otherOpen].map((one) => loopName(one.id)).join(', ') || 'none'
       throw new Error(`No closed room named ${JSON.stringify(wanted)}. Closed: ${have}.`)
     }
     const frame = reopenLoop(workspaceId, loop.id, input.window === undefined ? undefined : asWindow(input.window))
+    await settlePanel(workspaceId, frame.id, context.signal)
     return `Reopened ${loopName(loop.id)} in tile ${frame.id}.`
   },
 }

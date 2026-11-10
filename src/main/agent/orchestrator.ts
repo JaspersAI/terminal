@@ -5,15 +5,13 @@ import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { taskNote } from '../../shared/agent/transcript'
 import { WELCOME_PREFACE } from '../../shared/agent/welcome'
 import { EXCHANGES_MAX } from '../../shared/data/store'
-import { closedHolding } from '../../shared/loops/closed'
-import { addressed, LOOP_ID, loopName, named } from '../../shared/loops/loops'
+import { closedCallMessage } from '../../shared/loops/closed'
+import { addressed, LOOP_ID, loopName } from '../../shared/loops/loops'
 import { signsIn } from '../../shared/llm/providers'
 import type { Turn } from '../../shared/llm/llm'
 import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { answerQuestion, withoutSecretPrompts } from '../actions'
 import { recordRun } from '../data/store'
-import { getGrids } from '../grid/grid'
-import { loopsOf } from '../loops/loops'
 import { getProviderConfig } from '../secrets'
 import { getState } from '../state'
 import { expandSlash } from '../skills/skills'
@@ -212,20 +210,8 @@ export function runTaskCall(call: TaskCall, workspaceId: string): Promise<string
  * up no notice every run; null for any other call, which runs as it is.
  */
 function closedTarget(call: TaskCall, workspaceId: string): string | null {
-  if (call.tool !== 'refresh_element') return null
-  const { elementId, panelId, id } = call.input
-  const target = [elementId, panelId, id].find((v): v is string => typeof v === 'string' && v.trim() !== '')?.trim()
-  if (!target) return null
-  // Still on a grid, by its own id or as an open loop's frame: the refresh runs.
-  const loops = loopsOf(workspaceId)
-  const grids = Object.values(getGrids(workspaceId))
-  if (grids.some((grid) => grid.elements.some((e) => e.id === target) || grid.panels.some((p) => p.id === target)))
-    return null
-  if (named(loops.list, target)) return null
-  const closed = closedHolding(loops, target)
-  if (!closed) return null
-  const name = loopName(closed.loop.id)
-  return `Skipped: ${target} is in ${name}, which is closed. It refreshes again once ${name} is reopened from Rooms.`
+  const state = getState()
+  return closedCallMessage(call, workspaceId, state.grids, state.loops)
 }
 
 /**
