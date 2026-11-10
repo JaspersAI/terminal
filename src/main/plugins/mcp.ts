@@ -96,6 +96,34 @@ export function connect(id: string, retry = 0): Promise<void> {
 }
 
 /**
+ * Waits for in-flight connection handshakes (either the named `ids` or every connection currently
+ * connecting, bounded by `timeoutMs`) so a plugin backend calling `ctx.tools.list()` at launch does
+ * not read an empty tool list while local MCP servers are still completing their startup handshake.
+ */
+export async function waitForConnecting(ids?: readonly string[], timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const pending =
+      ids && ids.length > 0
+        ? ids.map((id) => connecting.get(id)).filter((p): p is Promise<void> => p !== undefined)
+        : [...connecting.values()]
+    const remaining = deadline - Date.now()
+    if (pending.length === 0 || remaining <= 0) return
+    let timer: NodeJS.Timeout | undefined
+    const limit = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, remaining)
+      timer.unref?.()
+    })
+    try {
+      await Promise.race([Promise.allSettled(pending), limit])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+    if (Date.now() >= deadline) return
+  }
+}
+
+/**
  * Re-establishes a connection when no attempt is already under way and the stale client (if named)
  * has not already been replaced by another caller's reconnect. When called for an already-errored
  * connection (`stale` omitted), respects the sleep/wake grace window and the retry cooldown so

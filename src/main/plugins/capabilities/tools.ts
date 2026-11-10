@@ -18,6 +18,8 @@ export interface ToolsDeps {
     args: Record<string, unknown>,
     opts: { signal: AbortSignal; timeoutMs: number },
   ): Promise<unknown>
+  /** Waits for pending startup plugin builds and in-flight connection handshakes to settle. */
+  settle?(connections?: readonly string[]): Promise<void>
   /** Asks the user for a connection's missing key and waits; throws when they do not give it. */
   ask?(connection: string): Promise<void>
 }
@@ -29,9 +31,14 @@ const TEXT_MAX = 100_000
 export function createTools(deps: ToolsDeps) {
   const lastPolled = new Map<string, string>()
 
-  const pick = (raw: unknown): ConnectionInfo[] => {
+  const wantedIds = (raw: unknown): string[] | undefined => {
     const filter = record(raw)['connections']
-    const wanted = Array.isArray(filter) ? new Set(filter.filter((c): c is string => typeof c === 'string')) : null
+    return Array.isArray(filter) ? filter.filter((c): c is string => typeof c === 'string') : undefined
+  }
+
+  const pick = (raw: unknown): ConnectionInfo[] => {
+    const list = wantedIds(raw)
+    const wanted = list ? new Set(list) : null
     return Object.values(deps.connections()).filter((c) => wanted === null || wanted.has(c.id))
   }
 
@@ -39,8 +46,9 @@ export function createTools(deps: ToolsDeps) {
   // on it waits for the key instead of starting without the connection's tools and its server's guide.
   // Asking for everything names nothing, and holds nothing up. A refusal leaves the connection as it is.
   const askNamed = async (raw: unknown): Promise<void> => {
-    const filter = record(raw)['connections']
-    if (!deps.ask || !Array.isArray(filter)) return
+    await deps.settle?.(wantedIds(raw))
+    const filter = wantedIds(raw)
+    if (!deps.ask || !filter) return
     for (const c of Object.values(deps.connections())) {
       if (filter.includes(c.id) && c.status === 'needs-secret') await deps.ask(c.id).catch(() => undefined)
     }
@@ -84,10 +92,15 @@ export function createTools(deps: ToolsDeps) {
         }
       }
       const parsedArgs = record(args)
+      const connectionId = id.slice(0, slash)
+      const toolName = id.slice(slash + 1)
+      if (!deps.connections()[connectionId] || deps.connections()[connectionId]?.status === 'connecting') {
+        await deps.settle?.([connectionId])
+      }
       const isAgentsPoll = id === 'agents/research/status' || id === 'agents/research/documents'
       const pollKey = isAgentsPoll ? `${id}\n${stableStringify(parsedArgs)}` : null
       try {
-        const result = (await deps.call(id.slice(0, slash), id.slice(slash + 1), parsedArgs, {
+        const result = (await deps.call(connectionId, toolName, parsedArgs, {
           signal,
           timeoutMs: CALL_TIMEOUT_MS,
         })) as {

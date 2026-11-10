@@ -51,6 +51,8 @@ const codeChanged = new Set<string>()
 const buildQueue = createPluginBuildQueue({ build, remove })
 /** Last good build output per plugin so unchanged watcher rescans do not bump version or restart hosts. */
 const lastBuilt = new Map<string, { dir: string; code: string; bundle: string; stamp: string; shell: boolean }>()
+/** Active plugin builds, so a plugin backend asking for connections at startup waits for sibling plugins to register theirs. */
+const inFlightBuilds = new Set<Promise<void>>()
 let checkingUpdates: Promise<void> | null = null
 let updatesStarted = false
 
@@ -68,6 +70,26 @@ export function startPlugins(): void {
   startPluginUpdates()
 }
 
+/** Waits for any currently running plugin builds to finish registering their connections. */
+export async function waitForPluginBuilds(timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (inFlightBuilds.size > 0) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return
+    let timer: NodeJS.Timeout | undefined
+    const limit = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, remaining)
+      timer.unref?.()
+    })
+    try {
+      await Promise.race([Promise.allSettled([...inFlightBuilds]), limit])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+    if (Date.now() >= deadline) return
+  }
+}
+
 /** Where the built browser bundle for a plugin goes. Stage 4 serves it to the iframe from here. */
 export function bundlePath(id: string): string {
   return path.join(app.getPath('userData'), 'cache', 'plugins', id, 'bundle.js')
@@ -78,7 +100,11 @@ export function bundlePath(id: string): string {
  * registered before and says why, since a half-written file is the usual reason to be here.
  */
 function load(id: string, dir: string, fromWatch = false): Promise<void> {
-  return buildQueue.load(id, dir, fromWatch)
+  const task = buildQueue.load(id, dir, fromWatch).finally(() => {
+    inFlightBuilds.delete(task)
+  })
+  inFlightBuilds.add(task)
+  return task
 }
 
 async function build(id: string, dir: string, fromWatch = false): Promise<void> {

@@ -20,7 +20,8 @@ import { askForMissingSecret } from '../actions'
 import { hasShellApproval } from './shell-approval'
 import { createTools } from './capabilities/tools'
 import { jaspersHome } from '../home'
-import { call as callTool } from './mcp'
+import { call as callTool, waitForConnecting } from './mcp'
+import { waitForPluginBuilds } from './plugins'
 import { complete } from '../llm/llm'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { clearLive, deleteLive, hasLive, setLive } from './live'
@@ -544,7 +545,15 @@ function serve(host: Host, capabilities: Capability[]): void {
         : undefined
     return llm.complete(params, signal, stream)
   })
-  const tools = createTools({ connections: () => getState().connections, call: callTool, ask: askForMissingSecret })
+  const tools = createTools({
+    connections: () => getState().connections,
+    call: callTool,
+    settle: async (ids) => {
+      await waitForPluginBuilds()
+      await waitForConnecting(ids)
+    },
+    ask: askForMissingSecret,
+  })
   rpc.handle('tools.connections', (params) => {
     need('tools')
     return tools.connections(params)
