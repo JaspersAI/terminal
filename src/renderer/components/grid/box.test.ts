@@ -14,6 +14,7 @@ import {
   boxSent,
   boxSettled,
   canZoomLoop,
+  hasResearchRoom,
   IDLE_BOX,
   shouldReadTileBox,
   tileBoxExpanded,
@@ -350,4 +351,21 @@ test('a tile box summarizes attached_file blocks in sent and heard questions', (
   assert.equal(sentRows[0]!.question, 'Analyze\n[Attached: sheet.xlsx]')
   const heardRows = boxHeard([], start('run1', 'e1', { request: prompt }), HERE)
   assert.equal(heardRows[0]!.question, 'Analyze\n[Attached: sheet.xlsx]')
+})
+
+test('a tile holding a research/room view keeps its box folded so only the research room thread is shown', () => {
+  assert.equal(hasResearchRoom([{ elementId: 'e2', content: { kind: 'view', view: 'research/room' } }]), true)
+  assert.equal(
+    hasResearchRoom([{ elementId: 'e2', content: { kind: 'view', view: 'research/room' } }], new Set(['e2'])),
+    false,
+  )
+  assert.equal(hasResearchRoom([{ elementId: 'e2', content: { kind: 'view', view: 'tradingview/chart' } }]), false)
+
+  // Even if the box opened while the tile was empty and working, landing research/room folds it and keeps it folded.
+  let box = tileBoxSeen(IDLE_BOX, { empty: true, working: true, researchRoom: false })
+  assert.equal(box.expanded, true)
+  box = tileBoxSeen(box, { empty: false, working: true, researchRoom: true })
+  assert.equal(box.expanded, false)
+  box = tileBoxSeen({ ...box, expanded: true }, { empty: false, working: false, researchRoom: true })
+  assert.equal(box.expanded, false)
 })

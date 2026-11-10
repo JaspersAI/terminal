@@ -11,7 +11,7 @@
 import type { Turn } from '../llm/llm'
 // The extension is explicit because Node's test runner resolves this import at run time.
 import { stripSkillContent } from '../skills/skills.ts'
-import { stripAttachedFiles } from './attachments.ts'
+import { shownQuestion, stripAttachedFiles } from './attachments.ts'
 
 /** The line under which a user's turn holds what the assistant wrote for a piece of work. */
 export const HANDED =
@@ -81,4 +81,14 @@ export interface Handed {
 export function handedBy(asked: string | undefined, task: string | undefined, written: string | undefined): Handed {
   if (task === undefined) return { typed: asked, written }
   return { written: [asked, written].filter(Boolean).join('\n\n'), task }
+}
+
+/**
+ * What a tile's run and failure log show as asked: the user's own question when they typed one, else
+ * what was written for the work (such as a scheduled task's instructions).
+ */
+export function shownRequest(input: string, written?: string): string {
+  const fromUser = shownQuestion(stripSkillContent(input)).trim()
+  if (fromUser) return fromUser
+  return shownQuestion(stripSkillContent(written ?? input))
 }

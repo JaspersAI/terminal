@@ -109,6 +109,20 @@ export function boxActivity(list: readonly LiveExchange[]): Activity | null {
 export interface TileState {
   empty: boolean
   working: boolean
+  researchRoom?: boolean
+}
+
+/** Whether a tile holds a drawn research/room view, whose own thread is the room's single conversation. */
+export function hasResearchRoom(
+  panels: readonly { elementId: string; content: { kind: string; view?: string } }[],
+  undrawn?: ReadonlySet<string>,
+): boolean {
+  return panels.some(
+    (panel) =>
+      (undrawn === undefined || !undrawn.has(panel.elementId)) &&
+      panel.content.kind === 'view' &&
+      panel.content.view === 'research/room',
+  )
 }
 
 /** A tile as it is born, with no view and nothing running: what a box takes its tile for before it has seen it. */
@@ -119,9 +133,12 @@ export const BORN: TileState = { empty: true, working: false }
  * run begins in a tile with no view yet, so what the work is doing is what the tile shows, and folds
  * as the first view lands, which is what the tile is for. Between those the user has it: folded by
  * hand it stays folded while the run goes on, and open when the run ends with no view it stays open
- * on the reply. A tile seen first with a run already in flight opens as one whose run just began.
+ * on the reply. A tile seen first with a run already in flight opens as one whose run just began. A
+ * tile holding a research/room view keeps its box folded, since the research room view is the single
+ * thread.
  */
 export function boxOpens(was: TileState, now: TileState): boolean | null {
+  if (now.researchRoom) return false
   if (was.empty && !now.empty) return false
   if (now.empty && now.working && !(was.empty && was.working)) return true
   return null
@@ -311,7 +328,11 @@ export function tileBoxExpanded(box: TileBox, expanded: boolean): TileBox {
 }
 
 export function tileBoxSeen(box: TileBox, now: TileState): TileBox {
-  if (box.seen.empty === now.empty && box.seen.working === now.working) return box
+  const same =
+    box.seen.empty === now.empty &&
+    box.seen.working === now.working &&
+    Boolean(box.seen.researchRoom) === Boolean(now.researchRoom)
+  if (same && !(now.researchRoom && box.expanded)) return box
   const opens = boxOpens(box.seen, now)
   const next = { ...box, seen: now }
   return opens === null ? next : tileBoxExpanded(next, opens)

@@ -1,8 +1,8 @@
-import { shownQuestion, splitAttachments } from '../../shared/agent/attachments'
+import { splitAttachments } from '../../shared/agent/attachments'
 import { forkOf } from '../../shared/agent/fork'
 import { closeOff } from '../../shared/agent/history'
 import { failedNote, mask, STOPPED_NOTE } from '../../shared/agent/transcript'
-import { handedTurn } from '../../shared/agent/typed'
+import { handedTurn, shownRequest } from '../../shared/agent/typed'
 import type { Place } from '../../shared/agent/asking'
 import type { Turn } from '../../shared/llm/llm'
 import { signsIn } from '../../shared/llm/providers'
@@ -134,8 +134,8 @@ export async function userRequest({
     void fileExchange(chat, Date.now(), { question: input, answer: STARTED_OVER })
     return STARTED_OVER
   }
-  // What the tile and the chat's log say was asked: the assistant's words for the work when it wrote some.
-  const shown = shownQuestion(written ?? input)
+  // What the tile and the chat's log say was asked: the user's own question when they typed one, else what was written for the work.
+  const shown = shownRequest(input, written)
   const entry = begin(
     task === undefined ? 'user' : 'task',
     workspaceId,

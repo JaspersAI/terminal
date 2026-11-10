@@ -29,7 +29,7 @@ import { useAppState } from '../../lib/state'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
 import { loopTitle, showsChat } from '../../../shared/loops/loops'
-import { barLabel, boxActivity, canZoomLoop, tileBoxSeen } from './box'
+import { barLabel, boxActivity, canZoomLoop, hasResearchRoom, tileBoxSeen } from './box'
 import { LoopBox, updateTileBox, useTileBox } from './LoopBox'
 import { LoopMenu } from './LoopMenu'
 import { Held } from './Held'
@@ -167,6 +167,13 @@ export function ElementFrame({
     if (need) setSetAside((had) => new Set(had).add(need.name))
   }, [need])
   const empty = frame && !grid.elements.some((e) => e.parent === element.id && !undrawn.has(e.id))
+  const researchRoom = useMemo(
+    () =>
+      frame
+        ? hasResearchRoom(layoutOf(grid, element.id).panels, undrawn)
+        : panel !== undefined && hasResearchRoom([panel]),
+    [frame, grid, element.id, undrawn, panel],
+  )
   const label = frame ? (loop ? `${called}, ${loop.desc}` : '') : title
   const minimized = element.mode === 'minimized'
   const zoom = elementZoom(element)
@@ -183,13 +190,13 @@ export function ElementFrame({
   // What the work is doing. A tile whose box asks for what a view waits on is asking, whatever its runs are doing.
   const doing = useLoopStatus(workspaceId, element.loop)
   const status = need ? 'asking' : doing
-  const said = loop ? barLabel(status, activity, chat || earlier.length > 0) : null
+  const said = loop ? barLabel(status, activity, !researchRoom && (chat || earlier.length > 0)) : null
   // The box opens itself as the bar says a run is at work in a tile with no view yet, and folds as the
   // first view lands: between those it is the user's. The tile as the box last saw it, born empty and idle.
   const working = said?.kind === 'working'
   useEffect(() => {
-    updateTileBox(place, (current) => tileBoxSeen(current, { empty, working }))
-  }, [place, empty, working])
+    updateTileBox(place, (current) => tileBoxSeen(current, { empty, working, researchRoom }))
+  }, [place, empty, working, researchRoom])
   // A minimized tile is as tall as its bar, so its menu cannot be drawn inside it: it hangs below.
   const hangs = minimized && menu
 
@@ -494,6 +501,7 @@ export function ElementFrame({
             label={label}
             called={called}
             chat={chat}
+            expandable={!researchRoom}
             covered={covered || minimized}
             fills={empty}
             need={need}

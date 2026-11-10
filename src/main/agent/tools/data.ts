@@ -4,6 +4,7 @@ import { readInput, readMcpCall } from '../../../shared/data/arguments'
 import { QUERY_LIMIT_DEFAULT, QUERY_LIMIT_MAX } from '../../../shared/data/store'
 import { findConnectionTool, resolveConnectionSource, sourceParameters } from '../../../shared/data/tool-parameters'
 import { MCP_SOURCE } from '../../../shared/plugins/apps'
+import { normalizeResearchPostArgs, RESEARCH_POST_SOURCE } from '../../../shared/plugins/live'
 import { appOf, showApp } from '../../plugins/apps'
 import { allSources, getSource, type RegisteredSource } from '../../plugins/registry'
 import { runSource } from '../../data/sources'
@@ -166,7 +167,7 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
         required: ['source'],
       },
       /** Runs a source with normalized input, returning its text and dataset metadata and showing a loop app when available. */
-      async run(input, { workspaceId, signal, unread, loop }) {
+      async run(input, { workspaceId, signal, unread, loop, asked }) {
         const id = asPathString(input.source).trim()
         const source = find(id)
         const { plugin, connection } = source
@@ -178,10 +179,11 @@ export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
             : Object.keys(topLevel).length > 0
               ? readInput(topLevel, source.id, state.connections)
               : {}
-        const args =
+        const rawArgs =
           rawInput !== undefined && Object.keys(topLevel).length > 0
             ? readInput({ ...topLevel, ...parsedInput }, source.id, state.connections)
             : parsedInput
+        const args = source.id === RESEARCH_POST_SOURCE ? normalizeResearchPostArgs(rawArgs, asked) : rawArgs
         if (source.id === MCP_SOURCE) {
           const target = readMcpCall(args, state.connections).connection
           if (state.connections[target]?.internal)

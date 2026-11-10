@@ -1257,5 +1257,8 @@ test('a loop agent is told to equip research/room analysts with needed ready con
     assert.match(rules, /research\/room/)
     assert.match(rules, /earningscall\/server/)
     assert.match(rules, /research\/save-analyst/)
+    assert.match(rules, /research\/post/)
+    assert.match(rules, /context/)
   }
+  assert.match(ROUTER_RULES, /single thread/)
 })
