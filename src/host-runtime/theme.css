@@ -283,3 +283,12 @@
 .jp-math-matrix-left td {
   text-align: left;
 }
+
+.rs-process {
+  padding-bottom: 12px;
+}
+
+.rs-thread .rs-you .rs-meta > .rs-muted,
+.rs-thread details.rs-trail {
+  display: none;
+}

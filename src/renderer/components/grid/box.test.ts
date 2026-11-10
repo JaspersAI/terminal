@@ -14,6 +14,7 @@ import {
   boxSent,
   boxSettled,
   canZoomLoop,
+  hasResearchRoom,
   IDLE_BOX,
   isTitleTap,
   roomRenameChange,
@@ -396,4 +397,21 @@ test('clicking or double-clicking a room title opens rename without triggering h
   assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, ''), '')
   assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'Room 3'), '')
   assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'room_3'), '')
+})
+
+test('a tile holding a research/room view keeps its box folded so only the research room thread is shown', () => {
+  assert.equal(hasResearchRoom([{ elementId: 'e2', content: { kind: 'view', view: 'research/room' } }]), true)
+  assert.equal(
+    hasResearchRoom([{ elementId: 'e2', content: { kind: 'view', view: 'research/room' } }], new Set(['e2'])),
+    false,
+  )
+  assert.equal(hasResearchRoom([{ elementId: 'e2', content: { kind: 'view', view: 'tradingview/chart' } }]), false)
+
+  // Even if the box opened while the tile was empty and working, landing research/room folds it and keeps it folded.
+  let box = tileBoxSeen(IDLE_BOX, { empty: true, working: true, researchRoom: false })
+  assert.equal(box.expanded, true)
+  box = tileBoxSeen(box, { empty: false, working: true, researchRoom: true })
+  assert.equal(box.expanded, false)
+  box = tileBoxSeen({ ...box, expanded: true }, { empty: false, working: false, researchRoom: true })
+  assert.equal(box.expanded, false)
 })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Turn } from '../llm/llm'
-import { HANDED, handedBy, handedTurn, ranByUser, saidByUser, typedPart, writtenPart } from './typed.ts'
+import { HANDED, handedBy, handedTurn, ranByUser, saidByUser, shownRequest, typedPart, writtenPart } from './typed.ts'
 
 const user = (text: string): Turn => ({ role: 'user', text })
 const assistant = (text: string): Turn => ({ role: 'assistant', text, toolCalls: [], raw: null })
@@ -119,4 +119,18 @@ test('what an attached file holds never passes for what the user typed, even whe
   const handed = user(handedTurn(`Check my notes.\n\n${attached}`, 'Summarize the notes.'))
   assert.equal(saidByUser([handed], 'Check my notes.'), true)
   assert.equal(saidByUser([handed], 'sk-file-99999999'), false)
+})
+
+test('shownRequest prefers the user’s typed question over assistant handoff instructions and falls back to written for tasks', () => {
+  assert.equal(
+    shownRequest(
+      'Find access to the 2027 FLWS investor presentation and summarize it.',
+      'Do not just pass the question blindly to Basic Analyst. First, retrieve the presentation yourself.',
+    ),
+    'Find access to the 2027 FLWS investor presentation and summarize it.',
+  )
+  assert.equal(
+    shownRequest('', 'Refresh the Bloomberg browser view and summarize new headlines.'),
+    'Refresh the Bloomberg browser view and summarize new headlines.',
+  )
 })

@@ -3,8 +3,10 @@ import { test } from 'node:test'
 import {
   checkLiveKey,
   checkLiveValue,
+  cleanResearchThreadStatus,
   liveKeyOf,
   normalizeAgentsLiveSet,
+  normalizeResearchPostArgs,
   researchLiveText,
   researchRoomOf,
 } from './live.ts'
@@ -268,4 +270,52 @@ test('normalizeAgentsLiveSet preserves signedIn and company statuses across back
       value: { signedIn: true, status: 'needs-sign-in', error: null },
     },
   )
+})
+
+test('normalizeResearchPostArgs keeps the user question in text and moves multi-line agent dumps or handoff notes into context', () => {
+  assert.deepEqual(
+    normalizeResearchPostArgs(
+      {
+        room: 'room_84',
+        text: 'Synthesize the presentation:\n- Slide 21: Gross Profit Margin 37.5%\n- Slide 22: Adjusted EBITDA $2.9M',
+        to: ['basic'],
+      },
+      'Find access to the 2027 FLWS investor presentation — can you parse it, analyze and summarize for me?',
+    ),
+    {
+      room: 'room_84',
+      text: 'Find access to the 2027 FLWS investor presentation — can you parse it, analyze and summarize for me?',
+      to: ['basic'],
+      context: 'Synthesize the presentation:\n- Slide 21: Gross Profit Margin 37.5%\n- Slide 22: Adjusted EBITDA $2.9M',
+    },
+  )
+  assert.deepEqual(
+    normalizeResearchPostArgs(
+      {
+        room: 'room_84',
+        text: 'What is the gross margin trend?',
+        to: ['basic'],
+      },
+      'ask Basic Analyst what is the gross margin trend?',
+    ),
+    {
+      room: 'room_84',
+      text: 'What is the gross margin trend?',
+      to: ['basic'],
+    },
+  )
+})
+
+test('cleanResearchThreadStatus strips turn counters in the chat thread and restores them in the Process view', () => {
+  assert.deepEqual(cleanResearchThreadStatus('working · turn 6', false), {
+    text: 'working',
+    processStatus: 'working · turn 6',
+  })
+  assert.deepEqual(cleanResearchThreadStatus('working', true, 'working · turn 6'), {
+    text: 'working · turn 6',
+    processStatus: 'working · turn 6',
+  })
+  assert.deepEqual(cleanResearchThreadStatus('10:42 PM', false, 'working · turn 6'), {
+    text: '10:42 PM',
+  })
 })

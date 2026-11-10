@@ -2,6 +2,7 @@
 // rules both ends check: what a key looks like, how large a value may be, and how a view names one.
 // Pure; the store itself is main's.
 
+import { shownRequest, typedPart, writtenPart } from '../agent/typed.ts'
 import type { Panel, PanelContent } from '../grid/grid.ts'
 
 /** One megabyte of JSON. Past it, a value belongs in several keys or in a file. */
@@ -12,7 +13,63 @@ const SEGMENT = /^[A-Za-z0-9._-]+$/
 export const RESEARCH_PLUGIN = 'research'
 export const RESEARCH_ROOM_VIEW = 'research/room'
 export const RESEARCH_THREAD_SOURCE = 'research/thread'
+export const RESEARCH_POST_SOURCE = 'research/post'
 export const AGENTS_PLUGIN = 'agents'
+
+/**
+ * Normalizes `research/post` arguments so the user's question stays clean in `text` while any
+ * handoff block or multi-line notes extracted by the room agent move into `context`.
+ */
+const WORKING_TURN = /^working\s*·\s*turn\s+\d+$/i
+
+/**
+ * Strips technical turn counters (`working · turn N`) from an analyst status label in the chat
+ * thread while preserving them for the separate Process view.
+ */
+export function cleanResearchThreadStatus(
+  text: string,
+  showProcess: boolean,
+  savedProcessStatus?: string,
+): { text: string; processStatus?: string } {
+  const trimmed = text.trim()
+  if (WORKING_TURN.test(trimmed)) {
+    return {
+      text: showProcess ? trimmed : 'working',
+      processStatus: trimmed,
+    }
+  }
+  if (trimmed === 'working' && savedProcessStatus) {
+    return {
+      text: showProcess ? savedProcessStatus : 'working',
+      processStatus: savedProcessStatus,
+    }
+  }
+  return { text }
+}
+
+export function normalizeResearchPostArgs(args: Record<string, unknown>, asked?: string): Record<string, unknown> {
+  const rawText = typeof args['text'] === 'string' ? args['text'].trim() : ''
+  if (!rawText) return args
+  const rawContext = typeof args['context'] === 'string' ? args['context'].trim() : ''
+  const beforeHanded = typedPart(rawText).trim()
+  const handedNotes = writtenPart(rawText)?.trim() ?? ''
+  let text = beforeHanded || handedNotes
+  const cleanAsked = asked ? shownRequest(typedPart(asked)).trim() : ''
+  let movedNotes = beforeHanded ? handedNotes : ''
+  if (
+    cleanAsked &&
+    text !== cleanAsked &&
+    (text.includes('\n') || text.length > Math.max(cleanAsked.length * 2, 240))
+  ) {
+    movedNotes = [text, movedNotes].filter(Boolean).join('\n\n')
+    text = cleanAsked
+  }
+  const context = [movedNotes, rawContext].filter(Boolean).join('\n\n')
+  if (text === args['text'] && (!context || context === args['context'])) return args
+  const next: Record<string, unknown> = { ...args, text }
+  if (context) next['context'] = context
+  return next
+}
 
 /** Whether any conversation published in `entries` (`chat/<id>`) holds one or more messages. */
 function hasLoadedAgentsConversation(entries: ReadonlyMap<string, unknown>): boolean {

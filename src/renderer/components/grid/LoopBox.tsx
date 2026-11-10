@@ -109,6 +109,8 @@ interface Props {
   chat: boolean
   /** Whether the tile's workspace tab is the active tab in this window. */
   active?: boolean
+  /** False when the tile's view is itself the room's single thread (research/room), so the box stays a compact input bar. */
+  expandable?: boolean
   /** True while another element is maximized over the tile: nothing in the box can be read then. */
   covered: boolean
   /** True while the tile has no view in it yet: with nothing to make room for, what the box shows open is the tile. */
@@ -153,6 +155,7 @@ export function LoopBox({
   called,
   chat,
   active = true,
+  expandable = true,
   covered,
   fills,
   need,
@@ -167,13 +170,14 @@ export function LoopBox({
     updateTileBox(place, (b) => {
       const sentBox = tileBoxSent(b, place, ask, questionText)
       const settledBox = tileBoxSettled(sentBox, ask, msg, null)
-      return tileBoxExpanded(settledBox, true)
+      return tileBoxExpanded(settledBox, expandable)
     })
     void window.app?.agent?.logExchange?.(questionText, msg, loop.id).catch(() => undefined)
   })
   const drop = useFileDrop(attachments.attach)
   const tileBox = useTileBox(place)
-  const { expanded: open, draft, live, earlier, more, scrollTop } = tileBox
+  const { expanded, draft, live, earlier, more, scrollTop } = tileBox
+  const open = expandable && expanded
   const onScrollTopChange = useCallback(
     (nextScrollTop: number | null) => {
       updateTileBox(place, (b) => tileBoxScrolled(b, nextScrollTop))
@@ -389,22 +393,24 @@ export function LoopBox({
               </button>
             )}
           </div>
-          <button
-            type="button"
-            id={active ? `loop-expand-${elementId}` : undefined}
-            data-loop-expand
-            aria-expanded={open}
-            aria-controls={active ? `loop-box-${elementId}` : undefined}
-            aria-label={open ? 'Fold the conversation' : 'Open the conversation'}
-            title={open ? 'Collapse conversation' : 'Expand conversation'}
-            onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
-            style={zoom !== 1 ? { width: `${1.25 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
-            className="flex h-6 w-5 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
-              {open ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
-            </svg>
-          </button>
+          {expandable && (
+            <button
+              type="button"
+              id={active ? `loop-expand-${elementId}` : undefined}
+              data-loop-expand
+              aria-expanded={open}
+              aria-controls={active ? `loop-box-${elementId}` : undefined}
+              aria-label={open ? 'Fold the conversation' : 'Open the conversation'}
+              title={open ? 'Collapse conversation' : 'Expand conversation'}
+              onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
+              style={zoom !== 1 ? { width: `${1.25 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
+              className="flex h-6 w-5 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+                {open ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
+              </svg>
+            </button>
+          )}
         </form>
       )}
       {open && (
