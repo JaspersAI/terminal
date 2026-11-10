@@ -2,6 +2,7 @@ import { post, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
 import { getAttachedImages } from '../agent/attachments.ts'
 import { INSTRUCTIONS, LARGE, WHOLE_MAX as ASIDE_WHOLE_MAX } from '../../shared/agent/aside.ts'
+import { trimToolCalls } from '../../shared/agent/rounds.ts'
 import { added } from '../../shared/agent/transcript.ts'
 import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
@@ -353,7 +354,10 @@ async function send(
         for await (const payload of sse(config, url, requestHeaders, streamed, options.timeoutMs, options.signal)) {
           sawFrame = true
           const parsed = event(payload)
-          if (parsed) reader.push(parsed)
+          if (parsed) {
+            reader.push(parsed)
+            if (reader.looping()) break
+          }
         }
         return readAnthropic(reader.done())
       } catch (err) {
@@ -384,19 +388,25 @@ async function send(
  * streamed path assembles the same blocks from its deltas and reads them here.
  */
 export function readAnthropic(data: AnthropicResponse): Completion {
-  const content = data.content ?? []
-  return {
-    text: content
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text ?? '')
-      .join(''),
-    toolCalls: content
+  const rawContent = data.content ?? []
+  const trimmed = trimToolCalls(
+    rawContent
       .filter((b) => b.type === 'tool_use')
       .map((b) => ({
         id: b.id ?? '',
         name: b.name ?? '',
         input: isRecord(b.input) ? b.input : {},
+        block: b,
       })),
+  )
+  const keptBlocks = new Set(trimmed.map((t) => t.block))
+  const content = rawContent.filter((b) => b.type !== 'tool_use' || keptBlocks.has(b))
+  return {
+    text: content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text ?? '')
+      .join(''),
+    toolCalls: trimmed.map(({ id, name, input }) => ({ id, name, input })),
     stopReason: data.stop_reason ?? '',
     usage: readUsage(data.usage ?? {}),
     raw: content,
@@ -428,15 +438,18 @@ export function anthropicStream(
   onCall?: (name: string) => void,
 ): {
   push: (event: Record<string, unknown>) => void
+  looping: () => boolean
   finished: () => boolean
   done: () => AnthropicResponse
 } {
   const blocks: AnthropicBlock[] = []
   const partial = new Map<number, string>()
   const openBlocks = new Set<number>()
+  let looped = false
   const reply: AnthropicResponse = { content: blocks, usage: { input_tokens: 0, output_tokens: 0 } }
   return {
     push(event) {
+      if (looped && event.type !== 'message_delta') return
       const index = typeof event.index === 'number' ? event.index : 0
       switch (event.type) {
         case 'message_start': {
@@ -473,6 +486,27 @@ export function anthropicStream(
           openBlocks.delete(index)
           const json = partial.get(index)
           if (json !== undefined && blocks[index]) blocks[index].input = parseArguments(json)
+          const closedTools = blocks
+            .map((b, idx) => ({ b, idx }))
+            .filter(({ b, idx }) => b !== undefined && b.type === 'tool_use' && !openBlocks.has(idx))
+          if (closedTools.length > 1) {
+            const parsed = closedTools.map(({ b, idx }) => ({
+              id: b.id ?? String(idx),
+              name: b.name ?? '',
+              input: isRecord(b.input) ? b.input : {},
+              idx,
+            }))
+            const trimmed = trimToolCalls(parsed)
+            if (trimmed.length < parsed.length) {
+              const keptIndices = new Set(trimmed.map((t) => t.idx))
+              for (const { idx } of closedTools) {
+                if (!keptIndices.has(idx)) delete blocks[idx]
+              }
+              openBlocks.clear()
+              reply.stop_reason ||= 'tool_use'
+              looped = true
+            }
+          }
           return
         }
         case 'message_delta': {
@@ -488,6 +522,7 @@ export function anthropicStream(
         }
       }
     },
+    looping: () => looped,
     finished: () => Boolean(reply.stop_reason) && openBlocks.size === 0,
     done() {
       // A block index nothing ever started would be a hole, which JSON.stringify writes as null.

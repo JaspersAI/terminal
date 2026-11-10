@@ -1174,3 +1174,114 @@ test('a Gemini 4 Argon stream that resets mid-thought or after finish_reason rec
     await new Promise((resolve) => server3.close(resolve))
   }
 })
+
+test('a stream that enters a runaway place_view loop after laying out a 2x2 grid stops early and keeps only the valid calls', async () => {
+  const jaspers = findProvider('llm', 'jaspers')!
+  const charts = [
+    {
+      index: 0,
+      id: 't1',
+      type: 'function',
+      function: {
+        name: 'place_view',
+        arguments: JSON.stringify({
+          rect: { x: 0, y: 0, w: 8, h: 6 },
+          state: { symbol: 'AMEX:SPY' },
+          view: 'tradingview/chart',
+        }),
+      },
+      extra_content: { google: { thought_signature: 'sig-2x2' } },
+    },
+    {
+      index: 1,
+      id: 't2',
+      type: 'function',
+      function: {
+        name: 'place_view',
+        arguments: JSON.stringify({
+          rect: { x: 8, y: 0, w: 8, h: 6 },
+          state: { symbol: 'NASDAQ:QQQ' },
+          view: 'tradingview/chart',
+        }),
+      },
+    },
+    {
+      index: 2,
+      id: 't3',
+      type: 'function',
+      function: {
+        name: 'place_view',
+        arguments: JSON.stringify({
+          rect: { x: 0, y: 6, w: 8, h: 6 },
+          state: { symbol: 'AMEX:DIA' },
+          view: 'tradingview/chart',
+        }),
+      },
+    },
+    {
+      index: 3,
+      id: 't4',
+      type: 'function',
+      function: {
+        name: 'place_view',
+        arguments: JSON.stringify({
+          rect: { x: 8, y: 6, w: 8, h: 6 },
+          state: { symbol: 'AMEX:IWM' },
+          view: 'tradingview/chart',
+        }),
+      },
+    },
+  ]
+  const server = createServer((_req, res: ServerResponse) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    for (const call of charts) {
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] } }] })}\n\n`)
+    }
+    res.write(
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 4,
+                  id: 't5',
+                  type: 'function',
+                  function: {
+                    name: 'place_view',
+                    arguments: JSON.stringify({
+                      rect: { x: 0, y: 0, w: 16, h: 12 },
+                      state: {},
+                      view: 'core/plugins',
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      })}\n\n`,
+    )
+    // Leave the response open: complete should break out of sse as soon as t5 is seen as runaway.
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    const reply = await complete(
+      { provider: jaspers, baseUrl, model: 'gemini-4-argon', token: 'tok', fetch },
+      'System',
+      [{ role: 'user', text: 'Spin up market charts.' }],
+      [GET],
+      { stream: true },
+    )
+    assert.equal(reply.stopReason, 'tool_calls')
+    assert.deepEqual(
+      reply.toolCalls.map((c) => c.id),
+      ['t1', 't2', 't3', 't4'],
+    )
+    assert.equal(reply.raw?.length, 4)
+  } finally {
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  }
+})

@@ -1,6 +1,7 @@
 import { post, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
 import { getAttachedImages } from '../agent/attachments.ts'
+import { trimToolCalls } from '../../shared/agent/rounds.ts'
 import { marksCache } from '../../shared/llm/providers.ts'
 import type { Completion, CompleteOptions, Effort, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
@@ -96,7 +97,10 @@ export async function openai(
           for await (const payload of sse(config, url, requestHeaders, streamed, options.timeoutMs, options.signal)) {
             sawFrame = true
             const parsed = event(payload)
-            if (parsed) reader.push(parsed)
+            if (parsed) {
+              reader.push(parsed)
+              if (reader.looping()) break
+            }
           }
           return readOpenai(reader.done())
         } catch (err) {
@@ -219,17 +223,26 @@ function extraOf(raw: unknown[] | null, id: string): { extra_content?: unknown }
 export function readOpenai(data: OpenAiResponse): Completion {
   const choice = data.choices?.[0]
   const message = choice?.message ?? {}
-  const calls = message.tool_calls ?? []
+  const rawCalls = message.tool_calls ?? []
+  const trimmed = trimToolCalls(
+    rawCalls.map((c) => ({
+      id: c.id,
+      name: c.function.name,
+      input: parseArguments(c.function.arguments),
+      raw: c,
+    })),
+  )
+  const calls = trimmed.map((c) => c.raw)
   const input = data.usage?.prompt_tokens ?? 0
   const completion = data.usage?.completion_tokens ?? 0
   const reasoning = data.usage?.completion_tokens_details?.reasoning_tokens ?? 0
   const fromTotal = data.usage?.total_tokens !== undefined ? Math.max(0, data.usage.total_tokens - input) : 0
   return {
     text: message.content ?? '',
-    toolCalls: calls.map((c) => ({
-      id: c.id,
-      name: c.function.name,
-      input: parseArguments(c.function.arguments),
+    toolCalls: trimmed.map(({ id, name, input: parsedInput }) => ({
+      id,
+      name,
+      input: parsedInput,
     })),
     stopReason: choice?.finish_reason ?? '',
     usage: {
@@ -256,16 +269,19 @@ export function openaiStream(
   onThinking?: (delta: string) => void,
 ): {
   push: (event: Record<string, unknown>) => void
+  looping: () => boolean
   finished: () => boolean
   done: () => OpenAiResponse
 } {
   let content = ''
   let finish = ''
+  let looped = false
   let usage: OpenAiResponse['usage']
   const calls = new Map<number, { id: string; name: string; arguments: string; extra?: unknown }>()
   return {
     push(event) {
       if (isRecord(event.usage)) usage = event.usage as OpenAiResponse['usage']
+      if (looped) return
       const choice = Array.isArray(event.choices) ? event.choices[0] : undefined
       if (!isRecord(choice)) return
       if (typeof choice.finish_reason === 'string' && choice.finish_reason) finish = choice.finish_reason
@@ -291,7 +307,34 @@ export function openaiStream(
         if (raw.extra_content !== undefined) call.extra = raw.extra_content
         calls.set(index, call)
       }
+      if (calls.size > 1) {
+        const sorted = [...calls.entries()].sort(([a], [b]) => a - b)
+        const completed: [number, { id: string; name: string; arguments: string; extra?: unknown }][] = []
+        for (const entry of sorted) {
+          const [, c] = entry
+          if (c.name === '' || c.arguments.trim() === '' || !validArguments(c.arguments)) break
+          completed.push(entry)
+        }
+        if (completed.length > 1) {
+          const parsed = completed.map(([idx, c]) => ({
+            id: c.id || String(idx),
+            name: c.name,
+            input: parseArguments(c.arguments),
+            idx,
+          }))
+          const trimmed = trimToolCalls(parsed)
+          if (trimmed.length < parsed.length) {
+            const keptIndices = new Set(trimmed.map((c) => c.idx))
+            for (const [idx] of sorted) {
+              if (!keptIndices.has(idx)) calls.delete(idx)
+            }
+            finish ||= 'tool_calls'
+            looped = true
+          }
+        }
+      }
     },
+    looping: () => looped,
     finished: () =>
       finish !== '' &&
       (finish !== 'tool_calls' || calls.size > 0) &&

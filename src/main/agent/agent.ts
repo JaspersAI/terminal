@@ -1,6 +1,13 @@
 import { READ_AGAIN, startOf } from '../../shared/agent/aside'
 import { dayOf, overBudget } from '../../shared/agent/budget'
-import { afterRound, handoffReply, MAX_ROUNDS, shouldDeferForAdded } from '../../shared/agent/rounds'
+import {
+  afterRound,
+  handoffReply,
+  keepRawCalls,
+  MAX_ROUNDS,
+  shouldDeferForAdded,
+  trimToolCalls,
+} from '../../shared/agent/rounds'
 import {
   canCompletePartially,
   canRestateCut,
@@ -17,6 +24,7 @@ import type { Completion, Turn } from '../../shared/llm/llm'
 import { recordUsage, spentToday } from '../data/store'
 import { isLlmSleeping } from '../llm/http'
 import type { ProviderConfig } from '../secrets'
+import { placementGrid } from './tools/grid'
 import type { Tool, ToolContext } from './tools/types'
 import { runCalls } from './utils/calls'
 import { asRun } from './utils/record'
@@ -291,6 +299,13 @@ async function loop({
         if (citations.length > 0 && !quiet) emit({ kind: 'citations', runId: entry.runId, citations })
         if (spent) outOfRounds?.()
         return text
+      }
+      if (reply.toolCalls.length > 1) {
+        const trimmed = trimToolCalls(reply.toolCalls, placementGrid(context))
+        if (trimmed.length < reply.toolCalls.length) {
+          const keptIds = new Set(trimmed.map((call) => call.id))
+          reply = { ...reply, toolCalls: trimmed, raw: keepRawCalls(reply.raw, keptIds) }
+        }
       }
       const earlierTurns = history.slice()
       history.push({ role: 'assistant', text: reply.text, toolCalls: reply.toolCalls, raw: reply.raw })
