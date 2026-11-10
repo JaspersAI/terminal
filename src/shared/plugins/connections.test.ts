@@ -355,6 +355,40 @@ test('isStaleHttpSession detects expired or broken Streamable HTTP sessions whil
   assert.equal(isStaleHttpSession(new Error('Unknown ticker symbol'), http), false)
   assert.equal(isStaleHttpSession(httpError(404, 'Session not found'), stdio), false)
   assert.equal(isStaleHttpSession(new TypeError('fetch failed'), stdio), false)
+
+  // Offline DNS/network failures and sleep/wake auth holds are not stale HTTP sessions and must not tear down a ready client.
+  const dnsCause = Object.assign(new Error('getaddrinfo ENOTFOUND account.jsprai.com'), { code: 'ENOTFOUND' })
+  assert.equal(isStaleHttpSession(new TypeError('fetch failed', { cause: dnsCause }), http), false)
+  assert.equal(
+    isStaleHttpSession(new Error('fetch failed', { cause: new TypeError('fetch failed', { cause: dnsCause }) }), http),
+    false,
+  )
+  assert.equal(
+    isStaleHttpSession(new Error('fetch failed (fetch failed (getaddrinfo ENOTFOUND account.jsprai.com))'), http),
+    false,
+  )
+  assert.equal(
+    isStaleHttpSession(
+      new TypeError('fetch failed', {
+        cause: Object.assign(new Error('getaddrinfo EAI_AGAIN s.jsprai.com'), { code: 'EAI_AGAIN' }),
+      }),
+      http,
+    ),
+    false,
+  )
+  assert.equal(
+    isStaleHttpSession(
+      new TypeError('fetch failed', {
+        cause: Object.assign(new Error('connect ENETUNREACH 3.19.30.251:443'), { code: 'ENETUNREACH' }),
+      }),
+      http,
+    ),
+    false,
+  )
+  assert.equal(
+    isStaleHttpSession(new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.'), http),
+    false,
+  )
 })
 
 test('shouldPublishConnecting keeps ready connections ready and errored connections in error during background retries', () => {

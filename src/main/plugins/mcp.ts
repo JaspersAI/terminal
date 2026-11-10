@@ -569,10 +569,16 @@ async function asked<T>(
   send: (client: Client) => Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
+  let sentToClient = false
   const once = async (current: Live): Promise<T> => {
-    if (spec.auth !== 'oauth') return send(current.client)
+    sentToClient = false
+    const callClient = (): Promise<T> => {
+      sentToClient = true
+      return send(current.client)
+    }
+    if (spec.auth !== 'oauth') return callClient()
     try {
-      const attempt = () => sentAgainIfRefused(() => send(current.client))
+      const attempt = () => sentAgainIfRefused(callClient)
       if (!current.viaJaspers) return await attempt()
       try {
         return await callAsAccount(attempt)
@@ -601,7 +607,8 @@ async function asked<T>(
     if (
       signal?.aborted ||
       waits(getState().connections[id]?.status) ||
-      (!isStaleHttpSession(err, spec) && !(spec.url && (connecting.has(id) || clients.get(id) !== live)))
+      (!(sentToClient && isStaleHttpSession(err, spec)) &&
+        !(spec.url && (connecting.has(id) || clients.get(id) !== live)))
     ) {
       throw err
     }
