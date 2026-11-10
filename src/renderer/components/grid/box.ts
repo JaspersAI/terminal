@@ -251,6 +251,8 @@ export interface TileBox {
   more: boolean
   /** Where the reader scrolled in the conversation when off its end, or null while following the bottom. */
   scrollTop: number | null
+  /** Vertical share (`[0, 1]`) of the scalable space below the command line given to the open conversation drawer, or null for the default `max-h-1/2` cap. */
+  split: number | null
 }
 
 export const IDLE_BOX: TileBox = {
@@ -262,6 +264,7 @@ export const IDLE_BOX: TileBox = {
   read: false,
   more: true,
   scrollTop: null,
+  split: null,
 }
 
 export function placeKey(place: Place): string {
@@ -380,9 +383,38 @@ export function tileBoxSettled(box: TileBox, ask: string, reply: string, error: 
 }
 
 export function tileBoxExpanded(box: TileBox, expanded: boolean): TileBox {
-  if (box.expanded === expanded) return box
+  const split = box.split === 0 ? null : box.split
+  if (box.expanded === expanded && box.split === split) return box
   const unread = over(box.live).size > 0
-  return { ...box, expanded, ...(unread ? { read: false } : {}) }
+  return { ...box, expanded, split, ...(unread ? { read: false } : {}) }
+}
+
+/** Toggles the conversation drawer via the caret button; if dragged to 0%, restores the default drawer height in one click. */
+export function tileBoxToggled(box: TileBox): TileBox {
+  if (box.expanded && box.split === 0) return { ...box, split: null }
+  return tileBoxExpanded(box, !box.expanded)
+}
+
+/** Clamps a pointer Y position between the command line's bottom (`top`) and the tile body's bottom (`bottom`) to a `[0, 1]` split ratio. */
+export function loopBoxSplit(clientY: number, top: number, bottom: number): number {
+  const span = bottom - top
+  if (!Number.isFinite(span) || span <= 0) return 0
+  const raw = (clientY - top) / span
+  if (!Number.isFinite(raw)) return 0
+  return Math.min(1, Math.max(0, raw))
+}
+
+/** CSS height for an open `LoopBox` in a tile with views when resized by hand, or `undefined` when using the default class sizing (`null` or `0`). */
+export function loopBoxSplitHeight(split: number | null, barHeightPx: number): string | undefined {
+  if (split === null || split <= 0) return undefined
+  if (split >= 1) return 'calc(100% - 0.5rem)'
+  const bar = Math.max(0, Math.round(barHeightPx))
+  return `calc(${bar}px + (100% - 0.5rem - ${bar}px) * ${split})`
+}
+
+export function tileBoxSplit(box: TileBox, split: number | null): TileBox {
+  const next = split === null ? null : Math.min(1, Math.max(0, split))
+  return box.split === next ? box : { ...box, split: next }
 }
 
 export function tileBoxSeen(box: TileBox, now: TileState): TileBox {

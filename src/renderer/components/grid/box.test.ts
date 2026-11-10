@@ -16,6 +16,8 @@ import {
   canZoomLoop,
   IDLE_BOX,
   isTitleTap,
+  loopBoxSplit,
+  loopBoxSplitHeight,
   roomRenameChange,
   roomUpdatedAt,
   shouldReadTileBox,
@@ -28,6 +30,8 @@ import {
   tileBoxSeen,
   tileBoxSent,
   tileBoxSettled,
+  tileBoxSplit,
+  tileBoxToggled,
   WAITING,
   withTileBox,
   type TileBox,
@@ -426,4 +430,52 @@ test('boxHeard and boxSettled stamp completion timestamps, and roomUpdatedAt res
     roomUpdatedAt({ createdAt: 100, lastActiveAt: 250 }, [{ refreshedAt: 400 }], [{ at: 500 }], [{ at: 650 }]),
     650,
   )
+})
+
+test('a tile box clamps its conversation split from 0% to 100%, keeps it across workspace switches, and resets a 0% split when reopened', () => {
+  assert.equal(IDLE_BOX.split, null)
+  assert.equal(loopBoxSplit(100, 100, 500), 0)
+  assert.equal(loopBoxSplit(60, 100, 500), 0)
+  assert.equal(loopBoxSplit(300, 100, 500), 0.5)
+  assert.equal(loopBoxSplit(500, 100, 500), 1)
+  assert.equal(loopBoxSplit(620, 100, 500), 1)
+  assert.equal(loopBoxSplit(200, 300, 300), 0)
+
+  assert.equal(loopBoxSplitHeight(null, 24), undefined)
+  assert.equal(loopBoxSplitHeight(0, 24), undefined)
+  assert.equal(loopBoxSplitHeight(1, 24), 'calc(100% - 0.5rem)')
+  assert.equal(loopBoxSplitHeight(0.25, 24), 'calc(24px + (100% - 0.5rem - 24px) * 0.25)')
+
+  let boxes: ReadonlyMap<string, TileBox> = new Map()
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, true))
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSplit(box, 0.75))
+  assert.equal(tileBoxOf(boxes, HERE).split, 0.75)
+
+  // Unchanged split preserves reference identity; out-of-range values clamp to [0, 1].
+  const at75 = tileBoxOf(boxes, HERE)
+  assert.equal(tileBoxSplit(at75, 0.75), at75)
+  assert.equal(tileBoxSplit(at75, -0.2).split, 0)
+  assert.equal(tileBoxSplit(at75, 1.4).split, 1)
+
+  // Folding and reopening via the caret preserves a non-zero custom split across workspace switches.
+  boxes = withTileBox(boxes, HERE, tileBoxToggled)
+  assert.equal(tileBoxOf(boxes, HERE).expanded, false)
+  assert.equal(tileBoxOf(boxes, HERE).split, 0.75)
+  boxes = withTileBox(boxes, HERE, tileBoxToggled)
+  assert.equal(tileBoxOf(boxes, HERE).expanded, true)
+  assert.equal(tileBoxOf(boxes, HERE).split, 0.75)
+
+  // Dragging all the way up to 0% keeps expanded true so the boundary stays draggable, and clicking the caret reopens to default height in one click.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSplit(box, 0))
+  assert.equal(tileBoxOf(boxes, HERE).expanded, true)
+  assert.equal(tileBoxOf(boxes, HERE).split, 0)
+  boxes = withTileBox(boxes, HERE, tileBoxToggled)
+  assert.equal(tileBoxOf(boxes, HERE).expanded, true)
+  assert.equal(tileBoxOf(boxes, HERE).split, null)
+
+  // Folding explicitly from a 0% split also resets split to null so reopening later restores the default drawer height.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSplit(box, 0))
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, false))
+  assert.equal(tileBoxOf(boxes, HERE).expanded, false)
+  assert.equal(tileBoxOf(boxes, HERE).split, null)
 })
