@@ -346,7 +346,7 @@ export function LoopBox({
     setResizing(true)
 
     const applyAt = (clientY: number): void => {
-      const top = commandBar.getBoundingClientRect().bottom
+      const top = commandBar.getBoundingClientRect().bottom + 4
       const bottom = container.getBoundingClientRect().bottom - 4 - handleHeight
       const next = loopBoxSplit(clientY - grabOffset, top, bottom)
       updateTileBox(place, (b) => tileBoxSplit(b, next))
