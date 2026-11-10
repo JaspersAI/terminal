@@ -1308,3 +1308,22 @@ test('the orchestrator is told to refine and expand rough, terse, or cross-room 
   )
   assert.match(ROUTER_RULES, /unpack any referenced rooms, panels, or data first/i)
 })
+
+test('agent prompts instruct Central and room agents to include an "as of YYYY-MM-DD 10am PT" system-time stamp in responses and work product, and describeLoop includes exchange timestamps', () => {
+  for (const rules of [ROUTER_RULES, LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /as of 2026-11-10 10am PT/)
+    assert.match(rules, /system time/i)
+  }
+  const read = describeLoop(
+    tree(EMPTY_GRID),
+    WS,
+    NOTE_LOOP,
+    'idle',
+    [{ at: Date.UTC(2026, 10, 10, 18, 0, 0), question: 'how old is the summary?', answer: 'Fresh.' }],
+    () => undefined,
+  )
+  assert.match(
+    read,
+    /- asked: "how old is the summary\?"\n  when: as of 2026-11-\d{2} \d{1,2}(?::\d{2})?(?:am|pm) \S+\n  said: Fresh\./,
+  )
+})

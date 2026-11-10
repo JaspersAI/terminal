@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { useBridge, useData, usePanel, type SourceData } from '@jaspers-ai/sdk'
+import { useBridge, useData, usePanel, type PanelRef, type SourceData } from '@jaspers-ai/sdk'
 import { sqlMatchesSource } from '../../shared/data/store'
+import { formatAsOf } from '../../shared/tasks/tasks'
+import { useAppState } from '../lib/state'
 import { beginSqlRun, EMPTY_ROWS as EMPTY, sqlAfterFailure, sqlAfterResult, type Rows } from './cells'
 
 // How a generic view gets its rows. Two ways in, one shape out: a source by registry id, which is
@@ -25,6 +27,14 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
   const [fromSql, setFromSql] = useState<Rows>(EMPTY)
   const [sqlNonce, setSqlNonce] = useState(0)
   const lastSql = useRef<string | null>(null)
+  const [sourceUpdatedAt, setSourceUpdatedAt] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!source || fromSource.loading || fromSource.error) return
+    if ((fromSource.data && fromSource.data.length > 0) || fromSource.text) {
+      setSourceUpdatedAt(Date.now())
+    }
+  }, [source, fromSource.data, fromSource.text, fromSource.loading, fromSource.error])
 
   useEffect(() => {
     if (!panel || !sql || source) return
@@ -66,7 +76,7 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
     void read(sql, limit)
       .then((result) => {
         if (!live) return
-        setFromSql((previous) => sqlAfterResult(previous, result, sameSql))
+        setFromSql((previous) => sqlAfterResult(previous, result, sameSql, Date.now()))
       })
       .catch((error: unknown) => {
         if (!live) return
@@ -88,7 +98,31 @@ export function useRows({ source, args, sql, limit }: Ask): Rows {
     error: fromSource.error,
     text: fromSource.text ?? null,
     truncated: false,
+    updatedAt: sourceUpdatedAt,
   }
+}
+
+/**
+ * Resolves the formatted `as of YYYY-MM-DD <12h><am|pm> <TZ>` system-time stamp for a panel's work
+ * product from its own `refreshedAt` / `rowsUpdatedAt` and its owning room's `lastActiveAt` / `createdAt`.
+ */
+export function usePanelAsOf(panel: PanelRef, rowsUpdatedAt?: number | null): string {
+  return useAppState((s) => {
+    const grids = s.grids[panel.workspaceId] ?? {}
+    let refreshedAt = 0
+    let loopId: string | undefined
+    for (const grid of Object.values(grids)) {
+      const found = grid.panels.find((p) => p.id === panel.id)
+      if (found) {
+        refreshedAt = found.refreshedAt ?? 0
+        loopId = grid.elements.find((e) => e.id === found.elementId)?.loop
+        break
+      }
+    }
+    const loop = loopId ? s.loops[panel.workspaceId]?.find((one) => one.id === loopId) : undefined
+    const latest = Math.max(rowsUpdatedAt ?? 0, refreshedAt, loop?.lastActiveAt ?? 0, loop?.createdAt ?? 0)
+    return latest > 0 ? formatAsOf(latest) : ''
+  })
 }
 
 /** Every key any of the first rows has, in the order they first appear, so a sparse row adds nothing late. */

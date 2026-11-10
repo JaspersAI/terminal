@@ -10,6 +10,7 @@ import {
 import { ADDED } from '../../../shared/agent/agent'
 import type { Citation } from '../../../shared/agent/citations'
 import type { Exchange } from '../../../shared/agent/transcript'
+import { formatAsOf } from '../../../shared/tasks/tasks'
 import { useAppState } from '../../lib/state'
 import { ErrorText } from './ErrorText'
 import { trailOf, type LiveExchange } from './live'
@@ -217,13 +218,21 @@ const LiveRow = memo(function LiveRow({
   last: boolean
   onStop?: (ask: string) => void
 }): ReactElement {
-  const { ask, question, answer, citations, steps, thinking, working, error } = exchange
+  const { ask, question, answer, citations, steps, thinking, working, at, error } = exchange
   const stop = onStop ? () => onStop(ask) : undefined
+  const asOf = !working && at !== null ? formatAsOf(at) : ''
   return (
     <div data-live={working ? 'working' : 'over'} className="mb-5 last:mb-0">
       <Bubble id={last ? 'agent-question' : undefined} text={question} />
       {answer === null ? (
-        <Trail steps={steps} thinking={thinking} error={error} working={working} last={last} onStop={stop} />
+        <>
+          <Trail steps={steps} thinking={thinking} error={error} working={working} last={last} onStop={stop} />
+          {asOf && (
+            <p data-reply-timestamp className="mt-1 text-xs text-muted-foreground">
+              {asOf}
+            </p>
+          )}
+        </>
       ) : (
         <>
           {/* Until the run is over the trail works and Stop stays, whatever has been written under it. */}
@@ -234,6 +243,11 @@ const LiveRow = memo(function LiveRow({
             <MarkdownText source={answer} citations={citations} />
           </div>
           {error && <ErrorText text={error} className="mt-1" />}
+          {asOf && (
+            <p data-reply-timestamp className="mt-1 text-xs text-muted-foreground">
+              {asOf}
+            </p>
+          )}
         </>
       )}
     </div>
@@ -247,14 +261,20 @@ const LiveRow = memo(function LiveRow({
  * under a long conversation redraws itself, not every exchange above it.
  */
 const EarlierExchange = memo(function EarlierExchange({ exchange }: { exchange: Exchange }): ReactElement {
+  const asOf = exchange.at !== undefined ? formatAsOf(exchange.at) : ''
   return (
     <div data-earlier className="mb-5 last:mb-0">
       {exchange.task !== undefined ? (
-        <TaskReply task={exchange.task} text={exchange.answer} citations={exchange.citations} />
+        <TaskReply task={exchange.task} text={exchange.answer} citations={exchange.citations} asOf={asOf} />
       ) : exchange.welcome ? (
         // The assistant speaking unasked, with nothing over it.
         <div data-welcome className="font-prose text-prose">
           <MarkdownText source={exchange.answer} citations={exchange.citations} />
+          {asOf && (
+            <p data-reply-timestamp className="mt-1 font-sans text-xs text-muted-foreground">
+              {asOf}
+            </p>
+          )}
         </div>
       ) : (
         <>
@@ -268,6 +288,11 @@ const EarlierExchange = memo(function EarlierExchange({ exchange }: { exchange: 
             </div>
           )}
           {exchange.error && <ErrorText text={exchange.error} className="mt-1" />}
+          {asOf && (
+            <p data-reply-timestamp className="mt-1 text-xs text-muted-foreground">
+              {asOf}
+            </p>
+          )}
         </>
       )}
     </div>
@@ -278,7 +303,17 @@ const EarlierExchange = memo(function EarlierExchange({ exchange }: { exchange: 
  * What a scheduled task's run said, where it was said: no question over it, and a rule down its side
  * under the task it came from, so it reads as the assistant speaking unasked.
  */
-function TaskReply({ task, text, citations }: { task: string; text: string; citations?: Citation[] }): ReactElement {
+function TaskReply({
+  task,
+  text,
+  citations,
+  asOf,
+}: {
+  task: string
+  text: string
+  citations?: Citation[]
+  asOf?: string
+}): ReactElement {
   // What the task does says more than its id, while the task is there to ask.
   const does = useAppState((s) => s.tasks.find((t) => t.id === task)?.instructions)
   return (
@@ -290,6 +325,11 @@ function TaskReply({ task, text, citations }: { task: string; text: string; cita
       <div className="font-prose text-prose">
         <MarkdownText source={text} citations={citations} />
       </div>
+      {asOf && (
+        <p data-reply-timestamp className="mt-1 text-xs text-muted-foreground">
+          {asOf}
+        </p>
+      )}
     </div>
   )
 }

@@ -10,6 +10,7 @@ import { isSleepWakeError, TASK_EXCLUDED_TOOLS } from '../../shared/tasks/tasks'
 import { asksFor, withoutSecretPrompts } from '../actions'
 import { fileExchange } from '../data/store'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
+import { touchLoop } from '../loops/loops'
 import { expandSlash } from '../skills/skills'
 import { agentLoop, type Request, type RunPrompt, type UserTurn } from './agent'
 import { forgetApprovals } from './tools/shell'
@@ -202,6 +203,7 @@ export async function userRequest({
     emit({ kind: 'done', runId: entry.runId, text: reply })
     join(chat, config, thread, fork, era)
     file(chat, turns, stepsOf(entry.runId))
+    if (tile) touchLoop(workspaceId, tile.loop)
     return reply
   } catch (err) {
     const stopped = isStopped(entry, err)

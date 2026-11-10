@@ -3,7 +3,7 @@ import type { TerminalSession } from '../../../shared/agent/history'
 import type { Exchange } from '../../../shared/agent/transcript'
 import { CHANGE_TEXT, globalRoomLog, searchRooms, type GlobalLogEntry } from '../../../shared/loops/closed'
 import { loopTitle } from '../../../shared/loops/loops'
-import { shortLocal } from '../../../shared/tasks/tasks'
+import { formatAsOf } from '../../../shared/tasks/tasks'
 import { errorMessage } from '../../lib/errors'
 import { currentWorkspace, dispatch, useAppState } from '../../lib/state'
 import { useRequest } from '../composer/request'
@@ -87,6 +87,7 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
       .filter((one) => !one.working && (one.answer || one.error))
       .map((one, idx) => ({
         id: idx + 1,
+        ...(one.at !== null ? { at: one.at } : {}),
         question: one.question,
         answer: one.answer ?? '',
         steps: one.steps,
@@ -255,7 +256,7 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
                   key={entry.loop.id}
                   entry={entry}
                   currentTabId={workspace.id}
-                  when={(at) => shortLocal(at, now, timeZone)}
+                  when={(at) => formatAsOf(at, timeZone)}
                   onJump={() => {
                     act({ type: 'tab.select', id: entry.workspaceId })
                     onClose()
@@ -282,7 +283,7 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
                 key={session.id}
                 session={session}
                 defaultExpanded={index === 0}
-                when={(at) => shortLocal(at, now, timeZone)}
+                when={(at) => formatAsOf(at, timeZone)}
               />
             ))}
           </ol>
@@ -336,19 +337,23 @@ function SessionRow({ session, defaultExpanded, when }: SessionRowProps): ReactE
           data-session-transcript={session.id}
           className="mt-2 max-h-60 space-y-2 overflow-y-auto border border-border bg-muted/20 p-2.5 text-xs"
         >
-          {session.exchanges.map((ex, idx) => (
-            <div key={ex.id ?? idx} className="space-y-1 border-b border-border/60 pb-2 last:border-b-0 last:pb-0">
-              {ex.question && !ex.welcome && (
-                <p className="font-medium text-foreground whitespace-pre-wrap break-words">You: {ex.question}</p>
-              )}
-              {ex.steps && ex.steps.length > 0 && (
-                <p className="text-[11px] text-muted-foreground">{ex.steps.join(' · ')}</p>
-              )}
-              {(ex.answer || ex.error) && (
-                <p className="text-muted-foreground whitespace-pre-wrap break-words">{ex.answer || ex.error}</p>
-              )}
-            </div>
-          ))}
+          {session.exchanges.map((ex, idx) => {
+            const exAsOf = ex.at !== undefined ? when(ex.at) : ''
+            return (
+              <div key={ex.id ?? idx} className="space-y-1 border-b border-border/60 pb-2 last:border-b-0 last:pb-0">
+                {ex.question && !ex.welcome && (
+                  <p className="font-medium text-foreground whitespace-pre-wrap break-words">You: {ex.question}</p>
+                )}
+                {ex.steps && ex.steps.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground">{ex.steps.join(' · ')}</p>
+                )}
+                {(ex.answer || ex.error) && (
+                  <p className="text-muted-foreground whitespace-pre-wrap break-words">{ex.answer || ex.error}</p>
+                )}
+                {exAsOf && <p className="text-[11px] text-muted-foreground">{exAsOf}</p>}
+              </div>
+            )
+          })}
         </div>
       )}
     </li>

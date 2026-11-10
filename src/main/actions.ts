@@ -1162,6 +1162,8 @@ export function setPanelStateChecked(
   }
   checkState(panel.content, setIn(panel.state, path, value))
   const updated = changeGridOf(workspaceId, panel.id, (grid) => setPanelState(grid, panel.id, path, value, at)).panel
+  const owner = tileLoop(workspaceId, panel.elementId)
+  if (owner) touchLoop(workspaceId, owner, at)
   if (panel.error) syncPluginViewErrors()
   return updated
 }
@@ -1190,6 +1192,8 @@ export function editPanelStateChecked(
   checkState(panel.content, nextState)
   const stampAt = nextState.sql !== panel.state.sql || path[0] === 'sql' ? at : undefined
   const updated = changeGridOf(workspaceId, panel.id, (g) => setPanelState(g, panel.id, [], nextState, stampAt)).panel
+  const owner = tileLoop(workspaceId, panel.elementId)
+  if (owner) touchLoop(workspaceId, owner, at)
   if (panel.error) syncPluginViewErrors()
   return updated
 }
@@ -1341,6 +1345,8 @@ export function refreshChecked(workspaceId: string, panelId: string, at = Date.n
     }))
   }
   const updated = changeGridOf(workspaceId, panelId, (layout) => refreshPanel(layout, panelId, at)).panel
+  const owner = tileLoop(workspaceId, panel.elementId)
+  if (owner) touchLoop(workspaceId, owner, at)
   syncPluginViewErrors()
   return updated
 }

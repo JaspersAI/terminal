@@ -3,6 +3,7 @@ import { usePanelState, usePublish, usePublishText, type PanelRef } from '@jaspe
 import { settled } from '../../shared/agent/citations'
 import { MarkdownText } from '../components/composer/MarkdownText'
 import { hasRichNoteContent } from '../components/composer/markdown'
+import { usePanelAsOf } from './data'
 
 /**
  * The one built-in view: a square text area filling its element, or rendered Markdown and LaTeX
@@ -15,6 +16,7 @@ export function Note({ panel }: { panel: PanelRef }): ReactElement {
   const [editing, setEditing] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const rich = useMemo(() => hasRichNoteContent(settled(text)), [text])
+  const asOf = usePanelAsOf(panel)
   usePublish(panel, { text })
   usePublishText(panel, text.trim() === '' ? null : text)
 
@@ -42,6 +44,11 @@ export function Note({ panel }: { panel: PanelRef }): ReactElement {
         }}
         className="group relative h-full w-full overflow-y-auto bg-background p-3 font-prose text-prose outline-none select-text"
       >
+        {asOf && (
+          <p data-note-timestamp className="mb-2 font-sans text-xs text-muted-foreground">
+            {asOf}
+          </p>
+        )}
         <MarkdownText source={text} />
         <button
           type="button"

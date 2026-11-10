@@ -118,6 +118,7 @@ interface Props {
   /** Sets that ask aside, which shows the view as it is. */
   onSkip: () => void
   zoom?: number
+  asOf?: string
 }
 
 /**
@@ -158,6 +159,7 @@ export function LoopBox({
   need,
   onSkip,
   zoom = 1,
+  asOf = '',
 }: Props): ReactElement {
   // This tile, as the place a run shows and asks: its workspace, and its element there.
   const place = useMemo(() => ({ workspaceId, on: elementId }), [workspaceId, elementId])
@@ -410,7 +412,7 @@ export function LoopBox({
       {open && (
         <div data-room-instructions className="mt-1 shrink-0 border border-border bg-muted/20 px-2 py-1.5 text-xs">
           <div className="flex items-center justify-between gap-2">
-            <span className="font-medium text-muted-foreground">Instructions</span>
+            <span className="truncate font-medium text-muted-foreground">Instructions{asOf ? ` · ${asOf}` : ''}</span>
             {!editingInstructions && (
               <button
                 type="button"

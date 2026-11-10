@@ -30,12 +30,14 @@ import { useAppState } from '../../lib/state'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
 import { loopTitle, ROOM_TITLE_MAX, showsChat } from '../../../shared/loops/loops'
+import { formatAsOf } from '../../../shared/tasks/tasks'
 import {
   barLabel,
   boxActivity,
   canZoomLoop,
   isTitleTap,
   roomRenameChange,
+  roomUpdatedAt,
   shouldToggleHeaderMode,
   tileBoxSeen,
 } from './box'
@@ -219,6 +221,15 @@ export function ElementFrame({
   const skipNeed = useCallback(() => {
     if (need) setSetAside((had) => new Set(had).add(need.name))
   }, [need])
+  const insidePanels = useMemo(
+    () => (frame ? layoutOf(grid, element.id).panels : panel ? [panel] : []),
+    [frame, grid, element.id, panel],
+  )
+  const roomStamp = useMemo(
+    () => (loop ? roomUpdatedAt(loop, insidePanels, earlier, live) : null),
+    [loop, insidePanels, earlier, live],
+  )
+  const roomAsOf = useMemo(() => (roomStamp ? formatAsOf(roomStamp) : ''), [roomStamp])
   const empty = frame && !grid.elements.some((e) => e.parent === element.id && !undrawn.has(e.id))
   const label = frame ? (loop ? `${called}, ${loop.desc}` : '') : title
   const minimized = element.mode === 'minimized'
@@ -460,7 +471,14 @@ export function ElementFrame({
                 {called}
               </span>
             )}
-            <span className="min-w-0 flex-1 truncate">{loop.desc ? ` · ${loop.desc}` : ''}</span>
+            <span
+              data-room-header-meta
+              title={loop.desc ? `${loop.desc}${roomAsOf ? ` (${roomAsOf})` : ''}` : roomAsOf || undefined}
+              className="min-w-0 flex-1 truncate"
+            >
+              {loop.desc ? ` · ${loop.desc}` : ''}
+              {roomAsOf ? ` · ${roomAsOf}` : ''}
+            </span>
           </div>
         ) : (
           <span
@@ -633,6 +651,7 @@ export function ElementFrame({
             need={need}
             onSkip={skipNeed}
             zoom={zoom}
+            asOf={roomAsOf}
           />
         )}
         {/* With no view yet, and the box above folded, where the views will go. */}

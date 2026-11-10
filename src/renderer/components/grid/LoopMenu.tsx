@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, t
 import { endedAs, type Exchange } from '../../../shared/agent/transcript'
 import { editedInstructionsPrompt, loopTitle, type Loop } from '../../../shared/loops/loops'
 import { menuOf } from '../../../shared/loops/menu'
+import { formatAsOf } from '../../../shared/tasks/tasks'
 import { useAppState } from '../../lib/state'
 import { PAGE } from '../composer/request'
 import { sendToRoom } from './LoopBox'
@@ -350,6 +351,7 @@ function Entry({ exchange }: { exchange: Exchange }): ReactElement {
       : ended === 'stopped'
         ? 'Stopped'
         : (exchange.answer.trim().split('\n')[0] ?? '')
+  const asOf = exchange.at !== undefined ? formatAsOf(exchange.at) : ''
   return (
     <li data-exchange data-ended={ended} className="mb-2 last:mb-0">
       <p className="truncate">{exchange.question}</p>
@@ -357,6 +359,7 @@ function Entry({ exchange }: { exchange: Exchange }): ReactElement {
         <p className="truncate text-muted-foreground">{exchange.steps.join(' · ')}</p>
       )}
       <p className={`truncate ${ended === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>{how}</p>
+      {asOf && <p className="truncate text-[11px] text-muted-foreground">{asOf}</p>}
     </li>
   )
 }
