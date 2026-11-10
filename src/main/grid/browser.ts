@@ -19,6 +19,7 @@ import {
   DEFAULT_BROWSER_BOUNDS,
   DEFAULT_BROWSER_URL,
   formatBrowserPageText,
+  googleAuthUserAgent,
   isBlankBrowserPopupUrl,
   isBrowserUrl,
   isPerimeterXCookieName,
@@ -412,13 +413,13 @@ function browserWebPreferences(part: Session): WebPreferences {
 function browserSession(): Session {
   if (configuredSession) return configuredSession
   const partition = session.fromPartition(BROWSER_PARTITION)
-  const rawUa = partition.getUserAgent()
+  const fullChrome = process.versions.chrome || '136.0.0.0'
+  const electronVersion = process.versions.electron || '44.10.0'
+  const rawUa = googleAuthUserAgent(partition.getUserAgent(), electronVersion, app.getVersion())
   rawSessionUserAgent = rawUa
   const cleanUa = browserUserAgent(rawUa)
   if (cleanUa) partition.setUserAgent(cleanUa, 'en-US,en;q=0.9')
   void clearPerimeterXCookies(partition)
-  const fullChrome = process.versions.chrome || '136.0.0.0'
-  const electronVersion = process.versions.electron || '44.10.0'
   partition.webRequest.onBeforeSendHeaders((details, callback) => {
     let pageUrl =
       details.webContentsId !== undefined ? inFlightUrlsByWebContentsId.get(details.webContentsId) : undefined
@@ -655,7 +656,14 @@ function createNativeView(
   })
 
   const managed: ManagedBrowserView = {
-    loadURL: (url) => (webContents.isDestroyed() ? Promise.resolve() : webContents.loadURL(url)),
+    loadURL: (url) => {
+      if (webContents.isDestroyed()) return Promise.resolve()
+      if (isBrowserUrl(url)) {
+        inFlightUrlsByWebContentsId.set(webContents.id, url)
+        uaSync.onDidStartNavigation(url, true, false)
+      }
+      return webContents.loadURL(url)
+    },
     reload: () => {
       if (!webContents.isDestroyed()) webContents.reload()
     },

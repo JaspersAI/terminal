@@ -56,6 +56,9 @@ import {
 // The schemes a plugin view's iframe loads from have to be declared before the app is ready; their
 // handlers come after it, below.
 registerSchemes()
+// Prevent embedded browser views from advertising navigator.webdriver = true to sites such as Google Sign-In.
+app.commandLine.removeSwitch('enable-automation')
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
 
 process.on('unhandledRejection', (reason) => {
   const message = reason instanceof Error ? reason.message : String(reason)

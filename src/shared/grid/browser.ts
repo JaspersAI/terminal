@@ -168,17 +168,29 @@ export function isGoogleAuthUrl(raw: unknown): boolean {
  * `accounts.youtube.com`). Google rejects sign-in when a Chromium runtime claims to be Firefox or
  * stock desktop Chrome, and accepts Electron's native identity with matching Chromium client hints.
  */
-export function googleAuthUserAgent(baseUserAgent = '', electronVersion = '44.10.0'): string {
-  const normalized = baseUserAgent.replace(/\s+/g, ' ').trim()
+export function googleAuthUserAgent(baseUserAgent = '', electronVersion = '44.10.0', appVersion = ''): string {
+  let result = baseUserAgent.replace(/\s+/g, ' ').trim()
   const safeElectron = electronVersion.trim() || '44.10.0'
-  if (normalized) {
-    if (/\bElectron\/[^\s]+/i.test(normalized)) return normalized
-    if (/\bSafari\/[^\s]+/i.test(normalized)) {
-      return normalized.replace(/\b(Safari\/[^\s]+)/i, `Electron/${safeElectron} $1`)
+  const safeAppVersion = appVersion.trim()
+  if (result) {
+    if (safeAppVersion && !/\bjaspers[-_]?terminal\/[^\s]+/i.test(result)) {
+      if (/\bChrome\/[^\s]+/i.test(result)) {
+        result = result.replace(/\b(Chrome\/[^\s]+)/i, `jaspers-terminal/${safeAppVersion} $1`)
+      } else {
+        result = `${result} jaspers-terminal/${safeAppVersion}`
+      }
     }
-    return `${normalized} Electron/${safeElectron}`
+    if (!/\bElectron\/[^\s]+/i.test(result)) {
+      if (/\bSafari\/[^\s]+/i.test(result)) {
+        result = result.replace(/\b(Safari\/[^\s]+)/i, `Electron/${safeElectron} $1`)
+      } else {
+        result = `${result} Electron/${safeElectron}`
+      }
+    }
+    return result
   }
-  return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Electron/${safeElectron} Safari/537.36`
+  const appToken = safeAppVersion ? `jaspers-terminal/${safeAppVersion} ` : ''
+  return `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) ${appToken}Chrome/136.0.0.0 Electron/${safeElectron} Safari/537.36`
 }
 
 /** Resolves the User-Agent for a navigation target: Electron's own UA on Google sign-in hosts, cleaned Chrome elsewhere. */
