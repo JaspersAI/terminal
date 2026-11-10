@@ -2,10 +2,8 @@
 // rules both ends check: what a key looks like, how large a value may be, and how a view names one.
 // Pure; the store itself is main's.
 
-import { shownQuestion } from '../agent/attachments.ts'
-import { HANDED, typedPart } from '../agent/typed.ts'
+import { shownRequest, typedPart, writtenPart } from '../agent/typed.ts'
 import type { Panel, PanelContent } from '../grid/grid.ts'
-import { stripSkillContent } from '../skills/skills.ts'
 
 /** One megabyte of JSON. Past it, a value belongs in several keys or in a file. */
 export const LIVE_VALUE_MAX = 1024 * 1024
@@ -26,12 +24,11 @@ export function normalizeResearchPostArgs(args: Record<string, unknown>, asked?:
   const rawText = typeof args['text'] === 'string' ? args['text'].trim() : ''
   if (!rawText) return args
   const rawContext = typeof args['context'] === 'string' ? args['context'].trim() : ''
-  const handedAt = rawText.indexOf(HANDED)
-  let text = handedAt === -1 ? rawText : rawText.slice(0, handedAt).trim()
-  const handedNotes = handedAt === -1 ? '' : rawText.slice(handedAt + HANDED.length).trim()
-  if (!text && handedNotes) text = handedNotes
-  const cleanAsked = asked ? shownQuestion(stripSkillContent(typedPart(asked))).trim() : ''
-  let movedNotes = handedAt !== -1 && rawText.slice(0, handedAt).trim() ? handedNotes : ''
+  const beforeHanded = typedPart(rawText).trim()
+  const handedNotes = writtenPart(rawText)?.trim() ?? ''
+  let text = beforeHanded || handedNotes
+  const cleanAsked = asked ? shownRequest(typedPart(asked)).trim() : ''
+  let movedNotes = beforeHanded ? handedNotes : ''
   if (
     cleanAsked &&
     text !== cleanAsked &&
