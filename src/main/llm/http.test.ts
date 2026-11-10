@@ -4,7 +4,17 @@ import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
 import { isRetryable } from '../../shared/llm/limits.ts'
 import type { Provider } from '../../shared/llm/providers.ts'
-import { post, ProviderError, QUIET_MS, sse } from './http.ts'
+import {
+  isLlmSleeping,
+  post,
+  ProviderError,
+  QUIET_MS,
+  sse,
+  STREAM_QUIET_MS,
+  suspendLlm,
+  waitUntilLlmAwake,
+  wakeLlm,
+} from './http.ts'
 
 const TEST: Provider = {
   id: 'test',
@@ -79,6 +89,68 @@ test('a stream that goes quiet is given up on, and says so, even if keep-alive c
       })
     },
   )
+})
+
+test('once a stream has delivered its first data frame, mid-stream stalls time out at the tighter stream silence limit', async () => {
+  assert.equal(STREAM_QUIET_MS, 90_000)
+  await serving(
+    (res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      // First frame arrives after 80 ms (within the 300 ms initial wait), then the stream stalls.
+      const timer = setTimeout(() => {
+        res.write('data: {"n":1}\n\n')
+      }, 80)
+      res.on('close', () => clearTimeout(timer))
+    },
+    async (url) => {
+      const got: string[] = []
+      const started = Date.now()
+      await assert.rejects(async () => {
+        for await (const payload of sse(WIRE, url, {}, '{}', 300, undefined, 50)) {
+          got.push(payload)
+        }
+      }, /Test: .*nothing arrived for/)
+      const elapsed = Date.now() - started
+      assert.deepEqual(got, ['{"n":1}'])
+      assert.ok(elapsed < 260, `expected mid-stream stall to abort well before 300 ms, took ${elapsed} ms`)
+    },
+  )
+})
+
+test('suspending or waking immediately aborts in-flight streams and holds off waitUntilLlmAwake across DarkWakes', async () => {
+  try {
+    await serving(
+      (res) => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.write('data: {"n":1}\n\n')
+      },
+      async (url) => {
+        setTimeout(() => suspendLlm(), 30)
+        await assert.rejects(read(url, 5_000), /Test: .*across sleep/i)
+        assert.equal(isLlmSleeping(), true)
+      },
+    )
+
+    // A brief DarkWake that goes back to sleep before its grace window elapses keeps waitUntilLlmAwake waiting.
+    let settled = false
+    const waiting = waitUntilLlmAwake().then(() => {
+      settled = true
+    })
+    wakeLlm(80)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(settled, false)
+    suspendLlm()
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    assert.equal(settled, false)
+
+    // Once the machine wakes and stays awake past the grace window, waitUntilLlmAwake resolves.
+    wakeLlm(30)
+    await waiting
+    assert.equal(settled, true)
+    assert.equal(isLlmSleeping(), false)
+  } finally {
+    wakeLlm(0)
+  }
 })
 
 test('a post that times out waiting on headers or body rejects with a ProviderError', async () => {
@@ -182,4 +254,81 @@ test('an HTML error page from a proxy or gateway is replaced with a clean status
       },
     )
   }
+})
+
+test('a stream or post that resets before delivering a frame retries on a fresh connection, and a reset after [DONE] finishes cleanly', async () => {
+  let streamTries = 0
+  const seenConnections: Array<string | undefined> = []
+  await serving(
+    (res) => {
+      streamTries++
+      seenConnections.push(res.req.headers.connection)
+      if (streamTries === 1) {
+        res.socket?.resetAndDestroy()
+        return
+      }
+      if (streamTries === 2) {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.flushHeaders()
+        setTimeout(() => res.socket?.resetAndDestroy(), 15)
+        return
+      }
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write('data: {"n":1}\n\ndata: [DONE]')
+      setTimeout(() => res.socket?.resetAndDestroy(), 15)
+    },
+    async (url) => {
+      assert.deepEqual(await read(url, 1000), ['{"n":1}'])
+      assert.equal(streamTries, 3)
+      assert.equal(seenConnections[1], 'close')
+      assert.equal(seenConnections[2], 'close')
+    },
+  )
+
+  let postTries = 0
+  await serving(
+    (res) => {
+      postTries++
+      if (postTries === 1) {
+        res.socket?.resetAndDestroy()
+        return
+      }
+      if (postTries === 2) {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.write('{"ok":')
+        setTimeout(() => res.socket?.resetAndDestroy(), 15)
+        return
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{"ok":true}')
+    },
+    async (url) => {
+      assert.deepEqual(await post<{ ok: boolean }>(WIRE, url, {}, '{}', 1000), { ok: true })
+      assert.equal(postTries, 3)
+    },
+  )
+})
+
+test('a stream reset after a trailing data frame without a blank line yields the buffered frame before throwing', async () => {
+  await serving(
+    (res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write('data: {"n":1}\n\ndata: {"n":2}')
+      setTimeout(() => res.socket?.resetAndDestroy(), 15)
+    },
+    async (url) => {
+      const got: string[] = []
+      await assert.rejects(
+        async () => {
+          for await (const payload of sse(WIRE, url, {}, '{}', 1000)) got.push(payload)
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof ProviderError)
+          assert.equal(isRetryable(err.message), true)
+          return true
+        },
+      )
+      assert.deepEqual(got, ['{"n":1}', '{"n":2}'])
+    },
+  )
 })

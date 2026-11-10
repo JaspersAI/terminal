@@ -57,6 +57,8 @@ export interface Session {
   suspend(): void
   /** Holds off token refreshes for `graceMs` after wake while the network settles. */
   wake(graceMs?: number): void
+  /** Remaining milliseconds before token refreshes are allowed again (0 when ready, > 0 during post-wake grace, Infinity while sleeping). */
+  wakeDelayMs(): number
   /** The access token for a request made now, renewed first when it is about to run out. Rejects with `SignedOutError` when there is no sign-in. */
   token(): Promise<string>
   /** A fetch that goes out as the account: the bearer added, a 401, 402, or 403 renewed once and sent again, a refusal thrown in the service's own words. */
@@ -118,8 +120,13 @@ export function createSession(deps: SessionDeps): Session {
     wakeUntil = deps.now() + Math.max(0, graceMs)
   }
 
+  function wakeDelayMs(): number {
+    if (sleeping) return Number.POSITIVE_INFINITY
+    return Math.max(0, wakeUntil - deps.now())
+  }
+
   function asleepOrWaking(): boolean {
-    return sleeping || deps.now() < wakeUntil
+    return wakeDelayMs() > 0
   }
 
   /**
@@ -381,6 +388,7 @@ export function createSession(deps: SessionDeps): Session {
     check,
     suspend,
     wake,
+    wakeDelayMs,
     token,
     fetch: asAccount,
     call,

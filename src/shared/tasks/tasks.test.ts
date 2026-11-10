@@ -17,6 +17,7 @@ import {
   everyText,
   formatLocal,
   isDue,
+  isSleepWakeError,
   isWakeLag,
   nextAfter,
   parseAt,
@@ -26,7 +27,9 @@ import {
   RESULT_MAX,
   runNotice,
   shortLocal,
+  shouldDeferTaskRun,
   taskStatus,
+  wakeGraceDelayMs,
   wakeGrids,
   WAKE_GRACE_MS,
   type Task,
@@ -711,4 +714,44 @@ test('a task that runs every few minutes tells a failure at its second in a row,
   // Fifteen minutes is still soon enough to wait for; more is not.
   assert.equal(runNotice('t1', task({ every: 15 * 60 * S, lastRun: fine }), run), null)
   assert.equal(runNotice('t1', task({ every: 16 * 60 * S, lastRun: fine }), run), 't1 failed: fetch failed')
+})
+
+test('scheduled tasks defer during sleep and post-wake auth grace instead of failing or surfacing a notice', () => {
+  const sleepWakeMsg = 'Jaspers: Cannot refresh Jaspers sign-in while the computer is sleeping or waking.'
+  assert.equal(isSleepWakeError(sleepWakeMsg), true)
+  assert.equal(isSleepWakeError('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.'), true)
+  assert.equal(isSleepWakeError('Jaspers: fetch failed'), false)
+
+  // Wake grace delay waits for the longer of the scheduler's grace and any active auth wake hold-off, and stays infinite while sleeping.
+  assert.equal(wakeGraceDelayMs(WAKE_GRACE_MS, 0), WAKE_GRACE_MS)
+  assert.equal(wakeGraceDelayMs(WAKE_GRACE_MS, 15 * S), 15 * S)
+  assert.equal(wakeGraceDelayMs(WAKE_GRACE_MS, 2 * S), WAKE_GRACE_MS)
+  assert.equal(wakeGraceDelayMs(0, 10 * S), 10 * S)
+  assert.equal(wakeGraceDelayMs(WAKE_GRACE_MS, Number.POSITIVE_INFINITY), Number.POSITIVE_INFINITY)
+
+  // A run that hits a sleep/wake error, or finishes with an error while the scheduler is disarmed or in auth wake grace, is deferred rather than recorded as failed.
+  assert.equal(shouldDeferTaskRun({ ok: false, result: sleepWakeMsg }, { started: true, wakeDelayMs: 0 }), true)
+  assert.equal(shouldDeferTaskRun({ ok: false, result: 'fetch failed' }, { started: false, wakeDelayMs: 0 }), true)
+  assert.equal(shouldDeferTaskRun({ ok: false, result: 'fetch failed' }, { started: true, wakeDelayMs: 8 * S }), true)
+  assert.equal(
+    shouldDeferTaskRun({ ok: false, result: 'fetch failed' }, { started: true, wakeDelayMs: Number.POSITIVE_INFINITY }),
+    true,
+  )
+  assert.equal(shouldDeferTaskRun({ ok: false, result: 'fetch failed' }, { started: true, wakeDelayMs: 0 }), false)
+  assert.equal(shouldDeferTaskRun({ ok: true, result: 'done' }, { started: false, wakeDelayMs: 10 * S }), false)
+
+  // Even on consecutive failures or one-shot tasks, a sleep/wake auth deferral never surfaces a task failure notice.
+  const failed = { at: T0, ok: false, result: sleepWakeMsg, ms: 14 }
+  assert.equal(
+    runNotice('t25 on Tab 6', task({ every: null }), { ok: false, result: sleepWakeMsg, changed: false }),
+    null,
+  )
+  assert.equal(
+    runNotice('t25 on Tab 6', task({ every: 10 * MIN, lastRun: failed, history: [failed] }), {
+      ok: false,
+      result: sleepWakeMsg,
+      changed: false,
+    }),
+    null,
+  )
 })

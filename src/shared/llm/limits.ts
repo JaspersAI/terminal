@@ -1,7 +1,10 @@
 // Small rules for calls made to a provider: how many run at once, which failures deserve another
 // try and how long to wait for it, and which one means the conversation has outgrown its model. Pure.
 
-import { everyText } from '../tasks/tasks.ts'
+import { everyText, WAKE_GRACE_MS } from '../tasks/tasks.ts'
+
+/** What an in-flight provider request throws when system sleep or wake drops its socket. */
+export const SLEEP_INTERRUPTED_MESSAGE = 'connection dropped across sleep'
 
 /** Runs at most `max` of the given calls at a time; the rest wait their turn, in order. */
 export function createLimiter(max: number): <T>(run: () => Promise<T>) => Promise<T> {
@@ -23,7 +26,7 @@ export function createLimiter(max: number): <T>(run: () => Promise<T>) => Promis
 export function isRetryable(message: string): boolean {
   if (/returned (408|429|5\d\d)\b/.test(message)) return true
   if (/returned 4\d\d\b/.test(message)) return false
-  return /fetch failed|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|overloaded|nothing arrived for \d+ s|aborted due to timeout|timed out|\bterminated\b|other side closed|premature close/i.test(
+  return /fetch failed|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|across sleep|overloaded|nothing arrived for \d+ s|aborted due to timeout|timed out|\bterminated\b|other side closed|premature close/i.test(
     message,
   )
 }
@@ -43,6 +46,67 @@ export function isTurnTimeout(message: string, elapsedMs?: number): boolean {
   if (/returned 4(?!08\b)\d\d\b/.test(message) || /returned 5(?!04\b)\d\d\b/.test(message)) return false
   if (!/returned (408|504)\b|aborted due to timeout|timed out/i.test(message)) return false
   return elapsedMs === undefined || elapsedMs >= STALLED_TURN_MS
+}
+
+/**
+ * Whether a provider failure was caused by the machine sleeping across the turn rather than the
+ * model stalling while awake: an explicit sleep/wake abort, a failure while the machine is sleeping,
+ * or a turn timeout whose wall-clock duration exceeded its timeout limit by at least `WAKE_GRACE_MS`.
+ */
+export function isSleepInterrupted(message: string, elapsedMs?: number, limitMs = 300_000, sleeping = false): boolean {
+  if (/across sleep/i.test(message)) return true
+  if (!isTurnTimeout(message, elapsedMs)) return false
+  if (sleeping) return true
+  return elapsedMs !== undefined && elapsedMs >= limitMs + WAKE_GRACE_MS
+}
+
+export type RoundErrorDecision =
+  | { action: 'throw'; sleepInterrupted: boolean }
+  | { action: 'retry'; waitMs: number; waitAwake: boolean; sleepInterrupted: boolean }
+
+/**
+ * Decides whether `request` should retry a failed provider call in place or throw back to the agent
+ * loop. A sleep-interrupted turn throws at once when earlier tool rounds have already completed
+ * (`abortOnSleep`) so the run can surface partial completion without hanging across sleep; otherwise
+ * it waits for wake before retrying instead of burning a smaller-step restate. An awake turn timeout
+ * throws at once when the caller restates it (`restateOnTimeout`) and retries at most once otherwise.
+ */
+export function shouldRetryRoundError(
+  options: {
+    message: string
+    attempt: number
+    retryAfterMs: number | null
+    elapsedMs: number
+    timeoutMs?: number
+    restateOnTimeout?: boolean
+    abortOnSleep?: boolean
+    sleeping?: boolean
+  },
+  random: () => number = Math.random,
+): RoundErrorDecision {
+  const {
+    message,
+    attempt,
+    retryAfterMs,
+    elapsedMs,
+    timeoutMs = 300_000,
+    restateOnTimeout = false,
+    abortOnSleep = false,
+    sleeping = false,
+  } = options
+  const sleepInterrupted = isSleepInterrupted(message, elapsedMs, timeoutMs, sleeping)
+  if (sleepInterrupted) {
+    if (abortOnSleep) return { action: 'throw', sleepInterrupted: true }
+    const waitMs = retryWait(attempt, retryAfterMs, random)
+    if (waitMs === null) return { action: 'throw', sleepInterrupted: true }
+    return { action: 'retry', waitMs, waitAwake: true, sleepInterrupted: true }
+  }
+  if (isTurnTimeout(message, elapsedMs) && (restateOnTimeout || abortOnSleep || attempt >= 1)) {
+    return { action: 'throw', sleepInterrupted: false }
+  }
+  const waitMs = isRetryable(message) ? retryWait(attempt, retryAfterMs, random) : null
+  if (waitMs === null) return { action: 'throw', sleepInterrupted: false }
+  return { action: 'retry', waitMs, waitAwake: sleeping, sleepInterrupted: false }
 }
 
 /**

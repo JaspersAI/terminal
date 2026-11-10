@@ -34,9 +34,9 @@ import type { ConnectionInfo, ConnectionTool } from '../../shared/state'
 import { connectionsOf, getConnection, missingOf, secretValues, setInfo, statusFor } from './connections'
 import { oauthProvider } from './oauth'
 import { refreshOnce, streamableHttpFetch, type StreamableHttpOptions } from './oauth-refresh'
-import { accountAddress, asAccount, callAsAccount, signedIn } from '../jaspers/jaspers'
+import { accountAddress, asAccount, callAsAccount, jaspersWakeDelayMs, signedIn } from '../jaspers/jaspers'
 import { RefusedError, SignedOutError } from '../jaspers/session'
-import { WAKE_GRACE_MS } from '../../shared/tasks/tasks'
+import { wakeGraceDelayMs, WAKE_GRACE_MS } from '../../shared/tasks/tasks'
 import { getState } from '../state'
 
 // One MCP client per connection, and what it knows published into the tree. Everything that could
@@ -114,7 +114,7 @@ function reconnect(id: string, stale?: Live): Promise<void> {
   if (
     !shouldReconnectOnCall({
       sleeping,
-      inWakeGrace: wakeGrace !== null,
+      inWakeGrace: wakeGrace !== null || jaspersWakeDelayMs() > 0,
       nextRetry,
       lastFailedAt: failedAt.get(id) ?? null,
       now: Date.now(),
@@ -274,6 +274,8 @@ export function wakeRetries(): void {
   if (wakeGrace) clearTimeout(wakeGrace)
   for (const timer of retries.values()) clearTimeout(timer)
   retries.clear()
+  const wait = wakeGraceDelayMs(WAKE_GRACE_MS, jaspersWakeDelayMs())
+  if (!Number.isFinite(wait)) return
   wakeGrace = setTimeout(() => {
     wakeGrace = null
     const due = [...pendingRetries.entries()]
@@ -281,7 +283,7 @@ export function wakeRetries(): void {
     for (const [id, nextRetry] of due) {
       void connect(id, nextRetry).catch(() => undefined)
     }
-  }, WAKE_GRACE_MS)
+  }, wait)
   wakeGrace.unref?.()
 }
 

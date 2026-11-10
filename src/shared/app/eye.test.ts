@@ -31,6 +31,7 @@ import {
   retryDelay,
   RETRY_BASE_MS,
   RETRY_MAX_MS,
+  shouldTriggerWakeLag,
   stamp,
   type EyeFeedback,
   type QueuedBatch,
@@ -308,4 +309,39 @@ test('coalesced frame triggers keep the highest-priority reason and wait for bot
   assert.equal(captureDelay(10_000, null), CAPTURE_SETTLE_MS)
   assert.equal(captureDelay(10_000, 5_000), CAPTURE_SETTLE_MS)
   assert.equal(captureDelay(10_000, 9_500), CAPTURE_GAP_MS - 500)
+})
+
+test('shouldTriggerWakeLag fires only for an unhandled lag spike while awake', () => {
+  const thresholdMs = 5_000
+  // Below threshold or missing lag: never triggers.
+  assert.equal(
+    shouldTriggerWakeLag({ lagMax: null, thresholdMs, sleeping: false, lastWakeAt: 0, sampleSince: 10_000 }),
+    false,
+  )
+  assert.equal(
+    shouldTriggerWakeLag({ lagMax: 4_999, thresholdMs, sleeping: false, lastWakeAt: 0, sampleSince: 10_000 }),
+    false,
+  )
+
+  // Unhandled lag spike while awake: triggers.
+  assert.equal(
+    shouldTriggerWakeLag({ lagMax: 5_000, thresholdMs, sleeping: false, lastWakeAt: 0, sampleSince: 10_000 }),
+    true,
+  )
+  assert.equal(
+    shouldTriggerWakeLag({ lagMax: 600_000, thresholdMs, sleeping: false, lastWakeAt: 10_000, sampleSince: 10_000 }),
+    true,
+  )
+
+  // While suspended (e.g. a brief macOS dark wake before resume): does not trigger wakeAll.
+  assert.equal(
+    shouldTriggerWakeLag({ lagMax: 600_000, thresholdMs, sleeping: true, lastWakeAt: 0, sampleSince: 10_000 }),
+    false,
+  )
+
+  // When resume or task wake-lag already handled the wake during this metrics sample window (lastWakeAt > sampleSince): does not re-trigger.
+  assert.equal(
+    shouldTriggerWakeLag({ lagMax: 600_000, thresholdMs, sleeping: false, lastWakeAt: 25_000, sampleSince: 10_000 }),
+    false,
+  )
 })

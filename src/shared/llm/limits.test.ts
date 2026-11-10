@@ -4,11 +4,14 @@ import {
   createLimiter,
   isOverflow,
   isRetryable,
+  isSleepInterrupted,
   isTurnTimeout,
   retryAfter,
   retryLine,
   retryWait,
   RETRIES_MAX,
+  shouldRetryRoundError,
+  SLEEP_INTERRUPTED_MESSAGE,
   STALLED_TURN_MS,
 } from './limits.ts'
 
@@ -97,6 +100,86 @@ test('a turn that stalled on a silent stream or a gateway timeout is told apart 
     assert.equal(isTurnTimeout(message), false, message)
     assert.equal(isTurnTimeout(message, 125_000), false, message)
   }
+})
+
+test('a turn interrupted by system sleep or wake is told apart from an awake turn timeout', () => {
+  assert.equal(isRetryable(`Jaspers: ${SLEEP_INTERRUPTED_MESSAGE}`), true)
+  assert.equal(isSleepInterrupted(`Jaspers: ${SLEEP_INTERRUPTED_MESSAGE}`), true)
+  assert.equal(isSleepInterrupted('Jaspers: nothing arrived for 300 s', 988_927, 300_000), true)
+  assert.equal(isSleepInterrupted('Jaspers: nothing arrived for 300 s', 323_770, 300_000), true)
+  assert.equal(isSleepInterrupted('Jaspers: nothing arrived for 300 s', 300_100, 300_000, true), true)
+  assert.equal(isSleepInterrupted('Jaspers: nothing arrived for 300 s', 300_100, 300_000, false), false)
+  assert.equal(isSleepInterrupted('Jaspers: nothing arrived for 90 s', 90_050, 90_000, false), false)
+  assert.equal(isSleepInterrupted('Anthropic returned 429: rate limited', 500_000, 300_000, false), false)
+
+  // On round 1 (abortOnSleep: false), a sleep-interrupted stream retries after waiting for wake instead of throwing to restate.
+  assert.deepEqual(
+    shouldRetryRoundError(
+      {
+        message: 'Jaspers: nothing arrived for 300 s',
+        attempt: 0,
+        retryAfterMs: null,
+        elapsedMs: 988_927,
+        timeoutMs: 300_000,
+        restateOnTimeout: true,
+        abortOnSleep: false,
+      },
+      () => 0.5,
+    ),
+    { action: 'retry', waitMs: 1_500, waitAwake: true, sleepInterrupted: true },
+  )
+
+  // Once earlier tool rounds have completed (abortOnSleep: true), a sleep-interrupted stream throws at once so the loop can finish partially.
+  assert.deepEqual(
+    shouldRetryRoundError({
+      message: 'Jaspers: nothing arrived for 300 s',
+      attempt: 0,
+      retryAfterMs: null,
+      elapsedMs: 988_927,
+      timeoutMs: 300_000,
+      restateOnTimeout: true,
+      abortOnSleep: true,
+    }),
+    { action: 'throw', sleepInterrupted: true },
+  )
+
+  // An awake turn timeout throws at once when restateOnTimeout is true, and retries at most once when restateOnTimeout is false.
+  assert.deepEqual(
+    shouldRetryRoundError({
+      message: 'Jaspers: nothing arrived for 90 s',
+      attempt: 0,
+      retryAfterMs: null,
+      elapsedMs: 90_050,
+      timeoutMs: 90_000,
+      restateOnTimeout: true,
+    }),
+    { action: 'throw', sleepInterrupted: false },
+  )
+  assert.equal(
+    shouldRetryRoundError(
+      {
+        message: 'Jaspers: nothing arrived for 90 s',
+        attempt: 0,
+        retryAfterMs: null,
+        elapsedMs: 90_050,
+        timeoutMs: 90_000,
+        restateOnTimeout: false,
+      },
+      () => 0.5,
+    ).action,
+    'retry',
+  )
+  assert.deepEqual(
+    shouldRetryRoundError({
+      message: 'Jaspers: nothing arrived for 90 s',
+      attempt: 1,
+      retryAfterMs: null,
+      elapsedMs: 90_050,
+      timeoutMs: 90_000,
+      restateOnTimeout: false,
+    }),
+    { action: 'throw', sleepInterrupted: false },
+  )
 })
 
 test('each try waits about twice as long as the last, never past a minute, and then there are no more', () => {

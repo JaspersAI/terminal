@@ -6,9 +6,10 @@ import { handedTurn } from '../../shared/agent/typed'
 import type { Place } from '../../shared/agent/asking'
 import type { Turn } from '../../shared/llm/llm'
 import { signsIn } from '../../shared/llm/providers'
-import { TASK_EXCLUDED_TOOLS } from '../../shared/tasks/tasks'
+import { isSleepWakeError, TASK_EXCLUDED_TOOLS } from '../../shared/tasks/tasks'
 import { asksFor, withoutSecretPrompts } from '../actions'
 import { fileExchange } from '../data/store'
+import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { expandSlash } from '../skills/skills'
 import { agentLoop, type Request, type RunPrompt, type UserTurn } from './agent'
 import { forgetApprovals } from './tools/shell'
@@ -134,6 +135,9 @@ export async function userRequest({
     void fileExchange(chat, Date.now(), { question: input, answer: STARTED_OVER })
     return STARTED_OVER
   }
+  if (task !== undefined && jaspersWakeDelayMs() > 0) {
+    throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+  }
   // What the tile and the chat's log say was asked: the assistant's words for the work when it wrote some.
   const shown = shownQuestion(written ?? input)
   const entry = begin(
@@ -202,13 +206,18 @@ export async function userRequest({
   } catch (err) {
     const stopped = isStopped(entry, err)
     const message = err instanceof Error ? err.message : String(err)
+    const deferredTask = task !== undefined && isSleepWakeError(message)
     // What it got done before it ended stays in the thread, closed off with why, whether the user
     // stopped it or it failed: the grid keeps what its rounds did, and "try again" only makes sense to
     // a model that knows what was tried. A conversation its provider refuses outright is started over
     // with /new.
     const held = turns.includes(asked)
     if (held) {
-      closeOff(turns, stopped ? STOPPED_NOTE : failedNote(message))
+      if (deferredTask && turns[turns.length - 1] === asked) {
+        turns.pop()
+      } else {
+        closeOff(turns, stopped || deferredTask ? STOPPED_NOTE : failedNote(message))
+      }
       join(chat, config, thread, fork, era)
     }
     if (stopped) {
@@ -216,6 +225,10 @@ export async function userRequest({
       console.log('[agent] stopped')
       emit({ kind: 'stopped', runId: entry.runId })
       return ''
+    }
+    if (deferredTask) {
+      emit({ kind: 'stopped', runId: entry.runId })
+      throw err
     }
     // The chat's log keeps a failure as one: what was asked, what it did, and why it ended.
     fileFailed(chat, shown, stepsOf(entry.runId), message)

@@ -12,6 +12,7 @@ import type { Turn } from '../../shared/llm/llm'
 import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { answerQuestion, withoutSecretPrompts } from '../actions'
 import { recordRun } from '../data/store'
+import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { getProviderConfig } from '../secrets'
 import { getState } from '../state'
 import { expandSlash } from '../skills/skills'
@@ -144,6 +145,9 @@ export interface TaskRequest {
  */
 export function runTask(task: TaskRequest): Promise<string> {
   return inBackground(() => {
+    if (jaspersWakeDelayMs() > 0) {
+      throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
+    }
     // The provider stays the app's, since its key and base URL are what main holds; only the model
     // changes, so a watch can run on a cheap one, unless the provider is Jaspers, which picks its own.
     const base = configured()

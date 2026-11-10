@@ -2,10 +2,14 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Turn } from '../llm/llm.ts'
 import {
+  canCompletePartially,
   canRestateCut,
   CUT_NOTE,
   CUTS_MAX,
   cutShort,
+  PARTIAL_TIMEOUT_NOTE,
+  resolveRoundFailure,
+  RESTATED_TIMEOUT_MS,
   restate,
   TIMEOUT_NOTE,
   turnTimeoutCut,
@@ -48,8 +52,11 @@ test('a stalled turn in a tool or quiet loop is restated with a smaller-step not
     note: TIMEOUT_NOTE,
   })
   assert.match(TIMEOUT_NOTE, /smaller tool call/)
+  assert.match(TIMEOUT_NOTE, /set/)
+  assert.match(TIMEOUT_NOTE, /old and new/)
   assert.match(TIMEOUT_NOTE, /excel-export\/export-tables/)
   assert.match(TIMEOUT_NOTE, /1 or 2 tables per round with the same filename/)
+  assert.equal(RESTATED_TIMEOUT_MS, 90_000)
 
   const silent = turnTimeoutCut('Jaspers: nothing arrived for 300 s', CUTS_MAX, false, true, false)
   assert.equal(silent?.note, TIMEOUT_NOTE)
@@ -83,4 +90,88 @@ test('restate puts the round state and note on the trailing user or tool turn', 
   ]
   restate(round2, 'Your tile: e10', CUT_NOTE)
   assert.equal(toolTurn.context, `Your tile: e10\n${CUT_NOTE}`)
+})
+
+test('a non-quiet multi-step run that already completed tool calls can finish partially instead of failing the run', () => {
+  const userTurn: Turn = { role: 'user', text: 'run it again' }
+  const assistantCall: Turn = {
+    role: 'assistant',
+    text: '',
+    toolCalls: [{ id: 't1', name: 'set', input: { path: 'panels/e2/state' } }],
+    raw: null,
+  }
+  const okTool: Turn = {
+    role: 'tool',
+    results: [{ callId: 't1', output: 'ok', isError: false }],
+  }
+  const errTool: Turn = {
+    role: 'tool',
+    results: [{ callId: 't1', output: 'failed', isError: true }],
+  }
+
+  assert.equal(canCompletePartially(1, false, [userTurn], 0), false)
+  assert.equal(canCompletePartially(2, true, [userTurn, assistantCall, okTool], 0), false)
+  assert.equal(canCompletePartially(2, false, [userTurn, assistantCall, errTool], 0), false)
+  assert.equal(canCompletePartially(2, false, [userTurn, assistantCall, okTool], 0), true)
+  assert.match(PARTIAL_TIMEOUT_NOTE, /completing the steps above/)
+
+  // A sleep-interrupted turn after earlier tool rounds have completed surfaces partial completion immediately without burning cuts.
+  assert.deepEqual(
+    resolveRoundFailure({
+      message: 'Jaspers: nothing arrived for 300 s',
+      cuts: 0,
+      hasTools: true,
+      quiet: false,
+      spent: false,
+      partial: true,
+      elapsedMs: 988_927,
+      timeoutMs: 300_000,
+    }),
+    { kind: 'complete', cuts: 0, text: PARTIAL_TIMEOUT_NOTE },
+  )
+
+  // An awake timeout restates up to CUTS_MAX times, then completes partially when earlier tool rounds succeeded (or throws on round 1).
+  const firstCut = resolveRoundFailure({
+    message: 'Jaspers: nothing arrived for 90 s',
+    cuts: 0,
+    hasTools: true,
+    quiet: false,
+    spent: false,
+    partial: true,
+    elapsedMs: 90_020,
+    timeoutMs: 90_000,
+  })
+  assert.equal(firstCut.kind, 'restate')
+  assert.equal(firstCut.cuts, 1)
+
+  const afterMaxPartial = resolveRoundFailure({
+    message: 'Jaspers: nothing arrived for 90 s',
+    cuts: CUTS_MAX,
+    hasTools: true,
+    quiet: false,
+    spent: false,
+    partial: true,
+    elapsedMs: 90_020,
+    timeoutMs: 90_000,
+  })
+  assert.deepEqual(afterMaxPartial, {
+    kind: 'complete',
+    cuts: CUTS_MAX + 1,
+    text: PARTIAL_TIMEOUT_NOTE,
+  })
+
+  const afterMaxRound1 = resolveRoundFailure({
+    message: 'Jaspers: nothing arrived for 90 s',
+    cuts: CUTS_MAX,
+    hasTools: true,
+    quiet: false,
+    spent: false,
+    partial: false,
+    elapsedMs: 90_020,
+    timeoutMs: 90_000,
+  })
+  assert.deepEqual(afterMaxRound1, {
+    kind: 'throw',
+    cuts: CUTS_MAX + 1,
+  })
 })
