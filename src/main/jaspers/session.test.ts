@@ -803,8 +803,10 @@ test('an expiring token during sleep or wake grace, or a transient network drop 
     assert.equal(account.seen.discoveries, 1)
 
     // 1. Advancing past expiry while suspended or inside the post-wake grace window holds off refresh rotation.
+    assert.equal(session.wakeDelayMs(), 0)
     clock.now += 59 * 60_000
     session.suspend()
+    assert.equal(session.wakeDelayMs(), Number.POSITIVE_INFINITY)
     await session.check()
     assert.equal(account.seen.refreshes.length, 0)
     await assert.rejects(session.token(), /sleeping|waking/i)
@@ -813,7 +815,9 @@ test('an expiring token during sleep or wake grace, or a transient network drop 
     assert.equal(stored().reason, null)
 
     session.wake(15_000)
+    assert.equal(session.wakeDelayMs(), 15_000)
     clock.now += 5_000
+    assert.equal(session.wakeDelayMs(), 10_000)
     await assert.rejects(session.token(), /sleeping|waking/i)
     assert.equal(account.seen.refreshes.length, 0)
     assert.equal(session.signedIn(), true)
@@ -821,6 +825,7 @@ test('an expiring token during sleep or wake grace, or a transient network drop 
     // 2. Once the wake grace window elapses, a transient network drop fails on the idempotent discovery probe
     // before the single-use refresh token is ever sent, and session.call does not swallow the error to retry immediately.
     clock.now += 10_000
+    assert.equal(session.wakeDelayMs(), 0)
     failNextFetch = true
     await assert.rejects(
       session.call(async () => {

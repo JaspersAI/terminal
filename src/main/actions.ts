@@ -43,10 +43,22 @@ import {
   NO_LOOPS,
   withLoopFor,
   withLoopAsked,
+  withLoopTitle,
+  withLoopUpdated,
   type Loop,
+  type LoopPatch,
   type LoopSpec,
 } from '../shared/loops/loops'
-import { archiveTabRooms, closedLoop, globalSeq, reopenAcrossTabs, withoutLoop } from '../shared/loops/closed'
+import {
+  archiveTabRooms,
+  archiveTabTasks,
+  closedLoop,
+  closedWithout,
+  globalSeq,
+  reopenAcrossTabs,
+  withoutLoop,
+  withoutRoomTasks,
+} from '../shared/loops/closed'
 import { readBudget } from '../shared/agent/budget'
 import { isTheme } from '../shared/app/theme'
 import { EYE_CONSENT, readEye, readFeedbackText } from '../shared/app/eye'
@@ -176,6 +188,26 @@ const HANDLERS: Record<Action['type'], Handler> = {
     const room = asString(raw.room)
     if (!LOOP_ID.test(room)) throw new Error('room.reopen names a room by its id.')
     reopenLoop(asString(raw.workspaceId), room, raw.window === undefined ? undefined : asWindow(raw.window))
+  },
+  'loop.rename': (raw) => {
+    const loop = asString(raw.loop)
+    if (!LOOP_ID.test(loop)) throw new Error('loop.rename names a loop by its id.')
+    renameLoop(asString(raw.workspaceId), loop, asString(raw.title ?? raw.name ?? ''))
+  },
+  'room.rename': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.rename names a room by its id.')
+    renameLoop(asString(raw.workspaceId), room, asString(raw.title ?? raw.name ?? ''))
+  },
+  'loop.update': (raw) => {
+    const loop = asString(raw.loop)
+    if (!LOOP_ID.test(loop)) throw new Error('loop.update names a loop by its id.')
+    updateLoop(asString(raw.workspaceId), loop, asLoopPatch(raw))
+  },
+  'room.update': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.update names a room by its id.')
+    updateLoop(asString(raw.workspaceId), room, asLoopPatch(raw))
   },
   'element.setMode': (raw) => {
     const workspaceId = asString(raw.workspaceId)
@@ -813,14 +845,40 @@ export function deleteWorkspace(id: string): void {
     const loops = { ...state.loops }
     const closingLoops = loops[id] ?? NO_LOOPS
     delete loops[id]
-    loops[neighborId] = archiveTabRooms(closingLoops, closingGrids, id, loops[neighborId] ?? NO_LOOPS, Date.now())
+    const now = Date.now()
+    const intoLoops = loops[neighborId] ?? NO_LOOPS
+    const intoGrids = grids[neighborId] ?? {}
+    loops[neighborId] = archiveTabRooms(closingLoops, closingGrids, id, intoLoops, now, intoGrids)
+    const closedMaxSeq = (loops[neighborId]?.closed ?? []).reduce(
+      (max, c) =>
+        Math.max(
+          max,
+          ...c.elements.map((e) => Number(e.id.slice(1)) || 0),
+          ...c.panels.map((p) => Number(p.id.slice(1)) || 0),
+        ),
+      0,
+    )
+    if (closedMaxSeq > 0 && grids[neighborId]) {
+      const updatedNeighborGrids: Record<number, Grid> = {}
+      let gridChanged = false
+      for (const [win, g] of Object.entries(grids[neighborId]!)) {
+        if (g.seq < closedMaxSeq) {
+          updatedNeighborGrids[Number(win)] = { ...g, seq: closedMaxSeq }
+          gridChanged = true
+        } else {
+          updatedNeighborGrids[Number(win)] = g
+        }
+      }
+      if (gridChanged) grids[neighborId] = updatedNeighborGrids
+    }
+    const tasks = archiveTabTasks(state.tasks, closingLoops, closingGrids, id, neighborId, now, intoLoops, intoGrids)
     return {
       ...state,
       workspaces,
       currentWorkspaceId: state.currentWorkspaceId === id ? neighborId : state.currentWorkspaceId,
       grids,
       loops,
-      tasks: state.tasks.filter((t) => t.workspaceId !== id),
+      tasks,
     }
   })
 }
@@ -970,6 +1028,14 @@ export function removeChecked(workspaceId: string, elementId: string): void {
   syncPluginViewErrors()
 }
 
+/** Sets or clears a room's custom title on whichever tab holds it (open or closed). */
+export function renameLoop(workspaceId: string, loopId: string, rawTitle: string): void {
+  update((state) => {
+    const tabId = findRoomTab(state, loopId) ?? workspaceId
+    return withLoops(state, tabId, withLoopTitle(state.loops[tabId] ?? NO_LOOPS, loopId, rawTitle))
+  })
+}
+
 /** Closes a room: its frame goes, with every tile inside it, and the room is kept in memory to reopen. One that is not open is nothing to do. */
 export function closeLoop(workspaceId: string, loopId: string): void {
   const tabId = findRoomTab(getState(), loopId) ?? workspaceId
@@ -979,38 +1045,80 @@ export function closeLoop(workspaceId: string, loopId: string): void {
 
 /**
  * Reopens a closed room onto `workspaceId` in a window: the one its frame was in when that is open,
- * else the main window. Its frame comes back with the tiles that were inside it, and its conversation goes on.
+ * else the main window. When the room is currently open on another tab, closes it there first so it
+ * moves onto `workspaceId` with its tiles, conversation, and scheduled tasks.
  */
 export function reopenLoop(workspaceId: string, loopId: string, window?: number): GridElement {
   const state = getState()
   const sourceTabId = Object.keys(state.loops).find((id) => closedLoop(state.loops[id] ?? NO_LOOPS, loopId))
   const shut = sourceTabId ? closedLoop(state.loops[sourceTabId] ?? NO_LOOPS, loopId) : undefined
-  if (!shut) throw new Error(`${loopName(loopId)} is not closed.`)
-  const where = window ?? (isOpenWindow(state.windows, shut.window) ? shut.window : MAIN_WINDOW)
+  const openOtherTabId =
+    shut === undefined
+      ? Object.keys(state.loops).find(
+          (id) => id !== workspaceId && (state.loops[id]?.list ?? []).some((one) => one.id === loopId),
+        )
+      : undefined
+  const openFrame = openOtherTabId ? frameOf(state.grids[openOtherTabId] ?? {}, loopId) : undefined
+  if (!shut && !openFrame) throw new Error(`${loopName(loopId)} is not closed.`)
+  const savedWindow = shut?.window ?? openFrame!.window
+  const where = window ?? (isOpenWindow(state.windows, savedWindow) ? savedWindow : MAIN_WINDOW)
   getGrid(workspaceId, where)
   let frame: GridElement | undefined
   update((current) => {
-    const back = reopenAcrossTabs(current.grids, current.loops, workspaceId, loopId, where, Date.now())
+    const back = reopenAcrossTabs(current.grids, current.loops, workspaceId, loopId, where, Date.now(), current.tasks)
     frame = back.frame
-    return { ...current, grids: back.grids, loops: back.loops }
+    return { ...current, grids: back.grids, loops: back.loops, tasks: back.tasks }
   })
+  if (openOtherTabId && openFrame) {
+    dismissSecretRequest({ workspaceId: openOtherTabId, on: openFrame.element.id })
+    syncPluginViewErrors()
+  }
   return frame!
+}
+
+/** Updates a room's `desc`, `brief`, or `systemPrompt` across any tab. */
+export function updateLoop(workspaceId: string, loopId: string, patch: LoopPatch, now = Date.now()): void {
+  update((state) => {
+    const tabId = findRoomTab(state, loopId) ?? workspaceId
+    return withLoops(state, tabId, withLoopUpdated(state.loops[tabId] ?? NO_LOOPS, loopId, patch, now))
+  })
+}
+
+function asLoopPatch(raw: Record<string, unknown>): LoopPatch {
+  const desc = raw.desc === undefined ? undefined : asString(raw.desc)
+  const brief = raw.brief === undefined ? undefined : asString(raw.brief)
+  const systemPrompt =
+    raw.systemPrompt === undefined ? undefined : raw.systemPrompt === null ? null : asString(raw.systemPrompt)
+  return {
+    ...(desc !== undefined ? { desc } : {}),
+    ...(brief !== undefined ? { brief } : {}),
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+  }
 }
 
 /**
  * Deletes a room for good, open or closed, across any tab: an open one's frame goes, with every tile
- * inside it, and its record. What follows a room leaving the tree, its run stopped and its conversation
- * forgotten, is done where every way one goes is seen (`watchLoops`).
+ * inside it, its record, and any scheduled tasks targeting it. What follows a room leaving the tree,
+ * its run stopped and its conversation forgotten, is done where every way one goes is seen (`watchLoops`).
  */
 export function deleteLoop(workspaceId: string, loopId: string): void {
   const tabId = findRoomTab(getState(), loopId) ?? workspaceId
   const frame = frameOf(getGrids(tabId), loopId)
   if (frame) {
+    const before = getGrids(tabId)
     changeGridOf(
       tabId,
       frame.element.id,
       (grid) => removeElement(grid, frame.element.id),
-      (next) => withLoops(next, tabId, withoutLoop(next.loops[tabId] ?? NO_LOOPS, loopId)),
+      (next) => {
+        const currentLoops = next.loops[tabId] ?? NO_LOOPS
+        const afterGrids = next.grids[tabId] ?? {}
+        const closed = closedWithout(currentLoops, before, afterGrids, Date.now())
+        const shut = closedLoop(closed, loopId)
+        const tasks = shut ? withoutRoomTasks(next.tasks, shut, tabId, afterGrids) : next.tasks
+        const stripped = withLoops(next, tabId, withoutLoop(currentLoops, loopId))
+        return tasks === next.tasks ? stripped : { ...stripped, tasks }
+      },
     )
     dismissSecretRequest({ workspaceId: tabId, on: frame.element.id })
     syncPluginViewErrors()
@@ -1019,14 +1127,17 @@ export function deleteLoop(workspaceId: string, loopId: string): void {
   update((state) => {
     const nextLoops = { ...state.loops }
     let changed = false
+    let tasks = state.tasks
     for (const [id, loops] of Object.entries(state.loops)) {
+      const shut = closedLoop(loops, loopId)
+      if (shut) tasks = withoutRoomTasks(tasks, shut, id, state.grids[id])
       const stripped = withoutLoop(loops, loopId)
       if (stripped !== loops) {
         nextLoops[id] = stripped
         changed = true
       }
     }
-    return changed ? { ...state, loops: nextLoops } : state
+    return changed || tasks !== state.tasks ? { ...state, loops: nextLoops, tasks } : state
   })
 }
 
@@ -1129,6 +1240,10 @@ export function failPanelChecked(workspaceId: string, panelId: string, error: st
 
 /** How long a tool that placed or updated a view waits for its frame to report an immediate mount error or output. */
 const PANEL_SETTLE_MS = 250
+/** How long an agent-initiated `refresh_element` waits for the view's source run and publish to finish. */
+export const REFRESH_SETTLE_MS = 2_500
+/** Brief grace window after `output` settles so a companion `publishText` from the same render lands too. */
+const COMPANION_PUBLISH_GRACE_MS = 25
 
 /**
  * Gives an open window a moment to mount or re-render a view panel (or the views inside a refreshed
@@ -1136,7 +1251,12 @@ const PANEL_SETTLE_MS = 250
  * the panel when the tool answers and the round's `workspace_state` is built. Returns at once when
  * no window is showing the workspace.
  */
-export async function settlePanel(workspaceId: string, panelId: string, signal?: AbortSignal): Promise<Panel | null> {
+export async function settlePanel(
+  workspaceId: string,
+  panelId: string,
+  signal?: AbortSignal,
+  timeoutMs: number = PANEL_SETTLE_MS,
+): Promise<Panel | null> {
   const initial = readPanel(workspaceId, panelId)
   if (!initial) return null
   const targets = watchedViewPanels(initial.grid, panelId)
@@ -1144,22 +1264,45 @@ export async function settlePanel(workspaceId: string, panelId: string, signal?:
     return initial.panel
   }
   const beforeOutputs = new Map(targets.map((p) => [p.id, p.output]))
+  const beforeTexts = new Map(targets.map((p) => [p.id, p.text]))
   const needsMountSettle = targets.some(
     (p) => !(p.content.kind === 'view' && p.content.view === BROWSER_VIEW && p.output !== null),
   )
   if (needsMountSettle) {
     await new Promise<void>((resolve) => {
+      let companionTimer: NodeJS.Timeout | null = null
       const finish = (): void => {
         clearTimeout(timer)
+        if (companionTimer) clearTimeout(companionTimer)
         stop()
         signal?.removeEventListener('abort', finish)
         resolve()
       }
       const stop = subscribe(() => {
         const now = readPanel(workspaceId, panelId)
-        if (!now || panelTargetsSettled(now.grid, panelId, beforeOutputs).settled) finish()
+        if (!now) {
+          finish()
+          return
+        }
+        const status = panelTargetsSettled(now.grid, panelId, beforeOutputs, beforeTexts)
+        if (!status.settled) return
+        if (status.error) {
+          finish()
+          return
+        }
+        const currentTargets = watchedViewPanels(now.grid, panelId)
+        const bothChanged = currentTargets.every(
+          (p) => p.output !== beforeOutputs.get(p.id) && p.text !== beforeTexts.get(p.id),
+        )
+        if (bothChanged) {
+          finish()
+          return
+        }
+        if (!companionTimer) {
+          companionTimer = setTimeout(finish, COMPANION_PUBLISH_GRACE_MS)
+        }
       })
-      const timer = setTimeout(finish, PANEL_SETTLE_MS)
+      const timer = setTimeout(finish, timeoutMs)
       signal?.addEventListener('abort', finish, { once: true })
     })
   }
@@ -1171,7 +1314,7 @@ export async function settlePanel(workspaceId: string, panelId: string, signal?:
   }
   const now = readPanel(workspaceId, panelId)
   if (!now) return initial.panel
-  const { error } = panelTargetsSettled(now.grid, panelId, beforeOutputs)
+  const { error } = panelTargetsSettled(now.grid, panelId, beforeOutputs, beforeTexts)
   return error ? { ...now.panel, error } : now.panel
 }
 

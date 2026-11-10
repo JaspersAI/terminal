@@ -19,8 +19,8 @@ import {
   type Rect,
   type Size,
 } from '../../../shared/grid/grid'
-import { elementTarget, frameOf, isTile, notPlaced, refreshTarget } from '../../../shared/loops/loops'
-import { asWindow, placeChecked, refreshChecked, removeChecked, settlePanel } from '../../actions'
+import { elementTarget, frameOf, isTile, notPlaced, resolveRefreshTarget } from '../../../shared/loops/loops'
+import { asWindow, placeChecked, REFRESH_SETTLE_MS, refreshChecked, removeChecked, settlePanel } from '../../actions'
 import { loopsOf, notOwnFrame, ownTile } from '../../loops/loops'
 import {
   changeGrid,
@@ -332,14 +332,23 @@ export function gridTools(context?: ToolContext): Tool[] {
       },
       async run(input, context) {
         const { workspaceId } = context
-        const id = refreshTarget(
-          getGrids(workspaceId),
-          loopsOf(workspaceId).list,
+        const mainState = getState()
+        const resolved = resolveRefreshTarget(
+          mainState.grids,
+          mainState.loops,
+          workspaceId,
           asElementId(input.elementId, input.panelId, input.id),
+          context.loop === undefined,
         )
-        ownTile(context, id)
-        const panel = refreshChecked(workspaceId, id)
-        const settled = (await settlePanel(workspaceId, panel.id, context.signal)) ?? panel
+        ownTile(context, resolved.id)
+        const panel = refreshChecked(resolved.workspaceId, resolved.id)
+        const settled =
+          (await settlePanel(
+            resolved.workspaceId,
+            panel.id,
+            context.signal,
+            context.unread ? undefined : REFRESH_SETTLE_MS,
+          )) ?? panel
         return JSON.stringify({
           refreshed: panel.elementId,
           at: panel.refreshedAt,

@@ -93,6 +93,23 @@ export function captureDelay(
 }
 
 /**
+ * Whether a sampled event-loop lag spike in Eye's periodic metrics tick should trigger the app's
+ * wake handlers: only while the machine is not suspended, when `lagMax` meets `thresholdMs`, and
+ * when no wake handler has already run since the start of the metrics sample window (`sampleSince`).
+ */
+export function shouldTriggerWakeLag(options: {
+  lagMax: unknown
+  thresholdMs: number
+  sleeping: boolean
+  lastWakeAt: number
+  sampleSince: number
+}): boolean {
+  const { lagMax, thresholdMs, sleeping, lastWakeAt, sampleSince } = options
+  if (sleeping || typeof lagMax !== 'number' || lagMax < thresholdMs) return false
+  return lastWakeAt <= sampleSince
+}
+
+/**
  * Where a batch goes, unless `JASPERS_EYE_URL` says otherwise, and the token every copy of the app
  * sends with it. The token ships in the app, so it is not a secret and cannot be one: it keeps strays
  * and scanners out, nothing more. An install is told apart by `install`, a random id made once and

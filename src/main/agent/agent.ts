@@ -1,19 +1,21 @@
-import { startOf } from '../../shared/agent/aside'
+import { READ_AGAIN, startOf } from '../../shared/agent/aside'
 import { dayOf, overBudget } from '../../shared/agent/budget'
 import { afterRound, handoffReply, MAX_ROUNDS, shouldDeferForAdded } from '../../shared/agent/rounds'
 import {
+  canCompletePartially,
   canRestateCut,
   CUT_NOTE,
   CUT_OFF,
   CUT_TEXT_NOTE,
   CUTS_MAX,
   cutShort,
-  turnTimeoutCut,
+  resolveRoundFailure,
+  RESTATED_TIMEOUT_MS,
   windowFull,
 } from '../../shared/agent/stop'
-import { isTurnTimeout } from '../../shared/llm/limits'
 import type { Completion, Turn } from '../../shared/llm/llm'
 import { recordUsage, spentToday } from '../data/store'
+import { isLlmSleeping } from '../llm/http'
 import type { ProviderConfig } from '../secrets'
 import type { Tool, ToolContext } from './tools/types'
 import { runCalls } from './utils/calls'
@@ -150,6 +152,21 @@ async function loop({
       putAway(history, sending, log)
       const available = offered(tools(), history)
       const spent = round > most
+      const partial = canCompletePartially(round, quiet, history, sending.asked)
+      const roundTimeoutMs = cuts > 0 ? RESTATED_TIMEOUT_MS : undefined
+      const finishPartial = (text: string): string => {
+        const citations = citedBy(text, history, context.workspaceId)
+        const sources = citations.length > 0 ? { citations } : {}
+        history.push({ role: 'assistant', text, toolCalls: [], raw: null, ...sources })
+        log(`final: ${text} [partial]`)
+        if (!quiet) {
+          emit({ kind: 'round', runId: entry.runId, round })
+          emit({ kind: 'text', runId: entry.runId, delta: text })
+          if (citations.length > 0) emit({ kind: 'citations', runId: entry.runId, citations })
+        }
+        return text
+      }
+      const roundBegan = Date.now()
       let reply: Completion
       try {
         reply = await request({
@@ -163,11 +180,14 @@ async function loop({
           tell,
           shown: !quiet,
           maxTokens,
+          timeoutMs: roundTimeoutMs,
           ...(cuts > 0 ? { effort: 'low' as const } : {}),
-          restateOnTimeout: canRestateCut(available.length > 0, quiet, spent),
+          restateOnTimeout: canRestateCut(available.length > 0, quiet, spent) || partial,
+          abortOnSleep: partial,
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
+        const elapsedMs = Date.now() - roundBegan
         // A refusal that is about the thread rather than the request is mended, and asked again.
         const mendable = !signal.aborted && mends < MENDS_MAX
         if (mendable && mend(history, sending, message, tell)) {
@@ -179,16 +199,31 @@ async function loop({
         }
         // A turn that timed out (stream silence or a gateway 524/504 timeout) in a tool loop was likely
         // stalled buffering a tool call too large for one turn: tell the model what happened and ask for
-        // a smaller step at low reasoning effort instead of repeating the identical prompt 6 times.
-        const timedOut =
-          !signal.aborted && isTurnTimeout(message)
-            ? turnTimeoutCut(message, ++cuts, available.length > 0, quiet, spent)
-            : null
-        if (timedOut) {
-          tell(timedOut.tell)
-          restate(history, prompt.round(), timedOut.note)
-          round--
-          continue
+        // a smaller step at low reasoning effort instead of repeating the identical prompt 6 times. When
+        // earlier rounds have already completed tool calls and the turn was interrupted by sleep or has
+        // exhausted its restates, surface partial completion cleanly instead of failing the run.
+        if (!signal.aborted) {
+          const outcome = resolveRoundFailure({
+            message,
+            cuts,
+            hasTools: available.length > 0,
+            quiet,
+            spent,
+            partial,
+            elapsedMs,
+            timeoutMs: roundTimeoutMs,
+            sleeping: isLlmSleeping(),
+          })
+          cuts = outcome.cuts
+          if (outcome.kind === 'restate') {
+            tell(outcome.tell)
+            restate(history, prompt.round(), outcome.note)
+            round--
+            continue
+          }
+          if (outcome.kind === 'complete') {
+            return finishPartial(outcome.text)
+          }
         }
         throw err
       }
@@ -217,7 +252,10 @@ async function loop({
         // A call cut off part way has arguments that stop mid-word. It is never run, and the reply is
         // not kept: the model is told what happened and asked again. A quiet run's words are for
         // whoever asked, so a reply cut off before any call is not an answer either: it is asked again.
-        if (++cuts > CUTS_MAX) throw new Error(`${config.provider.name} kept running past its output limit.`)
+        if (++cuts > CUTS_MAX) {
+          if (partial) return finishPartial([reply.text, CUT_OFF].filter(Boolean).join('\n\n'))
+          throw new Error(`${config.provider.name} kept running past its output limit.`)
+        }
         tell(
           reply.toolCalls.length > 0
             ? 'Reply cut off in the middle of a call: nothing run, asking again'
@@ -282,7 +320,8 @@ async function loop({
       // state rides on the last turn of the round, so it is said once. A run stopped under its calls
       // takes nothing: what was added then is left for the run after it.
       const joined = signal.aborted ? [] : [...earlyJoined, ...(added?.() ?? [])]
-      const next = afterRound(round, most, limit, prompt.round(), joined.length)
+      const readingAgain = reply.toolCalls.length > 0 && reply.toolCalls.every((call) => call.name === READ_AGAIN)
+      const next = afterRound(round, most, limit, prompt.round(), joined.length, readingAgain)
       most = next.most
       history.push({ role: 'tool', results, ...(joined.length === 0 ? { context: next.riding } : {}) })
       joined.forEach((turn, at) => {

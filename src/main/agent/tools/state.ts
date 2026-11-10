@@ -2,6 +2,7 @@ import {
   formatPath,
   panelErrorAt,
   panelIn,
+  panelTextMetaAt,
   parsePath,
   readPath,
   showPathValue,
@@ -107,7 +108,7 @@ export const stateTools: Tool[] = [
     name: 'get',
     readsOnly: true,
     description:
-      "Read app state by path: panels (every panel), panels/<id> (that one panel's entry: its window, view, summary, and any runtime error), panels/<id>/state[/key…], panels/<id>/output[/key…], panels/<id>/summary, panels/<id>/text, panels/<id>/error, tasks (this workspace's, with their last runs), views, sources, connections, connections/<id>, plugins. <id> is an element id like e3 or a panel id like p3, or a connection id like plugin/name. A view's text is the whole of what it shows, like a transcript, and comes 20,000 characters at a time from offset. Other long values are cut, and say so.",
+      "Read app state by path: panels (every panel), panels/<id> (that one panel's entry: its window, view, summary, and any runtime error), panels/<id>/state[/key…], panels/<id>/output[/key…], panels/<id>/summary, panels/<id>/text, panels/<id>/error, tasks (this workspace's, with their last runs), views, sources, connections, connections/<id>, plugins. <id> is an element id like e3 or a panel id like p3, or a connection id like plugin/name. A view's text is the whole of what it shows, like a transcript, and comes 50,000 characters at a time from offset (pass the returned next offset when present). Other long values are cut, and say so.",
     parameters: {
       type: 'object',
       properties: {
@@ -149,6 +150,7 @@ export const stateTools: Tool[] = [
       ) {
         return JSON.stringify({
           path: formatPath(path),
+          ...(path.field === 'text' ? panelTextMetaAt(state, workspaceId, path) : {}),
           ...textPart(value, optional(input.offset, asOffset) ?? 0, TEXT_PAGE),
           ...(error ? { error } : {}),
         })

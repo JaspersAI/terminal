@@ -379,7 +379,13 @@ function LogRow({ entry, currentTabId, when, onJump, onClose, onReopen, onDelete
     >
       <div className="min-w-0 flex-1 text-sm">
         <p className="truncate">
-          <span className="font-medium">{loopTitle(loop.id)}</span>
+          <span className="font-medium">{loopTitle(loop)}</span>
+          {loop.title && (
+            <span className="text-muted-foreground">
+              {' · '}
+              {loopTitle(loop.id)}
+            </span>
+          )}
           <span className={open ? 'text-foreground' : 'text-muted-foreground'}>
             {' · '}
             {open ? `Open in ${workspaceName}` : 'Saved in memory'}

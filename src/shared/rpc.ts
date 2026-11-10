@@ -49,19 +49,27 @@ export function createRpc(port: RpcPort): Rpc {
     else if (typeof method === 'string') hear(method, data['params'])
   })
 
+  function tryPost(message: unknown): void {
+    try {
+      port.postMessage(message)
+    } catch {
+      // A port whose process has already gone drops best-effort replies, aborts, and notifications.
+    }
+  }
+
   async function serve(id: number, method: string, params: unknown): Promise<void> {
     const handler = handlers.get(method)
     if (!handler) {
-      port.postMessage({ id, error: { message: `Unknown method ${method}.` } })
+      tryPost({ id, error: { message: `Unknown method ${method}.` } })
       return
     }
     const controller = new AbortController()
     running.set(id, controller)
     try {
       const result = await handler(params, controller.signal)
-      if (closed === null) port.postMessage({ id, result: result === undefined ? null : result })
+      if (closed === null) tryPost({ id, result: result === undefined ? null : result })
     } catch (err) {
-      if (closed === null) port.postMessage({ id, error: { message: messageOf(err) } })
+      if (closed === null) tryPost({ id, error: { message: messageOf(err) } })
     } finally {
       running.delete(id)
     }
@@ -102,7 +110,7 @@ export function createRpc(port: RpcPort): Rpc {
         const onAbort = (): void => {
           pending.delete(id)
           const reason = reasonOf(signal!)
-          port.postMessage({ method: ABORT, params: { id, reason: reason.message } })
+          tryPost({ method: ABORT, params: { id, reason: reason.message } })
           reject(reason)
         }
         signal?.addEventListener('abort', onAbort, { once: true })
@@ -121,7 +129,7 @@ export function createRpc(port: RpcPort): Rpc {
 
     notify(method, params) {
       if (closed !== null) return
-      port.postMessage({ method, params: params === undefined ? null : params })
+      tryPost({ method, params: params === undefined ? null : params })
     },
 
     handle(method, handler) {

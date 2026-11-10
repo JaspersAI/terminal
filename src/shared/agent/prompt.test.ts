@@ -1090,6 +1090,28 @@ test('the focused tile of a piece of work is said by the work it is, since that 
     describeRound(state, WS, instructionsFor, CLOCK).split('\n')[0],
     'Focused element e1, the tile of room_1.',
   )
+  const namedLoop = { ...NOTE_LOOP, title: 'Macro Rates' }
+  const namedState = {
+    ...tree(grid),
+    loops: { [WS]: [namedLoop] },
+    closedLoops: { [WS]: [{ ...NOTE_LOOP, id: 'f2', title: 'Gold Desk', desc: 'Gold chart' }] },
+  }
+  assert.equal(
+    describeRound(namedState, WS, instructionsFor, CLOCK).split('\n')[0],
+    'Focused element e1, the tile of room_1 ("Macro Rates").',
+  )
+  assert.match(
+    describeLoops(namedState, WS, () => 'idle'),
+    /- room_1 \("Macro Rates"\), idle: "Note"\. Tile: e1\.\nClosed work, which reopen_room brings back: room_2 \("Gold Desk"\), "Gold chart"\./,
+  )
+  assert.match(
+    describeTiles(namedState, WS, namedLoop, () => undefined),
+    /^Your tile, of room_1 \("Macro Rates"\): e1 in window 1/,
+  )
+  assert.match(
+    describeLoop(namedState, WS, namedLoop, 'idle', [], () => undefined),
+    /^room_1 \("Macro Rates"\): Note\n/,
+  )
 })
 
 test("the tile primer says a piece of work's views are laid out inside its tile, on cells of its own, and says nothing of the window's cells", () => {
@@ -1258,4 +1280,19 @@ test('a loop agent is told to equip research/room analysts with needed ready con
     assert.match(rules, /earningscall\/server/)
     assert.match(rules, /research\/save-analyst/)
   }
+})
+
+test('loop rules instruct the agent to call read_again on set-aside tool results rather than guessing or attributing items from memory', () => {
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /read_again/)
+    assert.match(rules, /\[Set aside:/)
+  }
+})
+
+test('the orchestrator is told to refine and expand rough, terse, or cross-room prompts into explicit self-contained instructions when starting or updating a room', () => {
+  assert.match(
+    ROUTER_RULES,
+    /refine and expand rough, terse, voice-transcribed, or cross-room prompts into explicit, self-contained instructions/i,
+  )
+  assert.match(ROUTER_RULES, /unpack any referenced rooms, panels, or data first/i)
 })

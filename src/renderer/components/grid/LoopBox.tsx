@@ -12,7 +12,7 @@ import {
 } from 'react'
 import { askedIn, type Place } from '../../../shared/agent/asking'
 import { withAttachments } from '../../../shared/agent/attachments'
-import type { Loop } from '../../../shared/loops/loops'
+import { editedInstructionsPrompt, type Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
 import { errorMessage } from '../../lib/errors'
 import { get, subscribe as subscribeState, useAppState } from '../../lib/state'
@@ -32,12 +32,14 @@ import {
   tileBoxOf,
   tileBoxOlder,
   tileBoxRead,
+  tileBoxScrolled,
   tileBoxSent,
   tileBoxSettled,
   withTileBox,
   type TileBox,
 } from './box'
 import { Need } from './Need'
+import { send } from './send'
 
 let boxes: ReadonlyMap<string, TileBox> = new Map()
 const listeners = new Set<() => void>()
@@ -82,6 +84,19 @@ export function updateTileBox(place: Place, to: (box: TileBox) => TileBox): void
   putBoxes(withTileBox(boxes, place, to))
 }
 
+/** Sends a message to a room's agent and tracks it in the room's tile box. */
+export function sendToRoom(place: Place, loopId: string, text: string): void {
+  const trimmed = text.trim()
+  if (!trimmed) return
+  const ask = crypto.randomUUID()
+  updateTileBox(place, (b) => tileBoxSent(b, place, ask, trimmed))
+  // A request that began is ended by its run's events. What comes back here settles one that never did.
+  window.app.agent.run(trimmed, ask, loopId).then(
+    (reply) => updateTileBox(place, (b) => tileBoxSettled(b, ask, reply, null)),
+    (err: unknown) => updateTileBox(place, (b) => tileBoxSettled(b, ask, '', errorMessage(err))),
+  )
+}
+
 interface Props {
   workspaceId: string
   elementId: string
@@ -92,6 +107,8 @@ interface Props {
   called: string
   /** True for a deep research loop, whose field invites follow-up questions rather than view commands. */
   chat: boolean
+  /** Whether the tile's workspace tab is the active tab in this window. */
+  active?: boolean
   /** True while another element is maximized over the tile: nothing in the box can be read then. */
   covered: boolean
   /** True while the tile has no view in it yet: with nothing to make room for, what the box shows open is the tile. */
@@ -135,6 +152,7 @@ export function LoopBox({
   label,
   called,
   chat,
+  active = true,
   covered,
   fills,
   need,
@@ -155,15 +173,31 @@ export function LoopBox({
   })
   const drop = useFileDrop(attachments.attach)
   const tileBox = useTileBox(place)
-  const { expanded: open, draft, live, earlier, more } = tileBox
+  const { expanded: open, draft, live, earlier, more, scrollTop } = tileBox
+  const onScrollTopChange = useCallback(
+    (nextScrollTop: number | null) => {
+      updateTileBox(place, (b) => tileBoxScrolled(b, nextScrollTop))
+    },
+    [place],
+  )
   // The rows as they stand, for what happens between draws: stopping a request, reading the log.
   const now = useRef<LiveExchange[]>(live)
   now.current = live
   const [focused, setFocused] = useState(false)
+  const [editingInstructions, setEditingInstructions] = useState(false)
+  const [briefDraft, setBriefDraft] = useState(loop.brief)
+  const [systemDraft, setSystemDraft] = useState(loop.systemPrompt ?? '')
   const question = useAppState((s) => askedIn(s.questions, place))
   const secret = useAppState((s) => askedIn(s.secretRequests, place))
   const box = useRef<HTMLDivElement>(null)
   const readingOlder = useRef(false)
+
+  useEffect(() => {
+    if (!editingInstructions) {
+      setBriefDraft(loop.brief)
+      setSystemDraft(loop.systemPrompt ?? '')
+    }
+  }, [loop.brief, loop.systemPrompt, editingInstructions])
 
   const working = live.some((one) => one.working)
   const asked = question?.id ?? (secret ? `${secret.plugin}/${secret.key}` : (need?.name ?? null))
@@ -216,13 +250,22 @@ export function LoopBox({
     const text = withAttachments(draft, attachments.files)
     if (!text) return
     attachments.clear()
-    const ask = crypto.randomUUID()
-    updateTileBox(place, (b) => tileBoxSent(b, place, ask, text))
-    // A request that began is ended by its run's events. What comes back here settles one that never did.
-    window.app.agent.run(text, ask, loop.id).then(
-      (reply) => updateTileBox(place, (b) => tileBoxSettled(b, ask, reply, null)),
-      (err: unknown) => updateTileBox(place, (b) => tileBoxSettled(b, ask, '', errorMessage(err))),
-    )
+    sendToRoom(place, loop.id, text)
+  }
+
+  function saveInstructions(andRun: boolean): void {
+    send({
+      type: 'room.update',
+      workspaceId,
+      room: loop.id,
+      brief: briefDraft,
+      systemPrompt: systemDraft,
+    })
+    setEditingInstructions(false)
+    if (andRun) {
+      const prompt = editedInstructionsPrompt(briefDraft, systemDraft)
+      if (prompt) sendToRoom(place, loop.id, prompt)
+    }
   }
 
   /** Stops one request by the name it was sent under: its run, or its wait for a turn, and no other. */
@@ -242,6 +285,12 @@ export function LoopBox({
     // A question or a key field a run put up here hears its own Escape.
     if (event.key !== 'Escape' || question !== null || secret !== null) return
     event.stopPropagation()
+    if (editingInstructions) {
+      setEditingInstructions(false)
+      setBriefDraft(loop.brief)
+      setSystemDraft(loop.systemPrompt ?? '')
+      return
+    }
     if (need !== null) return onSkip()
     if (stopNewest()) return
     if (open) return updateTileBox(place, (b) => tileBoxExpanded(b, false))
@@ -251,7 +300,7 @@ export function LoopBox({
   return (
     <div
       ref={box}
-      id={`loop-box-${elementId}`}
+      id={active ? `loop-box-${elementId}` : undefined}
       data-loop-box
       data-open={open}
       // It can hold the keyboard itself, so a press on what it shows keeps the keyboard in it.
@@ -272,18 +321,22 @@ export function LoopBox({
     >
       {secret !== null ? (
         <div className="border border-border">
-          <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} />
+          <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} active={active} />
         </div>
       ) : question !== null ? (
         <div className="border border-border">
-          <QuestionField key={question.id} question={question} shown={!covered} />
+          <QuestionField key={question.id} question={question} shown={!covered} active={active} />
         </div>
       ) : need !== null ? (
         <div className="border border-border">
-          <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} />
+          <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} active={active} />
         </div>
       ) : (
-        <form id={`loop-form-${elementId}`} onSubmit={submit} className="flex shrink-0 items-center gap-1">
+        <form
+          id={active ? `loop-form-${elementId}` : undefined}
+          onSubmit={submit}
+          className="flex shrink-0 items-center gap-1"
+        >
           <div
             style={zoom !== 1 ? { height: `${1.5 * zoom}rem` } : undefined}
             className="flex h-6 min-w-0 flex-1 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground"
@@ -307,7 +360,7 @@ export function LoopBox({
               </span>
             ))}
             <input
-              id={`loop-input-${elementId}`}
+              id={active ? `loop-input-${elementId}` : undefined}
               name="loop-prompt"
               aria-label={`Message ${label}`}
               autoComplete="off"
@@ -338,10 +391,10 @@ export function LoopBox({
           </div>
           <button
             type="button"
-            id={`loop-expand-${elementId}`}
+            id={active ? `loop-expand-${elementId}` : undefined}
             data-loop-expand
             aria-expanded={open}
-            aria-controls={`loop-box-${elementId}`}
+            aria-controls={active ? `loop-box-${elementId}` : undefined}
             aria-label={open ? 'Fold the conversation' : 'Open the conversation'}
             title={open ? 'Collapse conversation' : 'Expand conversation'}
             onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
@@ -354,6 +407,100 @@ export function LoopBox({
           </button>
         </form>
       )}
+      {open && (
+        <div data-room-instructions className="mt-1 shrink-0 border border-border bg-muted/20 px-2 py-1.5 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium text-muted-foreground">Instructions</span>
+            {!editingInstructions && (
+              <button
+                type="button"
+                data-edit-instructions
+                onClick={() => {
+                  setBriefDraft(loop.brief)
+                  setSystemDraft(loop.systemPrompt ?? '')
+                  setEditingInstructions(true)
+                }}
+                className="text-muted-foreground underline hover:text-foreground"
+              >
+                {loop.brief || loop.systemPrompt ? 'Edit' : 'Add'}
+              </button>
+            )}
+          </div>
+          {editingInstructions ? (
+            <div className="mt-1.5 flex flex-col gap-1.5">
+              <label className="flex flex-col gap-0.5">
+                <span className="text-[11px] text-muted-foreground">Room brief</span>
+                <textarea
+                  data-brief-input
+                  aria-label="Room instructions"
+                  rows={3}
+                  value={briefDraft}
+                  placeholder="Instructions for what this room's agent should do…"
+                  onChange={(event) => setBriefDraft(event.target.value)}
+                  className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
+                />
+              </label>
+              <label className="flex flex-col gap-0.5">
+                <span className="text-[11px] text-muted-foreground">System prompt (optional)</span>
+                <textarea
+                  data-system-prompt-input
+                  aria-label="Room system prompt"
+                  rows={2}
+                  value={systemDraft}
+                  placeholder="Role, methodology, or constraints for this room's agent…"
+                  onChange={(event) => setSystemDraft(event.target.value)}
+                  className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  data-apply-instructions
+                  onClick={() => saveInstructions(true)}
+                  className="border border-primary bg-primary px-2 py-0.5 text-primary-foreground"
+                >
+                  Save &amp; run
+                </button>
+                <button
+                  type="button"
+                  data-save-instructions
+                  onClick={() => saveInstructions(false)}
+                  className="border border-border bg-background px-2 py-0.5 hover:bg-muted"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  data-cancel-instructions
+                  onClick={() => {
+                    setEditingInstructions(false)
+                    setBriefDraft(loop.brief)
+                    setSystemDraft(loop.systemPrompt ?? '')
+                  }}
+                  className="px-1.5 py-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : loop.brief || loop.systemPrompt ? (
+            <div className="mt-1 max-h-24 space-y-1 overflow-y-auto">
+              {loop.brief && (
+                <p data-room-brief className="whitespace-pre-wrap break-words text-foreground">
+                  {loop.brief}
+                </p>
+              )}
+              {loop.systemPrompt && loop.systemPrompt !== loop.brief && (
+                <p data-room-system-prompt className="whitespace-pre-wrap break-words text-muted-foreground">
+                  <span className="font-medium">System prompt:</span> {loop.systemPrompt}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="mt-0.5 text-muted-foreground">No standing instructions set for {called}.</p>
+          )}
+        </div>
+      )}
       {open &&
         (live.length > 0 || earlier.length > 0 ? (
           <Transcript
@@ -362,6 +509,8 @@ export function LoopBox({
             onEarlier={older}
             live={live}
             onStop={stop}
+            scrollTop={scrollTop}
+            onScrollTopChange={onScrollTopChange}
             className="mt-1 min-h-0 flex-1 overflow-y-auto border border-border px-2 py-1.5"
           />
         ) : (

@@ -190,3 +190,25 @@ export function tabsForWindow<T extends { id: string; window?: number }>(
   const mainTabs = workspaces.filter((w) => w.window === undefined || w.window === 1)
   return mainTabs.length > 0 ? mainTabs : workspaces.slice(0, 1)
 }
+
+/**
+ * Updates the list of workspace tab IDs whose grids stay mounted in a window. Newly visited tabs
+ * (`currentId`) are appended in stable mount order so switching or reordering tabs never moves or
+ * reloads mounted iframes, and tabs removed from `tabs` (closed or detached) are pruned.
+ */
+export function updateMountedTabIds<T extends { id: string }>(
+  mounted: readonly string[],
+  tabs: readonly T[],
+  currentId: string,
+): string[] {
+  const valid = new Set(tabs.map((t) => t.id))
+  const next: string[] = []
+  for (const id of mounted) {
+    if (valid.has(id) && !next.includes(id)) next.push(id)
+  }
+  if (valid.has(currentId) && !next.includes(currentId)) next.push(currentId)
+  if (next.length === mounted.length && next.every((id, index) => id === mounted[index])) {
+    return mounted as string[]
+  }
+  return next
+}

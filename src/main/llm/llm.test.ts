@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { createServer, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
 import type { Turn } from '../../shared/llm/llm.ts'
+import { findProvider } from '../../shared/llm/providers.ts'
 import {
   anthropicRequest,
   anthropicStream,
@@ -11,9 +14,10 @@ import {
   allowedMax,
   replyCap,
 } from './anthropic.ts'
+import { complete } from './llm.ts'
 import { openaiBody, openaiStream, readOpenai } from './openai.ts'
 import { readResponse, responsesBody, responsesStream } from './responses.ts'
-import { sent as asSent } from '../../shared/agent/aside.ts'
+import { sent as asSent, WHOLE_MAX as ASIDE_WHOLE_MAX } from '../../shared/agent/aside.ts'
 
 // Items as the Responses API returns them for a reasoning model that calls a tool.
 const REASONING = { id: 'rs_1', type: 'reasoning', summary: [], encrypted_content: 'gAAAA-sealed' }
@@ -271,9 +275,13 @@ test('a tool loop marks the stable prefix before the first long tool answer, and
   // Message 2 is tu_1's set-aside note (before tu_2's 5,000-char live answer); message 6 is the final user/tool turn.
   assert.deepEqual(marked, [2, 6])
 
-  // When the newest round's answer exceeds WHOLE_MAX (60,000), it will be set aside on the very next round,
+  // When the newest round's answer exceeds WHOLE_MAX, it will be set aside on the very next round,
   // so the cache mark stays on the user/tool message before it instead of paying cache_write on the mega-output.
-  const mega: Turn[] = [{ role: 'user', text: 'Download 10-K.' }, call('tu_1'), answer('tu_1', 'x'.repeat(70_000))]
+  const mega: Turn[] = [
+    { role: 'user', text: 'Download 10-K.' },
+    call('tu_1'),
+    answer('tu_1', 'x'.repeat(ASIDE_WHOLE_MAX + 10_000)),
+  ]
   const { body: megaBody } = anthropicRequest('claude-opus-5', ['S'], mega, [GET], LOOP, NONE, 32_000)
   const megaMessages = megaBody.messages as { role: string; content: Record<string, unknown>[] }[]
   const megaMarked = megaMessages
@@ -1000,3 +1008,169 @@ for (const { name, sealed, raw, write } of PROTOCOLS) {
     assert.ok(atWork.includes('grid after c2'))
   })
 }
+
+test('stream readers report finished only once the stop reason and complete tool calls have arrived', () => {
+  const chat = openaiStream()
+  assert.equal(chat.finished(), false)
+  chat.push({
+    choices: [
+      { delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'get', arguments: '{"path":' } }] } },
+    ],
+  })
+  assert.equal(chat.finished(), false)
+  // Even if finish_reason arrived on a truncated argument JSON, it is not finished.
+  chat.push({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })
+  assert.equal(chat.finished(), false)
+  chat.push({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"views"}' } }] } }] })
+  assert.equal(chat.finished(), true)
+  // A trailing usage chunk with an empty finish_reason does not clear the completed finish_reason.
+  chat.push({ choices: [{ delta: {}, finish_reason: '' }], usage: { prompt_tokens: 100, completion_tokens: 10 } })
+  assert.equal(chat.finished(), true)
+  assert.equal(readOpenai(chat.done()).stopReason, 'tool_calls')
+
+  const messages = anthropicStream()
+  assert.equal(messages.finished(), false)
+  messages.push({
+    type: 'content_block_start',
+    index: 0,
+    content_block: { type: 'tool_use', id: 'tu_1', name: 'get', input: {} },
+  })
+  messages.push({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{}' } })
+  assert.equal(messages.finished(), false)
+  messages.push({ type: 'content_block_stop', index: 0 })
+  assert.equal(messages.finished(), false)
+  messages.push({ type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 12 } })
+  assert.equal(messages.finished(), true)
+
+  const responses = responsesStream()
+  assert.equal(responses.finished(), false)
+  responses.push({ type: 'response.created', response: { id: 'resp_1', status: 'in_progress', output: [] } })
+  assert.equal(responses.finished(), false)
+  responses.push({
+    type: 'response.completed',
+    response: { id: 'resp_1', status: 'completed', output: [CALL], usage: { input_tokens: 50, output_tokens: 10 } },
+  })
+  assert.equal(responses.finished(), true)
+})
+
+test('a Gemini 4 Argon stream that resets mid-thought or after finish_reason recovers without failing complete', async () => {
+  const jaspers = findProvider('llm', 'jaspers')!
+  const signedCall = {
+    index: 0,
+    id: 'call_166502',
+    type: 'function',
+    function: { name: 'get', arguments: '{"path":"panels/e46/text"}' },
+    extra_content: { google: { thought_signature: 'sig-argon' } },
+  }
+
+  // 1. Two consecutive mid-stream ECONNRESET drops during thinking/tool-call streaming (before onText)
+  // retry on a fresh connection and succeed on the third try.
+  let midStreamTries = 0
+  const seenConnections: Array<string | undefined> = []
+  const server1 = createServer((req, res: ServerResponse) => {
+    midStreamTries++
+    seenConnections.push(req.headers.connection)
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    if (midStreamTries <= 2) {
+      res.write(
+        `data: ${JSON.stringify({
+          choices: [{ delta: { content: 'Thinking about panel e46.', extra_content: { google: { thought: true } } } }],
+        })}\n\n`,
+      )
+      setTimeout(() => res.socket?.resetAndDestroy(), 15)
+      return
+    }
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { role: 'assistant', tool_calls: [signedCall] } }] })}\n\n`)
+    res.write(
+      `data: ${JSON.stringify({
+        choices: [{ delta: { content: '' }, finish_reason: 'tool_calls' }],
+        usage: { prompt_tokens: 94178, completion_tokens: 16, total_tokens: 94231 },
+      })}\n\n`,
+    )
+    res.end('data: [DONE]\n\n')
+  })
+  await new Promise<void>((resolve) => server1.listen(0, '127.0.0.1', resolve))
+  try {
+    const baseUrl = `http://127.0.0.1:${(server1.address() as AddressInfo).port}`
+    const thoughts: string[] = []
+    const reply = await complete(
+      { provider: jaspers, baseUrl, model: 'gemini-4-argon', token: 'tok', fetch },
+      'System',
+      [{ role: 'user', text: 'Check e46.' }],
+      [GET],
+      { stream: true, onText: () => {}, onThinking: (d) => thoughts.push(d) },
+    )
+    assert.equal(midStreamTries, 3)
+    assert.equal(seenConnections[1], 'close')
+    assert.equal(seenConnections[2], 'close')
+    assert.equal(reply.stopReason, 'tool_calls')
+    assert.deepEqual(reply.toolCalls, [{ id: 'call_166502', name: 'get', input: { path: 'panels/e46/text' } }])
+    assert.deepEqual(reply.usage, { input: 94178, output: 53, cacheRead: 0, cacheWrite: 0 })
+    assert.equal(thoughts.length, 2)
+  } finally {
+    server1.closeAllConnections()
+    await new Promise((resolve) => server1.close(resolve))
+  }
+
+  // 2. An ECONNRESET after the finish_reason + usage chunk (before [DONE]) salvages the completed reply in 1 request.
+  let tailTries = 0
+  const server2 = createServer((_req, res: ServerResponse) => {
+    tailTries++
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { role: 'assistant', tool_calls: [signedCall] } }] })}\n\n`)
+    res.write(
+      `data: ${JSON.stringify({
+        choices: [{ delta: { content: '' }, finish_reason: 'tool_calls' }],
+        usage: { prompt_tokens: 94178, completion_tokens: 16, total_tokens: 94231 },
+      })}\n\n`,
+    )
+    setTimeout(() => res.socket?.resetAndDestroy(), 15)
+  })
+  await new Promise<void>((resolve) => server2.listen(0, '127.0.0.1', resolve))
+  try {
+    const baseUrl = `http://127.0.0.1:${(server2.address() as AddressInfo).port}`
+    const reply = await complete(
+      { provider: jaspers, baseUrl, model: 'gemini-4-argon', token: 'tok', fetch },
+      'System',
+      [{ role: 'user', text: 'Check e46.' }],
+      [GET],
+      { stream: true },
+    )
+    assert.equal(tailTries, 1)
+    assert.equal(reply.stopReason, 'tool_calls')
+    assert.deepEqual(reply.toolCalls, [{ id: 'call_166502', name: 'get', input: { path: 'panels/e46/text' } }])
+    assert.deepEqual(reply.usage, { input: 94178, output: 53, cacheRead: 0, cacheWrite: 0 })
+  } finally {
+    server2.closeAllConnections()
+    await new Promise((resolve) => server2.close(resolve))
+  }
+
+  // 3. A mid-stream ECONNRESET after visible text was already emitted to onText still rejects so the caller can reset the UI.
+  let textTries = 0
+  const server3 = createServer((_req, res: ServerResponse) => {
+    textTries++
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Partial answer' } }] })}\n\n`)
+    setTimeout(() => res.socket?.resetAndDestroy(), 15)
+  })
+  await new Promise<void>((resolve) => server3.listen(0, '127.0.0.1', resolve))
+  try {
+    const baseUrl = `http://127.0.0.1:${(server3.address() as AddressInfo).port}`
+    const emitted: string[] = []
+    await assert.rejects(
+      complete(
+        { provider: jaspers, baseUrl, model: 'gemini-4-argon', token: 'tok', fetch },
+        'System',
+        [{ role: 'user', text: 'Say hi.' }],
+        [],
+        { stream: true, onText: (d) => emitted.push(d) },
+      ),
+      /Jaspers: terminated/,
+    )
+    assert.equal(textTries, 1)
+    assert.deepEqual(emitted, ['Partial answer'])
+  } finally {
+    server3.closeAllConnections()
+    await new Promise((resolve) => server3.close(resolve))
+  }
+})

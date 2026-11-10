@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from 'react'
@@ -28,8 +29,16 @@ import { noteZoom } from '../../lib/eye'
 import { useAppState } from '../../lib/state'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
-import { loopTitle, showsChat } from '../../../shared/loops/loops'
-import { barLabel, boxActivity, canZoomLoop, tileBoxSeen } from './box'
+import { loopTitle, ROOM_TITLE_MAX, showsChat } from '../../../shared/loops/loops'
+import {
+  barLabel,
+  boxActivity,
+  canZoomLoop,
+  isTitleTap,
+  roomRenameChange,
+  shouldToggleHeaderMode,
+  tileBoxSeen,
+} from './box'
 import { LoopBox, updateTileBox, useTileBox } from './LoopBox'
 import { LoopMenu } from './LoopMenu'
 import { Held } from './Held'
@@ -46,8 +55,10 @@ interface Props {
   /** Where it is drawn: its own rect, or where a drag in progress puts it. */
   rect: Rect
   panel: Panel | undefined
+  /** Whether the element's workspace tab is the active tab in this window. */
+  active?: boolean
   focused: boolean
-  /** True while another element is maximized over this one. */
+  /** True while another element is maximized over this one, or its workspace tab is off screen. */
   covered: boolean
   /** True while a drag has carried it out of this window: drawn dimmed at home until the move lands. */
   away?: boolean
@@ -103,6 +114,7 @@ export function ElementFrame({
   element,
   rect,
   panel,
+  active = true,
   focused,
   covered,
   away = false,
@@ -123,22 +135,63 @@ export function ElementFrame({
   const zoomTriggerRef = useRef<HTMLButtonElement>(null)
   const [selected, setSelected] = useState(focused)
   const [zoomPopover, setZoomPopover] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [renameDraft, setRenameDraft] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const cancellingRenameRef = useRef(false)
+  const renameOpenedAtRef = useRef(0)
+  const titlePressRef = useRef<{ x: number; y: number; button: number } | null>(null)
   const prevFocused = useRef(focused)
   useEffect(() => {
-    if (!focused) {
+    if (!focused || !active) {
       setSelected(false)
       setZoomPopover(false)
+      if (!active) {
+        setMenu(false)
+        setRenaming(false)
+      }
     } else if (!prevFocused.current) {
       setSelected(true)
     }
     prevFocused.current = focused
-  }, [focused])
+  }, [focused, active])
+  useEffect(() => {
+    if (!renaming) return
+    requestAnimationFrame(() => {
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+    })
+  }, [renaming])
   // A deep research loop's field invites follow-up questions; any other invites view commands.
   const chat = loop !== undefined && showsChat(loop)
   const place = useMemo(() => ({ workspaceId, on: element.id }), [workspaceId, element.id])
   const { expanded, live, earlier } = useTileBox(place)
   const activity = useMemo(() => boxActivity(live), [live])
-  const called = loop ? loopTitle(loop.id) : ''
+  const called = loop ? loopTitle(loop) : ''
+  const startRename = useCallback(() => {
+    if (!loop) return
+    cancellingRenameRef.current = false
+    renameOpenedAtRef.current = Date.now()
+    setMenu(false)
+    setZoomPopover(false)
+    setRenameDraft(loopTitle(loop))
+    setRenaming(true)
+  }, [loop])
+  const commitRename = useCallback(() => {
+    if (!loop || cancellingRenameRef.current) {
+      cancellingRenameRef.current = false
+      setRenaming(false)
+      return
+    }
+    cancellingRenameRef.current = true
+    setRenaming(false)
+    const change = roomRenameChange(loop, renameDraft)
+    if (change !== null) send({ type: 'room.rename', workspaceId, room: loop.id, title: change })
+  }, [loop, renameDraft, workspaceId])
+  const cancelRename = useCallback(() => {
+    cancellingRenameRef.current = true
+    setRenaming(false)
+  }, [])
   const { x, y, w, h } = rect
   const content = panel?.content
   const title = content?.kind === 'view' ? (views[content.view]?.title ?? content.view) : ''
@@ -205,7 +258,7 @@ export function ElementFrame({
   )
 
   useEffect(() => {
-    if (!zoomable) return
+    if (!zoomable || !active) return
     const onPointerDown = (event: PointerEvent): void => {
       const target = event.target as Node | null
       const inside = Boolean(tileRef.current?.contains(target))
@@ -236,7 +289,7 @@ export function ElementFrame({
       document.removeEventListener('focusin', onFocusIn, true)
       window.removeEventListener('blur', onWindowBlur)
     }
-  }, [zoomable, zoomPopover])
+  }, [zoomable, active, zoomPopover])
 
   // Cmd or Ctrl and K puts the caret in the focused element's box: its line, or what it is asking.
   // Cmd or Ctrl and +/=/-/_/0 zooms the selected, focused loop or Docked Central and shows its zoom popover.
@@ -246,7 +299,7 @@ export function ElementFrame({
       if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         setSelected(true)
-        document.querySelector<HTMLInputElement>(`#loop-box-${element.id} input`)?.focus()
+        tileRef.current?.querySelector<HTMLInputElement>('input[name="loop-prompt"]')?.focus()
         return
       }
       if (event.key === 'Escape' && zoomPopover) {
@@ -287,7 +340,7 @@ export function ElementFrame({
   return (
     <section
       ref={tileRef}
-      id={`element-${element.id}`}
+      id={active ? `element-${element.id}` : undefined}
       data-tile-id={element.id}
       data-zoom={zoom}
       data-loop-zoom={zoomable && !minimized ? zoom : undefined}
@@ -322,23 +375,102 @@ export function ElementFrame({
     >
       <header
         onPointerDown={(event) => onGrab(event, 'move')}
+        onPointerUp={(event) => {
+          const press = titlePressRef.current
+          titlePressRef.current = null
+          if (!press || renaming) return
+          if (isTitleTap(press.x, press.y, event.clientX, event.clientY, press.button)) {
+            startRename()
+          }
+        }}
+        onPointerCancel={() => {
+          titlePressRef.current = null
+        }}
         onDoubleClick={(event) => {
-          const onButton = event.target instanceof Element && event.target.closest('button')
-          if (onButton) return
+          const target = event.target instanceof Element ? event.target : null
+          const onButton = Boolean(target?.closest('button, input'))
+          const onTitle = Boolean(target?.closest('[data-room-title]'))
+          if (!shouldToggleHeaderMode({ renaming, onButton, onTitle })) return
           if (minimized) toggleMinimized(workspaceId, element)
           else toggleMaximized(workspaceId, element)
         }}
         className={`flex min-h-6 shrink-0 items-center border-b ${minimized ? 'h-6' : ''} ${
-          central ? 'border-central bg-central text-central-foreground' : 'border-border bg-muted'
+          central ? 'border-central bg-central text-central-foreground' : 'border-border bg-room-header'
         } ${canGrab(element.mode, 'move') ? 'cursor-grab' : ''}`}
       >
-        <span
-          className={`min-w-0 flex-1 truncate px-2 text-xs ${
-            central ? 'font-medium' : focused ? 'font-medium text-foreground' : 'text-muted-foreground'
-          }`}
-        >
-          {loop ? `${called} · ${loop.desc}` : title}
-        </span>
+        {loop ? (
+          <div
+            className={`flex min-w-0 flex-1 items-center px-2 text-xs ${
+              focused ? 'font-medium text-foreground' : 'text-muted-foreground'
+            }`}
+          >
+            {renaming ? (
+              <input
+                ref={renameInputRef}
+                id={active ? `loop-title-input-${element.id}` : undefined}
+                data-room-title-input
+                aria-label="Room name"
+                value={renameDraft}
+                maxLength={ROOM_TITLE_MAX}
+                placeholder={loopTitle(loop.id)}
+                autoComplete="off"
+                spellCheck={false}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (Date.now() - renameOpenedAtRef.current < 400) {
+                    event.currentTarget.select()
+                  }
+                }}
+                onDoubleClick={(event) => {
+                  event.stopPropagation()
+                  event.currentTarget.select()
+                }}
+                onChange={(event) => setRenameDraft(event.target.value)}
+                onBlur={commitRename}
+                onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    cancelRename()
+                  } else if (event.key === 'Enter') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    commitRename()
+                  }
+                }}
+                className="h-4 w-40 max-w-full shrink-0 border-b border-foreground bg-background px-1 text-xs leading-none font-medium text-foreground outline-none"
+              />
+            ) : (
+              <span
+                id={active ? `loop-title-${element.id}` : undefined}
+                data-room-title
+                title="Click or double-click to rename room"
+                onPointerDown={(event) => {
+                  if (event.button === 0) {
+                    titlePressRef.current = { x: event.clientX, y: event.clientY, button: event.button }
+                  }
+                }}
+                onDoubleClick={(event) => {
+                  event.stopPropagation()
+                  startRename()
+                }}
+                className="max-w-[50%] shrink-0 cursor-text truncate hover:text-foreground hover:underline"
+              >
+                {called}
+              </span>
+            )}
+            <span className="min-w-0 flex-1 truncate">{loop.desc ? ` · ${loop.desc}` : ''}</span>
+          </div>
+        ) : (
+          <span
+            className={`min-w-0 flex-1 truncate px-2 text-xs ${
+              central ? 'font-medium' : focused ? 'font-medium text-foreground' : 'text-muted-foreground'
+            }`}
+          >
+            {title}
+          </span>
+        )}
         {/* How the loop stands, said to a screen reader as it changes, without each step it takes. */}
         <span className="sr-only" aria-live="polite">
           {said && said.kind !== 'conversation' ? said.text.split(' · ')[0] : ''}
@@ -347,7 +479,7 @@ export function ElementFrame({
           <button
             ref={zoomTriggerRef}
             type="button"
-            id={`tile-zoom-${element.id}`}
+            id={active ? `tile-zoom-${element.id}` : undefined}
             data-tile-zoom
             aria-label={`Zoom ${zoomPercent(zoom)}. Open zoom controls.`}
             aria-expanded={zoomPopover}
@@ -369,7 +501,7 @@ export function ElementFrame({
         {loop && (
           <button
             type="button"
-            id={`loop-min-${element.id}`}
+            id={active ? `loop-min-${element.id}` : undefined}
             aria-label={`${minimized ? 'Restore' : 'Minimize'} ${label}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={() => toggleMinimized(workspaceId, element)}
@@ -384,7 +516,7 @@ export function ElementFrame({
           <button
             ref={more}
             type="button"
-            id={`loop-more-${element.id}`}
+            id={active ? `loop-more-${element.id}` : undefined}
             aria-label={`More for ${label}`}
             aria-expanded={menu}
             onPointerDown={(event) => event.stopPropagation()}
@@ -402,7 +534,7 @@ export function ElementFrame({
         )}
         <button
           type="button"
-          id={loop ? `loop-close-${element.id}` : undefined}
+          id={active && loop ? `loop-close-${element.id}` : undefined}
           aria-label={`Close ${label}`}
           onPointerDown={(event) => event.stopPropagation()}
           // Closing a loop keeps it, conversation and views, and View loops in Settings reopens it.
@@ -428,7 +560,7 @@ export function ElementFrame({
       {zoomable && zoomPopover && !minimized && (
         <div
           ref={zoomPopoverRef}
-          id={`loop-zoom-popover-${element.id}`}
+          id={active ? `loop-zoom-popover-${element.id}` : undefined}
           data-zoom-popover
           role="dialog"
           aria-label={`Zoom controls for ${called || title}`}
@@ -481,6 +613,7 @@ export function ElementFrame({
           opener={more}
           hangs={minimized}
           onClose={closeMenu}
+          onRename={startRename}
         />
       )}
       {/* Under the bar. Minimized, it is all still here, cut off by the tile's own height and inert:
@@ -494,6 +627,7 @@ export function ElementFrame({
             label={label}
             called={called}
             chat={chat}
+            active={active}
             covered={covered || minimized}
             fills={empty}
             need={need}
@@ -511,6 +645,7 @@ export function ElementFrame({
             windowNumber={windowNumber}
             grid={grid}
             frame={element}
+            active={active}
             focused={focused}
             working={working}
             waiting={undrawn}

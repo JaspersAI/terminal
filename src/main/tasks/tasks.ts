@@ -9,9 +9,11 @@ import {
   isWakeLag,
   pruneFinished,
   runNotice,
+  shouldDeferTaskRun,
   STARTUP_GRACE_MS,
   TASKS_MAX,
   TIMER_MAX_MS,
+  wakeGraceDelayMs,
   wakeGrids,
   WAKE_GRACE_MS,
   type Task,
@@ -45,6 +47,8 @@ export interface SchedulerDeps {
   intoChat(workspaceId: string, task: string, reply: string): Promise<boolean>
   /** Called when a timer fires late enough past its deadline that the machine woke before resume arrived. */
   onWake?: () => void
+  /** Remaining milliseconds to hold off task execution while the machine or auth state is sleeping or waking (0 when ready, Infinity while sleeping). */
+  wakeDelayMs?: () => number
   now?: () => number
 }
 
@@ -63,10 +67,23 @@ function now(): number {
   return deps?.now?.() ?? Date.now()
 }
 
+function holdOffMs(): number {
+  const delay = deps?.wakeDelayMs?.() ?? 0
+  return delay > 0 ? delay : 0
+}
+
 function startAfterGrace(ms: number, waking = false): void {
   suspendTasks()
+  const wait = wakeGraceDelayMs(ms, holdOffMs())
+  if (!Number.isFinite(wait)) return
   grace = setTimeout(() => {
     grace = null
+    const remaining = holdOffMs()
+    if (!Number.isFinite(remaining)) return
+    if (remaining > 0) {
+      startAfterGrace(remaining, waking)
+      return
+    }
     started = true
     if (waking) {
       const at = now()
@@ -76,7 +93,7 @@ function startAfterGrace(ms: number, waking = false): void {
       })
     }
     arm()
-  }, ms)
+  }, wait)
 }
 
 /** Wires the dependencies and, after the startup grace, arms the timer; from then on every change to the tasks re-arms it. */
@@ -248,8 +265,29 @@ function tick(): void {
     wakeTasks()
     return
   }
+  const holdMs = holdOffMs()
+  if (holdMs > 0) {
+    if (Number.isFinite(holdMs)) startAfterGrace(holdMs, true)
+    else suspendTasks()
+    return
+  }
   for (const task of dueTasks(getState().tasks, now())) void execute(task)
   arm()
+}
+
+function deferAfterSleepWake(): void {
+  const remaining = holdOffMs()
+  if (!Number.isFinite(remaining)) {
+    suspendTasks()
+    return
+  }
+  if (remaining > 0) {
+    startAfterGrace(remaining, true)
+    return
+  }
+  if (started || !grace) {
+    startAfterGrace(WAKE_GRACE_MS, true)
+  }
 }
 
 /**
@@ -261,6 +299,15 @@ function tick(): void {
 async function execute(task: Task): Promise<void> {
   const run = deps
   if (!run) return
+  const holdMs = holdOffMs()
+  if (holdMs > 0) {
+    if (Number.isFinite(holdMs)) {
+      if (started || !grace) startAfterGrace(holdMs, true)
+    } else {
+      suspendTasks()
+    }
+    return
+  }
   const current = getState().tasks.find((t) => t.id === task.id)
   if (!current || current.running) return
   replace({ ...current, running: true })
@@ -311,6 +358,13 @@ async function execute(task: Task): Promise<void> {
   }
 
   const ms = now() - at
+  if (shouldDeferTaskRun({ ok, result }, { started, wakeDelayMs: holdOffMs() })) {
+    console.log(`[tasks] ${current.id} deferred during sleep/wake (${ms} ms)`)
+    deferAfterSleepWake()
+    const still = getState().tasks.find((t) => t.id === current.id)
+    if (still && still.running) replace({ ...still, running: false })
+    return
+  }
   console.log(`[tasks] ${current.id} run: ${ok ? 'ok' : `failed: ${result}`} (${ms} ms)`)
   const before = getState().tasks.find((t) => t.id === current.id)
   if (!before) return

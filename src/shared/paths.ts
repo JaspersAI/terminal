@@ -136,6 +136,33 @@ export function panelErrorAt(state: AppState, workspaceId: string, path: StorePa
   return panelIn(grids, path.panelId).panel.error ?? null
 }
 
+/** Optional URL and title metadata of a panel (such as core/browser) to include ahead of its text part. */
+export function panelTextMeta(panel: Panel): { url?: string; title?: string } {
+  const out =
+    typeof panel.output === 'object' && panel.output !== null ? (panel.output as Record<string, unknown>) : null
+  const state =
+    typeof panel.state === 'object' && panel.state !== null ? (panel.state as Record<string, unknown>) : null
+  const outUrl = typeof out?.url === 'string' && out.url.trim() ? out.url.trim() : undefined
+  const stateUrl = typeof state?.url === 'string' && state.url.trim() ? state.url.trim() : undefined
+  const url = outUrl ?? stateUrl
+  const title = typeof out?.title === 'string' && out.title.trim() ? out.title.trim() : undefined
+  return {
+    ...(url ? { url } : {}),
+    ...(title ? { title } : {}),
+  }
+}
+
+/** The URL and title metadata of the panel a path points at, when present on its output or state. */
+export function panelTextMetaAt(
+  state: AppState,
+  workspaceId: string,
+  path: StorePath,
+): { url?: string; title?: string } {
+  if (path.kind !== 'panel') return {}
+  const grids = gridsOf(state, path.workspaceId ?? workspaceId)
+  return panelTextMeta(panelIn(grids, path.panelId).panel)
+}
+
 /** Formats a path's value (or state) as JSON for `get` and `set`, cutting long values and including any panel error. */
 export function showPathValue(
   path: string,

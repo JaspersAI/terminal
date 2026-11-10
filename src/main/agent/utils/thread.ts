@@ -5,6 +5,7 @@ import {
   INSTRUCTIONS,
   makeRoom,
   READ_AGAIN,
+  readAgainTargets,
   sent,
   setAside,
   type Sending,
@@ -370,24 +371,41 @@ function readAgain(history: Turn[]): Tool {
     readsOnly: true,
     whole: true,
     description:
-      'Bring back a call from earlier in this conversation as it was made and what it answered, whole, with nothing run again. A long answer you have already read stands as a note saying so, and so do the long arguments of an earlier request: the note gives the id to pass here. Use it rather than running the tool again; when only some rows of a source are needed, query reads those from the store.',
+      'Bring back one or more calls from earlier in this conversation as they were made and what they answered, whole, with nothing run again. A long answer that was set aside stands as a [Set aside: …] note with only its opening characters (and any earlier tool-round thinking is not in view): pass the id from the note here before counting, quoting, itemizing, or stating facts from that answer, rather than running the tool again or guessing from memory; you can pass comma-separated ids in call (or an array in calls) or make multiple read_again calls in one round. When only some rows of a source are needed, query reads those from the store.',
     parameters: {
       type: 'object',
       // Named for what it is, not `id`: a run's trail shows a call's id argument, and this one says nothing to a person.
-      properties: { call: { type: 'string', description: 'The id of the call, as the note gives it.' } },
-      required: ['call'],
+      properties: {
+        call: {
+          type: 'string',
+          description:
+            'The id of the call, as the note gives it (or comma-separated ids to bring several calls back at once).',
+        },
+        calls: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional list of call ids to bring back together in one round.',
+        },
+      },
     },
     async run(input) {
-      // A model that writes the argument's name its own way, or keeps the note's quotes, means the same call.
-      const given = input.call ?? input.id
-      const id = typeof given === 'string' ? given.trim().replace(/^"(.*)"$/, '$1') : ''
-      const found = id ? callOf(history, id) : null
-      if (!found) {
+      // A model that writes the argument's name its own way, keeps the note's quotes, or passes several ids at once means those calls.
+      const ids = readAgainTargets({ id: '', name: READ_AGAIN, input })
+      if (ids.length === 0) {
         throw new Error(
-          `No call "${id}" in this conversation. The id is in the note that stands where an answer or an argument was set aside.`,
+          'No call "" in this conversation. The id is in the note that stands where an answer or an argument was set aside.',
         )
       }
-      return `${found.call.name} ${JSON.stringify(found.call.input)}\n\n${found.answer ?? '(Nothing answered this call.)'}`
+      const blocks = ids.map((id) => {
+        const found = callOf(history, id)
+        if (!found) {
+          throw new Error(
+            `No call "${id}" in this conversation. The id is in the note that stands where an answer or an argument was set aside.`,
+          )
+        }
+        return `${found.call.name} ${JSON.stringify(found.call.input)}\n\n${found.answer ?? '(Nothing answered this call.)'}`
+      })
+      return blocks.join('\n\n---\n\n')
     },
   }
 }

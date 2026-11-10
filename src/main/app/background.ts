@@ -35,6 +35,10 @@ export interface BackgroundDeps {
   wakeTasks(): void
   /** Installs the downloaded update and starts the new app. */
   installUpdate(): void
+  /** Whether an assistant run is currently in flight. */
+  runsInFlight?: () => boolean
+  /** Subscribes to changes in whether any assistant run is in flight. */
+  onRunsChange?: (listener: (active: boolean) => void) => () => void
 }
 
 let quitting = false
@@ -83,10 +87,16 @@ export function startBackground(deps: BackgroundDeps): void {
   if (process.platform !== 'darwin') tray.on('click', () => deps.showWindow())
   refreshMenu(deps)
 
+  const syncHold = (): void => {
+    holdWhileRunning(getState().tasks.some((t) => t.running) || (deps.runsInFlight?.() ?? false))
+  }
+  deps.onRunsChange?.(() => syncHold())
+  syncHold()
+
   subscribe((next, prev) => {
     if (next.tasks !== prev.tasks) {
       refreshMenu(deps)
-      holdWhileRunning(next.tasks.some((t) => t.running))
+      syncHold()
     }
     if (next.updates !== prev.updates) refreshMenu(deps)
   })

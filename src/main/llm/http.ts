@@ -1,7 +1,9 @@
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
-import { retryAfter } from '../../shared/llm/limits.ts'
+import { retryAfter, SLEEP_INTERRUPTED_MESSAGE } from '../../shared/llm/limits.ts'
 import type { Provider } from '../../shared/llm/providers'
 import { SSE_DONE, sseFrames, sseTail } from '../../shared/llm/sse.ts'
+import { WAKE_GRACE_MS } from '../../shared/tasks/tasks.ts'
+import { isConnectionDrop, RESET_RETRIES } from './wire.ts'
 
 /**
  * Who a request is to and how it leaves: the provider, for the words of an error, and the fetch it
@@ -40,29 +42,44 @@ export async function post<T>(
   timeoutMs = QUIET_MS,
   signal?: AbortSignal,
 ): Promise<T> {
-  let response: Response
-  const limit = AbortSignal.timeout(timeoutMs)
+  const sleep = new AbortController()
+  const onSleep = (): void => sleep.abort(new Error(SLEEP_INTERRUPTED_MESSAGE))
+  inFlight.add(onSleep)
   try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body,
-      signal: signal ? AbortSignal.any([limit, signal]) : limit,
-    })
-  } catch (err) {
-    throw new ProviderError(`${provider.name}: ${describe(err)}`)
-  }
-  if (!response.ok) throw await refused(provider, response)
-  let text: string
-  try {
-    text = await response.text()
-  } catch (err) {
-    throw new ProviderError(`${provider.name}: ${describe(err)}`)
-  }
-  try {
-    return JSON.parse(text) as T
-  } catch {
-    throw new ProviderError(`${provider.name} returned something other than JSON.`, response.status)
+    for (let reset = 0; ; reset++) {
+      let response: Response
+      const limit = AbortSignal.timeout(timeoutMs)
+      const requestSignal = AbortSignal.any(signal ? [limit, sleep.signal, signal] : [limit, sleep.signal])
+      const requestHeaders = reset > 0 ? { ...headers, connection: 'close' } : headers
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: requestHeaders,
+          body,
+          signal: requestSignal,
+        })
+      } catch (err) {
+        const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
+        if (!requestSignal.aborted && reset < RESET_RETRIES && isConnectionDrop(wrapped)) continue
+        throw wrapped
+      }
+      if (!response.ok) throw await refused(provider, response)
+      let text: string
+      try {
+        text = await response.text()
+      } catch (err) {
+        const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
+        if (!requestSignal.aborted && reset < RESET_RETRIES && isConnectionDrop(wrapped)) continue
+        throw wrapped
+      }
+      try {
+        return JSON.parse(text) as T
+      } catch {
+        throw new ProviderError(`${provider.name} returned something other than JSON.`, response.status)
+      }
+    }
+  } finally {
+    inFlight.delete(onSleep)
   }
 }
 
@@ -121,8 +138,74 @@ function detail(text: string, status: number, statusText = ''): string {
   return status >= 500 ? 'server error' : 'no details'
 }
 
-/** How long a stream may go without a `data:` frame before it is given up on. */
+/** How long a stream may go without its first `data:` frame before it is given up on. */
 export const QUIET_MS = 300_000
+/** How long a stream that has already sent `data:` frames may go silent between frames before it is given up on. */
+export const STREAM_QUIET_MS = 90_000
+
+const inFlight = new Set<() => void>()
+const wakeListeners = new Set<() => void>()
+let sleeping = false
+let wakeUntil = 0
+
+function abortInFlight(): void {
+  for (const abort of [...inFlight]) abort()
+}
+
+function notifyWakeListeners(): void {
+  for (const listener of [...wakeListeners]) listener()
+}
+
+/** Aborts in-flight provider streams when the machine suspends so dead sockets do not hang across sleep. */
+export function suspendLlm(): void {
+  sleeping = true
+  abortInFlight()
+  notifyWakeListeners()
+}
+
+/** Aborts pre-sleep provider streams on wake and holds off retries until `graceMs` has elapsed. */
+export function wakeLlm(graceMs = WAKE_GRACE_MS): void {
+  sleeping = false
+  wakeUntil = Date.now() + Math.max(0, graceMs)
+  abortInFlight()
+  notifyWakeListeners()
+}
+
+export function isLlmSleeping(): boolean {
+  return sleeping
+}
+
+/** Waits while the machine is sleeping or inside the post-wake network grace window. */
+export function waitUntilLlmAwake(signal?: AbortSignal): Promise<void> {
+  if (!sleeping && Date.now() >= wakeUntil) return Promise.resolve()
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Aborted'))
+  return new Promise<void>((resolve, reject) => {
+    let timer: NodeJS.Timeout | undefined
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      wakeListeners.delete(check)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    const onAbort = (): void => {
+      cleanup()
+      reject(signal?.reason ?? new Error('Aborted'))
+    }
+    const check = (): void => {
+      clearTimeout(timer)
+      if (sleeping) return
+      const remaining = wakeUntil - Date.now()
+      if (remaining <= 0) {
+        cleanup()
+        resolve()
+        return
+      }
+      timer = setTimeout(check, remaining)
+    }
+    wakeListeners.add(check)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    check()
+  })
+}
 
 /**
  * POST to a provider and read back a server-sent event stream, one payload at a time. The errors are
@@ -131,8 +214,9 @@ export const QUIET_MS = 300_000
  *
  * The limit is on the silence between `data:` pieces, not on the whole stream, which is the point of
  * streaming a long reply: a model that thinks for ten minutes and says so as it goes is working, and
- * one that has sent no `data:` frame for five minutes (even if a proxy sends keep-alive comments)
- * is not. A caller that stops reading (a `break`, or an error thrown at it) cancels the body.
+ * one that has sent no `data:` frame for five minutes before starting (or ninety seconds mid-stream,
+ * even if a proxy sends keep-alive comments) is not. A caller that stops reading (a `break`, or an
+ * error thrown at it) cancels the body.
  */
 export async function* sse(
   { provider, fetch }: Wire,
@@ -141,55 +225,117 @@ export async function* sse(
   body: string,
   quietMs = QUIET_MS,
   signal?: AbortSignal,
+  streamQuietMs = STREAM_QUIET_MS,
 ): AsyncGenerator<string> {
   const quiet = new AbortController()
+  const onSleep = (): void => quiet.abort(new Error(SLEEP_INTERRUPTED_MESSAGE))
+  inFlight.add(onSleep)
   let timer: NodeJS.Timeout | undefined
-  const heard = (): void => {
+  let currentLimit = quietMs
+  let heardAt = Date.now()
+  let lastTick = heardAt
+  const heard = (limitMs = currentLimit): void => {
+    currentLimit = limitMs
+    heardAt = Date.now()
+    lastTick = heardAt
     clearTimeout(timer)
-    timer = setTimeout(() => quiet.abort(new Error(`nothing arrived for ${Math.round(quietMs / 1000)} s`)), quietMs)
-  }
-  heard()
-  try {
-    let response: Response
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: { ...headers, accept: 'text/event-stream' },
-        body,
-        signal: signal ? AbortSignal.any([quiet.signal, signal]) : quiet.signal,
-      })
-    } catch (err) {
-      throw new ProviderError(`${provider.name}: ${describe(err)}`)
-    }
-    if (!response.ok) throw await refused(provider, response)
-    if (!response.body) throw new ProviderError(`${provider.name} returned no body to read.`, response.status)
-    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
-    let buffer = ''
-    try {
-      for (;;) {
-        let chunk: ReadableStreamReadResult<string>
-        try {
-          if (quiet.signal.aborted) throw quiet.signal.reason
-          chunk = await reader.read()
-        } catch (err) {
-          throw new ProviderError(`${provider.name}: ${describe(err)}`)
-        }
-        if (chunk.done) break
-        buffer += chunk.value
-        const { data, rest } = sseFrames(buffer)
-        buffer = rest
-        if (data.length > 0) heard()
-        for (const payload of data) {
-          if (payload === SSE_DONE) return
-          yield payload
-        }
+    timer = setTimeout(() => {
+      if (Date.now() - heardAt >= currentLimit + WAKE_GRACE_MS) {
+        wakeLlm()
+        quiet.abort(new Error(SLEEP_INTERRUPTED_MESSAGE))
+        return
       }
-      const last = sseTail(buffer)
-      if (last !== null && last !== SSE_DONE) yield last
-    } finally {
-      await reader.cancel().catch(() => {})
+      quiet.abort(new Error(`nothing arrived for ${Math.round(currentLimit / 1000)} s`))
+    }, currentLimit)
+  }
+  heard(quietMs)
+  const watch =
+    quietMs > WAKE_GRACE_MS
+      ? setInterval(() => {
+          const now = Date.now()
+          if (now - lastTick >= WAKE_GRACE_MS || now - heardAt >= currentLimit + WAKE_GRACE_MS) {
+            wakeLlm()
+            quiet.abort(new Error(SLEEP_INTERRUPTED_MESSAGE))
+            return
+          }
+          lastTick = now
+        }, 2_000).unref()
+      : undefined
+  try {
+    for (let reset = 0; ; reset++) {
+      heard(quietMs)
+      let yielded = false
+      let response: Response
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            ...headers,
+            accept: 'text/event-stream',
+            ...(reset > 0 ? { connection: 'close' } : {}),
+          },
+          body,
+          signal: signal ? AbortSignal.any([quiet.signal, signal]) : quiet.signal,
+        })
+      } catch (err) {
+        const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
+        if (!signal?.aborted && !quiet.signal.aborted && reset < RESET_RETRIES && isConnectionDrop(wrapped)) continue
+        throw wrapped
+      }
+      if (!response.ok) throw await refused(provider, response)
+      if (!response.body) throw new ProviderError(`${provider.name} returned no body to read.`, response.status)
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+      let buffer = ''
+      try {
+        for (;;) {
+          let chunk: ReadableStreamReadResult<string>
+          try {
+            if (quiet.signal.aborted) throw quiet.signal.reason
+            chunk = await reader.read()
+          } catch (err) {
+            if (!signal?.aborted && !quiet.signal.aborted) {
+              const tail = sseTail(buffer)
+              buffer = ''
+              if (tail === SSE_DONE) return
+              if (tail !== null) {
+                yielded = true
+                yield tail
+              }
+            }
+            const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
+            if (
+              !yielded &&
+              !signal?.aborted &&
+              !quiet.signal.aborted &&
+              reset < RESET_RETRIES &&
+              isConnectionDrop(wrapped)
+            ) {
+              break
+            }
+            throw wrapped
+          }
+          if (chunk.done) {
+            const last = sseTail(buffer)
+            if (last !== null && last !== SSE_DONE) yield last
+            return
+          }
+          buffer += chunk.value
+          const { data, rest } = sseFrames(buffer)
+          buffer = rest
+          if (data.length > 0) heard(Math.min(quietMs, streamQuietMs))
+          for (const payload of data) {
+            if (payload === SSE_DONE) return
+            yielded = true
+            yield payload
+          }
+        }
+      } finally {
+        await reader.cancel().catch(() => {})
+      }
     }
   } finally {
+    inFlight.delete(onSleep)
     clearTimeout(timer)
+    clearInterval(watch)
   }
 }

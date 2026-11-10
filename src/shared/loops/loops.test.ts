@@ -7,9 +7,12 @@ import {
   adopt,
   asksForLoop,
   DESC_MAX,
+  findAnyRoom,
+  findLoop,
   frameOf,
   LOOP_EXCLUDED_TOOLS,
   ORCHESTRATOR_TOOLS,
+  ROOM_TITLE_MAX,
   VIEW_TOOLS,
   loopChat,
   loopName,
@@ -25,6 +28,7 @@ import {
   readLoops,
   elementTarget,
   refreshTarget,
+  resolveRefreshTarget,
   retagged,
   START,
   startQuestion,
@@ -33,8 +37,14 @@ import {
   viewPlugin,
   withLoopFor,
   withLoopAsked,
+  withLoopTitle,
+  withLoopUpdated,
   withPlugin,
   withoutTileless,
+  editedInstructionsPrompt,
+  handoffSummary,
+  handoffWritten,
+  startInstructions,
   type Loop,
   type Loops,
 } from './loops.ts'
@@ -78,11 +88,65 @@ const at = (x: number, y: number, w: number, h: number): Partial<GridElement> =>
 const shape = (g: Grid) =>
   g.elements.map((e) => [e.id, e.loop ?? null, e.parent ?? null, [e.rect.x, e.rect.y, e.rect.w, e.rect.h]])
 
-test('a room is called room_ and the number its counter gave it, and titled Room N in the UI', () => {
+test('a room is called room_ and the number its counter gave it, and titled Room N in the UI unless given a custom title', () => {
   assert.equal(loopName('f3'), 'room_3')
   assert.equal(loopName('f12'), 'room_12')
   assert.equal(loopTitle('f3'), 'Room 3')
   assert.equal(loopTitle('f38'), 'Room 38')
+  assert.equal(loopTitle(loop('f3', 'note')), 'Room 3')
+  assert.equal(loopTitle({ ...loop('f3', 'note'), title: 'Macro Rates' }), 'Macro Rates')
+})
+
+test('withLoopTitle sets, normalizes, caps, and clears custom titles on open and closed rooms, and readLoops persists them', () => {
+  const base: Loops = {
+    seq: 2,
+    list: [loop('f1', 'Rates'), loop('f2', 'FX')],
+    closed: [
+      {
+        loop: loop('f3', 'Commodities'),
+        window: 1,
+        elements: [{ id: 'e1', panelId: 'p1', loop: 'f3', rect: { x: 0, y: 0, w: 4, h: 4 }, z: 1, mode: 'tiled' }],
+        panels: [
+          {
+            id: 'p1',
+            elementId: 'e1',
+            content: frame,
+            state: {},
+            output: null,
+            summary: null,
+            text: null,
+            refreshedAt: null,
+          },
+        ],
+      },
+    ],
+  }
+  const namedOpen = withLoopTitle(base, 'f1', '  Macro   Rates  ')
+  assert.equal(namedOpen.list[0]?.title, 'Macro Rates')
+  assert.equal(loopTitle(namedOpen.list[0]!), 'Macro Rates')
+  // Unchanged title or unknown room returns the same object.
+  assert.equal(withLoopTitle(namedOpen, 'f1', 'Macro Rates'), namedOpen)
+  assert.equal(withLoopTitle(namedOpen, 'f99', 'Other'), namedOpen)
+  assert.equal(withLoopTitle(base, 'f2', ''), base)
+  assert.equal(withLoopTitle(base, 'f2', 'Room 2'), base)
+
+  // Capped at ROOM_TITLE_MAX.
+  const long = withLoopTitle(base, 'f2', 'x'.repeat(ROOM_TITLE_MAX + 25))
+  assert.equal(long.list[1]?.title?.length, ROOM_TITLE_MAX)
+
+  // Clearing or entering the default Room N / room_N resets title back to undefined.
+  for (const reset of ['', '   ', 'Room 1', 'room 1', 'room_1']) {
+    const cleared = withLoopTitle(namedOpen, 'f1', reset)
+    assert.equal(cleared.list[0]?.title, undefined, reset)
+    assert.equal('title' in cleared.list[0]!, false, reset)
+  }
+
+  // Closed rooms can also be renamed and round-tripped through readLoops.
+  const namedClosed = withLoopTitle(namedOpen, 'f3', 'Gold Desk')
+  assert.equal(namedClosed.closed?.[0]?.loop.title, 'Gold Desk')
+  const roundTripped = readLoops(namedClosed.list, namedClosed.seq, namedClosed.closed)
+  assert.equal(roundTripped.list[0]?.title, 'Macro Rates')
+  assert.equal(roundTripped.closed?.[0]?.loop.title, 'Gold Desk')
 })
 
 test('everything on a grid is a tile but the docked chat', () => {
@@ -507,8 +571,12 @@ test('a plugin told of is kept for the loop, once', () => {
   assert.equal(withPlugin(loops, 'f9', 'news'), loops)
 })
 
-test('a room is named by its name however it is written, or by its id', () => {
-  const list = [loop('f1', 'Note'), loop('f12', 'Backtest FLWS')]
+test('a room is named by its name however it is written, by its custom title, or by its id', () => {
+  const list = [
+    { ...loop('f1', 'Note'), title: 'Macro Rates' },
+    loop('f12', 'Backtest FLWS'),
+    { ...loop('f2', 'Other'), title: 'Room 12' },
+  ]
   for (const text of [
     'room_12',
     ' @room_12 ',
@@ -521,8 +589,40 @@ test('a room is named by its name however it is written, or by its id', () => {
     'f12',
   ])
     assert.equal(named(list, text)?.id, 'f12', text)
-  for (const text of ['room_2', 'room_0', 'room', 'Backtest FLWS', '12', 'f0', 'room_12x'])
+  for (const text of [
+    'Macro Rates',
+    '  macro   rates ',
+    '@Macro Rates',
+    '@macro_rates',
+    '@macro-rates',
+    '"Macro Rates"',
+  ])
+    assert.equal(named(list, text)?.id, 'f1', text)
+  for (const text of ['room_3', 'room_0', 'room', 'Backtest FLWS', '12', 'f0', 'room_12x'])
     assert.equal(named(list, text), undefined, text)
+
+  // Across multiple tabs and closed memory, canonical room_N matches before a custom title on the active tab.
+  const multiTabState = {
+    loops: {
+      t1: [{ ...loop('f2', 'Active tab room'), title: 'Room 12' }],
+      t2: [loop('f12', 'Second tab room'), { ...loop('f3', 'Other tab'), title: 'Macro Rates' }],
+    },
+    closedLoops: {
+      t1: [{ ...loop('f15', 'Closed room'), title: 'Saved Rates' }],
+    },
+  }
+  assert.equal(findLoop(multiTabState, 't1', 'room_12').id, 'f12')
+  assert.equal(findLoop(multiTabState, 't1', 'Macro Rates').id, 'f3')
+  assert.deepEqual(findAnyRoom(multiTabState, 't1', 'room_15'), {
+    loop: multiTabState.closedLoops.t1[0],
+    workspaceId: 't1',
+    open: false,
+  })
+  assert.deepEqual(findAnyRoom(multiTabState, 't1', 'Saved Rates'), {
+    loop: multiTabState.closedLoops.t1[0],
+    workspaceId: 't1',
+    open: false,
+  })
 })
 
 test('a loop waiting on the user is asking, whatever else: its run is in flight then too', () => {
@@ -599,8 +699,12 @@ test('a name a file saved from before loops were numbered is left behind: a loop
   assert.deepEqual(read.list, [{ id: 'f1', desc: 'A note', brief: '', plugins: [], skills: [], createdAt: 0 }])
 })
 
-test('a typed message that starts with a room\u2019s @name is for that room, and says something after the name', () => {
-  const all = [loop('f1', 'Note'), loop('f2', 'Note'), loop('f12', 'Backtest FLWS')]
+test('a typed message that starts with a room\u2019s @name or @title is for that room, and says something after the name', () => {
+  const all = [
+    { ...loop('f1', 'Note'), title: 'Macro Rates' },
+    { ...loop('f2', 'Note'), title: 'FX Watch' },
+    loop('f12', 'Backtest FLWS'),
+  ]
   const to = (input: string): [string, string] | null => {
     const found = addressed(all, input)
     return found && [found.loop.id, found.message]
@@ -611,6 +715,11 @@ test('a typed message that starts with a room\u2019s @name is for that room, and
   assert.deepEqual(to('  @ROOM12   use two years  '), ['f12', 'use two years'])
   assert.deepEqual(to('@Room 12 use two years'), ['f12', 'use two years'])
   assert.deepEqual(to('@room-2 hi'), ['f2', 'hi'])
+  // Custom room titles can be addressed directly with @, or with underscores/dashes or quotes.
+  assert.deepEqual(to('@Macro Rates add 2Y yield'), ['f1', 'add 2Y yield'])
+  assert.deepEqual(to('@macro_rates add 2Y yield'), ['f1', 'add 2Y yield'])
+  assert.deepEqual(to('@macro-rates add 2Y yield'), ['f1', 'add 2Y yield'])
+  assert.deepEqual(to('@"Macro Rates" add 2Y yield'), ['f1', 'add 2Y yield'])
   // The whole number decides, never a start of it.
   assert.equal(to('@room_1x hi'), null)
   // A message of several lines is kept whole, and a /command after the address is that room's.
@@ -620,6 +729,7 @@ test('a typed message that starts with a room\u2019s @name is for that room, and
   // For no room by name: nothing after it, a number no room has, a name not at the start, an id.
   assert.equal(to('@room_1'), null)
   assert.equal(to('@room_1   '), null)
+  assert.equal(to('@Macro Rates'), null)
   assert.equal(to('@room_9 hi'), null)
   assert.equal(to('hi @room_1'), null)
   assert.equal(to('room_1 hi'), null)
@@ -761,4 +871,180 @@ test('asksForLoop ignores text inside attached_file blocks and addressed routes 
   assert.equal(asksForLoop(`Start a new loop for this.\n\n${attached}`), true)
   const list = [loop('f3', 'Screener')]
   assert.deepEqual(addressed(list, `@loop_3\n\n${attached}`), { loop: list[0], message: attached })
+})
+
+test('resolveRefreshTarget resolves rooms and unique elements across tabs when cross-tab lookup is enabled, while keeping room agents local', () => {
+  const gridsByTab = {
+    'tab-a': {
+      1: grid([1, frame, 'f1'], [2, view('core/table'), 'f1', undefined, { parent: 'e1' }]),
+    },
+    'tab-b': {
+      1: grid([10, frame, 'f33'], [96, view('option-chain/table'), 'f33', undefined, { parent: 'e10' }]),
+    },
+  }
+  const loopsByTab: Record<string, Loops> = {
+    'tab-a': { seq: 1, list: [loop('f1', 'Table')] },
+    'tab-b': { seq: 33, list: [loop('f33', 'Options Chain')] },
+  }
+
+  assert.deepEqual(resolveRefreshTarget(gridsByTab, loopsByTab, 'tab-a', 'room_33', true), {
+    workspaceId: 'tab-b',
+    id: 'e10',
+  })
+  assert.deepEqual(resolveRefreshTarget(gridsByTab, loopsByTab, 'tab-a', 'e96', true), {
+    workspaceId: 'tab-b',
+    id: 'e96',
+  })
+  assert.deepEqual(resolveRefreshTarget(gridsByTab, loopsByTab, 'tab-a', 'room_33', false), {
+    workspaceId: 'tab-a',
+    id: 'room_33',
+  })
+
+  // When e96 is in a closed room on tab-a, resolveRefreshTarget stays on tab-a instead of resolving to tab-b's e96.
+  const loopsWithClosedOnA: Record<string, Loops> = {
+    ...loopsByTab,
+    'tab-a': {
+      ...loopsByTab['tab-a']!,
+      closed: [
+        {
+          loop: loop('f2', 'Closed on A'),
+          window: 1,
+          elements: [
+            { id: 'e90', panelId: 'p90', rect: { x: 0, y: 0, w: 4, h: 4 }, z: 1, mode: 'tiled', loop: 'f2' },
+            {
+              id: 'e96',
+              panelId: 'p96',
+              parent: 'e90',
+              rect: { x: 0, y: 0, w: 4, h: 4 },
+              z: 1,
+              mode: 'tiled',
+              loop: 'f2',
+            },
+          ],
+          panels: [],
+        },
+      ],
+    },
+  }
+  assert.deepEqual(resolveRefreshTarget(gridsByTab, loopsWithClosedOnA, 'tab-a', 'e96', true), {
+    workspaceId: 'tab-a',
+    id: 'e96',
+  })
+})
+
+test('handoffWritten picks the refined message, brief, or systemPrompt passed to a room', () => {
+  assert.equal(
+    handoffWritten({ message: '  Check Q3 filings  ', brief: 'General brief', systemPrompt: 'Role' }),
+    'Check Q3 filings',
+  )
+  assert.equal(
+    handoffWritten({ message: '   ', brief: '  Unpack all 13 executives  ', systemPrompt: 'Role' }),
+    'Unpack all 13 executives',
+  )
+  assert.equal(handoffWritten({ brief: '', systemPrompt: '  Act as a credit analyst  ' }), 'Act as a credit analyst')
+  assert.equal(handoffWritten({ message: ' ', brief: ' ', systemPrompt: null }), undefined)
+})
+
+test('startInstructions formats refined room instructions and systemPrompt for confirmation', () => {
+  assert.equal(
+    startInstructions('Research all 13 executives from FLWS.', 'Visit each profile in order.'),
+    'Research all 13 executives from FLWS.\n\nSystem prompt:\nVisit each profile in order.',
+  )
+  assert.equal(
+    startInstructions('Research all 13 executives.', 'Research all 13 executives.'),
+    'Research all 13 executives.',
+  )
+  assert.equal(
+    startInstructions('Research all 13 executives.', undefined, 'Start with the CEO.'),
+    'Research all 13 executives.\n\nStart with the CEO.',
+  )
+  assert.equal(startInstructions('', '   ', undefined), undefined)
+})
+
+test('handoffSummary includes the refined instructions passed on to the room', () => {
+  assert.equal(
+    handoffSummary('Started', 'f89', 'Research all 13 executives on LinkedIn.'),
+    'Started room_89:\nResearch all 13 executives on LinkedIn.',
+  )
+  assert.equal(handoffSummary('Started', 'f89', '   '), 'Started room_89.')
+  assert.equal(
+    handoffSummary('Sent to', 'f12', 'Filter to the last 3 months.'),
+    'Sent to room_12:\nFilter to the last 3 months.',
+  )
+  assert.equal(handoffSummary('Sent to', 'f12', undefined), 'Sent to room_12.')
+})
+
+test('editedInstructionsPrompt builds the follow-up message when the user corrects room instructions', () => {
+  assert.equal(
+    editedInstructionsPrompt('Research all 13 executives.', 'Do not stop until 3 months of activity are read.'),
+    'Updated room instructions:\nResearch all 13 executives.\n\nSystem prompt:\nDo not stop until 3 months of activity are read.',
+  )
+  assert.equal(
+    editedInstructionsPrompt('Research all 13 executives.', ''),
+    'Updated room instructions:\nResearch all 13 executives.',
+  )
+  assert.equal(
+    editedInstructionsPrompt('  ', 'Only check 90 days.'),
+    'Updated room system prompt:\nOnly check 90 days.',
+  )
+  assert.equal(editedInstructionsPrompt('  ', '  '), null)
+})
+
+test('withLoopUpdated updates open and closed room instructions and preserves identity when unchanged', () => {
+  const openLoop: Loop = {
+    ...loop('f1', 'Initial desc'),
+    brief: 'Old brief',
+    systemPrompt: 'Old system',
+  }
+  const closedEntry = {
+    loop: { ...loop('f2', 'Closed desc'), brief: 'Closed brief', systemPrompt: 'Closed system' },
+    window: 1,
+    elements: grid([1, frame, 'f2']).elements,
+    panels: grid([1, frame, 'f2']).panels,
+  }
+  const state: Loops = { seq: 2, list: [openLoop], closed: [closedEntry] }
+
+  assert.equal(withLoopUpdated(state, 'f9', { brief: 'Nope' }, 50), state)
+  assert.equal(withLoopUpdated(state, 'f1', { brief: 'Old brief', systemPrompt: 'Old system' }, 50), state)
+
+  const updatedOpen = withLoopUpdated(
+    state,
+    'f1',
+    { desc: 'y'.repeat(DESC_MAX + 10), brief: '  New brief  ', systemPrompt: '  ' },
+    50,
+  )
+  assert.equal(updatedOpen.list[0]?.desc, 'y'.repeat(DESC_MAX))
+  assert.equal(updatedOpen.list[0]?.brief, 'New brief')
+  assert.equal('systemPrompt' in (updatedOpen.list[0] ?? {}), false)
+  assert.equal(updatedOpen.list[0]?.lastActiveAt, 50)
+
+  const updatedClosed = withLoopUpdated(
+    updatedOpen,
+    'f2',
+    { brief: 'Updated closed brief', systemPrompt: 'Updated closed system' },
+    60,
+  )
+  assert.equal(updatedClosed.closed?.[0]?.loop.brief, 'Updated closed brief')
+  assert.equal(updatedClosed.closed?.[0]?.loop.systemPrompt, 'Updated closed system')
+  assert.equal(updatedClosed.closed?.[0]?.loop.lastActiveAt, 60)
+})
+
+test('a room handoff with brief and no message shows the refined brief in the room transcript while keeping only the raw prompt as user-typed', async () => {
+  const { handedBy, handedTurn, saidByUser } = await import('../agent/typed.ts')
+  const { transcript } = await import('../agent/transcript.ts')
+  const rawPrompt = 'spinout a browser and research every profile referenced in room 87'
+  const brief = 'Open LinkedIn in core/browser and review 3 months of activity for all 13 FLWS executives.'
+  const written = handoffWritten({ message: undefined, brief, systemPrompt: 'Check each profile in order.' })
+  const handed = handedBy(rawPrompt, undefined, written)
+  assert.deepEqual(handed, {
+    typed: rawPrompt,
+    written: brief,
+  })
+  const turn = { role: 'user' as const, text: handedTurn(handed.typed ?? '', handed.written!) }
+  assert.equal(saidByUser([turn], 'room 87'), true)
+  assert.equal(saidByUser([turn], 'all 13 FLWS executives'), false)
+  assert.deepEqual(
+    transcript([turn, { role: 'assistant', text: 'Started.', toolCalls: [], raw: null }], 5).map((e) => e.question),
+    [brief],
+  )
 })

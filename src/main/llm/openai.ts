@@ -12,6 +12,10 @@ import {
   isRecord,
   newestState,
   withState,
+  canSalvageStream,
+  isConnectionDrop,
+  RESET_RETRIES,
+  validArguments,
 } from './wire.ts'
 
 // OpenAI Chat Completions. Tool results go back as one `tool` message per call.
@@ -72,18 +76,38 @@ export async function openai(
       effort,
     )
     if (streams(options, model)) {
-      try {
-        const reader = openaiStream(options.onText, options.onCall, options.onThinking)
-        // Without asking, a streamed reply says nothing about what it cost; the last chunk then carries it.
-        const streamed = JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } })
-        for await (const payload of sse(config, url, headers, streamed, options.timeoutMs, options.signal)) {
-          const parsed = event(payload)
-          if (parsed) reader.push(parsed)
+      // Without asking, a streamed reply says nothing about what it cost; the last chunk then carries it.
+      const streamed = JSON.stringify({ ...body, stream: true, stream_options: { include_usage: true } })
+      for (let reset = 0; ; reset++) {
+        let sawFrame = false
+        let emittedText = false
+        const reader = openaiStream(
+          options.onText
+            ? (delta) => {
+                emittedText = true
+                options.onText?.(delta)
+              }
+            : undefined,
+          options.onCall,
+          options.onThinking,
+        )
+        const requestHeaders = reset > 0 ? { ...headers, connection: 'close' } : headers
+        try {
+          for await (const payload of sse(config, url, requestHeaders, streamed, options.timeoutMs, options.signal)) {
+            sawFrame = true
+            const parsed = event(payload)
+            if (parsed) reader.push(parsed)
+          }
+          return readOpenai(reader.done())
+        } catch (err) {
+          if (reader.finished() && canSalvageStream(err, options.signal)) return readOpenai(reader.done())
+          if (sawFrame && !emittedText && !options.signal?.aborted && reset < RESET_RETRIES && isConnectionDrop(err)) {
+            continue
+          }
+          if (!refusedStreaming(err)) throw err
+          withoutStreaming.add(model)
+          break
         }
-        return readOpenai(reader.done())
-      } catch (err) {
-        if (!refusedStreaming(err)) throw err
-        withoutStreaming.add(model)
       }
     }
     return readOpenai(
@@ -232,6 +256,7 @@ export function openaiStream(
   onThinking?: (delta: string) => void,
 ): {
   push: (event: Record<string, unknown>) => void
+  finished: () => boolean
   done: () => OpenAiResponse
 } {
   let content = ''
@@ -243,7 +268,7 @@ export function openaiStream(
       if (isRecord(event.usage)) usage = event.usage as OpenAiResponse['usage']
       const choice = Array.isArray(event.choices) ? event.choices[0] : undefined
       if (!isRecord(choice)) return
-      if (typeof choice.finish_reason === 'string') finish = choice.finish_reason
+      if (typeof choice.finish_reason === 'string' && choice.finish_reason) finish = choice.finish_reason
       const delta = isRecord(choice.delta) ? choice.delta : {}
       const thinking = onThinking ? thinkingOf(delta) : ''
       if (thinking) onThinking?.(thinking)
@@ -267,6 +292,10 @@ export function openaiStream(
         calls.set(index, call)
       }
     },
+    finished: () =>
+      finish !== '' &&
+      (finish !== 'tool_calls' || calls.size > 0) &&
+      [...calls.values()].every((call) => call.name !== '' && validArguments(call.arguments)),
     done: () => ({
       choices: [
         {

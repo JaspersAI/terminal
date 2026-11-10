@@ -36,8 +36,10 @@ export function afterRound(
   limit: number,
   state: string,
   added: number,
+  readingAgain = false,
 ): { most: number; riding: string } {
-  const next = added > 0 ? Math.max(most, round + limit) : most
+  const extra = readingAgain && round >= most && most < limit + 8 ? 1 : 0
+  const next = added > 0 ? Math.max(most, round + limit) : most + extra
   return { most: next, riding: round === next ? `${state}\n${LAST_ROUND}` : state }
 }
 

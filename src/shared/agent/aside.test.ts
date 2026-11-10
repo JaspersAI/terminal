@@ -6,6 +6,7 @@ import {
   INSTRUCTIONS,
   LARGE,
   makeRoom,
+  readAgainTargets,
   restoreInput,
   sent,
   setAside,
@@ -62,9 +63,22 @@ test("an earlier request's long answer is sent as a note: its tool, its length, 
   assert.match(note, /run_source/)
   assert.match(note, /4,019 characters/)
   assert.match(note, /read_again "c1"/)
+  assert.match(note, /counting, quoting, or stating facts/)
   assert.match(note, /ticker,revenue/)
   assert.doesNotMatch(note, /TAIL/)
   assert.ok(note.length < 800, `the note is ${note.length} characters`)
+})
+
+test('a multi-page browser research request across 13 pages (30,000 characters each) keeps all 13 answers whole through synthesis', () => {
+  const turns: Turn[] = [
+    asked('research all 13 executive profiles'),
+    ...Array.from({ length: 13 }, (_, i): Turn[] => [
+      calling(`g${i + 1}`, 'get', { path: 'panels/e102/text', offset: 0 }),
+      answer(`g${i + 1}`, big(30_000, String(i % 10))),
+    ]).flat(),
+  ]
+  assert.ok(WHOLE_MAX >= 400_000)
+  assert.equal(setAside(turns, { asked: 0, aside: 0 }), null)
 })
 
 test('what was said goes whole, and the thread handed in is not changed', () => {
@@ -604,4 +618,33 @@ test('once the front of a thread is cut, the marks point at the turns they did',
   // A cut that reaches into the request at work leaves all of what is left to it.
   assert.deepEqual(cutFrom({ asked: 10, aside: 14 }, 12), { asked: 0, aside: 2 })
   assert.deepEqual(cutFrom({ asked: 10, aside: 10 }, 12), { asked: 0, aside: 0 })
+})
+
+test('paginating panels/<id>/text at a positive offset keeps the earlier slice of that page whole alongside it', () => {
+  const paged: Turn[] = [
+    asked('read the feed'),
+    calling('g1', 'get', { path: 'panels/e102/text', offset: 0 }),
+    answer('g1', big(half)),
+    calling('g2', 'get', { path: 'panels/e102/text', offset: 20_000 }),
+    answer('g2', big(half)),
+  ]
+  assert.equal(setAside(paged, { asked: 0, aside: 0 }), null)
+  // Once the agent moves on to another call (like set), the earlier page slices stand aside as usual.
+  const movedOn: Turn[] = [
+    ...paged,
+    calling('s1', 'set', { path: 'panels/e102/state/url', value: 'https://example.com/2' }),
+    answer('s1', 'ok'),
+  ]
+  assert.deepEqual(setAside(movedOn, { asked: 0, aside: 0 })!.sending, { asked: 0, aside: 6 })
+})
+
+test('readAgainTargets extracts single, comma-separated, and array call ids', () => {
+  assert.deepEqual(readAgainTargets({ id: 'r1', name: 'read_again', input: { call: ' "c1" ' } }), ['c1'])
+  assert.deepEqual(readAgainTargets({ id: 'r2', name: 'read_again', input: { call: 'c1, "c2", c1' } }), ['c1', 'c2'])
+  assert.deepEqual(readAgainTargets({ id: 'r3', name: 'read_again', input: { calls: ['c1', 'c2', 'c3'] } }), [
+    'c1',
+    'c2',
+    'c3',
+  ])
+  assert.deepEqual(readAgainTargets({ id: 'g1', name: 'get', input: { path: 'panels/e1/text' } }), [])
 })

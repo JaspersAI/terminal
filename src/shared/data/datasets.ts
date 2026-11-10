@@ -96,6 +96,21 @@ export function canShareInFlight(options: {
   return options.ttlMs > 0 && !options.fresh && !options.signal && !options.raw
 }
 
+/**
+ * Whether a cached dataset is still valid at `now`: within its TTL and fetched on or after the
+ * workspace's latest panel `refreshedAt` stamp (so a panel refreshed while its tab was inactive,
+ * while its iframe was booting, or when its room was reopened never gets a pre-refresh cached dataset).
+ */
+export function isDatasetStillGood(
+  dataset: { at: number; ttlMs: number },
+  now: number,
+  refreshedAt: number | null = null,
+): boolean {
+  if (dataset.ttlMs <= 0 || now - dataset.at > dataset.ttlMs) return false
+  if (refreshedAt !== null && dataset.at < refreshedAt) return false
+  return true
+}
+
 /** Deduplicates concurrent shareable calls for the same key until the in-flight promise settles. */
 export function createInFlightMap<T>(): {
   run(key: string, share: boolean, execute: () => Promise<T>): Promise<T>

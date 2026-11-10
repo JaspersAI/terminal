@@ -40,6 +40,10 @@ interface Props {
    * does: an id names one thing, and a tile's box draws this too.
    */
   named?: boolean
+  /** Saved scroll offset when the reader scrolled up from the end, or null while following the bottom. */
+  scrollTop?: number | null
+  /** Reports when the reader scrolls up to a position or returns to following the bottom (`null`). */
+  onScrollTopChange?: (scrollTop: number | null) => void
   /** What the scroller is: the floating box caps its height, the docked chat fills what it is given. */
   className: string
 }
@@ -77,29 +81,41 @@ export function Transcript({
   label,
   text,
   named = true,
+  scrollTop: savedScrollTop = null,
+  onScrollTopChange,
   className,
 }: Props): ReactElement {
   const scroller = useRef<HTMLDivElement>(null)
   // Whether the end is kept in view: until the reader scrolls up from it, and again once they are back.
-  const follow = useRef(true)
+  const follow = useRef(savedScrollTop === null)
   // The requests drawn last, by name: one not among them has just been sent.
-  const drawn = useRef<string[]>([])
+  const drawn = useRef<string[]>(savedScrollTop === null ? [] : live.map((one) => one.ask))
+  const restored = useRef(savedScrollTop === null)
   // The exchange at the top of what was last drawn, and where the reader was in it: how far down, and
   // how far from the end.
   const top = useRef<number | undefined>(undefined)
-  const at = useRef(0)
+  const at = useRef(savedScrollTop ?? 0)
   const fromEnd = useRef(0)
 
   useLayoutEffect(() => {
     const asks = live.map((one) => one.ask)
     // A question just sent is where the reader is now, wherever they had read back to.
-    if (asks.some((ask) => !drawn.current.includes(ask))) follow.current = true
+    if (asks.some((ask) => !drawn.current.includes(ask))) {
+      follow.current = true
+      restored.current = true
+      onScrollTopChange?.(null)
+    }
     drawn.current = asks
     const el = scroller.current
     if (!el) return
     const was = top.current
     top.current = earlier[0]?.id
-    if (follow.current) {
+    if (!restored.current && savedScrollTop !== null) {
+      if (earlier.length > 0 || live.length > 0) {
+        el.scrollTop = savedScrollTop
+        restored.current = true
+      }
+    } else if (follow.current) {
       el.scrollTop = el.scrollHeight
     } else if (was !== undefined && was !== top.current && earlier.some((one) => one.id === was)) {
       // A page joined above what the reader has in hand. The same distance from the end is the same
@@ -109,7 +125,7 @@ export function Transcript({
     reached(el)
     // Every change to a request still on screen: a step landing over what its run has written, its
     // reply growing, or Stop coming and going, moves what is under it.
-  }, [earlier, live, text])
+  }, [earlier, live, text, savedScrollTop, onScrollTopChange])
 
   // What holds it may change its height under the same words: a question taking room above it, its
   // tile resized. Its end stays in view through that too, unless the reader has it.
@@ -117,7 +133,7 @@ export function Transcript({
     const el = scroller.current
     if (!el) return
     const observer = new ResizeObserver(() => {
-      if (follow.current) el.scrollTop = el.scrollHeight
+      if (el.clientHeight > 0 && follow.current) el.scrollTop = el.scrollHeight
     })
     observer.observe(el)
     return () => observer.disconnect()
@@ -139,12 +155,14 @@ export function Transcript({
    * changes nothing.
    */
   function moved(el: HTMLDivElement): void {
+    if (el.clientHeight === 0) return
     const was = at.current
     reached(el)
     // Within a pixel of it: the heights are whole numbers and the place is not.
     const atEnd = fromEnd.current - el.clientHeight <= 1
     if (el.scrollTop < was && !atEnd) follow.current = false
     else if (el.scrollTop > was && atEnd) follow.current = true
+    onScrollTopChange?.(follow.current ? null : el.scrollTop)
   }
 
   /**
@@ -153,7 +171,10 @@ export function Transcript({
    * pinch arrives as a wheel too, and scrolls nothing.
    */
   function letGo(event: ReactWheelEvent<HTMLDivElement>): void {
-    if (event.deltaY < 0 && !event.ctrlKey && event.currentTarget.scrollTop > 0) follow.current = false
+    if (event.deltaY < 0 && !event.ctrlKey && event.currentTarget.scrollTop > 0) {
+      follow.current = false
+      onScrollTopChange?.(event.currentTarget.scrollTop)
+    }
   }
 
   return (

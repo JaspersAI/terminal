@@ -204,9 +204,13 @@ export function moveElementAcross(
   return { element: result.element, resolved: result.resolved, from: from.window }
 }
 
-/** The grid with the engine's counter at the workspace's highest, so a new id is new in every window. */
+/** The grid with the engine's counter at the workspace's highest, so a new id is new in every window and closed room. */
 function seeded(workspaceId: string, grid: Grid): Grid {
-  const max = Math.max(...Object.values(getGrids(workspaceId)).map((g) => g.seq))
+  const closedMax = (getState().loops[workspaceId]?.closed ?? []).flatMap((c) => [
+    ...c.elements.map((e) => Number(e.id.slice(1)) || 0),
+    ...c.panels.map((p) => Number(p.id.slice(1)) || 0),
+  ])
+  const max = Math.max(...Object.values(getGrids(workspaceId)).map((g) => g.seq), ...closedMax)
   return grid.seq === max ? grid : { ...grid, seq: max }
 }
 

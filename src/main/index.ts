@@ -12,7 +12,7 @@ import { registerSkillEditorIpc } from './skills/skill-editor'
 import { registerSkillInstallIpc } from './skills/skill-install'
 import { registerLiveIpc } from './plugins/live-ipc'
 import { flush } from './persist'
-import { killAllHosts, quittingHosts, stopAllHosts } from './plugins/plugin-host'
+import { killAllHosts, quittingHosts, stopAllHosts, suspendHosts, wakeHosts } from './plugins/plugin-host'
 import { startPlugins } from './plugins/plugins'
 import { registerBuiltins } from './plugins/registry'
 import { startSkills } from './skills/skills'
@@ -27,9 +27,10 @@ import { startThreads } from './agent/thread-file'
 import { startInbox } from './app/notices'
 import { compact, notifications, query, startStore, stats, stopOnQuit, usageToday } from './data/store'
 import { startBackground, startsHidden } from './app/background'
-import { deleteRecordings, endSession, eyeFolder, startEye } from './eye/eye'
+import { deleteRecordings, endSession, eyeFolder, record, startEye, suspendEye, wakeEye } from './eye/eye'
 import { recordAction, recordNote, startTelemetry } from './eye/taps'
 import { closePendingRuns } from './agent/utils/record'
+import { hasLiveRuns, onLiveRunsChange } from './agent/utils/runs'
 import { knownSecrets } from './agent/utils/settings'
 import { canFlushUploads, flushUploads, startUploads, stopUploads, suspendUploads, wakeUploads } from './eye/upload'
 import { startTheme } from './app/theme'
@@ -37,6 +38,7 @@ import { installUpdate, startUpdates } from './app/updates'
 import { startTasks, stopTasks, suspendTasks, wakeTasks } from './tasks/tasks'
 import { findTool } from './agent/tools'
 import { registerSchemes, registerViewHost } from './plugins/viewhost'
+import { suspendLlm, wakeLlm } from './llm/http'
 import { registerVoiceIpc } from './llm/voice'
 import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
 import { anyInFront, isHttps, openAllStored, registerDragIpc, showAll, watchDisplays } from './grid/windows'
@@ -44,6 +46,7 @@ import { installMenu } from './app/menu'
 import {
   accountPageAddress,
   checkSignIn,
+  jaspersWakeDelayMs,
   onSignInChange,
   refreshTerms,
   suspendJaspers,
@@ -53,6 +56,18 @@ import {
 // The schemes a plugin view's iframe loads from have to be declared before the app is ready; their
 // handlers come after it, below.
 registerSchemes()
+
+process.on('unhandledRejection', (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  const stack = reason instanceof Error ? (reason.stack ?? null) : null
+  console.error('unhandled rejection:', message)
+  record({ kind: 'error', name: 'main', data: { message, stack } })
+})
+
+process.on('uncaughtException', (err) => {
+  console.error('uncaught exception:', err.message)
+  record({ kind: 'error', name: 'main', data: { message: err.message, stack: err.stack ?? null } })
+})
 
 // One Jaspers per user data folder, since two would write the same files. A second launch shows the
 // first one's windows and leaves.
@@ -93,9 +108,12 @@ app.whenReady().then(async () => {
   // and an app opened from Finder has launchd's PATH rather than the user's.
   void adoptShellPath().finally(() => startPlugins())
   const wakeAll = (): void => {
-    wakeTasks()
-    wakeRetries()
+    wakeEye()
     wakeJaspers()
+    wakeHosts()
+    wakeRetries()
+    wakeLlm()
+    wakeTasks()
     wakeUploads()
   }
   // The scheduler. A call task runs its tool the way the orchestrator would, on the task's
@@ -107,9 +125,13 @@ app.whenReady().then(async () => {
     runCall: runTaskCall,
     runAsk: runTask,
     intoChat: taskSaid,
+    wakeDelayMs: jaspersWakeDelayMs,
     onWake: () => {
-      wakeRetries()
+      wakeEye()
       wakeJaspers()
+      wakeHosts()
+      wakeRetries()
+      wakeLlm()
       wakeUploads()
     },
   })
@@ -227,13 +249,18 @@ app.whenReady().then(async () => {
     showWindow: reopen,
     windowInFront: anyInFront,
     suspendTasks: () => {
+      suspendEye()
       suspendTasks()
+      suspendHosts()
       suspendRetries()
       suspendJaspers()
+      suspendLlm()
       suspendUploads()
     },
     wakeTasks: wakeAll,
     installUpdate,
+    runsInFlight: hasLiveRuns,
+    onRunsChange: onLiveRunsChange,
   })
   // Eye, if the user has it on: a frame of the app's own windows every minute, and a line of
   // telemetry for what the app did. It records into a folder on this machine, and the uploader

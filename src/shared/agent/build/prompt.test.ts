@@ -89,6 +89,8 @@ test('the procedure asks for approval first, writes complete files in a single p
   assert.match(fixed!, /each write_file and edit_file save automatically rebuilds/)
   assert.match(fixed!, /edit_file replaces one passage of a file and leaves the rest as it is/)
   assert.match(fixed!, /destructured in its runtime parameter list/)
+  // Interactive controls in views persist edits back to panel.state so tab switches and remounts keep them.
+  assert.match(fixed!, /usePanelState\(panel, key, init\)|setState/)
   // Shell-prepared files are read through ctx.files with shell: paths.
   assert.match(fixed!, /ctx\.files/)
   assert.match(fixed!, /shell:/)

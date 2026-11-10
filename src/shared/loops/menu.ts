@@ -14,6 +14,8 @@ export interface ToldPlugin {
 
 export interface Menu {
   plugins: ToldPlugin[]
+  brief?: string
+  systemPrompt?: string
 }
 
 /** What a tile's menu says of its work, or null when the workspace has no such work. */
@@ -32,5 +34,9 @@ export function menuOf(
     })
     return { id, installed: plugin !== undefined, connections }
   })
-  return { plugins }
+  return {
+    plugins,
+    ...(loop.brief ? { brief: loop.brief } : {}),
+    ...(loop.systemPrompt ? { systemPrompt: loop.systemPrompt } : {}),
+  }
 }

@@ -15,11 +15,15 @@ import {
   boxSettled,
   canZoomLoop,
   IDLE_BOX,
+  isTitleTap,
+  roomRenameChange,
   shouldReadTileBox,
+  shouldToggleHeaderMode,
   tileBoxExpanded,
   tileBoxOf,
   tileBoxOlder,
   tileBoxRead,
+  tileBoxScrolled,
   tileBoxSeen,
   tileBoxSent,
   tileBoxSettled,
@@ -350,4 +354,46 @@ test('a tile box summarizes attached_file blocks in sent and heard questions', (
   assert.equal(sentRows[0]!.question, 'Analyze\n[Attached: sheet.xlsx]')
   const heardRows = boxHeard([], start('run1', 'e1', { request: prompt }), HERE)
   assert.equal(heardRows[0]!.question, 'Analyze\n[Attached: sheet.xlsx]')
+})
+
+test('a tile box remembers its conversation scroll position across tab switches and folds until a new message is sent', () => {
+  let boxes: ReadonlyMap<string, TileBox> = new Map()
+  assert.equal(tileBoxOf(boxes, HERE).scrollTop, null)
+
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, true))
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxScrolled(box, 240))
+  assert.equal(tileBoxOf(boxes, HERE).scrollTop, 240)
+
+  // Unchanged scroll offset preserves the box reference.
+  const beforeSame = tileBoxOf(boxes, HERE)
+  assert.equal(tileBoxScrolled(beforeSame, 240), beforeSame)
+
+  // Folding and reopening the conversation keeps the saved scroll position.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, false))
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxExpanded(box, true))
+  assert.equal(tileBoxOf(boxes, HERE).scrollTop, 240)
+
+  // Sending a new prompt returns the conversation to following the bottom.
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSent(box, HERE, 'a1', 'next question'))
+  assert.equal(tileBoxOf(boxes, HERE).scrollTop, null)
+})
+
+test('clicking or double-clicking a room title opens rename without triggering header maximize or blocking drag, and roomRenameChange commits only real changes', () => {
+  assert.equal(isTitleTap(100, 50, 102, 51, 0), true)
+  assert.equal(isTitleTap(100, 50, 108, 50, 0), false)
+  assert.equal(isTitleTap(100, 50, 100, 50, 2), false)
+
+  assert.equal(shouldToggleHeaderMode({ renaming: false, onButton: false, onTitle: false }), true)
+  assert.equal(shouldToggleHeaderMode({ renaming: true, onButton: false, onTitle: false }), false)
+  assert.equal(shouldToggleHeaderMode({ renaming: false, onButton: true, onTitle: false }), false)
+  assert.equal(shouldToggleHeaderMode({ renaming: false, onButton: false, onTitle: true }), false)
+
+  assert.equal(roomRenameChange({ id: 'f3' }, '  Macro   Rates '), 'Macro Rates')
+  assert.equal(roomRenameChange({ id: 'f3' }, ''), null)
+  assert.equal(roomRenameChange({ id: 'f3' }, 'Room 3'), null)
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'Macro Rates'), null)
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, '  Macro Rates  '), null)
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, ''), '')
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'Room 3'), '')
+  assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'room_3'), '')
 })

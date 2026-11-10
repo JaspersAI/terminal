@@ -8,15 +8,19 @@
 
 // The extensions are explicit because Node's test runner resolves these imports at run time.
 import {
+  isRefreshableView,
   layoutOf,
   MIN_CELLS,
+  removeElement,
   resolvePlacement,
   restored,
+  withLayout,
   type Grid,
   type GridElement,
   type GridSize,
   type Rect,
 } from '../grid/grid.ts'
+import { panelTargetOfCall, type Task, type TaskCall } from '../tasks/tasks.ts'
 import {
   frameOf,
   loopChat,
@@ -127,15 +131,25 @@ export function reopened(
   id: string,
   window: number,
   now: number,
-): { grids: Record<number, Grid>; loops: Loops; frame: GridElement } {
+): {
+  grids: Record<number, Grid>
+  loops: Loops
+  frame: GridElement
+  ids: ReadonlyMap<string, string>
+  panelIds: ReadonlyMap<string, string>
+} {
   const shut = closedLoop(loops, id)
   if (!shut) throw new Error(`${loopName(id)} is not closed.`)
   const grid = grids[window]
   if (!grid) throw new Error(`Window ${window} has no grid.`)
-  const used = new Set(
-    Object.values(grids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
-  )
-  let seq = Math.max(0, ...Object.values(grids).map((g) => g.seq))
+  const closedOther = (loops.closed ?? [])
+    .filter((one) => one !== shut)
+    .flatMap((one) => [...one.elements.map((e) => e.id), ...one.panels.map((p) => p.id)])
+  const used = new Set([
+    ...Object.values(grids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
+    ...closedOther,
+  ])
+  let seq = Math.max(0, ...Object.values(grids).map((g) => g.seq), ...closedOther.map((id) => Number(id.slice(1)) || 0))
   const clash = shut.elements.some((e) => used.has(e.id)) || shut.panels.some((p) => used.has(p.id))
   const ids = new Map<string, string>()
   const panelIds = new Map<string, string>()
@@ -176,6 +190,7 @@ export function reopened(
     ...p,
     id: panelIds.get(p.id) ?? p.id,
     elementId: ids.get(p.elementId) ?? p.elementId,
+    ...(isRefreshableView(p) ? { refreshedAt: now } : {}),
   }))
   // A maximized tile would cover it: it goes back to its own cells, as it does for a placement.
   const shown = grid.elements.map((e) => (e.parent === undefined && e.mode === 'maximized' ? restored(e) : e))
@@ -194,6 +209,8 @@ export function reopened(
     grids: { ...grids, [window]: next },
     loops: closed.length > 0 ? { ...kept, list, closed } : { ...kept, list },
     frame,
+    ids,
+    panelIds,
   }
 }
 
@@ -288,6 +305,7 @@ export function searchRooms<T extends LogEntry & { workspaceName?: string }>(
       `room ${n}`,
       `loop_${n}`,
       `loop ${n}`,
+      loop.title ?? '',
       loop.desc,
       loop.brief,
       loop.systemPrompt ?? '',
@@ -313,10 +331,97 @@ export function globalSeq(loopsByTab: Record<string, Loops>): number {
   return max
 }
 
+function archivedIncomingRooms(
+  closingLoops: Loops,
+  closingGrids: Record<number, Grid>,
+  closingTabId: string,
+  intoLoops: Loops,
+  now: number,
+  intoGrids: Record<number, Grid> = {},
+): {
+  seq: number
+  rooms: {
+    original: ClosedLoop
+    archived: ClosedLoop
+    ids: Map<string, string>
+    panelIds: Map<string, string>
+  }[]
+} {
+  const closedAll = closedWithout(closingLoops, closingGrids, {}, now)
+  const seq = Math.max(intoLoops.seq, closedAll.seq)
+  const existingRoomIds = new Set([
+    ...intoLoops.list.map((r) => r.id),
+    ...(intoLoops.closed ?? []).map((c) => c.loop.id),
+  ])
+  const used = new Set<string>([
+    ...Object.values(intoGrids).flatMap((g) => [...g.elements.map((e) => e.id), ...g.panels.map((p) => p.id)]),
+    ...(intoLoops.closed ?? []).flatMap((c) => [...c.elements.map((e) => e.id), ...c.panels.map((p) => p.id)]),
+  ])
+  let elemSeq = Math.max(
+    0,
+    ...Object.values(intoGrids).map((g) => g.seq),
+    ...[...used].map((id) => Number(id.slice(1)) || 0),
+  )
+  const rooms: {
+    original: ClosedLoop
+    archived: ClosedLoop
+    ids: Map<string, string>
+    panelIds: Map<string, string>
+  }[] = []
+
+  for (const shut of closedAll.closed ?? []) {
+    if (existingRoomIds.has(shut.loop.id)) continue
+    const clash = shut.elements.some((e) => used.has(e.id)) || shut.panels.some((p) => used.has(p.id))
+    const ids = new Map<string, string>()
+    const panelIds = new Map<string, string>()
+    for (const element of shut.elements) {
+      if (clash) {
+        elemSeq += 1
+        ids.set(element.id, `e${elemSeq}`)
+        panelIds.set(element.panelId, `p${elemSeq}`)
+      } else {
+        ids.set(element.id, element.id)
+        panelIds.set(element.panelId, element.panelId)
+        elemSeq = Math.max(elemSeq, Number(element.id.slice(1)) || 0, Number(element.panelId.slice(1)) || 0)
+      }
+      used.add(ids.get(element.id)!)
+      used.add(panelIds.get(element.panelId)!)
+    }
+    const [first, ...rest] = shut.elements
+    const frameId = ids.get(first!.id)!
+    const elements: GridElement[] = [
+      { ...first!, id: frameId, panelId: panelIds.get(first!.panelId)! },
+      ...rest.map((e) => ({
+        ...e,
+        id: ids.get(e.id)!,
+        panelId: panelIds.get(e.panelId)!,
+        parent: frameId,
+      })),
+    ]
+    const panels = shut.panels.map((p) => ({
+      ...p,
+      id: panelIds.get(p.id) ?? p.id,
+      elementId: ids.get(p.elementId) ?? p.elementId,
+    }))
+    rooms.push({
+      original: shut,
+      archived: {
+        ...shut,
+        loop: { ...shut.loop, chat: loopChat(closingTabId, shut.loop) },
+        elements,
+        panels,
+      },
+      ids,
+      panelIds,
+    })
+  }
+  return { seq, rooms }
+}
+
 /**
  * Archives all open and closed rooms of a closing tab (`closingTabId`) into `intoLoops`'s closed
  * memory, stamping each room's canonical `chat` key (`<closingTabId>/<id>`) so its conversation history
- * survives after the tab is gone.
+ * survives after the tab is gone, and renumbering any element/panel ids that collide with `intoTabId`.
  */
 export function archiveTabRooms(
   closingLoops: Loops,
@@ -324,23 +429,18 @@ export function archiveTabRooms(
   closingTabId: string,
   intoLoops: Loops,
   now: number,
+  intoGrids: Record<number, Grid> = {},
 ): Loops {
-  const closedAll = closedWithout(closingLoops, closingGrids, {}, now)
-  const incoming = (closedAll.closed ?? []).map((shut): ClosedLoop => ({
-    ...shut,
-    loop: { ...shut.loop, chat: loopChat(closingTabId, shut.loop) },
-  }))
-  const seq = Math.max(intoLoops.seq, closedAll.seq)
-  if (incoming.length === 0) return seq === intoLoops.seq ? intoLoops : { ...intoLoops, seq }
-  const existingIds = new Set([...intoLoops.list.map((r) => r.id), ...(intoLoops.closed ?? []).map((c) => c.loop.id)])
-  const filtered = incoming.filter((c) => !existingIds.has(c.loop.id))
-  const closed = [...(intoLoops.closed ?? []), ...filtered]
-  return closed.length > 0 ? { ...intoLoops, seq, closed } : { ...intoLoops, seq }
+  const { seq, rooms } = archivedIncomingRooms(closingLoops, closingGrids, closingTabId, intoLoops, now, intoGrids)
+  if (rooms.length === 0) return seq === intoLoops.seq ? intoLoops : { ...intoLoops, seq }
+  const closed = [...(intoLoops.closed ?? []), ...rooms.map((r) => r.archived)]
+  return { ...intoLoops, seq, closed }
 }
 
 /**
  * Reopens a closed room (from whichever tab's closed list holds it) onto `targetTabId`'s grid,
- * preserving its canonical `chat` key when it moves across tabs.
+ * preserving its canonical `chat` key when it moves across tabs and retargeting any scheduled
+ * tasks that belong to the room.
  */
 export function reopenAcrossTabs(
   gridsByTab: Record<string, Record<number, Grid>>,
@@ -349,28 +449,53 @@ export function reopenAcrossTabs(
   roomId: string,
   window: number,
   now: number,
+  tasks: readonly Task[] = [],
 ): {
   grids: Record<string, Record<number, Grid>>
   loops: Record<string, Loops>
   frame: GridElement
+  tasks: Task[]
 } {
-  const sourceTabId = Object.keys(loopsByTab).find((tabId) => closedLoop(loopsByTab[tabId] ?? NO_LOOPS, roomId))
+  let workingGridsByTab = gridsByTab
+  let workingLoopsByTab = loopsByTab
+  let sourceTabId = Object.keys(workingLoopsByTab).find((tabId) =>
+    closedLoop(workingLoopsByTab[tabId] ?? NO_LOOPS, roomId),
+  )
+  if (!sourceTabId) {
+    const openSourceTabId = Object.keys(workingLoopsByTab).find(
+      (tabId) => tabId !== targetTabId && (workingLoopsByTab[tabId]?.list ?? []).some((one) => one.id === roomId),
+    )
+    if (openSourceTabId) {
+      const beforeGrids = workingGridsByTab[openSourceTabId] ?? {}
+      const openFrame = frameOf(beforeGrids, roomId)
+      if (openFrame) {
+        const winGrid = beforeGrids[openFrame.window]!
+        const afterWinGrid = withLayout(winGrid, undefined, removeElement(layoutOf(winGrid), openFrame.element.id).grid)
+        const afterGrids = { ...beforeGrids, [openFrame.window]: afterWinGrid }
+        const afterLoops = closedWithout(workingLoopsByTab[openSourceTabId] ?? NO_LOOPS, beforeGrids, afterGrids, now)
+        workingGridsByTab = { ...workingGridsByTab, [openSourceTabId]: afterGrids }
+        workingLoopsByTab = { ...workingLoopsByTab, [openSourceTabId]: afterLoops }
+        sourceTabId = openSourceTabId
+      }
+    }
+  }
   if (!sourceTabId) throw new Error(`${loopName(roomId)} is not closed.`)
-  const sourceLoops = loopsByTab[sourceTabId] ?? NO_LOOPS
-  const targetLoops = loopsByTab[targetTabId] ?? NO_LOOPS
-  const targetGrids = gridsByTab[targetTabId]
+  const sourceLoops = workingLoopsByTab[sourceTabId] ?? NO_LOOPS
+  const targetLoops = workingLoopsByTab[targetTabId] ?? NO_LOOPS
+  const targetGrids = workingGridsByTab[targetTabId]
   if (!targetGrids) throw new Error('Unknown tab.')
 
+  const shut = closedLoop(sourceLoops, roomId)!
   if (sourceTabId === targetTabId) {
     const back = reopened(targetGrids, targetLoops, roomId, window, now)
     return {
-      grids: { ...gridsByTab, [targetTabId]: back.grids },
-      loops: { ...loopsByTab, [targetTabId]: back.loops },
+      grids: { ...workingGridsByTab, [targetTabId]: back.grids },
+      loops: { ...workingLoopsByTab, [targetTabId]: back.loops },
       frame: back.frame,
+      tasks: reopenRoomTasks(tasks, shut, sourceTabId, targetTabId, back.ids, back.panelIds, targetGrids),
     }
   }
 
-  const shut = closedLoop(sourceLoops, roomId)!
   const taggedShut: ClosedLoop = {
     ...shut,
     loop: { ...shut.loop, chat: loopChat(sourceTabId, shut.loop) },
@@ -385,14 +510,256 @@ export function reopenAcrossTabs(
   const { closed: _was, ...restSource } = sourceLoops
   const nextSource: Loops = nextSourceClosed.length > 0 ? { ...restSource, closed: nextSourceClosed } : restSource
   return {
-    grids: { ...gridsByTab, [targetTabId]: back.grids },
+    grids: { ...workingGridsByTab, [targetTabId]: back.grids },
     loops: {
-      ...loopsByTab,
+      ...workingLoopsByTab,
       [sourceTabId]: nextSource,
       [targetTabId]: back.loops,
     },
     frame: back.frame,
+    tasks: reopenRoomTasks(
+      tasks,
+      shut,
+      sourceTabId,
+      targetTabId,
+      back.ids,
+      back.panelIds,
+      workingGridsByTab[sourceTabId],
+    ),
   }
+}
+
+const ROOM_MENTION_RE = /\b(?:(?:room|loop)[_ -]?([1-9]\d*)|f([1-9]\d*))\b/gi
+const ELEMENT_PANEL_TOKEN_RE = /\b([ep][1-9]\d*)\b/g
+
+function instructionsExclusiveToRoom(
+  instructions: string,
+  room: ClosedLoop,
+  elementIds: ReadonlySet<string>,
+  panelIds: ReadonlySet<string>,
+): { matches: boolean; namedRoom: boolean; referencedIds: string[] } {
+  const roomNum = loopNumber(room.loop.id)
+  let namedRoom = false
+  for (const match of instructions.matchAll(ROOM_MENTION_RE)) {
+    const n = Number(match[1] ?? match[2])
+    if (n !== roomNum) return { matches: false, namedRoom: false, referencedIds: [] }
+    namedRoom = true
+  }
+  const referencedIds: string[] = []
+  for (const match of instructions.matchAll(ELEMENT_PANEL_TOKEN_RE)) {
+    const token = match[1]!
+    if (!elementIds.has(token) && !panelIds.has(token)) {
+      return { matches: false, namedRoom: false, referencedIds: [] }
+    }
+    referencedIds.push(token)
+  }
+  return { matches: namedRoom || referencedIds.length > 0, namedRoom, referencedIds }
+}
+
+function isReusedOnSource(id: string, room: ClosedLoop, sourceGrids?: Record<number, Grid>): boolean {
+  if (!sourceGrids) return false
+  return Object.values(sourceGrids).some(
+    (grid) =>
+      grid.elements.some((e) => e.id === id && e.loop !== room.loop.id) ||
+      grid.panels.some(
+        (p) => p.id === id && grid.elements.some((e) => e.id === p.elementId && e.loop !== room.loop.id),
+      ),
+  )
+}
+
+/** Whether a scheduled task targets a room or its elements/panels on `sourceTabId`. */
+export function taskTargetsRoom(
+  task: Task,
+  room: ClosedLoop,
+  sourceTabId: string,
+  sourceGrids?: Record<number, Grid>,
+): boolean {
+  const elementIds = new Set(room.elements.map((e) => e.id))
+  const panelIds = new Set(room.panels.flatMap((p) => [p.id, p.elementId]))
+  const closedAt = [...(room.loop.log ?? [])].reverse().find((c) => c.change === 'closed')?.at
+  const fromInstructions = instructionsExclusiveToRoom(task.instructions, room, elementIds, panelIds)
+
+  const idBelongsToRoom = (id: string, tabId: string): boolean => {
+    if (named([room.loop], id)) return true
+    if (tabId !== sourceTabId) return false
+    if (!elementIds.has(id) && !panelIds.has(id)) return false
+    if (fromInstructions.namedRoom) return true
+    if (closedAt !== undefined && task.createdAt > closedAt && isReusedOnSource(id, room, sourceGrids)) {
+      return false
+    }
+    return true
+  }
+
+  if (task.call) {
+    const target = panelTargetOfCall(task)
+    if (target) return idBelongsToRoom(target.panelId, target.workspaceId)
+    return false
+  }
+
+  if (task.workspaceId !== sourceTabId || !fromInstructions.matches) return false
+  if (fromInstructions.namedRoom) return true
+  if (
+    closedAt !== undefined &&
+    task.createdAt > closedAt &&
+    fromInstructions.referencedIds.some((id) => isReusedOnSource(id, room, sourceGrids))
+  ) {
+    return false
+  }
+  return true
+}
+
+function retargetTask(
+  task: Task,
+  targetTabId: string,
+  ids: ReadonlyMap<string, string>,
+  panelIds: ReadonlyMap<string, string>,
+): Task {
+  const mapToken = (token: string): string => ids.get(token) ?? panelIds.get(token) ?? token
+  const nextInstructions = task.instructions.replace(ELEMENT_PANEL_TOKEN_RE, (token) => mapToken(token))
+  let nextCall = task.call
+  if (task.call) {
+    const { tool, input } = task.call
+    if (tool === 'refresh_element') {
+      let inputChanged = false
+      const nextInput: Record<string, unknown> = { ...input }
+      for (const key of ['elementId', 'panelId', 'id'] as const) {
+        const val = input[key]
+        if (typeof val === 'string' && val.trim()) {
+          const mapped = mapToken(val.trim())
+          if (mapped !== val) {
+            nextInput[key] = mapped
+            inputChanged = true
+          }
+        }
+      }
+      if (inputChanged) nextCall = { tool, input: nextInput }
+    } else if (tool === 'set' && typeof input['path'] === 'string') {
+      const segments = input['path'].trim().split('/')
+      let pathChanged = false
+      if (segments[0] === 'panels' && segments[1]) {
+        const mapped = mapToken(segments[1])
+        if (mapped !== segments[1]) {
+          segments[1] = mapped
+          pathChanged = true
+        }
+      } else if (
+        (segments[0] === 'workspaces' || segments[0] === 'tabs') &&
+        segments[1] &&
+        segments[2] === 'panels' &&
+        segments[3]
+      ) {
+        if (segments[1] !== targetTabId) {
+          segments[1] = targetTabId
+          pathChanged = true
+        }
+        const mapped = mapToken(segments[3])
+        if (mapped !== segments[3]) {
+          segments[3] = mapped
+          pathChanged = true
+        }
+      }
+      if (pathChanged) nextCall = { tool, input: { ...input, path: segments.join('/') } }
+    }
+  }
+  if (task.workspaceId === targetTabId && nextInstructions === task.instructions && nextCall === task.call) {
+    return task
+  }
+  return {
+    ...task,
+    workspaceId: targetTabId,
+    instructions: nextInstructions,
+    call: nextCall,
+  }
+}
+
+/**
+ * Moves and retargets scheduled tasks belonging to `shut` when it is reopened onto `targetTabId`,
+ * rewriting any clashing element or panel ids in `call` and `instructions` to their new ids.
+ */
+export function reopenRoomTasks(
+  tasks: readonly Task[],
+  shut: ClosedLoop,
+  sourceTabId: string,
+  targetTabId: string,
+  ids: ReadonlyMap<string, string>,
+  panelIds: ReadonlyMap<string, string>,
+  sourceGrids?: Record<number, Grid>,
+): Task[] {
+  let changed = false
+  const next = tasks.map((task) => {
+    if (!taskTargetsRoom(task, shut, sourceTabId, sourceGrids)) return task
+    const updated = retargetTask(task, targetTabId, ids, panelIds)
+    if (updated !== task) changed = true
+    return updated
+  })
+  return changed ? next : [...tasks]
+}
+
+/**
+ * When a tab (`closingTabId`) closes and its rooms are archived into `intoTabId`, keeps scheduled
+ * tasks that belong to any of the archived rooms by moving them to `intoTabId` (renumbering any
+ * element/panel ids that collided with `intoTabId`), while dropping tab-only tasks that belong to no room.
+ */
+export function archiveTabTasks(
+  tasks: readonly Task[],
+  closingLoops: Loops,
+  closingGrids: Record<number, Grid>,
+  closingTabId: string,
+  intoTabId: string,
+  now: number,
+  intoLoops: Loops = NO_LOOPS,
+  intoGrids: Record<number, Grid> = {},
+): Task[] {
+  const { rooms } = archivedIncomingRooms(closingLoops, closingGrids, closingTabId, intoLoops, now, intoGrids)
+  return tasks.flatMap((task) => {
+    if (task.workspaceId !== closingTabId) return [task]
+    const matched = rooms.find((r) => taskTargetsRoom(task, r.original, closingTabId, closingGrids))
+    if (!matched) return []
+    return [retargetTask(task, intoTabId, matched.ids, matched.panelIds)]
+  })
+}
+
+/**
+ * Removes scheduled tasks that target a permanently deleted room (`shut`) on `tabId`.
+ */
+export function withoutRoomTasks(
+  tasks: readonly Task[],
+  shut: ClosedLoop,
+  tabId: string,
+  grids?: Record<number, Grid>,
+): Task[] {
+  const next = tasks.filter((task) => !taskTargetsRoom(task, shut, tabId, grids))
+  return next.length === tasks.length ? (tasks as Task[]) : next
+}
+
+/**
+ * What a scheduled call (`refresh_element` or `set`) says when the tile or panel it targets is in
+ * a room the user closed: nothing to do until the room is reopened, rather than a failure notice on
+ * every tick. Null when the target is open on a grid or not in any closed room.
+ */
+export function closedCallMessage(
+  call: TaskCall,
+  workspaceId: string,
+  gridsByTab: Record<string, Record<number, Grid>>,
+  loopsByTab: Record<string, Loops>,
+): string | null {
+  const targetInfo = panelTargetOfCall({ workspaceId, call })
+  if (!targetInfo) return null
+  const { workspaceId: targetTabId, panelId: target } = targetInfo
+  const loops = loopsByTab[targetTabId] ?? NO_LOOPS
+  const grids = Object.values(gridsByTab[targetTabId] ?? {})
+  if (grids.some((grid) => grid.elements.some((e) => e.id === target) || grid.panels.some((p) => p.id === target))) {
+    return null
+  }
+  if (named(loops.list, target)) return null
+  const closed =
+    closedHolding(loops, target) ??
+    Object.values(loopsByTab)
+      .map((one) => closedHolding(one, target))
+      .find((one) => one !== undefined)
+  if (!closed) return null
+  const name = loopName(closed.loop.id)
+  return `Skipped: ${target} is in ${name}, which is closed. It refreshes again once ${name} is reopened from Rooms.`
 }
 
 /**

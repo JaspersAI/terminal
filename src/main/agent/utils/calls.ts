@@ -5,6 +5,7 @@ import { capOutput } from '../../../shared/agent/history'
 import { cap } from '../../../shared/agent/prompt'
 import { batches, callLine, DEFERRED_FOR_ADDED } from '../../../shared/agent/rounds'
 import { messageOf } from '../../../shared/rpc'
+import { isSleepWakeError } from '../../../shared/tasks/tasks'
 import type { ToolCall, ToolResult, Turn } from '../../llm/llm'
 import type { Tool, ToolContext } from '../tools/types'
 import { noteToolEnd, noteToolStart } from './record'
@@ -107,6 +108,10 @@ async function execute(
     }
     const message = messageOf(err)
     log(`tool ${call.name} failed: ${message}`)
-    return finish(false, message)
+    const failed = finish(false, message)
+    if ((entry.origin === 'task' || context.task !== undefined) && isSleepWakeError(message)) {
+      throw err instanceof Error ? err : new Error(message)
+    }
+    return failed
   }
 }
