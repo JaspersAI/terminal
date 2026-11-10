@@ -352,7 +352,7 @@ async function execute(task: Task): Promise<void> {
       ok = false
       result = 'Cannot refresh Jaspers sign-in while the computer is sleeping or waking.'
     } else {
-      const compared = await compare(current.id, result)
+      const compared = await compare(current.id, result, at)
       found = compared.delta
       previousWatchText = compared.previous
       if (!found.changed) {
@@ -387,7 +387,7 @@ async function execute(task: Task): Promise<void> {
     )
   ) {
     if (previousWatchText !== null) {
-      await watch({ task: current.id, at, text: previousWatchText })
+      await watch({ task: current.id, at: Math.max(at, now()), text: previousWatchText })
     }
     console.log(`[tasks] ${current.id} deferred during sleep/wake (${ms} ms)`)
     deferAfterSleepWake()
@@ -418,8 +418,8 @@ async function execute(task: Task): Promise<void> {
  * happened belongs, and the first run has nothing to compare with, so it is never a change: a watch
  * does not announce itself the moment it is made.
  */
-async function compare(task: string, result: string): Promise<{ delta: Delta; previous: string | null }> {
-  const seen = await watch({ task, at: now(), text: result })
+async function compare(task: string, result: string, at = now()): Promise<{ delta: Delta; previous: string | null }> {
+  const seen = await watch({ task, at, text: result })
   if (!seen.previous) return { delta: { changed: false, added: [], removed: [], text: '' }, previous: null }
   return { delta: delta(seen.previous.text, result), previous: seen.previous.text }
 }
