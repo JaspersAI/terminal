@@ -189,6 +189,7 @@ const READ_PAGE_SCRIPT = `
 `
 
 const nativeViews = new WeakMap<ManagedBrowserView, WebContentsView>()
+const viewOwners = new WeakMap<WebContentsView, BrowserWindow>()
 const watchedWindows = new WeakSet<BrowserWindow>()
 const inFlightUrlsByWebContentsId = new Map<number, string>()
 let configuredSession: Session | null = null
@@ -791,6 +792,8 @@ function createNativeView(
       }
       lastBounds = { ...bounds }
       raw.setBounds(bounds)
+      const owner = viewOwners.get(raw)
+      if (owner && !owner.isDestroyed()) syncOrbInWindow(owner)
     },
     setVisible: (visible) => {
       if (webContents.isDestroyed()) return
@@ -799,6 +802,8 @@ function createNativeView(
       if (!visible) lastBounds = null
       raw.setVisible(visible)
       syncBackgroundThrottling()
+      const owner = viewOwners.get(raw)
+      if (owner && !owner.isDestroyed()) syncOrbInWindow(owner)
     },
     setBackgrounded: (backgrounded) => {
       if (webContents.isDestroyed() || lastBackgrounded === backgrounded) return
@@ -878,12 +883,14 @@ function wrapWindow(number: number, win: BrowserWindow): ManagedWindow {
     attach: (view) => {
       const raw = nativeViews.get(view)
       if (!raw || win.isDestroyed() || raw.webContents.isDestroyed()) return
+      viewOwners.set(raw, win)
       if (!win.contentView.children.includes(raw)) win.contentView.addChildView(raw)
       syncOrbInWindow(win)
     },
     detach: (view) => {
       const raw = nativeViews.get(view)
       if (!raw || win.isDestroyed() || raw.webContents.isDestroyed()) return
+      if (viewOwners.get(raw) === win) viewOwners.delete(raw)
       if (win.contentView.children.includes(raw)) win.contentView.removeChildView(raw)
       syncOrbInWindow(win)
     },
