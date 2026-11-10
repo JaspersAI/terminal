@@ -159,11 +159,23 @@ function tree(
 }
 
 test('with nothing on the grid the model is told what it can place, and that nothing is focused', () => {
+  const chat: ViewInfo = {
+    id: 'core/chat',
+    plugin: null,
+    title: 'Central',
+    renders: [],
+    stateSchema: { type: 'object', properties: {} },
+  }
   assert.equal(
-    describeContext(tree(EMPTY_GRID, { 'core/note': NOTE, 'tradingview/chart': TV }), WS, instructionsFor, CLOCK),
+    describeContext(
+      tree(EMPTY_GRID, { 'core/note': NOTE, 'core/chat': chat, 'tradingview/chart': TV }),
+      WS,
+      instructionsFor,
+      CLOCK,
+    ),
     [
       'Installed views (place_view { view, state }):',
-      // The note is no agent's to place, so it is not among them.
+      // Neither the note nor the docked chat is an agent's to place, so neither is among them.
       '- tradingview/chart: Chart. state: { symbol: string, range: 1D|12M|ALL, studies: (rsi|macd)[] }',
       'No element is focused.',
       'Now: 2026-09-14 09:12 (UTC, UTC+00:00)',

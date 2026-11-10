@@ -19,7 +19,7 @@ import {
   type Rect,
   type Size,
 } from '../../../shared/grid/grid'
-import { elementTarget, frameOf, isTile, notPlaced, resolveRefreshTarget } from '../../../shared/loops/loops'
+import { elementTarget, frameOf, notPlaced, resolveRefreshTarget } from '../../../shared/loops/loops'
 import { asWindow, placeChecked, REFRESH_SETTLE_MS, refreshChecked, removeChecked, settlePanel } from '../../actions'
 import { loopsOf, notOwnFrame, ownTile } from '../../loops/loops'
 import {
@@ -159,13 +159,6 @@ export function gridTools(context?: ToolContext): Tool[] {
           replace: optional(input.replace, (raw) => resolveElementId(workspaceId, raw)),
         }
         // A loop's agent takes the place of its own tiles only, and what it places is another of them.
-        // The docked chat is no work's tile: it is the global conversation, and where it sits is the
-        // window's business.
-        if (context.loop !== undefined && !isTile(content)) {
-          throw new Error(
-            "The chat is the global conversation, which the user docks from the composer: it is not this work's to place.",
-          )
-        }
         if (placement.replace !== undefined) ownTile(context, placement.replace)
         const { element, panel, resolved } = placeChecked(
           workspaceId,
