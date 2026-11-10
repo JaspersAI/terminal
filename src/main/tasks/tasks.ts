@@ -8,6 +8,7 @@ import {
   isPending,
   isWakeLag,
   pruneFinished,
+  resolveWakeGrace,
   runNotice,
   shouldDeferTaskRun,
   STARTUP_GRACE_MS,
@@ -57,6 +58,7 @@ let timer: NodeJS.Timeout | null = null
 let grace: NodeJS.Timeout | null = null
 let started = false
 let expectedAt: number | null = null
+let sleepWakeSeq = 0
 /** The task and time the timer was last armed for, so the log says so once rather than on every change. */
 let armedFor: string | null = null
 let stopListening: (() => void) | null = null
@@ -76,12 +78,18 @@ function startAfterGrace(ms: number, waking = false): void {
   suspendTasks()
   const wait = wakeGraceDelayMs(ms, holdOffMs())
   if (!Number.isFinite(wait)) return
+  const dueAt = now() + wait
   grace = setTimeout(() => {
     grace = null
-    const remaining = holdOffMs()
-    if (!Number.isFinite(remaining)) return
-    if (remaining > 0) {
-      startAfterGrace(remaining, waking)
+    const decision = resolveWakeGrace({ expectedAt: dueAt, now: now(), authWakeDelayMs: holdOffMs() })
+    if (decision.action === 'wake-lag') {
+      deps?.onWake?.()
+      wakeTasks()
+      return
+    }
+    if (decision.action === 'suspend') return
+    if (decision.action === 'wait') {
+      startAfterGrace(decision.delayMs, waking)
       return
     }
     started = true
@@ -108,6 +116,7 @@ export function startTasks(next: SchedulerDeps): void {
 
 /** While the machine sleeps: disarm until wake, so an overdue timer does not fire before the network is back. */
 export function suspendTasks(): void {
+  sleepWakeSeq++
   started = false
   if (grace) clearTimeout(grace)
   if (timer) clearTimeout(timer)
@@ -119,6 +128,7 @@ export function suspendTasks(): void {
 
 /** After sleep: wait the grace window for connections and the network to settle, then arm from the clock as it is now. */
 export function wakeTasks(): void {
+  sleepWakeSeq++
   if (!deps) return
   startAfterGrace(WAKE_GRACE_MS, true)
 }
@@ -271,8 +281,11 @@ function tick(): void {
     else suspendTasks()
     return
   }
-  for (const task of dueTasks(getState().tasks, now())) void execute(task)
-  arm()
+  for (const task of dueTasks(getState().tasks, now())) {
+    if (!started) return
+    void execute(task)
+  }
+  if (started) arm()
 }
 
 function deferAfterSleepWake(): void {
@@ -311,6 +324,7 @@ async function execute(task: Task): Promise<void> {
   const current = getState().tasks.find((t) => t.id === task.id)
   if (!current || current.running) return
   replace({ ...current, running: true })
+  const seqAtStart = sleepWakeSeq
   const at = now()
   let ok = true
   let result = ''
@@ -332,33 +346,49 @@ async function execute(task: Task): Promise<void> {
   // nothing finishes here: no model is woken, no notice is shown, and the whole cost of a quiet
   // interval is the call itself.
   let found: Delta | null = null
+  let previousWatchText: string | null = null
   if (ok && isWatch(current)) {
-    found = await compare(current.id, result)
-    if (!found.changed) {
-      const ms = now() - at
-      console.log(`[tasks] ${current.id} watch: unchanged (${ms} ms)`)
-      const still = getState().tasks.find((t) => t.id === current.id)
-      if (still) replace(afterRun(still, { at, ok: true, result: 'unchanged', ms }))
-      return
-    }
-    console.log(`[tasks] ${current.id} watch: changed`)
-    // Something moved, so the instructions get their turn, with the change in front of them.
-    try {
-      result = await run.runAsk({
-        id: current.id,
-        instructions: `${current.instructions}\n\nWhat you are watching changed. This is the difference since last time:\n\n${found.text}`,
-        workspaceId: current.workspaceId,
-        model: current.model,
-        commands: current.commands,
-      })
-    } catch (err) {
+    if (sleepWakeSeq !== seqAtStart || !started || holdOffMs() > 0) {
       ok = false
-      result = err instanceof Error ? err.message : String(err)
+      result = 'Cannot refresh Jaspers sign-in while the computer is sleeping or waking.'
+    } else {
+      const compared = await compare(current.id, result)
+      found = compared.delta
+      previousWatchText = compared.previous
+      if (!found.changed) {
+        const ms = now() - at
+        console.log(`[tasks] ${current.id} watch: unchanged (${ms} ms)`)
+        const still = getState().tasks.find((t) => t.id === current.id)
+        if (still) replace(afterRun(still, { at, ok: true, result: 'unchanged', ms }))
+        return
+      }
+      console.log(`[tasks] ${current.id} watch: changed`)
+      // Something moved, so the instructions get their turn, with the change in front of them.
+      try {
+        result = await run.runAsk({
+          id: current.id,
+          instructions: `${current.instructions}\n\nWhat you are watching changed. This is the difference since last time:\n\n${found.text}`,
+          workspaceId: current.workspaceId,
+          model: current.model,
+          commands: current.commands,
+        })
+      } catch (err) {
+        ok = false
+        result = err instanceof Error ? err.message : String(err)
+      }
     }
   }
 
   const ms = now() - at
-  if (shouldDeferTaskRun({ ok, result }, { started, wakeDelayMs: holdOffMs() })) {
+  if (
+    shouldDeferTaskRun(
+      { ok, result },
+      { started, wakeDelayMs: holdOffMs(), sleptDuringRun: sleepWakeSeq !== seqAtStart },
+    )
+  ) {
+    if (previousWatchText !== null) {
+      await watch({ task: current.id, at, text: previousWatchText })
+    }
     console.log(`[tasks] ${current.id} deferred during sleep/wake (${ms} ms)`)
     deferAfterSleepWake()
     const still = getState().tasks.find((t) => t.id === current.id)
@@ -388,10 +418,10 @@ async function execute(task: Task): Promise<void> {
  * happened belongs, and the first run has nothing to compare with, so it is never a change: a watch
  * does not announce itself the moment it is made.
  */
-async function compare(task: string, result: string): Promise<Delta> {
+async function compare(task: string, result: string): Promise<{ delta: Delta; previous: string | null }> {
   const seen = await watch({ task, at: now(), text: result })
-  if (!seen.previous) return { changed: false, added: [], removed: [], text: '' }
-  return delta(seen.previous.text, result)
+  if (!seen.previous) return { delta: { changed: false, added: [], removed: [], text: '' }, previous: null }
+  return { delta: delta(seen.previous.text, result), previous: seen.previous.text }
 }
 
 /** "t3", or "t3 on Research" when there is more than one workspace to tell apart. */
