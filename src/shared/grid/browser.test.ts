@@ -18,6 +18,7 @@ import {
   clipBounds,
   DEFAULT_BROWSER_BOUNDS,
   DEFAULT_BROWSER_URL,
+  desktopUserAgentMetadata,
   formatBrowserPageText,
   googleAuthUserAgent,
   isBlankBrowserPopupUrl,
@@ -124,12 +125,11 @@ test('isVideoPageUrl detects Bloomberg TV/Live and YouTube pages for default the
   )
 })
 
-test('Google sign-in hosts present a Firefox identity without client hints while other hosts keep cleaned Chrome headers', () => {
+test('Google sign-in hosts present Electron’s unmodified identity with native client hints while other hosts receive cleaned Chrome headers', () => {
   const rawUa =
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) jaspers-terminal/0.11.1 Chrome/136.0.0.0 Electron/44.3.0 Safari/537.36'
   const cleanChromeUa =
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36'
-  const macFirefoxUa = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0'
 
   assert.equal(isGoogleAuthUrl('https://accounts.google.com/v3/signin/identifier'), true)
   assert.equal(isGoogleAuthUrl('https://ACCOUNTS.GOOGLE.COM/o/oauth2/v2/auth'), true)
@@ -139,15 +139,46 @@ test('Google sign-in hosts present a Firefox identity without client hints while
   assert.equal(isGoogleAuthUrl('https://accounts.google.com.evil.test/'), false)
   assert.equal(isGoogleAuthUrl('not a url'), false)
 
-  assert.equal(googleAuthUserAgent('darwin'), macFirefoxUa)
+  assert.equal(googleAuthUserAgent(rawUa), rawUa)
   assert.equal(
-    googleAuthUserAgent('win32'),
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0',
+    googleAuthUserAgent(cleanChromeUa, '44.3.0'),
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Electron/44.3.0 Safari/537.36',
   )
-  assert.equal(googleAuthUserAgent('linux'), 'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0')
 
-  assert.equal(browserUserAgentForUrl('https://accounts.google.com/signin', rawUa, 'darwin'), macFirefoxUa)
-  assert.equal(browserUserAgentForUrl('https://www.linkedin.com/login', rawUa, 'darwin'), cleanChromeUa)
+  assert.equal(browserUserAgentForUrl('https://accounts.google.com/signin', rawUa), rawUa)
+  assert.equal(browserUserAgentForUrl('https://www.linkedin.com/login', rawUa), cleanChromeUa)
+
+  assert.deepEqual(desktopUserAgentMetadata({ platform: 'darwin', arch: 'arm64', systemVersion: '15.4.0' }), {
+    platform: 'macOS',
+    platformVersion: '15.4.0',
+    architecture: 'arm',
+    model: '',
+    mobile: false,
+  })
+  assert.deepEqual(
+    desktopUserAgentMetadata({ platform: 'darwin', arch: 'x64', systemVersion: '15.4.0', arm64Translation: true }),
+    {
+      platform: 'macOS',
+      platformVersion: '15.4.0',
+      architecture: 'arm',
+      model: '',
+      mobile: false,
+    },
+  )
+  assert.deepEqual(desktopUserAgentMetadata({ platform: 'win32', arch: 'x64' }), {
+    platform: 'Windows',
+    platformVersion: '15.0.0',
+    architecture: 'x86',
+    model: '',
+    mobile: false,
+  })
+  assert.deepEqual(desktopUserAgentMetadata({ platform: 'linux', arch: 'x64', systemVersion: '6.8.0' }), {
+    platform: 'Linux',
+    platformVersion: '',
+    architecture: 'x86',
+    model: '',
+    mobile: false,
+  })
 
   assert.equal(isBlankBrowserPopupUrl(''), true)
   assert.equal(isBlankBrowserPopupUrl('about:blank'), true)
@@ -155,11 +186,11 @@ test('Google sign-in hosts present a Firefox identity without client hints while
   assert.equal(isBlankBrowserPopupUrl('https://accounts.google.com/'), false)
   assert.equal(isBlankBrowserPopupUrl('javascript:alert(1)'), false)
 
-  // Direct request to accounts.google.com rewrites User-Agent to Firefox and strips all sec-ch-ua* headers.
+  // Direct request to accounts.google.com presents Electron's unmodified User-Agent and keeps native sec-ch-ua* headers intact.
   assert.deepEqual(
     browserRequestHeaders(
       {
-        'user-agent': rawUa,
+        'user-agent': cleanChromeUa,
         'Sec-CH-UA': '"Not.A/Brand";v="99", "Electron";v="44", "Chromium";v="136"',
         'sec-ch-ua-mobile': '?0',
         'Sec-CH-UA-Platform': '"macOS"',
@@ -171,20 +202,23 @@ test('Google sign-in hosts present a Firefox identity without client hints while
         resourceType: 'mainFrame',
         baseUserAgent: rawUa,
         chromeVersion: '136.0.7103.49',
-        platform: 'darwin',
       },
     ),
     {
-      'user-agent': macFirefoxUa,
+      'user-agent': rawUa,
+      'Sec-CH-UA': '"Not.A/Brand";v="99", "Electron";v="44", "Chromium";v="136"',
+      'sec-ch-ua-mobile': '?0',
+      'Sec-CH-UA-Platform': '"macOS"',
+      'sec-ch-ua-full-version-list': '"Electron";v="44.3.0", "Chromium";v="136.0.7103.49"',
       Accept: 'text/html',
     },
   )
 
-  // Cross-host subresource loaded from an accounts.google.com page keeps Firefox UA and strips client hints.
+  // Cross-host subresource loaded from an accounts.google.com page keeps Electron's UA and native client hints.
   assert.deepEqual(
     browserRequestHeaders(
       {
-        'User-Agent': macFirefoxUa,
+        'User-Agent': rawUa,
         'sec-ch-ua': '"Not.A/Brand";v="99", "Electron";v="44", "Chromium";v="136"',
         'sec-ch-ua-platform': '"macOS"',
       },
@@ -194,11 +228,12 @@ test('Google sign-in hosts present a Firefox identity without client hints while
         resourceType: 'script',
         baseUserAgent: rawUa,
         chromeVersion: '136.0.7103.49',
-        platform: 'darwin',
       },
     ),
     {
-      'User-Agent': macFirefoxUa,
+      'User-Agent': rawUa,
+      'sec-ch-ua': '"Not.A/Brand";v="99", "Electron";v="44", "Chromium";v="136"',
+      'sec-ch-ua-platform': '"macOS"',
     },
   )
 
@@ -206,7 +241,7 @@ test('Google sign-in hosts present a Firefox identity without client hints while
   assert.deepEqual(
     browserRequestHeaders(
       {
-        'User-Agent': macFirefoxUa,
+        'User-Agent': rawUa,
         'sec-ch-ua': '"Not.A/Brand";v="99", "Electron";v="44", "Chromium";v="136"',
         'sec-ch-ua-full-version-list': '"Electron";v="44.3.0", "Chromium";v="136.0.7103.49"',
       },
@@ -216,7 +251,6 @@ test('Google sign-in hosts present a Firefox identity without client hints while
         resourceType: 'mainFrame',
         baseUserAgent: rawUa,
         chromeVersion: '136.0.7103.49',
-        platform: 'darwin',
       },
     ),
     {
@@ -466,12 +500,13 @@ test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text an
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.7103.49 Safari/537.36',
   )
   assert.equal(chromeOverride.platform, 'MacIntel')
-  assert.deepEqual(chromeOverride.userAgentMetadata?.brands, [
+  const chromeMeta = chromeOverride.userAgentMetadata as ReturnType<typeof browserUserAgentMetadata> | undefined
+  assert.deepEqual(chromeMeta?.brands, [
     { brand: 'Not.A/Brand', version: '99' },
     { brand: 'Google Chrome', version: '136' },
     { brand: 'Chromium', version: '136' },
   ])
-  assert.deepEqual(chromeOverride.userAgentMetadata?.fullVersionList, [
+  assert.deepEqual(chromeMeta?.fullVersionList, [
     { brand: 'Not.A/Brand', version: '99.0.0.0' },
     { brand: 'Google Chrome', version: '136.0.7103.49' },
     { brand: 'Chromium', version: '136.0.7103.49' },
@@ -480,9 +515,17 @@ test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text an
   const googleOverride = browserEmulationOverrideForUrl('https://accounts.google.com/signin', rawUa, {
     chromeVersion: '136.0.7103.49',
     platform: 'darwin',
+    arch: 'arm64',
+    systemVersion: '15.4.0',
   })
-  assert.equal(googleOverride.userAgent, googleAuthUserAgent('darwin'))
-  assert.equal(googleOverride.userAgentMetadata, undefined)
+  assert.equal(googleOverride.userAgent, googleAuthUserAgent(rawUa))
+  assert.deepEqual(googleOverride.userAgentMetadata, {
+    platform: 'macOS',
+    platformVersion: '15.4.0',
+    architecture: 'arm',
+    model: '',
+    mobile: false,
+  })
 
   // Evaluate browserStealthScript against a simulated Electron main-world environment that leaks "Electron" in userAgentData.
   const meta = browserUserAgentMetadata({ chromeVersion: '136.0.7103.49', platform: 'darwin', arch: 'arm64' })
@@ -597,8 +640,8 @@ test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text an
   assert.equal(fakeDocument.hidden, false)
   assert.equal(fakeDocument.visibilityState, 'visible')
 
-  // On Google sign-in hosts with Firefox User-Agent, userAgentData is hidden and window.chrome is not added.
-  const ffNavProto = {
+  // On Google sign-in hosts with Electron's unmodified User-Agent, native userAgentData is kept intact and window.chrome is not added.
+  const googleNavProto = {
     get userAgent() {
       return googleOverride.userAgent
     },
@@ -609,11 +652,14 @@ test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text an
       return Object.create(uaDataProto)
     },
   }
-  const ffNav = Object.create(ffNavProto) as { webdriver: boolean; userAgentData?: unknown }
-  const ffWin = {
-    navigator: ffNav,
+  const googleNav = Object.create(googleNavProto) as {
+    webdriver: boolean
+    userAgentData?: { brands: { brand: string; version: string }[] }
+  }
+  const googleWin = {
+    navigator: googleNav,
     document: fakeDocument,
-    Navigator: { prototype: ffNavProto },
+    Navigator: { prototype: googleNavProto },
     Document: { prototype: docProto },
     innerWidth: 1280,
     innerHeight: 800,
@@ -621,10 +667,14 @@ test('unwraps Bloomberg tosv2.html bot-challenge URLs, detects challenge text an
     outerHeight: 800,
     chrome: undefined as Record<string, unknown> | undefined,
   }
-  new Function('window', 'navigator', 'document', script)(ffWin, ffNav, fakeDocument)
-  assert.equal(ffNav.webdriver, false)
-  assert.equal(ffNav.userAgentData, undefined)
-  assert.equal(ffWin.chrome, undefined)
+  new Function('window', 'navigator', 'document', script)(googleWin, googleNav, fakeDocument)
+  assert.equal(googleNav.webdriver, false)
+  assert.deepEqual(googleNav.userAgentData?.brands, [
+    { brand: 'Not.A/Brand', version: '99' },
+    { brand: 'Electron', version: '44' },
+    { brand: 'Chromium', version: '136' },
+  ])
+  assert.equal(googleWin.chrome, undefined)
 })
 
 test('orbOverlayBounds pads the native Orb view for unclipped light vibration and shouldShowOrbOverlay only activates when overlapping a visible browser view or mid-drag', () => {
