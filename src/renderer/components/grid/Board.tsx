@@ -71,7 +71,7 @@ export function Board({
         gridTemplateColumns: `repeat(${cut.w}, minmax(0, 1fr))`,
         gridTemplateRows: `repeat(${cut.h}, minmax(0, 1fr))`,
       }}
-      className="relative isolate grid min-h-0 flex-1"
+      className="relative isolate grid min-h-0 flex-1 overflow-hidden"
     >
       {drawn.map((element) => {
         const panel = inside.panels.find((p) => p.elementId === element.id)

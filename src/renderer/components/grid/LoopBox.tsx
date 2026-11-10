@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactElement,
 } from 'react'
 import { askedIn, type Place } from '../../../shared/agent/asking'
@@ -27,6 +28,8 @@ import {
   boxesHeard,
   boxesKept,
   boxesSeeded,
+  loopBoxSplit,
+  loopBoxSplitHeight,
   shouldReadTileBox,
   tileBoxExpanded,
   tileBoxOf,
@@ -35,6 +38,8 @@ import {
   tileBoxScrolled,
   tileBoxSent,
   tileBoxSettled,
+  tileBoxSplit,
+  tileBoxToggled,
   withTileBox,
   type TileBox,
 } from './box'
@@ -127,8 +132,9 @@ interface Props {
  * (`barLabel`), which says meanwhile how its requests stand and what the run at work is doing, or by
  * itself as a run begins in a tile with no view yet, which the first view to land folds again
  * (`boxOpens`, in `ElementFrame`). Escape folds it too. Open, it sits above the loop's views and pushes
- * them down, never over them, and takes at most half the tile; in a tile with no view yet it fills the
- * tile.
+ * them down, never over them, taking at most half the tile by default and vertically resizable by its
+ * bottom boundary from 0% to 100% of the space below the command line; in a tile with no view yet it
+ * fills the tile.
  *
  * Open, the box shows the loop's conversation (`Transcript`): what was sent, what each run did, and
  * the reply, below what was said before, which it reads from the loop's log a page at a time. Its
@@ -175,7 +181,7 @@ export function LoopBox({
   })
   const drop = useFileDrop(attachments.attach)
   const tileBox = useTileBox(place)
-  const { expanded: open, draft, live, earlier, more, scrollTop } = tileBox
+  const { expanded: open, draft, live, earlier, more, scrollTop, split } = tileBox
   const onScrollTopChange = useCallback(
     (nextScrollTop: number | null) => {
       updateTileBox(place, (b) => tileBoxScrolled(b, nextScrollTop))
@@ -186,13 +192,19 @@ export function LoopBox({
   const now = useRef<LiveExchange[]>(live)
   now.current = live
   const [focused, setFocused] = useState(false)
+  const [resizing, setResizing] = useState(false)
+  const [barHeight, setBarHeight] = useState(24)
   const [editingInstructions, setEditingInstructions] = useState(false)
   const [briefDraft, setBriefDraft] = useState(loop.brief)
   const [systemDraft, setSystemDraft] = useState(loop.systemPrompt ?? '')
   const question = useAppState((s) => askedIn(s.questions, place))
   const secret = useAppState((s) => askedIn(s.secretRequests, place))
   const box = useRef<HTMLDivElement>(null)
+  const bar = useRef<HTMLDivElement>(null)
+  const resizeCleanup = useRef<(() => void) | null>(null)
   const readingOlder = useRef(false)
+
+  useEffect(() => () => resizeCleanup.current?.(), [])
 
   useEffect(() => {
     if (!editingInstructions) {
@@ -204,6 +216,19 @@ export function LoopBox({
   const working = live.some((one) => one.working)
   const asked = question?.id ?? (secret ? `${secret.plugin}/${secret.key}` : (need?.name ?? null))
   const shouldRead = shouldReadTileBox(tileBox)
+
+  useLayoutEffect(() => {
+    const el = bar.current
+    if (!el) return
+    const sync = (): void => {
+      const next = Math.round(el.getBoundingClientRect().height)
+      if (next > 0) setBarHeight(next)
+    }
+    sync()
+    const observer = new ResizeObserver(sync)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [asked, zoom])
 
   // What was said before: read on mount with no finished row up, and when opened with unread exchanges.
   useEffect(() => {
@@ -299,12 +324,90 @@ export function LoopBox({
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   }
 
+  function startResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    const handle = event.currentTarget
+    const container = box.current?.parentElement
+    const commandBar = bar.current
+    if (!container || !commandBar) return
+    resizeCleanup.current?.()
+    const initialSplit = split
+    const handleRect = handle.getBoundingClientRect()
+    const handleHeight = Math.max(0, handleRect.height)
+    const grabOffset = event.clientY - handleRect.top
+    const pointerId = event.pointerId
+    try {
+      handle.setPointerCapture(pointerId)
+    } catch {
+      // Synthetic pointer events in tests may not have an active pointerId.
+    }
+    setResizing(true)
+
+    const applyAt = (clientY: number): void => {
+      const top = commandBar.getBoundingClientRect().bottom
+      const bottom = container.getBoundingClientRect().bottom - 4 - handleHeight
+      const next = loopBoxSplit(clientY - grabOffset, top, bottom)
+      updateTileBox(place, (b) => tileBoxSplit(b, next))
+    }
+
+    const move = (e: PointerEvent): void => {
+      e.stopPropagation()
+      if ((e.buttons & 1) === 0) {
+        finish(false)
+        return
+      }
+      applyAt(e.clientY)
+    }
+    const up = (e: PointerEvent): void => {
+      e.stopPropagation()
+      applyAt(e.clientY)
+      finish(false)
+    }
+    const cancel = (): void => finish(true)
+    const escape = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      finish(true)
+    }
+
+    function finish(revert: boolean): void {
+      window.removeEventListener('pointermove', move, true)
+      window.removeEventListener('pointerup', up, true)
+      window.removeEventListener('pointercancel', cancel, true)
+      window.removeEventListener('keydown', escape, true)
+      window.removeEventListener('blur', cancel)
+      resizeCleanup.current = null
+      try {
+        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId)
+      } catch {
+        // Ignore if pointer capture was already released.
+      }
+      setResizing(false)
+      if (revert) updateTileBox(place, (b) => tileBoxSplit(b, initialSplit))
+    }
+
+    resizeCleanup.current = () => finish(false)
+    window.addEventListener('pointermove', move, true)
+    window.addEventListener('pointerup', up, true)
+    window.addEventListener('pointercancel', cancel, true)
+    window.addEventListener('keydown', escape, true)
+    window.addEventListener('blur', cancel)
+  }
+
+  const splitHeight = open && !fills ? loopBoxSplitHeight(split, barHeight) : undefined
+  const collapsedSplit = open && !fills && split === 0
+  const drawerOpen = open && !collapsedSplit
+
   return (
     <div
       ref={box}
       id={active ? `loop-box-${elementId}` : undefined}
       data-loop-box
       data-open={open}
+      data-split={open && !fills && split !== null ? Math.round(split * 100) : undefined}
       // It can hold the keyboard itself, so a press on what it shows keeps the keyboard in it.
       tabIndex={-1}
       onFocus={() => setFocused(true)}
@@ -315,211 +418,250 @@ export function LoopBox({
       onDragOver={drop.onDragOver}
       onDragLeave={drop.onDragLeave}
       onDrop={drop.onDrop}
+      style={splitHeight !== undefined ? { height: splitHeight } : undefined}
       // The command line is first in the box, at the top of the tile. Open in a tile with no view yet,
       // what it shows fills the tile under it.
       className={`m-1 flex flex-col bg-background outline-none select-text ${
-        fills && open ? 'min-h-0 flex-1' : 'max-h-1/2 shrink-0'
+        fills && open ? 'min-h-0 flex-1' : splitHeight !== undefined ? 'min-h-0 shrink-0' : 'max-h-1/2 shrink-0'
       } ${drop.dropping ? 'outline-2 -outline-offset-2 outline-foreground outline-dashed' : ''}`}
     >
-      {secret !== null ? (
-        <div className="border border-border">
-          <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} active={active} />
-        </div>
-      ) : question !== null ? (
-        <div className="border border-border">
-          <QuestionField key={question.id} question={question} shown={!covered} active={active} />
-        </div>
-      ) : need !== null ? (
-        <div className="border border-border">
-          <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} active={active} />
-        </div>
-      ) : (
-        <form
-          id={active ? `loop-form-${elementId}` : undefined}
-          onSubmit={submit}
-          className="flex shrink-0 items-center gap-1"
-        >
-          <div
-            style={zoom !== 1 ? { height: `${1.5 * zoom}rem` } : undefined}
-            className="flex h-6 min-w-0 flex-1 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground"
+      <div ref={bar} className="shrink-0">
+        {secret !== null ? (
+          <div className="border border-border">
+            <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} active={active} />
+          </div>
+        ) : question !== null ? (
+          <div className="border border-border">
+            <QuestionField key={question.id} question={question} shown={!covered} active={active} />
+          </div>
+        ) : need !== null ? (
+          <div className="border border-border">
+            <Need key={need.name} waiting={need} on={elementId} onSkip={onSkip} active={active} />
+          </div>
+        ) : (
+          <form
+            id={active ? `loop-form-${elementId}` : undefined}
+            onSubmit={submit}
+            className="flex shrink-0 items-center gap-1"
           >
-            <AttachButton compact onFiles={attachments.attach} />
-            {attachments.files.map((file) => (
-              <span
-                key={file.name}
-                data-attachment={file.name}
-                className="inline-flex h-4 max-w-28 shrink-0 items-center gap-1 border border-border bg-muted px-1 text-[10px] leading-none"
-              >
-                <span className="truncate">{file.name}</span>
+            <div
+              style={zoom !== 1 ? { height: `${1.5 * zoom}rem` } : undefined}
+              className="flex h-6 min-w-0 flex-1 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground"
+            >
+              <AttachButton compact onFiles={attachments.attach} />
+              {attachments.files.map((file) => (
+                <span
+                  key={file.name}
+                  data-attachment={file.name}
+                  className="inline-flex h-4 max-w-28 shrink-0 items-center gap-1 border border-border bg-muted px-1 text-[10px] leading-none"
+                >
+                  <span className="truncate">{file.name}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${file.name}`}
+                    onClick={() => attachments.remove(file.name)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <input
+                id={active ? `loop-input-${elementId}` : undefined}
+                name="loop-prompt"
+                aria-label={`Message ${label}`}
+                autoComplete="off"
+                value={draft}
+                placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
+                onChange={(event) =>
+                  updateTileBox(place, (b) =>
+                    b.draft === event.target.value ? b : { ...b, draft: event.target.value },
+                  )
+                }
+                onPaste={(event) => pasteLinks(event, attachments.attach)}
+                className="h-full min-w-0 flex-1 bg-transparent px-1 text-xs leading-none outline-none"
+              />
+              {working && (
                 <button
                   type="button"
-                  aria-label={`Remove ${file.name}`}
-                  onClick={() => attachments.remove(file.name)}
-                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Stop"
+                  title="Working — click to stop"
+                  data-loop-stop=""
+                  onClick={(event) => {
+                    event.preventDefault()
+                    stopNewest()
+                  }}
+                  style={zoom !== 1 ? { width: `${1 * zoom}rem`, height: `${1 * zoom}rem` } : undefined}
+                  className="progress-square flex h-4 w-4 shrink-0 items-center justify-center p-[2px]"
                 >
-                  ×
+                  <span aria-hidden className="relative z-10 h-2.5 w-2.5 bg-background" />
                 </button>
-              </span>
-            ))}
-            <input
-              id={active ? `loop-input-${elementId}` : undefined}
-              name="loop-prompt"
-              aria-label={`Message ${label}`}
-              autoComplete="off"
-              value={draft}
-              placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
-              onChange={(event) =>
-                updateTileBox(place, (b) => (b.draft === event.target.value ? b : { ...b, draft: event.target.value }))
-              }
-              onPaste={(event) => pasteLinks(event, attachments.attach)}
-              className="h-full min-w-0 flex-1 bg-transparent px-1 text-xs leading-none outline-none"
-            />
-            {working && (
-              <button
-                type="button"
-                aria-label="Stop"
-                title="Working — click to stop"
-                data-loop-stop=""
-                onClick={(event) => {
-                  event.preventDefault()
-                  stopNewest()
-                }}
-                style={zoom !== 1 ? { width: `${1 * zoom}rem`, height: `${1 * zoom}rem` } : undefined}
-                className="progress-square flex h-4 w-4 shrink-0 items-center justify-center p-[2px]"
-              >
-                <span aria-hidden className="relative z-10 h-2.5 w-2.5 bg-background" />
-              </button>
-            )}
-          </div>
-          <button
-            type="button"
-            id={active ? `loop-expand-${elementId}` : undefined}
-            data-loop-expand
-            aria-expanded={open}
-            aria-controls={active ? `loop-box-${elementId}` : undefined}
-            aria-label={open ? 'Fold the conversation' : 'Open the conversation'}
-            title={open ? 'Collapse conversation' : 'Expand conversation'}
-            onClick={() => updateTileBox(place, (current) => tileBoxExpanded(current, !current.expanded))}
-            style={zoom !== 1 ? { width: `${1.25 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
-            className="flex h-6 w-5 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
-              {open ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
-            </svg>
-          </button>
-        </form>
-      )}
+              )}
+            </div>
+            <button
+              type="button"
+              id={active ? `loop-expand-${elementId}` : undefined}
+              data-loop-expand
+              aria-expanded={drawerOpen}
+              aria-controls={active ? `loop-box-${elementId}` : undefined}
+              aria-label={drawerOpen ? 'Fold the conversation' : 'Open the conversation'}
+              title={drawerOpen ? 'Collapse conversation' : 'Expand conversation'}
+              onClick={() => updateTileBox(place, tileBoxToggled)}
+              style={zoom !== 1 ? { width: `${1.25 * zoom}rem`, height: `${1.5 * zoom}rem` } : undefined}
+              className="flex h-6 w-5 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <svg viewBox="0 0 10 10" fill="none" aria-hidden className="h-2.5 w-2.5 stroke-current stroke-[1.5]">
+                {drawerOpen ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
+              </svg>
+            </button>
+          </form>
+        )}
+      </div>
       {open && (
-        <div data-room-instructions className="mt-1 shrink-0 border border-border bg-muted/20 px-2 py-1.5 text-xs">
-          <div className="flex items-center justify-between gap-2">
-            <span className="truncate font-medium text-muted-foreground">Instructions{asOf ? ` · ${asOf}` : ''}</span>
-            {!editingInstructions && (
-              <button
-                type="button"
-                data-edit-instructions
-                onClick={() => {
-                  setBriefDraft(loop.brief)
-                  setSystemDraft(loop.systemPrompt ?? '')
-                  setEditingInstructions(true)
-                }}
-                className="text-muted-foreground underline hover:text-foreground"
-              >
-                {loop.brief || loop.systemPrompt ? 'Edit' : 'Add'}
-              </button>
-            )}
-          </div>
-          {editingInstructions ? (
-            <div className="mt-1.5 flex flex-col gap-1.5">
-              <label className="flex flex-col gap-0.5">
-                <span className="text-[11px] text-muted-foreground">Room brief</span>
-                <textarea
-                  data-brief-input
-                  aria-label="Room instructions"
-                  rows={3}
-                  value={briefDraft}
-                  placeholder="Instructions for what this room's agent should do…"
-                  onChange={(event) => setBriefDraft(event.target.value)}
-                  className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
-                />
-              </label>
-              <label className="flex flex-col gap-0.5">
-                <span className="text-[11px] text-muted-foreground">System prompt (optional)</span>
-                <textarea
-                  data-system-prompt-input
-                  aria-label="Room system prompt"
-                  rows={2}
-                  value={systemDraft}
-                  placeholder="Role, methodology, or constraints for this room's agent…"
-                  onChange={(event) => setSystemDraft(event.target.value)}
-                  className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
-                />
-              </label>
-              <div className="flex flex-wrap items-center gap-1.5">
+        <div
+          data-loop-drawer
+          className={`flex flex-col overflow-hidden ${
+            collapsedSplit ? 'h-0 shrink-0' : fills || split !== null ? 'min-h-0 flex-1' : 'min-h-0 flex-auto'
+          }`}
+        >
+          <div data-room-instructions className="mt-1 shrink-0 border border-border bg-muted/20 px-2 py-1.5 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-medium text-muted-foreground">Instructions{asOf ? ` · ${asOf}` : ''}</span>
+              {!editingInstructions && (
                 <button
                   type="button"
-                  data-apply-instructions
-                  onClick={() => saveInstructions(true)}
-                  className="border border-primary bg-primary px-2 py-0.5 text-primary-foreground"
-                >
-                  Save &amp; run
-                </button>
-                <button
-                  type="button"
-                  data-save-instructions
-                  onClick={() => saveInstructions(false)}
-                  className="border border-border bg-background px-2 py-0.5 hover:bg-muted"
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  data-cancel-instructions
+                  data-edit-instructions
                   onClick={() => {
-                    setEditingInstructions(false)
                     setBriefDraft(loop.brief)
                     setSystemDraft(loop.systemPrompt ?? '')
+                    setEditingInstructions(true)
                   }}
-                  className="px-1.5 py-0.5 text-muted-foreground hover:text-foreground"
+                  className="text-muted-foreground underline hover:text-foreground"
                 >
-                  Cancel
+                  {loop.brief || loop.systemPrompt ? 'Edit' : 'Add'}
                 </button>
+              )}
+            </div>
+            {editingInstructions ? (
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[11px] text-muted-foreground">Room brief</span>
+                  <textarea
+                    data-brief-input
+                    aria-label="Room instructions"
+                    rows={3}
+                    value={briefDraft}
+                    placeholder="Instructions for what this room's agent should do…"
+                    onChange={(event) => setBriefDraft(event.target.value)}
+                    className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[11px] text-muted-foreground">System prompt (optional)</span>
+                  <textarea
+                    data-system-prompt-input
+                    aria-label="Room system prompt"
+                    rows={2}
+                    value={systemDraft}
+                    placeholder="Role, methodology, or constraints for this room's agent…"
+                    onChange={(event) => setSystemDraft(event.target.value)}
+                    className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
+                  />
+                </label>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    data-apply-instructions
+                    onClick={() => saveInstructions(true)}
+                    className="border border-primary bg-primary px-2 py-0.5 text-primary-foreground"
+                  >
+                    Save &amp; run
+                  </button>
+                  <button
+                    type="button"
+                    data-save-instructions
+                    onClick={() => saveInstructions(false)}
+                    className="border border-border bg-background px-2 py-0.5 hover:bg-muted"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    data-cancel-instructions
+                    onClick={() => {
+                      setEditingInstructions(false)
+                      setBriefDraft(loop.brief)
+                      setSystemDraft(loop.systemPrompt ?? '')
+                    }}
+                    className="px-1.5 py-0.5 text-muted-foreground hover:text-foreground"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
-            </div>
-          ) : loop.brief || loop.systemPrompt ? (
-            <div className="mt-1 max-h-24 space-y-1 overflow-y-auto">
-              {loop.brief && (
-                <p data-room-brief className="whitespace-pre-wrap break-words text-foreground">
-                  {loop.brief}
-                </p>
-              )}
-              {loop.systemPrompt && loop.systemPrompt !== loop.brief && (
-                <p data-room-system-prompt className="whitespace-pre-wrap break-words text-muted-foreground">
-                  <span className="font-medium">System prompt:</span> {loop.systemPrompt}
-                </p>
-              )}
-            </div>
+            ) : loop.brief || loop.systemPrompt ? (
+              <div className="mt-1 max-h-24 space-y-1 overflow-y-auto">
+                {loop.brief && (
+                  <p data-room-brief className="whitespace-pre-wrap break-words text-foreground">
+                    {loop.brief}
+                  </p>
+                )}
+                {loop.systemPrompt && loop.systemPrompt !== loop.brief && (
+                  <p data-room-system-prompt className="whitespace-pre-wrap break-words text-muted-foreground">
+                    <span className="font-medium">System prompt:</span> {loop.systemPrompt}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-0.5 text-muted-foreground">No standing instructions set for {called}.</p>
+            )}
+          </div>
+          {live.length > 0 || earlier.length > 0 ? (
+            <Transcript
+              named={false}
+              earlier={earlier}
+              onEarlier={older}
+              live={live}
+              onStop={stop}
+              scrollTop={scrollTop}
+              onScrollTopChange={onScrollTopChange}
+              className="mt-1 min-h-0 flex-1 overflow-y-auto border border-border px-2 py-1.5"
+            />
           ) : (
-            <p className="mt-0.5 text-muted-foreground">No standing instructions set for {called}.</p>
+            <p className="mt-1 min-h-0 flex-1 border border-border px-2 py-1.5 text-xs text-muted-foreground">
+              No conversation in {called} yet.
+            </p>
           )}
         </div>
       )}
-      {open &&
-        (live.length > 0 || earlier.length > 0 ? (
-          <Transcript
-            named={false}
-            earlier={earlier}
-            onEarlier={older}
-            live={live}
-            onStop={stop}
-            scrollTop={scrollTop}
-            onScrollTopChange={onScrollTopChange}
-            className="mt-1 min-h-0 flex-1 overflow-y-auto border border-border px-2 py-1.5"
+      {open && !fills && (
+        <div
+          id={active ? `loop-resize-${elementId}` : undefined}
+          data-loop-resize
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={`Resize ${called} conversation`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={split === null ? 50 : Math.round(split * 100)}
+          title="Drag to resize conversation and views (double-click to reset)"
+          onPointerDown={startResize}
+          onDoubleClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            updateTileBox(place, (b) => tileBoxSplit(b, null))
+          }}
+          className={`group relative z-20 mt-1 flex h-2 shrink-0 cursor-ns-resize items-center justify-center select-none ${
+            resizing ? 'bg-primary/20' : 'hover:bg-primary/20'
+          }`}
+        >
+          <span
+            aria-hidden
+            className={`h-px w-full transition-colors ${resizing ? 'bg-primary' : 'bg-border group-hover:bg-primary'}`}
           />
-        ) : (
-          <p className="mt-1 border border-border px-2 py-1.5 text-xs text-muted-foreground">
-            No conversation in {called} yet.
-          </p>
-        ))}
+        </div>
+      )}
+      {resizing && <div aria-hidden data-loop-resize-overlay className="fixed inset-0 z-50 cursor-ns-resize" />}
     </div>
   )
 }
