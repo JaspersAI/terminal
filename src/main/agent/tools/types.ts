@@ -15,6 +15,8 @@ export interface ToolContext {
   inThread: (text: string) => boolean
   /** True when the user loaded this skill with /name in this conversation, which is what lets the model near a skill only the user may load. */
   userRan: (id: string) => boolean
+  /** True when `search_web` answered this address earlier in this conversation's turns. */
+  searchAnswered?: (address: string) => boolean
   /**
    * What this run was asked: the user's request as typed, or a task's instructions, which nobody
    * typed. It is what a piece of work the run starts or sends to is handed.

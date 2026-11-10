@@ -26,6 +26,7 @@ import { CLOSED_NOTE, lastExchange, maskExchange, transcript, type Exchange } fr
 import { attachedFileNames, stripAttachedFiles } from '../../../shared/agent/attachments'
 import { restate } from '../../../shared/agent/stop'
 import { ranByUser, saidByUser } from '../../../shared/agent/typed'
+import { answeredIn, remember, wasGiven } from '../../../shared/agent/web'
 import { isOverflow } from '../../../shared/llm/limits'
 import type { Turn } from '../../../shared/llm/llm'
 import { stripSkillContent } from '../../../shared/skills/skills'
@@ -266,11 +267,18 @@ export async function exchanges(chat: string, limit: number, before?: number): P
  * What a tool may ask of the thread its run is on. A run with no conversation behind it gives an
  * empty thread, which answers no to all three.
  */
-export function threadReads(history: Turn[]): Pick<ToolContext, 'userSaid' | 'inThread' | 'userRan'> {
+export function threadReads(
+  history: Turn[],
+): Pick<ToolContext, 'userSaid' | 'inThread' | 'userRan' | 'searchAnswered'> {
   return {
     userSaid: (text) => saidByUser(history, text),
     inThread: (text) => skillLoaded(history, text),
     userRan: (id) => ranByUser(history, id),
+    searchAnswered: (address) => {
+      const given = new Set<string>()
+      remember(given, answeredIn(history))
+      return wasGiven(address, given, () => false)
+    },
   }
 }
 
