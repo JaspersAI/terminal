@@ -202,3 +202,20 @@ test('sqlMatchesSource matches quoted source filters and falls back to all sourc
   const withDateAndAlias = `select source, '10/19' as entry_date, price / eps as "P/E" from runs r join run_rows d on d.run_id = r.id`
   assert.equal(sqlMatchesSource(withDateAndAlias, 'yfinance/quote'), true)
 })
+
+test('sqlAfterResult records updatedAt when a timestamp is supplied and preserves it on an empty same-SQL refresh', () => {
+  const stamped = sqlAfterResult(
+    { rows: [], columns: [], loading: true, error: null, text: null, truncated: false },
+    { columns: ['symbol'], rows: [['FLWS']], truncated: false },
+    false,
+    1_700_000_010_000,
+  )
+  assert.equal(stamped.updatedAt, 1_700_000_010_000)
+  const emptyRefresh = sqlAfterResult(
+    { ...stamped, loading: true },
+    { columns: [], rows: [], truncated: false },
+    true,
+    1_700_000_020_000,
+  )
+  assert.equal(emptyRefresh.updatedAt, 1_700_000_010_000)
+})

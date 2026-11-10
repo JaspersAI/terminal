@@ -51,6 +51,8 @@ export interface Rows {
   /** What a source that answered in prose said, when there were no rows. */
   text: string | null
   truncated: boolean
+  /** When the rows or text were last loaded, milliseconds since the epoch. */
+  updatedAt?: number | null
 }
 
 export const EMPTY_ROWS: Rows = { rows: [], columns: [], loading: false, error: null, text: null, truncated: false }
@@ -76,6 +78,7 @@ export function sqlAfterResult(
   previous: Rows,
   result: { columns: string[]; rows: unknown[][]; truncated: boolean },
   sameSql: boolean = true,
+  at?: number,
 ): Rows {
   if (sameSql && result.rows.length === 0 && previous.rows.length > 0) {
     return { ...previous, loading: false, error: null }
@@ -87,6 +90,7 @@ export function sqlAfterResult(
     error: null,
     text: null,
     truncated: result.truncated,
+    ...(at !== undefined ? { updatedAt: at } : {}),
   }
 }
 

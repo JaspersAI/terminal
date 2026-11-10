@@ -3,7 +3,7 @@ import { usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
 import { usePanelWorking } from '@jaspers-ai/sdk/host'
 import type { ViewProps } from './index'
 import { cellText, shownRows, shownText } from './cells'
-import { useRows } from './data'
+import { usePanelAsOf, useRows } from './data'
 
 // One number, large. What a small element is for, and what a watch will point at: the first row of
 // whatever a source or a query answers, read through one column.
@@ -19,6 +19,7 @@ export function Metric({ panel }: ViewProps): ReactElement {
 
   const raw = useRows({ source, args, sql })
   const found = shownRows(raw, usePanelWorking())
+  const asOf = usePanelAsOf(panel, found.updatedAt)
   const row = found.rows[0]
   const key = column ?? found.columns[0] ?? null
   const value = row && key ? row[key] : undefined
@@ -47,7 +48,10 @@ export function Metric({ panel }: ViewProps): ReactElement {
           {shownText(delta)}
         </p>
       )}
-      <p className="truncate text-xs text-muted-foreground">{label ?? key}</p>
+      <p className="truncate text-xs text-muted-foreground">
+        {label ?? key}
+        {asOf ? ` · ${asOf}` : ''}
+      </p>
     </div>
   )
 }

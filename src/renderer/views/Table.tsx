@@ -3,7 +3,7 @@ import { usePanelState, usePublish, usePublishText } from '@jaspers-ai/sdk'
 import { usePanelWorking } from '@jaspers-ai/sdk/host'
 import type { ViewProps } from './index'
 import { cellText, isNumeric, isYearColumn, shownRows, shownText } from './cells'
-import { pickColumns, useRows } from './data'
+import { pickColumns, usePanelAsOf, useRows } from './data'
 
 // A table over any source, or over the store. This is the view that means a server does not need a
 // view: connect anything that answers with rows and the assistant can put it on the grid.
@@ -21,6 +21,7 @@ export function Table({ panel }: ViewProps): ReactElement {
 
   const raw = useRows({ source, args, sql })
   const found = shownRows(raw, usePanelWorking())
+  const asOf = usePanelAsOf(panel, found.updatedAt)
   const columns = pickColumns(found.columns, wanted)
   const rows = useMemo(() => sorted(found.rows, columns, sort), [found.rows, columns, sort])
   const years = useMemo(() => yearColumns(found.rows, columns), [found.rows, columns])
@@ -90,6 +91,7 @@ export function Table({ panel }: ViewProps): ReactElement {
       <p className="shrink-0 border-t border-border px-3 py-1 text-xs text-muted-foreground">
         {rows.length.toLocaleString()} row{rows.length === 1 ? '' : 's'}
         {found.truncated && ', cut'}
+        {asOf ? ` · ${asOf}` : ''}
       </p>
     </div>
   )

@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { askedIn } from '../../../shared/agent/asking'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
+import { formatAsOf } from '../../../shared/tasks/tasks'
 import { currentWorkspace, useAppState } from '../../lib/state'
 import { useEarlier, useNoticeTimer } from './conversation'
 import { PHASE_TEXT } from './phase'
@@ -128,12 +129,14 @@ export function Composer(): ReactElement {
       key: `e-${ex.id ?? i}`,
       question: ex.welcome ? '' : ex.question,
       answer: ex.answer || ex.error || '',
+      asOf: ex.at !== undefined ? formatAsOf(ex.at) : '',
       working: false,
     })),
     ...shown.map((ex) => ({
       key: `l-${ex.ask}`,
       question: ex.question,
       answer: ex.answer || ex.error || (ex.working ? (ex.steps[ex.steps.length - 1] ?? 'Working…') : ''),
+      asOf: !ex.working && ex.at !== null ? formatAsOf(ex.at) : '',
       working: ex.working,
     })),
   ]
@@ -179,6 +182,7 @@ export function Composer(): ReactElement {
                     {item.answer && (
                       <p data-response-line className="italic text-muted-foreground whitespace-pre-wrap break-words">
                         {item.answer}
+                        {item.asOf ? ` (${item.asOf})` : ''}
                       </p>
                     )}
                   </div>

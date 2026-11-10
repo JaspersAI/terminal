@@ -6,7 +6,7 @@ import { useAppState } from '../lib/state'
 import { echarts, type EChart, type EChartsOption } from './echarts'
 import type { ViewProps } from './index'
 import { cellText, isYearColumn, shownRows } from './cells'
-import { useRows } from './data'
+import { usePanelAsOf, useRows } from './data'
 import { useColorScheme } from '../lib/color-scheme'
 import { noteChart } from '../lib/eye'
 import {
@@ -58,6 +58,7 @@ export function Chart({ panel }: ViewProps): ReactElement {
   const raw = useRows({ source, args, sql })
   const working = usePanelWorking()
   const found = shownRows(raw, working)
+  const asOf = usePanelAsOf(panel, found.updatedAt)
   // The chart's colors are written into its option, so a change of scheme builds it again.
   const scheme = useColorScheme()
   const scale = useAppState((s) => {
@@ -162,7 +163,11 @@ export function Chart({ panel }: ViewProps): ReactElement {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {title && <p className="shrink-0 truncate px-3 pt-1.5 text-xs text-muted-foreground">{title}</p>}
+      {(title || (ready && asOf)) && (
+        <p className="shrink-0 truncate px-3 pt-1.5 text-xs text-muted-foreground">
+          {title ? `${title}${ready && asOf ? ` · ${asOf}` : ''}` : asOf}
+        </p>
+      )}
       <div className="relative min-h-0 flex-1">
         {/* The canvas is always mounted, so the chart is never waiting on a container that a
             message replaced; what there is to say is said over it. */}
