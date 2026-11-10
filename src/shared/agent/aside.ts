@@ -37,6 +37,8 @@ export const WHOLE_MAX = 400_000
 export const ROOM = 2 / 3
 /** The tool that brings an answer set aside back, named here since a round of it is asked to be read with the one before. */
 export const READ_AGAIN = 'read_again'
+/** The web search tool, whose answers in the active request stay whole while within WHOLE_MAX so the run can synthesize them without re-reading. */
+export const SEARCH_WEB = 'search_web'
 /** The tools whose answers are instructions or source files a run works from, which always go whole. */
 export const INSTRUCTIONS: ReadonlySet<string> = new Set([ACTIVATE_SKILL, READ_SKILL_FILE, 'read_file'])
 
@@ -78,9 +80,10 @@ export function startOf(turns: Turn[]): Sending {
  */
 export function sent(turns: Turn[], { asked, aside }: Sending, kept: ReadonlySet<string> = new Set()): Turn[] {
   const calls = callsIn(turns)
+  const requestKept = activeKept(turns, asked, calls, kept)
   return turns.map((turn, at) => {
     if (at >= aside) return turn
-    if (turn.role === 'tool') return noted(at < asked ? stateless(turn) : turn, calls, kept)
+    if (turn.role === 'tool') return noted(at < asked ? stateless(turn) : turn, calls, at < asked ? kept : requestKept)
     if (at >= asked) return turn
     return turn.role === 'user' ? stateless(turn) : rebuilt(turn)
   })
@@ -91,8 +94,10 @@ export function sent(turns: Turn[], { asked, aside }: Sending, kept: ReadonlySet
  * set aside, or null while they are within it, or when the newest round is all there is, which the
  * model has not read. A newest round that only reads answers again keeps the round before it whole
  * too: the model asked for them back to read beside what it had in front of it, and setting that
- * aside in turn would have it read the two again by turns, never together. Thinking comes out of
- * every turn, since it is tied to the conversation as it stood. No answer is taken out of the thread.
+ * aside in turn would have it read the two again by turns, never together. Web search answers in the
+ * active request stay whole while they fit within `WHOLE_MAX`, so the agent can synthesize them
+ * across rounds without calling `read_again`. Thinking comes out of every turn, since it is tied to
+ * the conversation as it stood. No answer is taken out of the thread.
  */
 export function setAside(
   turns: Turn[],
@@ -100,9 +105,13 @@ export function setAside(
   kept: ReadonlySet<string> = new Set(),
 ): { turns: Turn[]; sending: Sending; aside: number; saved: number } | null {
   const calls = callsIn(turns)
-  const whole = long(turns, sending.aside, turns.length, calls, kept)
+  const requestKept = activeKept(turns, sending.asked, calls, kept)
+  const keptInRequest = long(turns, sending.asked, sending.aside, calls, kept).filter(
+    (result) => !standsAside(result, calls, requestKept),
+  )
+  const whole = [...keptInRequest, ...long(turns, sending.aside, turns.length, calls, kept)]
   if (whole.reduce((total, result) => total + result.output.length, 0) <= WHOLE_MAX) return null
-  return butNewest(turns, sending, calls, kept, keptWhole(turns, calls))
+  return butNewest(turns, sending, calls, requestKept, keptWhole(turns, sending.asked, calls, requestKept))
 }
 
 /**
@@ -120,7 +129,8 @@ export function makeRoom(
   room: number = ROOM,
 ): { turns: Turn[]; sending: Sending; aside: number; withheld: number; saved: number } | null {
   const calls = callsIn(turns)
-  const earlier = butNewest(turns, sending, calls, kept)
+  const requestKept = activeKept(turns, sending.asked, calls, kept)
+  const earlier = butNewest(turns, sending, calls, requestKept)
   if (earlier) return { ...earlier, withheld: 0 }
   const newest = newestRound(turns)
   if (newest < sending.aside) return null
@@ -264,22 +274,91 @@ function standsAside(result: ToolResult, calls: ReadonlyMap<string, ToolCall>, k
 }
 
 /**
- * Where the answers that stay whole begin: the newest round, or, when every call of a streak of newest
- * rounds reads an answer again or continues reading the next offset slice of a panel's text, the round
- * before that streak, which the model was reading when it asked.
+ * The tools whose answers stay whole in the active request (`at >= asked`): `kept` plus `search_web`
+ * while the active request's `search_web` answers fit within `WHOLE_MAX`.
  */
-function keptWhole(turns: Turn[], calls: ReadonlyMap<string, ToolCall>): number {
+function activeKept(
+  turns: Turn[],
+  asked: number,
+  calls: ReadonlyMap<string, ToolCall>,
+  kept: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (kept.has(SEARCH_WEB)) return kept
+  const searchChars = turns
+    .slice(asked)
+    .reduce(
+      (sum, turn) =>
+        turn.role === 'tool'
+          ? sum +
+            turn.results.reduce(
+              (turnSum, result) =>
+                originOf(result.callId, calls)?.name === SEARCH_WEB && result.output.length > LARGE
+                  ? turnSum + result.output.length
+                  : turnSum,
+              0,
+            )
+          : sum,
+      0,
+    )
+  return searchChars > 0 && searchChars <= WHOLE_MAX ? new Set([...kept, SEARCH_WEB]) : kept
+}
+
+/**
+ * Where the answers that stay whole begin: the newest round, or, when a streak of newest rounds
+ * reads an answer again or continues reading the next offset slice of a panel's text (possibly
+ * beside short calls that do not stand aside), the round before that streak, which the model was
+ * reading when it asked; or, when consecutive newest rounds in the active request run `search_web`,
+ * the start of the trailing `search_web` streak that fits within `WHOLE_MAX`.
+ */
+function keptWhole(
+  turns: Turn[],
+  asked: number,
+  calls: ReadonlyMap<string, ToolCall>,
+  kept: ReadonlySet<string>,
+): number {
   const newest = newestRound(turns)
   if (newest < 0) return newest
   let from = newest
   while (from >= 0) {
     const round = turns[from] as Answered
-    if (!round.results.every((result) => continuesReading(calls.get(result.callId)))) break
     const before = newestRound(turns.slice(0, from))
     if (before < 0) break
-    from = before
+    if (roundContinuesReading(round, calls, kept)) {
+      from = before
+      continue
+    }
+    if (
+      before >= asked &&
+      roundSearchesWeb(round, calls, kept) &&
+      roundSearchesWeb(turns[before] as Answered, calls, kept) &&
+      long(turns, before, turns.length, calls, kept).reduce((sum, result) => sum + result.output.length, 0) <= WHOLE_MAX
+    ) {
+      from = before
+      continue
+    }
+    break
   }
   return from
+}
+
+function roundContinuesReading(
+  round: Answered,
+  calls: ReadonlyMap<string, ToolCall>,
+  kept: ReadonlySet<string>,
+): boolean {
+  return (
+    round.results.some((result) => continuesReading(calls.get(result.callId))) &&
+    round.results.every((result) => continuesReading(calls.get(result.callId)) || !standsAside(result, calls, kept))
+  )
+}
+
+function roundSearchesWeb(round: Answered, calls: ReadonlyMap<string, ToolCall>, kept: ReadonlySet<string>): boolean {
+  return (
+    round.results.some((result) => originOf(result.callId, calls)?.name === SEARCH_WEB) &&
+    round.results.every(
+      (result) => originOf(result.callId, calls)?.name === SEARCH_WEB || !standsAside(result, calls, kept),
+    )
+  )
 }
 
 function continuesReading(call: ToolCall | undefined): boolean {

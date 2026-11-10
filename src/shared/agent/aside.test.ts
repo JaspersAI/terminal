@@ -648,3 +648,126 @@ test('readAgainTargets extracts single, comma-separated, and array call ids', ()
   ])
   assert.deepEqual(readAgainTargets({ id: 'g1', name: 'get', input: { path: 'panels/e1/text' } }), [])
 })
+
+test('search_web answers in the active request stay whole across multiple rounds when other tool outputs pass WHOLE_MAX, and become notes in the next request', () => {
+  const s = (n: number): string => `1. Result ${n}\n   https://example.com/${n}\n   ${big(4_000, String(n % 10))}`
+  const turns: Turn[] = [
+    asked('research industry and sources'),
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: Array.from({ length: 6 }, (_, i) => ({
+        id: `s${i + 1}`,
+        name: 'search_web',
+        input: { query: `q${i + 1}` },
+      })),
+      raw: null,
+    },
+    {
+      role: 'tool',
+      results: Array.from({ length: 6 }, (_, i) => ({
+        callId: `s${i + 1}`,
+        output: s(i + 1),
+        isError: false,
+      })),
+    },
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: [
+        { id: 'c1', name: 'run_source', input: { source: 'screener-mcp/guide' } },
+        ...Array.from({ length: 3 }, (_, i) => ({
+          id: `s${i + 7}`,
+          name: 'search_web',
+          input: { query: `q${i + 7}` },
+        })),
+      ],
+      raw: null,
+    },
+    {
+      role: 'tool',
+      results: [
+        { callId: 'c1', output: big(half), isError: false },
+        ...Array.from({ length: 3 }, (_, i) => ({
+          callId: `s${i + 7}`,
+          output: s(i + 7),
+          isError: false,
+        })),
+      ],
+    },
+    calling('c2', 'run_source', { source: 'screener-mcp/company' }),
+    answer('c2', big(half)),
+  ]
+  const made = setAside(turns, { asked: 0, aside: 0 })!
+  assert.ok(made)
+  assert.equal(made.aside, 1, 'only the earlier run_source answer is set aside')
+  const out = outputs(sent(made.turns, made.sending))
+  // All 6 search_web results from round 1 and all 3 search_web results from round 2 remain whole.
+  for (let i = 0; i < 6; i++) {
+    assert.equal(out[i], s(i + 1))
+  }
+  assert.match(out[6]!, /^\[Set aside: /)
+  assert.match(out[6]!, /run_source/)
+  for (let i = 0; i < 3; i++) {
+    assert.equal(out[7 + i], s(i + 7))
+  }
+  assert.equal(out[10]!.length, half)
+
+  // Once the request finishes and a new request begins, the earlier request's search_web answers stand as notes.
+  const nextRequest: Turn[] = [...made.turns, replied('Synthesized.'), asked('follow up')]
+  const nextOut = outputs(sent(nextRequest, startOf(nextRequest)))
+  for (let i = 0; i < 6; i++) {
+    assert.match(nextOut[i]!, /^\[Set aside: /)
+    assert.match(nextOut[i]!, new RegExp(`read_again "s${i + 1}"`))
+  }
+})
+
+test('consecutive search_web rounds at the end of a request stay whole together even when earlier search_web outputs push the request past WHOLE_MAX', () => {
+  const turns: Turn[] = [
+    asked('exhaustive web search'),
+    calling('s0', 'search_web', { query: 'initial' }),
+    answer('s0', big(WHOLE_MAX - 20_000, 'a')),
+    calling('s1', 'search_web', { query: 'batch 1' }),
+    answer('s1', big(24_000, 'b')),
+    calling('s2', 'search_web', { query: 'batch 2' }),
+    answer('s2', big(12_000, 'c')),
+  ]
+  const made = setAside(turns, { asked: 0, aside: 0 })!
+  assert.deepEqual(made.sending, { asked: 0, aside: 4 })
+  const out = outputs(sent(made.turns, made.sending))
+  assert.match(out[0]!, /^\[Set aside: /)
+  assert.equal(out[1]!.length, 24_000)
+  assert.equal(out[2]!.length, 12_000)
+})
+
+test('a round that calls read_again alongside a short non-standing-aside call like schedule_task keeps the preceding round whole', () => {
+  const fetched: Turn[] = [
+    asked('go'),
+    calling('c1', 'fetch_page'),
+    answer('c1', big(half)),
+    calling('c2', 'fetch_page'),
+    answer('c2', big(half)),
+  ]
+  const put = setAside(fetched, { asked: 0, aside: 0 })!
+  assert.deepEqual(put.sending, { asked: 0, aside: 4 })
+  const withShortCall: Turn[] = [
+    ...put.turns,
+    {
+      role: 'assistant',
+      text: '',
+      toolCalls: [
+        { id: 'r1', name: 'read_again', input: { call: 'c1' } },
+        { id: 't1', name: 'schedule_task', input: { instructions: 'weekly report' } },
+      ],
+      raw: null,
+    },
+    {
+      role: 'tool',
+      results: [
+        { callId: 'r1', output: big(half), isError: false },
+        { callId: 't1', output: '{"taskId":"t1","status":"scheduled"}', isError: false },
+      ],
+    },
+  ]
+  assert.equal(setAside(withShortCall, put.sending), null)
+})
