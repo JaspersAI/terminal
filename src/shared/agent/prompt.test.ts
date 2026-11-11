@@ -678,14 +678,22 @@ test('the orchestrator is told a skill to write or publish is its own to do, as 
   )
 })
 
-test('the rules tell the assistant to run shell commands with run_shell when offered, and to point to Settings > Pro mode when not', () => {
+test('the rules tell the assistant to run quick single shell commands with run_shell when offered, spin out a room worker for extensive scraping or file-download workflows, and point to Settings > Pro mode when off', () => {
   assert.match(
     ROUTER_RULES,
     /Answer in words yourself when words are the whole answer: [^.]*a command to run, a skill to write or publish\./,
   )
   assert.match(ROUTER_RULES, /call run_shell\b[^.]*rather than starting a room or scheduling a task/)
+  assert.match(
+    ROUTER_RULES,
+    /extensive, multi-step, repeatable, or lasting.*scraping web pages, audio, video, or files.*create_room.*instead of.*cluttering Central/i,
+  )
+  assert.match(ROUTER_RULES, /stop doing the work in Central and hand it off with create_room/i)
   for (const rules of [ROUTER_RULES, LOOP_RULES, loopRules(false)]) {
     assert.match(rules, /when run_shell is not in your tools[^.]*Settings > Pro mode/)
+  }
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /scrape, download, or process files into the folder.*run_shell/i)
   }
 })
 
