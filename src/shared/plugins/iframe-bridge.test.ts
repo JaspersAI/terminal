@@ -232,3 +232,76 @@ test('in-flight panel.setState writes are preserved when earlier store.changed n
     assert.deepEqual(conversationValues, [undefined, 'cmw1nq89oys'])
   })
 })
+
+test('when main normalizes a panel.setState write, post-reply store.changed reconciles peek and subscribers immediately', async () => {
+  await withWindow(async (host) => {
+    let hostState: Record<string, unknown> = {
+      run: { id: 'run_07d4f7e3cb7eeb99', status: 'done' },
+      verdicts: ['pass'],
+      open: 'DDOG',
+    }
+    let nextSub = 1
+    const subPaths = new Map<number, string>()
+
+    const pushStateToSubs = () => {
+      for (const [subId, path] of subPaths) {
+        if (path === 'workspaces/ws1/panels/p1/state') {
+          host.sendToFrame({ method: 'store.changed', params: { subId, value: { ...hostState } } })
+        } else if (path.startsWith('workspaces/ws1/panels/p1/state/')) {
+          const key = path.slice('workspaces/ws1/panels/p1/state/'.length)
+          host.sendToFrame({ method: 'store.changed', params: { subId, value: hostState[key] } })
+        }
+      }
+    }
+
+    host.onPost = (raw) => {
+      const req = raw as { id: number; method: string; params: Record<string, unknown> }
+      if (req.method === 'store.get' && req.params['path'] === 'workspaces/ws1/panels/p1/state') {
+        host.sendToFrame({ id: req.id, result: { ...hostState } })
+        return
+      }
+      if (req.method === 'store.subscribe') {
+        const subId = nextSub++
+        const path = String(req.params['path'])
+        subPaths.set(subId, path)
+        host.sendToFrame({ id: req.id, result: subId })
+        if (path === 'workspaces/ws1/panels/p1/state') {
+          host.sendToFrame({ method: 'store.changed', params: { subId, value: { ...hostState } } })
+        } else if (path.startsWith('workspaces/ws1/panels/p1/state/')) {
+          const key = path.slice('workspaces/ws1/panels/p1/state/'.length)
+          host.sendToFrame({ method: 'store.changed', params: { subId, value: hostState[key] } })
+        }
+        return
+      }
+      if (req.method === 'panel.setState') {
+        // Main normalizes a missing qualitative run error into { run: null, verdicts: [], open: '' },
+        // which pushes state:changed while the RPC is completing, replies to panel.setState, and then
+        // ViewHost reconciles panel state subscriptions after the reply.
+        hostState = { run: null, verdicts: [], open: '' }
+        pushStateToSubs()
+        host.sendToFrame({ id: req.id, result: null })
+        pushStateToSubs()
+      }
+    }
+
+    const bridge = createIframeBridge()
+    await bridge.get('workspaces/ws1/panels/p1/state')
+    const panel: PanelRef = { id: 'p1', workspaceId: 'ws1' }
+
+    const runValues: unknown[] = []
+    const openValues: unknown[] = []
+    bridge.subscribe('workspaces/ws1/panels/p1/state/run', (v) => runValues.push(v))
+    bridge.subscribe('workspaces/ws1/panels/p1/state/open', (v) => openValues.push(v))
+
+    await bridge.setState(panel, ['run'], {
+      id: 'run_07d4f7e3cb7eeb99',
+      status: 'error',
+      error: 'No qualitative run run_07d4f7e3cb7eeb99.',
+    })
+
+    assert.equal(bridge.peek?.('workspaces/ws1/panels/p1/state/run'), null)
+    assert.equal(bridge.peek?.('workspaces/ws1/panels/p1/state/open'), '')
+    assert.equal(runValues.at(-1), null)
+    assert.equal(openValues.at(-1), '')
+  })
+})

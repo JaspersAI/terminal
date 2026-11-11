@@ -231,7 +231,9 @@ export function createIframeBridge(): Bridge {
         writeCache(keyPath, value)
       }
       try {
-        await call('panel.setState', { panelId: panel.id, path, value })
+        await call('panel.setState', { panelId: panel.id, path, value }, () => {
+          if (writeId !== null) inFlightWrites.delete(writeId)
+        })
       } finally {
         if (writeId !== null) inFlightWrites.delete(writeId)
       }

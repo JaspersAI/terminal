@@ -190,7 +190,16 @@ function PluginView({
       }
       void (async () => {
         try {
-          post({ id: request.id, result: await run(request.method, params) })
+          const result = await run(request.method, params)
+          post({ id: request.id, result })
+          if (request.method === 'panel.setState') {
+            const prefix = `workspaces/${workspaceId}/panels/${String(params['panelId'])}/state`
+            for (const [subId, subPath] of subPaths) {
+              if (subPath === prefix || subPath.startsWith(`${prefix}/`)) {
+                post({ method: 'store.changed', params: { subId, value: bridge.peek?.(subPath) } })
+              }
+            }
+          }
         } catch (err) {
           post({ id: request.id, error: { message: err instanceof Error ? err.message : String(err) } })
         }
@@ -233,16 +242,8 @@ function PluginView({
           const key = liveKeyOf(path)
           return key !== null ? window.app.live.get(plugin, key) : bridge.get(path)
         }
-        case 'panel.setState': {
-          await bridge.setState(panel, params['path'] as string[], params['value'])
-          const prefix = `workspaces/${workspaceId}/panels/${panel.id}/state`
-          for (const [subId, subPath] of subPaths) {
-            if (subPath === prefix || subPath.startsWith(`${prefix}/`)) {
-              post({ method: 'store.changed', params: { subId, value: bridge.peek?.(subPath) } })
-            }
-          }
-          return null
-        }
+        case 'panel.setState':
+          return bridge.setState(panel, params['path'] as string[], params['value'])
         case 'panel.publish':
           return bridge.publish(panel, params['output'] as Record<string, unknown>)
         case 'panel.publishText':
