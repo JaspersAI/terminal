@@ -4,12 +4,13 @@ import {
   extractRows,
   isDatasetStillGood,
   mapToolResult,
+  missingQualitativeRunId,
   type Dataset,
   type RunResult,
 } from '../../shared/data/datasets'
 import { stableStringify } from '../../shared/data/hash'
 import type { RunRecord } from '../../shared/data/store'
-import { isRefreshableView } from '../../shared/grid/grid'
+import { isRefreshableView, retireScreenerRunInGrid } from '../../shared/grid/grid'
 import { isMcpSource, type BackendContext, type FunctionSourceSpec } from '@jaspers-ai/sdk/define'
 import {
   mergeWorkbookTables,
@@ -25,7 +26,7 @@ import { isSleepWakeError } from '../../shared/tasks/tasks'
 import { call } from '../plugins/mcp'
 import { runInHost } from '../plugins/plugin-host'
 import { getSource, type RegisteredSource } from '../plugins/registry'
-import { getState } from '../state'
+import { getState, update } from '../state'
 import { sourceEvent } from '../../shared/app/eye-events'
 import { record as recordEye } from '../eye/eye'
 import { keepCitations } from './citations'
@@ -52,6 +53,8 @@ const expires = new Map<string, number>()
 /** Accumulated sheets per `(workspaceId, filename)` so multi-sheet workbooks can be exported across calls. */
 const workbooks = new Map<string, WorkbookTable[]>()
 const inFlight = createInFlightMap<{ result: RunResult & { text: string }; citations: unknown }>()
+/** Qualitative run IDs that the server answered "No qualitative run ..." for, so saved panels do not re-poll them. */
+const missingQualitativeRuns = new Set<string>()
 let seq = 0
 
 export interface RunOptions {
@@ -98,8 +101,20 @@ export async function runSource(
     }
   }
 
+  const requestedRunId = missingQualitativeRunId(source.id, preparedArgs)
+  if (requestedRunId && missingQualitativeRuns.has(requestedRunId)) {
+    retireMissingQualitativeRun(requestedRunId)
+    throw new Error(`No qualitative run ${requestedRunId}.`)
+  }
+
   const ttlMs = def.ttlMs ?? DEFAULT_TTL_MS
-  const share = canShareInFlight({ ttlMs, fresh: options.fresh, signal: options.signal, raw: options.raw })
+  const share = canShareInFlight({
+    source: source.id,
+    ttlMs,
+    fresh: options.fresh,
+    signal: options.signal,
+    raw: options.raw,
+  })
   const { result, citations } = await inFlight.run(key, share, async () => {
     const startedAt = Date.now()
     let value: unknown
@@ -115,7 +130,11 @@ export async function runSource(
     } catch (error) {
       const rawMessage = messageOf(error)
       const message = isMcpSource(def) ? withParameters(rawMessage, declared()) : rawMessage
-      if (!isSleepWakeError(message)) {
+      const missingRunId = missingQualitativeRunId(source.id, preparedArgs, message)
+      if (missingRunId) {
+        missingQualitativeRuns.add(missingRunId)
+        retireMissingQualitativeRun(missingRunId)
+      } else if (!isSleepWakeError(message)) {
         // A run that failed is worth keeping: what a source stopped answering is half of what changed.
         file(source.id, preparedArgs, key, workspaceId, {
           rows: null,
@@ -317,5 +336,29 @@ function currentConnections(): Record<string, ConnectionInfo> {
     return getState().connections
   } catch {
     return {}
+  }
+}
+
+/** Clears a missing qualitative run ID from any saved screener panels across all workspaces. */
+function retireMissingQualitativeRun(runId: string): void {
+  try {
+    update((state) => {
+      let changed = false
+      const grids: typeof state.grids = {}
+      for (const [workspaceId, windows] of Object.entries(state.grids)) {
+        let wsChanged = false
+        const nextWindows: Record<number, (typeof windows)[number]> = {}
+        for (const [win, grid] of Object.entries(windows)) {
+          const nextGrid = retireScreenerRunInGrid(grid, runId)
+          if (nextGrid !== grid) wsChanged = true
+          nextWindows[Number(win)] = nextGrid
+        }
+        if (wsChanged) changed = true
+        grids[workspaceId] = wsChanged ? nextWindows : windows
+      }
+      return changed ? { ...state, grids } : state
+    })
+  } catch {
+    // State tree not initialized in isolated unit tests.
   }
 }

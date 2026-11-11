@@ -8,6 +8,7 @@
 
 // The extensions are explicit because Node's test runner resolves these imports at run time.
 import {
+  cleanScreenerPanel,
   isRefreshableView,
   layoutOf,
   MIN_CELLS,
@@ -186,12 +187,14 @@ export function reopened(
     loop: id,
     rect: onto(e.rect, grid.size),
   }))
-  const panels = shut.panels.map(({ error: _error, ...p }) => ({
-    ...p,
-    id: panelIds.get(p.id) ?? p.id,
-    elementId: ids.get(p.elementId) ?? p.elementId,
-    ...(isRefreshableView(p) ? { refreshedAt: now } : {}),
-  }))
+  const panels = shut.panels.map(({ error: _error, ...p }) =>
+    cleanScreenerPanel({
+      ...p,
+      id: panelIds.get(p.id) ?? p.id,
+      elementId: ids.get(p.elementId) ?? p.elementId,
+      ...(isRefreshableView(p) ? { refreshedAt: now } : {}),
+    }),
+  )
   // A maximized tile would cover it: it goes back to its own cells, as it does for a placement.
   const shown = grid.elements.map((e) => (e.parent === undefined && e.mode === 'maximized' ? restored(e) : e))
   const next: Grid = {

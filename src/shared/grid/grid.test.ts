@@ -34,9 +34,12 @@ import {
   PANEL_ERROR_MAX,
   PANEL_TEXT_MAX,
   activeViewErrors,
+  cleanScreenerPanel,
   clearPluginPanelErrors,
   failPanel,
+  isMissingQualitativeRunError,
   panelTargetsSettled,
+  retireScreenerRunInGrid,
   viewErrorMessage,
   publishOutput,
   publishText,
@@ -1755,4 +1758,78 @@ test('docking the chat uses available free space before shrinking or floating ov
       ['e2', 'tiled', r(13, 0, 3, 12)],
     ],
   )
+})
+
+test('saved or updated screener panels with a missing qualitative run clear run, verdicts, and open drawer while keeping filters and criteria', () => {
+  assert.equal(isMissingQualitativeRunError('No qualitative run run_07d4f7e3cb7eeb99.'), true)
+  assert.equal(isMissingQualitativeRunError('Error: No qualitative run run_fd71edbf083270de.'), true)
+  assert.equal(isMissingQualitativeRunError('Bedrock timed out'), false)
+  assert.equal(isMissingQualitativeRunError(null), false)
+
+  const placed = placeView(EMPTY_GRID, {
+    content: view('screener-mcp/screener'),
+    state: {
+      filters: [{ field: 'market_cap', op: 'gte', value: 1e9 }],
+      criteria: [{ id: 'founder_led', question: 'Is the company founder-led?' }],
+      run: { id: 'run_07d4f7e3cb7eeb99', status: 'done' },
+      verdicts: ['pass'],
+      open: 'DDOG',
+    },
+  })
+  const withOutput = publishText(
+    publishOutput(
+      placed.grid,
+      placed.panel.id,
+      {
+        session_id: 'scr_1',
+        universe: 5000,
+        count: 104,
+        applied_filters: [],
+        tickers: ['DDOG'],
+        unknown_tickers: [],
+        sort: { field: 'revenue', dir: 'desc' },
+        qualitative_ready: true,
+        qualitative_max: 100,
+        qualitative: {
+          run_id: 'run_07d4f7e3cb7eeb99',
+          status: 'done',
+          progress: { total: 104, queued: 0, running: 0, error: 0, pass: 12, fail: 92, unclear: 0, unverified: 0 },
+        },
+        open: 'DDOG',
+      },
+      'Screener: 104 of 5,000 pass 1 filter, sort revenue desc, qualitative run done, evidence open for DDOG',
+    ).grid,
+    placed.panel.id,
+    'Screener evidence for DDOG (Datadog Inc.), qualitative run run_07d4f7e3cb7eeb99: pass',
+  ).grid
+
+  // Writing a "No qualitative run ..." error into state.run clears run, verdicts, open, qualitative output, and evidence text.
+  const afterError = setPanelState(withOutput, placed.panel.id, ['run'], {
+    id: 'run_07d4f7e3cb7eeb99',
+    status: 'error',
+    error: 'No qualitative run run_07d4f7e3cb7eeb99.',
+  })
+  assert.deepEqual(afterError.panel.state, {
+    filters: [{ field: 'market_cap', op: 'gte', value: 1e9 }],
+    criteria: [{ id: 'founder_led', question: 'Is the company founder-led?' }],
+    run: null,
+    verdicts: [],
+    open: '',
+  })
+  assert.equal('qualitative' in (afterError.panel.output ?? {}), false)
+  assert.equal(afterError.panel.output?.open, '')
+  assert.equal(afterError.panel.text, null)
+  assert.equal(afterError.panel.summary, 'Screener: 104 of 5,000 pass 1 filter, sort revenue desc')
+
+  // Retiring a missing run id across a grid cleans matching screener panels and leaves others untouched.
+  const retired = retireScreenerRunInGrid(withOutput, 'run_07d4f7e3cb7eeb99')
+  const retiredPanel = panelOf(retired, placed.panel.id)
+  assert.equal(retiredPanel.state.run, null)
+  assert.deepEqual(retiredPanel.state.verdicts, [])
+  assert.equal(retiredPanel.state.open, '')
+  assert.equal(retiredPanel.text, null)
+  assert.equal(retireScreenerRunInGrid(withOutput, 'run_other'), withOutput)
+
+  // cleanScreenerPanel leaves a valid screener panel unchanged.
+  assert.equal(cleanScreenerPanel(panelOf(withOutput, placed.panel.id)), panelOf(withOutput, placed.panel.id))
 })

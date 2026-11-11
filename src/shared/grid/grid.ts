@@ -835,6 +835,75 @@ export function panelOf(grid: Grid, id: string): Panel {
   throw new Error(`No panel ${id}. ${ids ? `The grid has ${ids}.` : 'The grid has no panels.'}`)
 }
 
+/** Whether an error from get_qualitative_screen says the qualitative run no longer exists on the server. */
+export function isMissingQualitativeRunError(error: unknown): boolean {
+  return typeof error === 'string' && /No qualitative run\b/i.test(error)
+}
+
+/**
+ * Retires a missing or expired qualitative run on a `screener-mcp/screener` panel: clears `run`,
+ * `verdicts`, and `open` in state, strips the stale `qualitative` and `open` fields from output and
+ * summary, and clears stale evidence text while preserving quantitative filters and `criteria`.
+ */
+export function cleanScreenerPanel(panel: Panel, retireRunId?: string): Panel {
+  if (panel.content.kind !== 'view' || panel.content.view !== 'screener-mcp/screener') return panel
+  const stateRun = isPlainObject(panel.state.run) ? panel.state.run : null
+  const outQual =
+    isPlainObject(panel.output) && isPlainObject(panel.output.qualitative) ? panel.output.qualitative : null
+  const matchesRetireId =
+    retireRunId !== undefined && retireRunId !== '' && (stateRun?.id === retireRunId || outQual?.run_id === retireRunId)
+  const missingError = isMissingQualitativeRunError(stateRun?.error) || isMissingQualitativeRunError(outQual?.error)
+  if (!matchesRetireId && !missingError) return panel
+
+  const state: Record<string, unknown> = {
+    ...panel.state,
+    run: null,
+    verdicts: [],
+    open: '',
+  }
+  let output = panel.output
+  if (isPlainObject(output) && ('qualitative' in output || (typeof output.open === 'string' && output.open !== ''))) {
+    const { qualitative: _qual, ...restOutput } = output
+    output = { ...restOutput, open: '' }
+  }
+  let summary = panel.summary
+  if (typeof summary === 'string') {
+    summary = summary.replace(/, qualitative run [^,]*/g, '').replace(/, evidence open for [^,]*/g, '')
+  }
+  const text =
+    (typeof panel.state.open === 'string' && panel.state.open !== '') ||
+    (isPlainObject(panel.output) && typeof panel.output.open === 'string' && panel.output.open !== '') ||
+    (typeof panel.text === 'string' && panel.text.startsWith('Screener evidence for '))
+      ? null
+      : panel.text
+  if (
+    sameValue(state, panel.state) &&
+    sameValue(output, panel.output) &&
+    summary === panel.summary &&
+    text === panel.text
+  ) {
+    return panel
+  }
+  return {
+    ...panel,
+    state,
+    output,
+    summary,
+    text,
+  }
+}
+
+/** Retires `runId` on any `screener-mcp/screener` panel in `grid` that holds it. */
+export function retireScreenerRunInGrid(grid: Grid, runId: string): Grid {
+  let changed = false
+  const panels = grid.panels.map((p) => {
+    const next = cleanScreenerPanel(p, runId)
+    if (next !== p) changed = true
+    return next
+  })
+  return changed ? { ...grid, panels } : grid
+}
+
 /** Writes one value inside a panel's state. An empty path merges into the top-level keys; writing `sql` stamps `refreshedAt` when `at` is given so SQL views re-query even when the SQL string is unchanged. */
 export function setPanelState(
   grid: Grid,
@@ -848,11 +917,11 @@ export function setPanelState(
   const state = setIn(current.state, path, value)
   const stampSql =
     at !== undefined && (path[0] === 'sql' || (path.length === 0 && isPlainObject(value) && 'sql' in value))
-  const panel: Panel = {
+  const panel = cleanScreenerPanel({
     ...rest,
     state,
     ...(stampSql ? { refreshedAt: at } : {}),
-  }
+  })
   return { grid: withPanel(grid, panel), panel }
 }
 
@@ -879,10 +948,16 @@ export function publishOutput(
   summary: string | null,
 ): { grid: Grid; panel: Panel } {
   const current = panelOf(grid, panelId)
-  if (sameValue(current.output, output) && current.summary === summary && !current.error)
-    return { grid, panel: current }
   const { error: _was, ...rest } = current
-  const panel: Panel = { ...rest, output, summary }
+  const panel = cleanScreenerPanel({ ...rest, output, summary })
+  if (
+    sameValue(current.state, panel.state) &&
+    sameValue(current.output, panel.output) &&
+    current.summary === panel.summary &&
+    current.text === panel.text &&
+    !current.error
+  )
+    return { grid, panel: current }
   return { grid: withPanel(grid, panel), panel }
 }
 

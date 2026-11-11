@@ -15,6 +15,7 @@ import {
   extractRows,
   isDatasetStillGood,
   mapToolResult,
+  missingQualitativeRunId,
 } from './datasets.ts'
 
 test('an array of objects is the rows, with nothing around them', () => {
@@ -492,5 +493,40 @@ test('failed source calls retry only when their own source or connection becomes
       'HTTP 500 from api.stlouisfed.org',
     ),
     false,
+  )
+})
+
+test('screener-mcp/qualitative deduplicates concurrent in-flight polls and identifies missing qualitative run IDs', () => {
+  assert.equal(canShareInFlight({ source: 'screener-mcp/qualitative', ttlMs: 0, fresh: true }), true)
+  assert.equal(
+    canShareInFlight({
+      source: 'screener-mcp/qualitative',
+      ttlMs: 0,
+      fresh: true,
+      signal: new AbortController().signal,
+    }),
+    false,
+  )
+  assert.equal(canShareInFlight({ source: 'screener-mcp/screen', ttlMs: 0, fresh: true }), false)
+
+  assert.equal(
+    missingQualitativeRunId('screener-mcp/qualitative', { run_id: 'run_07d4f7e3cb7eeb99' }),
+    'run_07d4f7e3cb7eeb99',
+  )
+  assert.equal(
+    missingQualitativeRunId(
+      'screener-mcp/qualitative',
+      { run_id: 'run_fd71edbf083270de' },
+      'No qualitative run run_fd71edbf083270de.',
+    ),
+    'run_fd71edbf083270de',
+  )
+  assert.equal(
+    missingQualitativeRunId('screener-mcp/qualitative', { run_id: 'run_fd71edbf083270de' }, 'Bedrock timed out'),
+    null,
+  )
+  assert.equal(
+    missingQualitativeRunId('screener-mcp/screen', { run_id: 'run_fd71edbf083270de' }, 'No qualitative run run_1.'),
+    null,
   )
 })

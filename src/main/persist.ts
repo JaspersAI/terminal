@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
+  cleanScreenerPanel,
   DEFAULT_SIZE,
   SIZE_MAX,
   sizeProblem,
@@ -175,7 +176,7 @@ export function load(): MainState {
     // Every tile has a room, and every room a frame its other tiles are inside. A file from before
     // either is made so here, and is written so with the first change, as the patches above are.
     const whole = adopt(windowed, stored.loops, seenInFile, Date.now())
-    if (whole.grids !== windowed || whole.loops !== stored.loops) dirtyWorkspaces.add(w.id)
+    if (stored.cleaned || whole.grids !== windowed || whole.loops !== stored.loops) dirtyWorkspaces.add(w.id)
     rawGrids[w.id] = whole.grids
     rawLoops[w.id] = whole.loops
   }
@@ -281,7 +282,7 @@ function loadTasks(tasks: Task[], workspaces: Workspace[]): Task[] {
 }
 
 /** A workspace off disk: its grids (keyed by window from version 2, version 1 one grid, which is window 1's) and its loops, which a file before version 3 has none of, and one before version 5 none closed. Nothing on disk is an empty one. */
-function loadWorkspace(file: string): { grids: Record<number, Grid>; loops: Loops } {
+function loadWorkspace(file: string): { grids: Record<number, Grid>; loops: Loops; cleaned: boolean } {
   const raw = readJson<{
     version?: number
     grid?: Grid
@@ -294,20 +295,46 @@ function loadWorkspace(file: string): { grids: Record<number, Grid>; loops: Loop
     closedFlurbs?: unknown
   }>(file)
   const stored: Record<number, Grid> = {}
+  let cleaned = false
   if (raw?.grids && typeof raw.grids === 'object') {
     for (const [key, grid] of Object.entries(raw.grids)) {
       const n = Number(key)
-      if (Number.isInteger(n) && n >= MAIN_WINDOW && grid) stored[n] = patchGrid(grid)
+      if (Number.isInteger(n) && n >= MAIN_WINDOW && grid) {
+        const patched = patchGrid(grid)
+        if (patched.cleaned) cleaned = true
+        stored[n] = patched.grid
+      }
     }
   } else if (raw?.grid) {
-    stored[MAIN_WINDOW] = patchGrid(raw.grid)
+    const patched = patchGrid(raw.grid)
+    if (patched.cleaned) cleaned = true
+    stored[MAIN_WINDOW] = patched.grid
   }
-  const loops = readLoops(
+  const parsedLoops = readLoops(
     raw?.loops ?? raw?.flurbs,
     raw?.loopSeq ?? raw?.flurbSeq,
     raw?.closedLoops ?? raw?.closedFlurbs,
   )
-  return { grids: stored, loops }
+  let loops = parsedLoops
+  if (parsedLoops.closed && parsedLoops.closed.length > 0) {
+    let closedChanged = false
+    const closed = parsedLoops.closed.map((shut) => {
+      let panelsChanged = false
+      const panels = shut.panels.map((p) => {
+        const next = cleanScreenerPanel(p)
+        if (next !== p) panelsChanged = true
+        return next
+      })
+      if (!panelsChanged) return shut
+      closedChanged = true
+      return { ...shut, panels }
+    })
+    if (closedChanged) {
+      cleaned = true
+      loops = { ...parsedLoops, closed }
+    }
+  }
+  return { grids: stored, loops, cleaned }
 }
 
 /** What a saved tile says of itself, for the loop made for it: what it showed, and its view's plugin. The registry is not up yet, so not its title. */
@@ -333,20 +360,19 @@ function gone(panel: Panel): boolean {
 }
 
 /** Panels written before views existed have no state, output, or summary, ones written before views published text have no text, and ones written before refreshes were never refreshed. A panel written as holding nothing yet (version 3) was a piece of work's first tile, which is its frame. A grid written before the size was the workspace's is 16 × 12, which is what it was drawn at. */
-function patchGrid(stored: Grid): Grid {
+function patchGrid(stored: Grid): { grid: Grid; cleaned: boolean } {
   const grid = withoutPanels(stored, gone)
   const cells = grid.cells ?? {}
   // Wide enough for what the file holds. A grid saved by a later version, or edited by hand, can
   // carry elements past the size it records; the size grows to cover them rather than leaving them
   // off the grid, where every placement and every map for the model would have to guard for them.
   const size = fits(readSize(grid.size), grid.elements ?? [])
-  if (grid.panels.length === 0) return grid.cells && grid.size === size ? grid : { ...grid, cells, size }
-  return {
-    ...grid,
-    cells,
-    size,
-    elements: grid.elements.map(retagged),
-    panels: grid.panels.map(({ error: _error, ...p }) => ({
+  if (grid.panels.length === 0) {
+    return { grid: grid.cells && grid.size === size ? grid : { ...grid, cells, size }, cleaned: false }
+  }
+  let cleaned = false
+  const panels = grid.panels.map(({ error: _error, ...p }) => {
+    const base: Panel = {
       ...p,
       content: (p.content as { kind: string }).kind === 'empty' ? { kind: 'frame' } : p.content,
       state: p.state ?? {},
@@ -354,7 +380,20 @@ function patchGrid(stored: Grid): Grid {
       summary: p.summary ?? null,
       text: p.text ?? null,
       refreshedAt: p.refreshedAt ?? null,
-    })),
+    }
+    const next = cleanScreenerPanel(base)
+    if (next !== base) cleaned = true
+    return next
+  })
+  return {
+    grid: {
+      ...grid,
+      cells,
+      size,
+      elements: grid.elements.map(retagged),
+      panels,
+    },
+    cleaned,
   }
 }
 

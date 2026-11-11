@@ -139,6 +139,7 @@ function PluginView({
     const iframe = frame.current
     if (!iframe) return
     const subscriptions = new Map<number, () => void>()
+    const subPaths = new Map<number, string>()
     let nextSub = 1
     // Dictation records here, in the app's window, so the frame gets the words and never the audio.
     const recorder = new Recorder()
@@ -183,6 +184,7 @@ function PluginView({
         const subId = Number(params['subId'])
         subscriptions.get(subId)?.()
         subscriptions.delete(subId)
+        subPaths.delete(subId)
         post({ id: request.id, result: null })
         return
       }
@@ -211,6 +213,7 @@ function PluginView({
       try {
         const key = liveKeyOf(path)
         subscriptions.set(subId, key !== null ? subscribeLive(plugin, key, deliver) : bridge.subscribe(path, deliver))
+        if (key === null) subPaths.set(subId, path)
       } catch (err) {
         post({ id, error: { message: err instanceof Error ? err.message : String(err) } })
         return
@@ -230,8 +233,16 @@ function PluginView({
           const key = liveKeyOf(path)
           return key !== null ? window.app.live.get(plugin, key) : bridge.get(path)
         }
-        case 'panel.setState':
-          return bridge.setState(panel, params['path'] as string[], params['value'])
+        case 'panel.setState': {
+          await bridge.setState(panel, params['path'] as string[], params['value'])
+          const prefix = `workspaces/${workspaceId}/panels/${panel.id}/state`
+          for (const [subId, subPath] of subPaths) {
+            if (subPath === prefix || subPath.startsWith(`${prefix}/`)) {
+              post({ method: 'store.changed', params: { subId, value: bridge.peek?.(subPath) } })
+            }
+          }
+          return null
+        }
         case 'panel.publish':
           return bridge.publish(panel, params['output'] as Record<string, unknown>)
         case 'panel.publishText':
@@ -276,6 +287,7 @@ function PluginView({
       observer.disconnect()
       for (const unsubscribe of subscriptions.values()) unsubscribe()
       subscriptions.clear()
+      subPaths.clear()
       // A view that goes away while listening lets go of the microphone.
       if (recorder.active) void recorder.stop()
     }

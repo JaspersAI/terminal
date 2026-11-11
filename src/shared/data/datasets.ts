@@ -88,12 +88,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * or tapping the raw wire response.
  */
 export function canShareInFlight(options: {
+  source?: string
   ttlMs: number
   fresh?: boolean
   signal?: AbortSignal
   raw?: unknown
 }): boolean {
-  return options.ttlMs > 0 && !options.fresh && !options.signal && !options.raw
+  if (options.signal || options.raw) return false
+  if (options.source === 'screener-mcp/qualitative') return true
+  return options.ttlMs > 0 && !options.fresh
+}
+
+/**
+ * Returns the `run_id` argument of a `screener-mcp/qualitative` call when checking against known
+ * missing runs (`errorMessage` omitted) or when the call failed with `No qualitative run <id>`.
+ */
+export function missingQualitativeRunId(sourceId: string, args: unknown, errorMessage?: string): string | null {
+  if (sourceId !== 'screener-mcp/qualitative' || !isRecord(args)) return null
+  const runId = typeof args['run_id'] === 'string' ? args['run_id'].trim() : ''
+  if (!runId) return null
+  if (errorMessage !== undefined && !/No qualitative run\b/i.test(errorMessage)) return null
+  return runId
 }
 
 /**
