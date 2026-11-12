@@ -1,6 +1,6 @@
 import { untilAborted } from '../../../shared/abort.ts'
 import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../../shared/llm/llm.ts'
-import { createLimiter, isRetryable, retryWait } from '../../../shared/llm/limits.ts'
+import { createLimiter, isRetryable, isTurnTimeout, retryWait } from '../../../shared/llm/limits.ts'
 import { signsIn } from '../../../shared/llm/providers.ts'
 import { isSleepWakeError } from '../../../shared/tasks/tasks.ts'
 import { ProviderError } from '../../llm/http.ts'
@@ -58,8 +58,15 @@ export function createLlm(deps: LlmDeps): {
           ...(stream?.onThinking ? { onThinking: stream.onThinking } : {}),
           ...(request.tools.length > 0 || request.turns.length > 1 ? { loop: true } : {}),
         }
+        let timedOut = false
         const call = (): Promise<Completion> =>
-          deps.complete(config, request.system, request.turns, request.tools, options)
+          deps.complete(
+            config,
+            request.system,
+            request.turns,
+            request.tools,
+            timedOut ? { ...options, effort: 'low' } : options,
+          )
         let reply: Completion
         for (let attempt = 0; ; attempt++) {
           while (signsIn(config.provider)) {
@@ -76,11 +83,11 @@ export function createLlm(deps: LlmDeps): {
           } catch (err) {
             if (signal.aborted) throw err
             const message = err instanceof Error ? err.message : String(err)
+            const turnTimedOut = isTurnTimeout(message)
+            if (turnTimedOut) timedOut = true
             const wakingRetry = isSleepWakeError(message) && Number.isFinite(deps.wakeDelayMs?.() ?? 0)
-            const wait =
-              isRetryable(message) || wakingRetry
-                ? retryWait(attempt, err instanceof ProviderError ? err.retryAfterMs : null, deps.random)
-                : null
+            const retryAfterMs = !turnTimedOut && err instanceof ProviderError ? err.retryAfterMs : null
+            const wait = isRetryable(message) || wakingRetry ? retryWait(attempt, retryAfterMs, deps.random) : null
             if (wait === null) throw err
             await untilAborted(deps.wait(wait), signal)
             if (signal.aborted) throw err

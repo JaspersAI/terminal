@@ -262,7 +262,10 @@ test('an HTML error page from a proxy or gateway is replaced with a clean status
   ] as const) {
     await serving(
       (res) => {
-        res.writeHead(status, { 'content-type': 'text/html' })
+        res.writeHead(status, {
+          'content-type': 'text/html',
+          ...(status === 524 ? { 'retry-after': '120' } : {}),
+        })
         res.end(body)
       },
       async (url) => {
@@ -271,6 +274,7 @@ test('an HTML error page from a proxy or gateway is replaced with a clean status
             assert.ok(err instanceof ProviderError)
             assert.equal(err.message, expected)
             assert.equal(err.status, status)
+            assert.equal(err.retryAfterMs, null)
             return true
           })
         }

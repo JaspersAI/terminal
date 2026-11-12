@@ -83,13 +83,20 @@ export async function post<T>(
   }
 }
 
+const TIMEOUT_STATUS = new Set([408, 504, 522, 524])
+
 /** A response that was not a success, as the error it is thrown as. */
 async function refused(provider: Provider, response: Response): Promise<ProviderError> {
   const text = await response.text().catch(() => '')
+  // Cloudflare attaches Retry-After: 120 to its 522/524 origin timeout error pages; a gateway or
+  // request timeout is not a provider rate-limit backoff.
+  const retryAfterMs = TIMEOUT_STATUS.has(response.status)
+    ? null
+    : retryAfter(response.headers.get('retry-after'), Date.now())
   return new ProviderError(
     `${provider.name} returned ${response.status}: ${detail(text, response.status, response.statusText)}`,
     response.status,
-    retryAfter(response.headers.get('retry-after'), Date.now()),
+    retryAfterMs,
   )
 }
 

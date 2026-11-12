@@ -159,19 +159,19 @@ test('a turn interrupted by system sleep or wake is told apart from an awake tur
     }),
     { action: 'throw', sleepInterrupted: false },
   )
-  assert.equal(
+  assert.deepEqual(
     shouldRetryRoundError(
       {
-        message: 'Jaspers: nothing arrived for 90 s',
+        message: 'Jaspers returned 524: timed out',
         attempt: 0,
-        retryAfterMs: null,
-        elapsedMs: 90_050,
-        timeoutMs: 90_000,
+        retryAfterMs: 120_000,
+        elapsedMs: 125_000,
+        timeoutMs: 300_000,
         restateOnTimeout: false,
       },
       () => 0.5,
-    ).action,
-    'retry',
+    ),
+    { action: 'retry', waitMs: 1_500, waitAwake: false, sleepInterrupted: false },
   )
   assert.deepEqual(
     shouldRetryRoundError({
