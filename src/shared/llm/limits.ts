@@ -94,17 +94,19 @@ export function shouldRetryRoundError(
     abortOnSleep = false,
     sleeping = false,
   } = options
+  const timedOut = isTurnTimeout(message, elapsedMs)
+  const effectiveRetryAfterMs = timedOut ? null : retryAfterMs
   const sleepInterrupted = isSleepInterrupted(message, elapsedMs, timeoutMs, sleeping)
   if (sleepInterrupted) {
     if (abortOnSleep) return { action: 'throw', sleepInterrupted: true }
-    const waitMs = retryWait(attempt, retryAfterMs, random)
+    const waitMs = retryWait(attempt, effectiveRetryAfterMs, random)
     if (waitMs === null) return { action: 'throw', sleepInterrupted: true }
     return { action: 'retry', waitMs, waitAwake: true, sleepInterrupted: true }
   }
-  if (isTurnTimeout(message, elapsedMs) && (restateOnTimeout || abortOnSleep || attempt >= 1)) {
+  if (timedOut && (restateOnTimeout || abortOnSleep || attempt >= 1)) {
     return { action: 'throw', sleepInterrupted: false }
   }
-  const waitMs = isRetryable(message) ? retryWait(attempt, retryAfterMs, random) : null
+  const waitMs = isRetryable(message) ? retryWait(attempt, effectiveRetryAfterMs, random) : null
   if (waitMs === null) return { action: 'throw', sleepInterrupted: false }
   return { action: 'retry', waitMs, waitAwake: sleeping, sleepInterrupted: false }
 }

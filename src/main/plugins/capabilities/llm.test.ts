@@ -66,13 +66,16 @@ test('a request reaches the provider streamed, with its model, a capped token li
 
 test('a rate limit, gateway timeout, or server error is retried with backoff up to the retry limit; a refusal is not', async () => {
   let calls = 0
-  const flaky = deps(async () => {
-    if (++calls <= 2) throw new ProviderError('Jaspers returned 524: timed out', 524)
+  const efforts: Array<CompleteOptions['effort']> = []
+  const flaky = deps(async (options) => {
+    efforts.push(options.effort)
+    if (++calls <= 2) throw new ProviderError('Jaspers returned 524: timed out', 524, 120_000)
     return REPLY
   })
   assert.equal(await createLlm(flaky.d).complete(request, new AbortController().signal), REPLY)
   assert.equal(calls, 3)
   assert.deepEqual(flaky.waits, [2000, 4000])
+  assert.deepEqual(efforts, [undefined, 'low', 'low'])
 
   let limitedCalls = 0
   const rateLimited = deps(async () => {
