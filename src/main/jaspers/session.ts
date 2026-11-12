@@ -51,8 +51,8 @@ export interface Session {
   /** Revokes the grant at Account, as far as it can, and forgets the sign-in either way. */
   signOut(): Promise<void>
   signedIn(): boolean
-  /** Checks a stored sign-in on open: unseals the tokens and renews an expiring one, ending with `reason` when invalid or unreadable. */
-  check(): Promise<void>
+  /** Checks a stored sign-in: unseals the tokens and renews an expiring one (or renews immediately when `force` is true), ending with `reason` when invalid, revoked, or unreadable. */
+  check(force?: boolean): Promise<void>
   /** Disarms token refreshes while the machine sleeps so a single-use refresh token is never sent on a dying socket. */
   suspend(): void
   /** Holds off token refreshes for `graceMs` after wake while the network settles. */
@@ -300,9 +300,10 @@ export function createSession(deps: SessionDeps): Session {
     return fresh.access
   }
 
-  async function check(): Promise<void> {
+  async function check(force = false): Promise<void> {
+    if (running) return
     const held = current()
-    if (!held || !nearExpiry(held, deps.now())) return
+    if (!held || (!force && !nearExpiry(held, deps.now()))) return
     try {
       await renew(held)
     } catch {

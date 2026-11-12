@@ -338,6 +338,8 @@ export type Action =
   | { type: 'jaspers.signIn' }
   /** Revokes the sign-in at Account and forgets it. The providers set to Jaspers stay, and wait for the next sign-in. */
   | { type: 'jaspers.signOut' }
+  /** Verifies a stored sign-in with Account so a web sign-out or disconnect is reflected in the app. */
+  | { type: 'jaspers.check' }
   | { type: 'terms.accept' }
   | { type: 'onboarding.complete' }
   | { type: 'workspace.create' }

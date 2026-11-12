@@ -55,6 +55,11 @@ export function Settings({ onClose, onViewLoops }: Props): ReactElement {
   // Focus starts inside, so keys land here and not on the workspace underneath.
   useEffect(() => dialog.current?.focus(), [])
 
+  // Verify the stored Jaspers sign-in when Settings opens so a web sign-out or disconnect is reflected immediately.
+  useEffect(() => {
+    if (signedIn) void dispatch({ type: 'jaspers.check' })
+  }, [signedIn])
+
   // Escape is heard in the capture phase and goes no further: the answer box and the key field
   // above the composer close on Escape too, and settings is on top of both.
   useEffect(() => {
