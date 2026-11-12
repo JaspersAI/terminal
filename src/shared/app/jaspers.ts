@@ -266,9 +266,24 @@ export function gatewayUrl(account: string): string {
   return `${account}/v1`
 }
 
-/** The account's own page on Account, for the browser: what it has used and what is left, the apps connected to it, and its password. */
-export function accountPage(account: string): string {
-  return `${account}/auth/account`
+/** The account's own page on Account, for the browser: what it has used and what is left, the apps connected to it, and its password. Names `email` when signed in so the browser opens that account rather than a stale browser session. */
+export function accountPage(account: string, email?: string | null): string {
+  const trimmed = typeof email === 'string' ? email.trim() : ''
+  return trimmed ? `${account}/auth/account?email=${encodeURIComponent(trimmed)}` : `${account}/auth/account`
+}
+
+/** Whether `url` is Account's `/auth/account` page (with or without a trailing slash). */
+export function isAccountPageUrl(url: string, account: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const base = new URL(account)
+    return (
+      parsed.origin === base.origin &&
+      parsed.pathname.replace(/\/+$/, '') === `${base.pathname.replace(/\/+$/, '')}/auth/account`
+    )
+  } catch {
+    return false
+  }
 }
 
 /** The claims a JWT carries, read without checking its signature: the token is Account's to check, and this only reads who it names. Null when it is not a JWT. */

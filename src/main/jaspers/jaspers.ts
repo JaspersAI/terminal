@@ -70,7 +70,7 @@ export function gatewayAddress(): string {
 
 /** The account's own page on Account, which Settings opens in the browser for whoever is signed in. */
 export function accountPageAddress(): string {
-  return accountPage(ACCOUNT)
+  return accountPage(ACCOUNT, getState().jaspers.email)
 }
 
 export function signIn(): Promise<void> {
@@ -85,9 +85,9 @@ export function signedIn(): boolean {
   return getState().jaspers.tokens !== null
 }
 
-/** Verifies a stored sign-in on open, unsealing tokens and renewing an expiring one upfront. */
-export function checkSignIn(): Promise<void> {
-  return session().check()
+/** Verifies a stored sign-in, unsealing tokens and renewing an expiring one (or renewing upfront when `force` is true). */
+export function checkSignIn(force = false): Promise<void> {
+  return session().check(force)
 }
 
 /** Disarms Jaspers token refreshes while the machine sleeps so a single-use refresh token is never sent on a dying socket. */
@@ -113,10 +113,11 @@ export function callAsAccount<T>(send: () => Promise<T>): Promise<T> {
   return session().call(send)
 }
 
-/** Hears the sign-in begin and end, whoever ended it: the user, or Account refusing to renew it. A renewal is neither. */
+/** Hears the sign-in begin, end, or change account, whoever changed it: the user, or Account refusing to renew it. A renewal of the same account is neither. */
 export function onSignInChange(listener: (signedIn: boolean) => void): () => void {
   return subscribe((next, prev) => {
     const now = next.jaspers.tokens !== null
-    if (now !== (prev.jaspers.tokens !== null)) listener(now)
+    const was = prev.jaspers.tokens !== null
+    if (now !== was || (now && next.jaspers.email !== prev.jaspers.email)) listener(now)
   })
 }

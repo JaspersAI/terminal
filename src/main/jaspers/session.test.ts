@@ -723,6 +723,15 @@ test('check verifies a stored sign-in on open, renewing an expiring token and en
     await session.check()
     assert.equal(session.signedIn(), false)
     assert.equal(stored().reason, 'The sign-in could not be opened on this machine. Sign in again.')
+
+    // Forced check with a fresh token: verifies the grant with Account immediately and signs out if revoked on the web.
+    canUnseal = true
+    await session.signIn()
+    const freshRefresh = account.issued.at(-1)!.refresh_token
+    account.spend(freshRefresh)
+    await session.check(true)
+    assert.equal(session.signedIn(), false)
+    assert.equal(stored().reason, 'Jaspers signed you out: refresh token is no longer valid. Sign in again.')
   } finally {
     await account.close()
   }

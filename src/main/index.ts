@@ -43,7 +43,9 @@ import { registerVoiceIpc } from './llm/voice'
 import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
 import { anyInFront, isHttps, openAllStored, registerDragIpc, showAll, watchDisplays } from './grid/windows'
 import { installMenu } from './app/menu'
+import { isAccountPageUrl } from '../shared/app/jaspers'
 import {
+  accountAddress,
   accountPageAddress,
   checkSignIn,
   jaspersWakeDelayMs,
@@ -198,14 +200,21 @@ app.whenReady().then(async () => {
   })
 
   // Links out of the app: provider key pages, links in an answer, a view's `openLink`. https only.
-  ipcMain.handle('shell:open-external', (_event, url: unknown) => {
+  ipcMain.handle('shell:open-external', async (_event, url: unknown) => {
     if (!isHttps(url)) throw new Error('Only https links can be opened.')
+    if (isAccountPageUrl(url, accountAddress())) {
+      await checkSignIn(true)
+      return shell.openExternal(accountPageAddress())
+    }
     return shell.openExternal(url)
   })
 
   // Settings' link to the signed-in account's page on Account. Takes no address: main knows where
   // Account is, and the renderer never names it.
-  ipcMain.handle('shell:open-account', () => shell.openExternal(accountPageAddress()))
+  ipcMain.handle('shell:open-account', async () => {
+    await checkSignIn(true)
+    return shell.openExternal(accountPageAddress())
+  })
 
   // Settings > Eye's Reveal the folder, and its Delete all. Main knows the path; the renderer never
   // names one, and neither can reach a frame's contents.
@@ -247,6 +256,7 @@ app.whenReady().then(async () => {
 
   const reopen = (): void => {
     void refreshTerms()
+    void checkSignIn(true)
     showAll()
   }
   startBackground({
@@ -283,6 +293,7 @@ app.whenReady().then(async () => {
   app.on('second-instance', reopen)
   // The dock icon on macOS.
   app.on('activate', reopen)
+  app.on('browser-window-focus', () => void checkSignIn(true))
 })
 
 // The stdio servers are children of this process and go with it.

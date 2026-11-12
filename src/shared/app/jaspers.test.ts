@@ -12,6 +12,7 @@ import {
   emailOf,
   formatLicenseFile,
   gatewayUrl,
+  isAccountPageUrl,
   loadTermsState,
   nearExpiry,
   needsJaspersSignIn,
@@ -45,9 +46,19 @@ test('Account is the public one unless the environment names another, without a 
   assert.equal(gatewayUrl('http://localhost:3350'), 'http://localhost:3350/v1')
 })
 
-test("the account's page is on Account, wherever Account is", () => {
+test("the account's page is on Account, wherever Account is, and names the signed-in email when given", () => {
   assert.equal(accountPage(JASPERS_ACCOUNT), 'https://account.jsprai.com/auth/account')
+  assert.equal(accountPage(JASPERS_ACCOUNT, null), 'https://account.jsprai.com/auth/account')
+  assert.equal(accountPage(JASPERS_ACCOUNT, '  '), 'https://account.jsprai.com/auth/account')
+  assert.equal(
+    accountPage(JASPERS_ACCOUNT, 'jane@fund.com'),
+    'https://account.jsprai.com/auth/account?email=jane%40fund.com',
+  )
   assert.equal(accountPage(accountUrl('http://localhost:3350/')), 'http://localhost:3350/auth/account')
+  assert.equal(isAccountPageUrl('https://account.jsprai.com/auth/account', JASPERS_ACCOUNT), true)
+  assert.equal(isAccountPageUrl('https://account.jsprai.com/auth/account/', JASPERS_ACCOUNT), true)
+  assert.equal(isAccountPageUrl('https://account.jsprai.com/auth/login', JASPERS_ACCOUNT), false)
+  assert.equal(isAccountPageUrl('https://other.example.com/auth/account', JASPERS_ACCOUNT), false)
 })
 
 test('an override that is not an http(s) URL is refused, not fallen back from', () => {

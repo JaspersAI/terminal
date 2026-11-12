@@ -114,7 +114,7 @@ import { installDefaultsForSignUp, removeInstalled } from './plugins/install'
 import { connect } from './plugins/mcp'
 import { dismissNotice } from './app/notices'
 import { authorize } from './plugins/oauth'
-import { signIn, signOut, signedIn } from './jaspers/jaspers'
+import { checkSignIn, signIn, signOut, signedIn } from './jaspers/jaspers'
 import { allowApps } from './plugins/app-consent'
 import { getLive } from './plugins/live'
 import { getView } from './plugins/registry'
@@ -138,6 +138,7 @@ const HANDLERS: Record<Action['type'], Handler> = {
   // The browser flow, waited for: the screen that asked moves on once the sign-in is in.
   'jaspers.signIn': () => signInWithJaspers(),
   'jaspers.signOut': () => signOut(),
+  'jaspers.check': () => checkSignIn(true),
   'terms.accept': () => acceptTerms(),
   'onboarding.complete': () => completeOnboarding(),
   'workspace.create': () => createWorkspace(),
