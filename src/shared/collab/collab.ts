@@ -190,12 +190,6 @@ export function createRevisionGate() {
     isApplyingRemote(): boolean {
       return applyingDepth > 0
     },
-    recordLocalPush(shareId: string, revision: number): void {
-      const current = applied.get(shareId) ?? 0
-      if (Number.isInteger(revision) && revision > current) {
-        applied.set(shareId, revision)
-      }
-    },
   }
 }
 
@@ -262,7 +256,7 @@ export function findRoomShare(
     if (byId) return byId
   }
   const key = `${workspaceId}/${loopId}`
-  return collab.shares.find((s) => s.kind === 'room' && (s.localId === key || s.localId.endsWith(`/${loopId}`))) ?? null
+  return collab.shares.find((s) => s.kind === 'room' && s.localId === key) ?? null
 }
 
 /** Finds the active workspace tab share for `workspaceId`, or null. */
@@ -337,6 +331,17 @@ export function buildRoomSnapshot(
   }
 }
 
+const INTERNAL_STORE_TABLES = /\b(?:threads|exchanges|notifications|watched|usage|sqlite_master|sqlite_schema)\b/i
+
+function sanitizeRemotePanel(panel: Panel, isOwner: boolean): Panel {
+  if (isOwner) return panel
+  const state = isRecord(panel.state) ? { ...panel.state } : {}
+  if (typeof state.sql === 'string' && INTERNAL_STORE_TABLES.test(state.sql)) {
+    state.sql = null
+  }
+  return { ...panel, state }
+}
+
 /**
  * Applies a remote `SharedRoomSnapshot` onto a workspace's `grids` and `loops`, either creating the
  * shared room frame on window 1 or updating its existing frame, child tiles, panels, and loop record in place.
@@ -347,19 +352,24 @@ export function applyRoomSnapshot(
   shareId: string,
   snapshot: SharedRoomSnapshot,
   minLoopSeq = 0,
+  isOwner = false,
 ): { grids: Record<number, Grid>; loops: Loops; loopId: string } {
   const existingLoop =
-    loops.list.find((l) => l.shareId === shareId) ?? loops.list.find((l) => l.id === snapshot.loop.id)
+    loops.list.find((l) => l.shareId === shareId) ??
+    (isOwner ? loops.list.find((l) => l.id === snapshot.loop.id && !l.shareId) : undefined)
   const localLoopId =
     existingLoop?.id ??
     (loops.list.some((l) => l.id === snapshot.loop.id) ? `f${Math.max(loops.seq, minLoopSeq) + 1}` : snapshot.loop.id)
   const loopNum = Number(localLoopId.slice(1)) || 1
   const nextSeq = Math.max(loops.seq, minLoopSeq, loopNum)
 
+  const { chat: _remoteChat, ...cleanLoop } = snapshot.loop
   const nextLoopRecord: Loop = {
-    ...snapshot.loop,
+    ...cleanLoop,
+    ...(isOwner && snapshot.loop.chat ? { chat: snapshot.loop.chat } : {}),
     id: localLoopId,
     shareId,
+    lastActiveAt: Math.max(cleanLoop.lastActiveAt ?? 0, existingLoop?.lastActiveAt ?? 0) + 1,
   }
   const nextLoops: Loops = {
     ...loops,
@@ -413,11 +423,16 @@ export function applyRoomSnapshot(
       loop: localLoopId,
       parent: frameElement.id,
     })
-    childPanels.push({
-      ...rawPanel,
-      id: panelId,
-      elementId: elId,
-    })
+    childPanels.push(
+      sanitizeRemotePanel(
+        {
+          ...rawPanel,
+          id: panelId,
+          elementId: elId,
+        },
+        isOwner,
+      ),
+    )
   }
 
   const nextInner: Grid = {
@@ -475,6 +490,7 @@ export function applyWorkspaceSnapshot(
   },
   shareId: string,
   snapshot: SharedWorkspaceSnapshot,
+  isOwner = false,
 ): {
   workspaces: Workspace[]
   grids: Record<string, Record<number, Grid>>
@@ -482,7 +498,8 @@ export function applyWorkspaceSnapshot(
   workspaceId: string
 } {
   const existing =
-    state.workspaces.find((w) => w.shareId === shareId) ?? state.workspaces.find((w) => w.id === snapshot.workspace.id)
+    state.workspaces.find((w) => w.shareId === shareId) ??
+    (isOwner ? state.workspaces.find((w) => w.id === snapshot.workspace.id && !w.shareId) : undefined)
   const workspaceId = existing?.id ?? `shared-${shareId}`
   const updatedWorkspace: Workspace = {
     ...(existing ?? { id: workspaceId, name: snapshot.workspace.name }),
@@ -495,20 +512,29 @@ export function applyWorkspaceSnapshot(
     : [...state.workspaces, updatedWorkspace]
 
   const currentGrids = state.grids[workspaceId] ?? {}
+  const sanitizedGrid: Grid = {
+    ...snapshot.grid,
+    panels: snapshot.grid.panels.map((p) => sanitizeRemotePanel(p, isOwner)),
+  }
   const grids: Record<string, Record<number, Grid>> = {
     ...state.grids,
     [workspaceId]: {
       ...currentGrids,
-      1: snapshot.grid,
+      1: sanitizedGrid,
     },
   }
   const currentLoops = state.loops[workspaceId] ?? NO_LOOPS
+  const sanitizedLoops = snapshot.loops.map(({ chat: remoteChat, ...l }) => ({
+    ...l,
+    ...(isOwner && remoteChat ? { chat: remoteChat } : {}),
+    lastActiveAt: Math.max(l.lastActiveAt ?? 0, 1) + 1,
+  }))
   const loops: Record<string, Loops> = {
     ...state.loops,
     [workspaceId]: {
       ...currentLoops,
       seq: Math.max(currentLoops.seq, snapshot.loopSeq),
-      list: snapshot.loops,
+      list: sanitizedLoops,
     },
   }
   return { workspaces, grids, loops, workspaceId }

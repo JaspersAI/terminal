@@ -164,7 +164,53 @@ test('buildWorkspaceSnapshot and applyWorkspaceSnapshot sync a full workspace ta
   assert.equal(merged.loops[sharedTab.id]!.list.length, 1)
 })
 
-test('isSponsoredRoom identifies rooms where execution is sponsored by a remote owner', () => {
+test('applyRoomSnapshot never overwrites an unshared local f1 room on a collaborator machine, strips remote chat keys, and sanitizes internal SQL tables', () => {
+  // Collaborator already has their own private room f1 on ws-1
+  const localMade = withLoopAsked(
+    NO_LOOPS,
+    { desc: 'My Private Portfolio', brief: 'Keep private', plugins: [], skills: [] },
+    1000,
+  )
+  const localPlaced = placeFramed(EMPTY_GRID, {
+    content: { kind: 'view', view: 'core/note' },
+    state: { text: 'Private note' },
+    loop: localMade.loop.id,
+  })
+
+  // Owner also has a room f1 and shares it, with a malicious chat key and internal SQL query
+  const ownerMade = withLoopAsked(
+    NO_LOOPS,
+    { desc: 'Shared NVDA Room', brief: 'NVDA', plugins: [], skills: [], chat: 'central' },
+    2000,
+  )
+  const ownerPlaced = placeFramed(EMPTY_GRID, {
+    content: { kind: 'view', view: 'core/table' },
+    state: { sql: 'SELECT * FROM threads' },
+    loop: ownerMade.loop.id,
+  })
+  const snapshot = buildRoomSnapshot({ 1: ownerPlaced.grid }, ownerMade.loops, ownerMade.loop.id, {
+    exchanges: [],
+    datasets: [],
+    bundles: [],
+  })!
+
+  const applied = applyRoomSnapshot({ 1: localPlaced.grid }, localMade.loops, 'share-nvda', snapshot, 1, false)
+  // Both rooms exist: local f1 is untouched, and the shared room got f2!
+  assert.equal(applied.loops.list.length, 2)
+  assert.equal(applied.loops.list[0]!.id, 'f1')
+  assert.equal(applied.loops.list[0]!.desc, 'My Private Portfolio')
+  assert.equal(applied.loopId, 'f2')
+  const sharedLoop = applied.loops.list.find((l) => l.id === 'f2')!
+  assert.equal(sharedLoop.desc, 'Shared NVDA Room')
+  assert.equal(sharedLoop.chat, undefined)
+
+  // Internal SQL query against `threads` was stripped on the collaborator
+  const sharedPanels = applied.grids[1]!.panels.filter((p) => p.content.kind === 'view')
+  const tablePanel = sharedPanels.find((p) => p.content.kind === 'view' && p.content.view === 'core/table')!
+  assert.equal(tablePanel.state.sql, null)
+})
+
+test('isSponsoredRoom identifies rooms where execution is sponsored by a remote owner and does not match unshared f1 rooms in other tabs', () => {
   const collab: CollabState = {
     ...EMPTY_COLLAB,
     connected: true,
@@ -186,4 +232,5 @@ test('isSponsoredRoom identifies rooms where execution is sponsored by a remote 
   }
   assert.equal(isSponsoredRoom(collab, 'ws-1', 'f2').sponsored, true)
   assert.equal(isSponsoredRoom(collab, 'ws-1', 'f1').sponsored, false)
+  assert.equal(isSponsoredRoom(collab, 'ws-2', 'f2').sponsored, false)
 })

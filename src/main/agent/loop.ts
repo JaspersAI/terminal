@@ -109,7 +109,6 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
   const stateNowSnapshot = getState()
   const record = loopsOf(workspaceId).list.find((one) => one.id === loop)
   const chat = loopChat(workspaceId, record ?? loop)
-  touchLoop(workspaceId, loop)
 
   // "People First -> Agent after": a message starting with `@` in a room addresses a person in the
   // room, records directly in the room's conversation transcript, syncs to teammates, and makes the
@@ -117,6 +116,7 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
   if (task === undefined && !written) {
     const parsed = parseRoomInput(input, stateNowSnapshot.jaspers.email)
     if (parsed.kind === 'human') {
+      touchLoop(workspaceId, loop)
       fileDirectExchange(chat, parsed.formattedQuestion, parsed.answer)
       roomExchangeHooks?.(workspaceId, loop)
       return Promise.resolve(parsed.answer)
@@ -133,6 +133,8 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
       return sponsoredPromptHandler(workspaceId, loop, input)
     }
   }
+
+  touchLoop(workspaceId, loop)
 
   const request = (): Promise<string> => {
     const latestRecord = loopsOf(workspaceId).list.find((one) => one.id === loop)

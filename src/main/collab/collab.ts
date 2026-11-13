@@ -6,7 +6,8 @@ import { addNotice } from '../app/notices'
 import { setCollabLoopHooks, sendToLoop } from '../agent/loop'
 import { exchanges as readChatExchanges } from '../agent/utils/thread'
 import { fileExchange, forgetChat } from '../data/store'
-import { exportDatasets, hydrateSyncedDataset, runSource } from '../data/sources'
+import { exportDatasets, hydrateSyncedDataset, runSource, setSponsoredSourceRunner } from '../data/sources'
+import type { RunResult } from '../../shared/data/datasets'
 import { asAccount, gatewayAddress, onSignInChange, signedIn } from '../jaspers/jaspers'
 import { bundlePath } from '../plugins/plugins'
 import { registerSyncedViews } from '../plugins/registry'
@@ -134,7 +135,7 @@ const engine = createCollabEngine({
   getState,
   update,
   api,
-  exportDatasets: () => exportDatasets(),
+  exportDatasets: (workspaceId, allowedPlugins) => exportDatasets(workspaceId, allowedPlugins),
   hydrateDataset: (ds, workspaceId) => hydrateSyncedDataset(ds, workspaceId ?? null),
   exportBundles: exportLocalPluginBundles,
   registerBundle: (bundle) => {
@@ -239,6 +240,10 @@ function stopStream(): void {
 }
 
 export function startCollab(): void {
+  setSponsoredSourceRunner(
+    (workspaceId, source, args, fresh) =>
+      engine.runSponsoredSource(workspaceId, source, args, fresh) as Promise<(RunResult & { text: string }) | null>,
+  )
   setCollabLoopHooks({
     runSponsoredPrompt: (workspaceId, loopId, input) => engine.runSponsoredPrompt(workspaceId, loopId, input),
     onRoomExchange: (workspaceId, loopId) => {
