@@ -25,6 +25,7 @@ import {
   type Rect,
 } from '../../../shared/grid/grid'
 import { waitingViews } from '../../../shared/plugins/needs'
+import { EMPTY_COLLAB, isSponsoredRoom } from '../../../shared/collab/collab'
 import { noteZoom } from '../../lib/eye'
 import { useAppState } from '../../lib/state'
 import { Board } from './Board'
@@ -204,17 +205,23 @@ export function ElementFrame({
   const frame = content?.kind === 'frame'
   const plugins = useAppState((s) => s.plugins)
   const connections = useAppState((s) => s.connections)
+  const collab = useAppState((s) => s.collab ?? EMPTY_COLLAB)
+  const workspace = useAppState((s) => s.workspaces.find((w) => w.id === workspaceId))
+  const sponsored = useMemo(
+    () => (loop ? isSponsoredRoom(collab, workspaceId, loop.id, loop.shareId, workspace?.shareId).sponsored : false),
+    [collab, workspaceId, loop, workspace?.shareId],
+  )
   // The asks the user set aside in this tile, by name: their views are drawn as they are.
   const [setAside, setSetAside] = useState<ReadonlySet<string>>(() => new Set())
   // The views inside that have nothing to show until their plugin is given what it needs.
   const waiting = useMemo(
     () =>
       frame
-        ? waitingViews(layoutOf(grid, element.id).panels, views, plugins, connections).filter(
+        ? waitingViews(layoutOf(grid, element.id).panels, views, plugins, connections, sponsored).filter(
             (one) => !setAside.has(one.name),
           )
         : [],
-    [frame, grid, element.id, views, plugins, connections, setAside],
+    [frame, grid, element.id, views, plugins, connections, sponsored, setAside],
   )
   const undrawn = useMemo(() => new Set(waiting.map((one) => one.elementId)), [waiting])
   const need = waiting[0] ?? null

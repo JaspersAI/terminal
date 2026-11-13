@@ -479,3 +479,15 @@ test('a tile box clamps its conversation split from 0% to 100%, keeps it across 
   assert.equal(tileBoxOf(boxes, HERE).expanded, false)
   assert.equal(tileBoxOf(boxes, HERE).split, null)
 })
+
+test('sending an @ human message in a room expands the conversation drawer and settles immediately without a working spinner', () => {
+  let boxes: ReadonlyMap<string, TileBox> = new Map()
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSent(box, HERE, 'ask-human', '@jane check the margin assumptions'))
+  assert.equal(tileBoxOf(boxes, HERE).expanded, true)
+  boxes = withTileBox(boxes, HERE, (box) =>
+    tileBoxSettled(box, 'ask-human', 'Sent to room — agent held.', null, 1_700_000_009_000),
+  )
+  const settled = tileBoxOf(boxes, HERE)
+  assert.equal(settled.live[0]?.working, false)
+  assert.equal(settled.live[0]?.answer, 'Sent to room — agent held.')
+})

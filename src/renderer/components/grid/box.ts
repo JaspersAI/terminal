@@ -10,6 +10,7 @@ import { THINKING, type AgentEvent, type AgentOrigin } from '../../../shared/age
 import type { Place } from '../../../shared/agent/asking'
 import { shownQuestion } from '../../../shared/agent/attachments.ts'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript.ts'
+import { isHumanRoomMessage } from '../../../shared/collab/collab.ts'
 import { normalizeLoopTitle, type Loop, type LoopStatus } from '../../../shared/loops/loops.ts'
 import { answered, failed, heard, over, sent, without, type LiveExchange } from '../composer/live.ts'
 
@@ -366,17 +367,25 @@ export function boxesKept(
 }
 
 export function tileBoxSent(box: TileBox, place: Place, ask: string, question: string): TileBox {
-  const dropped = !box.expanded && over(box.live).size > 0
-  const live = boxSent(boxFresh(box.live, box.expanded), ask, place.workspaceId, question)
-  return { ...box, draft: '', live, scrollTop: null, ...(dropped ? { read: false } : {}) }
+  const expandForHuman = isHumanRoomMessage(question)
+  const expanded = box.expanded || expandForHuman
+  const dropped = !expanded && over(box.live).size > 0
+  const live = boxSent(boxFresh(box.live, expanded), ask, place.workspaceId, question)
+  return { ...box, expanded, draft: '', live, scrollTop: null, ...(dropped ? { read: false } : {}) }
 }
 
 export function tileBoxScrolled(box: TileBox, scrollTop: number | null): TileBox {
   return box.scrollTop === scrollTop ? box : { ...box, scrollTop }
 }
 
-export function tileBoxSettled(box: TileBox, ask: string, reply: string, error: string | null): TileBox {
-  const live = boxSettled(box.live, ask, reply, error)
+export function tileBoxSettled(
+  box: TileBox,
+  ask: string,
+  reply: string,
+  error: string | null,
+  at = Date.now(),
+): TileBox {
+  const live = boxSettled(box.live, ask, reply, error, at)
   if (live === box.live) return box
   const unread = error === null && (!reply || !box.expanded)
   return { ...box, live, ...(unread ? { read: false } : {}) }

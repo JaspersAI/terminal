@@ -12,12 +12,25 @@ import { PluginsPane } from './PluginsPane'
 import { ProModePane } from './ProModePane'
 import { SkillsPane } from './SkillsPane'
 import { TasksPane } from './TasksPane'
+import { TeamPane } from './TeamPane'
 
 type Pane =
-  'llm' | 'plugins' | 'connections' | 'skills' | 'memory' | 'tasks' | 'data' | 'appearance' | 'pro' | 'eye' | 'about'
+  | 'llm'
+  | 'team'
+  | 'plugins'
+  | 'connections'
+  | 'skills'
+  | 'memory'
+  | 'tasks'
+  | 'data'
+  | 'appearance'
+  | 'pro'
+  | 'eye'
+  | 'about'
 
 const PANES: { id: Pane; label: string; icon: () => ReactElement }[] = [
   { id: 'llm', label: 'LLM', icon: ChipIcon },
+  { id: 'team', label: 'Team', icon: PersonIcon },
   { id: 'plugins', label: 'Plugins', icon: PlugIcon },
   { id: 'connections', label: 'Connections', icon: LinkIcon },
   { id: 'skills', label: 'Skills', icon: SkillIcon },
@@ -140,6 +153,7 @@ export function Settings({ onClose, onViewLoops }: Props): ReactElement {
           </button>
           {/* Keyed by pane, so each one opens scrolled to its top. The panes with a list scroll it and its entry apart. */}
           {pane === 'llm' ||
+          pane === 'team' ||
           pane === 'data' ||
           pane === 'appearance' ||
           pane === 'pro' ||
@@ -149,6 +163,8 @@ export function Settings({ onClose, onViewLoops }: Props): ReactElement {
             <div key={pane} className={pane === 'data' ? 'h-full' : 'h-full overflow-y-auto px-8 pt-6 pb-10'}>
               {pane === 'llm' ? (
                 <LlmPane />
+              ) : pane === 'team' ? (
+                <TeamPane />
               ) : pane === 'data' ? (
                 <DataPane />
               ) : pane === 'pro' ? (
