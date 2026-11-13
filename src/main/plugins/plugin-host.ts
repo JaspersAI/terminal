@@ -55,7 +55,7 @@ const INIT_MS = 30_000
 /** How long main waits on one source run; a source with longer work starts a job and returns. */
 const SOURCE_MS = 120_000
 /** A host started on demand stops after this long with nothing to do; the next source run starts it again. */
-const IDLE_MS = 5 * 60_000
+const IDLE_MS = 2 * 60_000
 /** How often such a host is looked at. */
 const IDLE_CHECK_MS = 30_000
 
