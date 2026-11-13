@@ -63,6 +63,15 @@ The **Amazon Bedrock** provider serves the same Messages API as Anthropic, so it
 
 Bedrock can also be the web search provider (**Settings > Language model > Web search**), on the same key (or you can use **Brave Search** at `https://api.search.brave.com/res/v1`). Bedrock's Web Search tool runs on the Responses API with an OpenAI model: the base URL is `https://bedrock-mantle.<region>.api.aws/openai/v1`, in a US region, and the model is one that has the tool, such as the default `openai.gpt-5.6-luna`. The key's IAM identity needs both `bedrock-websearch:InvokeSearch` and `bedrock-websearch:InvokeFetch`, as well as access to that model; missing permissions return HTTP 403 `AccessDeniedException`. A search takes twelve to eighteen seconds, since a model runs it and writes out what it found, and it stays on Amazon's own index of the web.
 
+### A thinking model and a fast model
+
+A language model provider runs the terminal on two models, set in **Settings > Language model** and in setup:
+
+- **Thinking model:** rooms, scheduled tasks, the plugin builder, and plugins' own model calls (the research analysts) run on it.
+- **Fast model:** the global box runs on it, at low reasoning effort: routing a request, answering a short question, choosing a new room's plugins, and the welcome. What it starts is done by a room, on the thinking model, so the fast model is the wait before the work and not the work.
+
+Leave **Fast model** empty and everything runs on the thinking model. A provider saved before there were fast models has none until you name one. Anthropic (`claude-haiku-5-5`), OpenAI (`gpt-5.4-mini`), Google (`gemini-3.8-flash`, the same model thinking less), and OpenRouter (`anthropic/claude-haiku-5.5`) come with a default, and the others start empty. Signed in with Jaspers, both models are Jaspers' to pick and neither field shows.
+
 ### Plugins and welcome
 
 The last step of setup is the plugin directory **Settings > Plugins** shows, which is [Jaspers Hub](https://hub.jsprai.com)'s: the plugins Hub features first, in its order, then every other plugin on Hub, most starred first, with **More** for the next page. Each shows who published it, marked official when it is Jaspers' own, its version, and whether Hub reviewed it. Nothing installs until you press its **Install**, which downloads it from Hub, checks that it is the archive Hub described, and asks first. The one exception is the Jaspers Screener and the Research Agents when signing in with Jaspers during setup, which install by themselves when Hub has Jaspers' own reviewed versions and you do not have them yet; the step shows them installing. Finishing with none installed is fine. When Hub cannot be reached, the step says so, with **Retry**, and installing from a non-Hub link still works, retaining archive-safety checks and explicit confirmation; only Hub sources receive metadata-backed hash and version validation (see [Installing plugins](installing-plugins.md)). Install more later in **Settings > Plugins**, which also searches Hub, or [write your own](writing-a-plugin.md).
