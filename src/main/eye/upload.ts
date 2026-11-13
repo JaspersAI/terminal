@@ -53,10 +53,14 @@ let nudged = false
 let failures = 0
 /** How many lines of this run's telemetry file the endpoint has: the next part starts there. */
 let sentLines = 0
+/** How many UTF-8 bytes of this run's telemetry file the endpoint has, so each pass reads only the new tail. */
+let sentBytes = 0
 /** The session `sentLines` counts for: a new one, after everything was deleted, starts from its first line. */
 let sentFor: string | null = null
 /** How many lines of an earlier run's file the endpoint has, by session, while it goes in parts. */
 const sentOf = new Map<string, number>()
+/** How many UTF-8 bytes of an earlier run's file the endpoint has, by session. */
+const sentBytesOf = new Map<string, number>()
 
 /** Starts the uploader: a pass soon after launch, one whenever something new is written, and one every few minutes regardless. */
 export function startUploads(): void {
@@ -224,6 +228,45 @@ function failed(why: { status: number } | { message: string }): void {
  * The files that went are deleted when the endpoint has them, all but this run's telemetry file,
  * which only grows; an earlier run's folder goes once nothing is left in it.
  */
+async function readEventsTail(
+  file: string,
+  fromLine: number,
+  fromByte: number,
+): Promise<{ body: string; count: number; rest: number; nextByte: number }> {
+  const stat = await fsp.stat(file)
+  if (fromByte > 0 && stat.size >= fromByte) {
+    if (stat.size === fromByte) {
+      return { body: '', count: 0, rest: 0, nextByte: fromByte }
+    }
+    const handle = await fsp.open(file, 'r')
+    try {
+      const length = stat.size - fromByte
+      const buf = Buffer.allocUnsafe(length)
+      const { bytesRead } = await handle.read(buf, 0, length, fromByte)
+      const tail = buf.subarray(0, bytesRead).toString('utf8')
+      const part = eventsPart(tail, 0)
+      const nextByte = fromByte + Buffer.byteLength(part.body, 'utf8')
+      return { ...part, nextByte }
+    } finally {
+      await handle.close()
+    }
+  }
+  const full = await fsp.readFile(file, 'utf8')
+  const skip = Math.max(0, fromLine)
+  let pos = 0
+  for (let i = 0; i < skip; i++) {
+    const nl = full.indexOf('\n', pos)
+    if (nl === -1) return { body: '', count: 0, rest: 0, nextByte: 0 }
+    pos = nl + 1
+  }
+  const prefixBytes = pos > 0 ? Buffer.byteLength(full.slice(0, pos), 'utf8') : 0
+  const part = eventsPart(pos > 0 ? full.slice(pos) : full, 0)
+  return {
+    ...part,
+    nextByte: prefixBytes + Buffer.byteLength(part.body, 'utf8'),
+  }
+}
+
 async function send(session: string): Promise<'accepted' | { status: number } | 'empty'> {
   if (!ENDPOINT) return 'empty'
   const folder = path.join(eyeRoot(), session)
@@ -232,6 +275,7 @@ async function send(session: string): Promise<'accepted' | { status: number } | 
   if (own && sentFor !== session) {
     sentFor = session
     sentLines = 0
+    sentBytes = 0
   }
   const names = (await fsp.readdir(folder)).sort()
   const frames = names.filter((name) => name.endsWith('.jpg')).slice(0, FRAMES_PER_REQUEST)
@@ -239,12 +283,14 @@ async function send(session: string): Promise<'accepted' | { status: number } | 
   const feedback = names.filter((name) => name.endsWith('.feedback.json')).slice(0, RUNS_PER_REQUEST)
   const eventsFile = names.includes(EVENTS_FILE) ? path.join(folder, EVENTS_FILE) : null
   const from = own ? sentLines : (sentOf.get(session) ?? 0)
-  const events = eventsFile ? eventsPart(await fsp.readFile(eventsFile, 'utf8'), from) : null
+  const fromByte = own ? sentBytes : (sentBytesOf.get(session) ?? 0)
+  const events = eventsFile ? await readEventsTail(eventsFile, from, fromByte) : null
   if (frames.length === 0 && runs.length === 0 && feedback.length === 0 && !events?.count) {
     // Nothing whole to send. An earlier run's file with nothing left in it is done with, and so is
     // its folder; this run's stays, since its next line is still to come.
     if (!own) {
       sentOf.delete(session)
+      sentBytesOf.delete(session)
       if (eventsFile) await fsp.rm(eventsFile, { force: true })
       if ((await fsp.readdir(folder)).length === 0) await fsp.rm(folder, { recursive: true, force: true })
     }
@@ -280,11 +326,17 @@ async function send(session: string): Promise<'accepted' | { status: number } | 
   )
   for (const name of [...frames, ...runs, ...feedback]) await fsp.rm(path.join(folder, name), { force: true })
   if (events?.count) {
-    if (own) sentLines += events.count
-    else if (events.rest > 0) sentOf.set(session, from + events.count)
+    if (own) {
+      sentLines += events.count
+      sentBytes = events.nextByte
+    } else if (events.rest > 0) {
+      sentOf.set(session, from + events.count)
+      sentBytesOf.set(session, events.nextByte)
+    }
     // An earlier run's file has gone to its end, and is done with.
     else {
       sentOf.delete(session)
+      sentBytesOf.delete(session)
       if (eventsFile) await fsp.rm(eventsFile, { force: true })
     }
   }

@@ -179,32 +179,80 @@ export function subscribe(listener: Listener): () => void {
   return () => listeners.delete(listener)
 }
 
+const publicStateCache = new WeakMap<MainState, AppState>()
+const publicProviderCache = new WeakMap<StoredProvider, NonNullable<AppState['llm']>>()
+const publicLoopsCache = new WeakMap<
+  MainState['loops'],
+  { loops: AppState['loops']; closedLoops: AppState['closedLoops'] }
+>()
+const publicClosedListCache = new WeakMap<Loops, AppState['closedLoops'][string]>()
+const publicMemoriesCache = new WeakMap<MainState['memories'], AppState['memories']>()
+
+function stripProvider(p: StoredProvider | null): AppState['llm'] {
+  if (!p) return null
+  let cached = publicProviderCache.get(p)
+  if (!cached) {
+    cached = {
+      providerId: p.providerId,
+      baseUrl: p.baseUrl,
+      model: p.model,
+      ...(p.fastModel ? { fastModel: p.fastModel } : {}),
+      hasToken: p.token !== null,
+    }
+    publicProviderCache.set(p, cached)
+  }
+  return cached
+}
+
+function publicLoopsOf(loopsByWorkspace: MainState['loops']): {
+  loops: AppState['loops']
+  closedLoops: AppState['closedLoops']
+} {
+  let cached = publicLoopsCache.get(loopsByWorkspace)
+  if (!cached) {
+    const loops: AppState['loops'] = {}
+    const closedLoops: AppState['closedLoops'] = {}
+    for (const [id, one] of Object.entries(loopsByWorkspace)) {
+      loops[id] = one.list
+      let closed = publicClosedListCache.get(one)
+      if (!closed) {
+        closed = (one.closed ?? []).map((shut) => shut.loop)
+        publicClosedListCache.set(one, closed)
+      }
+      closedLoops[id] = closed
+    }
+    cached = { loops, closedLoops }
+    publicLoopsCache.set(loopsByWorkspace, cached)
+  }
+  return cached
+}
+
+function publicMemoriesOf(memories: MainState['memories']): AppState['memories'] {
+  let cached = publicMemoriesCache.get(memories)
+  if (!cached) {
+    cached = memories.map(({ name, about, at }) => ({ name, about, at }))
+    publicMemoriesCache.set(memories, cached)
+  }
+  return cached
+}
+
 /** The tree as the renderer sees it: each token reduced to whether one is saved, secrets left behind. */
 export function toPublic(state: MainState): AppState {
-  const strip = (p: StoredProvider | null) =>
-    p
-      ? {
-          providerId: p.providerId,
-          baseUrl: p.baseUrl,
-          model: p.model,
-          ...(p.fastModel ? { fastModel: p.fastModel } : {}),
-          hasToken: p.token !== null,
-        }
-      : null
-  return {
+  const existing = publicStateCache.get(state)
+  if (existing) return existing
+  const { loops, closedLoops } = publicLoopsOf(state.loops)
+  const pub: AppState = {
     termsAccepted: state.termsAccepted,
     termsText: state.termsText,
     onboardingComplete: state.onboardingComplete,
-    llm: strip(state.llm),
-    voice: strip(state.voice),
-    search: strip(state.search),
+    llm: stripProvider(state.llm),
+    voice: stripProvider(state.voice),
+    search: stripProvider(state.search),
     workspaces: state.workspaces,
     currentWorkspaceId: state.currentWorkspaceId,
     grids: state.grids,
-    loops: Object.fromEntries(Object.entries(state.loops).map(([id, one]) => [id, one.list])),
-    closedLoops: Object.fromEntries(
-      Object.entries(state.loops).map(([id, one]) => [id, (one.closed ?? []).map((shut) => shut.loop)]),
-    ),
+    loops,
+    closedLoops,
     windows: state.windows,
     views: state.views,
     sources: state.sources,
@@ -219,7 +267,7 @@ export function toPublic(state: MainState): AppState {
     notices: state.notices,
     unread: state.unread,
     // The index, never the bodies: the whole tree goes to every window on every change.
-    memories: state.memories.map(({ name, about, at }) => ({ name, about, at })),
+    memories: publicMemoriesOf(state.memories),
     tasks: state.tasks,
     background: state.background,
     updates: state.updates,
@@ -238,6 +286,8 @@ export function toPublic(state: MainState): AppState {
       lastCaptureAt: state.eye.lastCaptureAt,
     },
   }
+  publicStateCache.set(state, pub)
+  return pub
 }
 
 /** Every window gets the whole tree after every change, whoever made it. */

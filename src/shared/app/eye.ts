@@ -34,14 +34,47 @@ export const CAPTURE_PRIORITY = [
 ] as const
 export type CaptureWhy = (typeof CAPTURE_PRIORITY)[number]
 
+const NON_VISUAL_PANEL_PATH = /^\/grids\/[^/]+\/[^/]+\/panels\/[^/]+\/(?:text|summary)(?:\/|$)/
+const NON_VISUAL_LOOP_PATH = /^\/loops\/[^/]+\/[^/]+\/lastActiveAt$/
+
+function isVisualChangeOp(
+  op: unknown,
+  options?: { focused?: boolean; visibleWorkspaces?: ReadonlySet<string> },
+): boolean {
+  if (!isRecord(op) || typeof op['path'] !== 'string') return true
+  const path = op['path']
+  if (NON_VISUAL_PANEL_PATH.test(path) || NON_VISUAL_LOOP_PATH.test(path)) return false
+  if (options?.focused === false && (path === '/tasks' || path.startsWith('/tasks/'))) return false
+  const visible = options?.visibleWorkspaces
+  if (visible && visible.size > 0 && (path.startsWith('/grids/') || path.startsWith('/loops/'))) {
+    const secondSlash = path.indexOf('/', 1)
+    const thirdSlash = secondSlash === -1 ? -1 : path.indexOf('/', secondSlash + 1)
+    const rawWs =
+      secondSlash === -1
+        ? ''
+        : thirdSlash === -1
+          ? path.slice(secondSlash + 1)
+          : path.slice(secondSlash + 1, thirdSlash)
+    const workspaceId = rawWs.replaceAll('~1', '/').replaceAll('~0', '~')
+    if (workspaceId && !visible.has(workspaceId)) return false
+  }
+  return true
+}
+
 /**
  * Whether a telemetry line should trigger a settled window screenshot, and under which reason.
  * Background scheduled task runs (`name === 'task'`) and their changes/events do not wake frame
- * capture when no window is focused (`focused === false`).
+ * capture when no window is focused (`focused === false`), and `change` events whose ops only
+ * touch non-visual fields (`panel.text`, `panel.summary`, `lastActiveAt`, off-screen workspaces,
+ * or unfocused task state) do not wake screenshots.
  */
 export function captureTrigger(
-  event: { kind: string; name?: string; run?: string },
-  options?: { focused?: boolean; taskRuns?: ReadonlySet<string> },
+  event: { kind: string; name?: string; run?: string; data?: Record<string, unknown> },
+  options?: {
+    focused?: boolean
+    taskRuns?: ReadonlySet<string>
+    visibleWorkspaces?: ReadonlySet<string>
+  },
 ): CaptureWhy | null {
   const unfocusedTask =
     options?.focused === false &&
@@ -58,8 +91,13 @@ export function captureTrigger(
       return 'said'
     case 'run-end':
       return 'run-end'
-    case 'change':
+    case 'change': {
+      const ops = event.data?.['ops']
+      if (Array.isArray(ops) && ops.length > 0 && !ops.some((op) => isVisualChangeOp(op, options))) {
+        return null
+      }
       return 'change'
+    }
     case 'chart':
       return event.name === 'zoom' || event.name === 'legend' ? 'chart' : null
     case 'zoom':
@@ -322,24 +360,38 @@ export function eventsPart(
   from: number,
   max: number = PART_MAX_CHARS,
 ): { body: string; count: number; rest: number } {
-  const lines = text.split('\n')
-  // The last piece is either empty, after a final newline, or a line not yet whole: neither goes.
-  lines.pop()
-  const next = lines.slice(Math.max(0, from))
+  const skip = Math.max(0, from)
+  let pos = 0
+  for (let i = 0; i < skip; i++) {
+    const nl = text.indexOf('\n', pos)
+    if (nl === -1) return { body: '', count: 0, rest: 0 }
+    pos = nl + 1
+  }
+  const start = pos
+  let end = pos
   let size = 0
   let count = 0
-  for (const line of next) {
-    if (count > 0 && size + line.length + 1 > max) break
-    size += line.length + 1
+  while (pos < text.length) {
+    const nl = text.indexOf('\n', pos)
+    if (nl === -1) break
+    const lineChars = nl - pos + 1
+    if (count > 0 && size + lineChars > max) break
+    size += lineChars
     count++
+    end = nl + 1
+    pos = end
+  }
+  let rest = 0
+  while (pos < text.length) {
+    const nl = text.indexOf('\n', pos)
+    if (nl === -1) break
+    rest++
+    pos = nl + 1
   }
   return {
-    body: next
-      .slice(0, count)
-      .map((line) => `${line}\n`)
-      .join(''),
+    body: count > 0 ? text.slice(start, end) : '',
     count,
-    rest: next.length - count,
+    rest,
   }
 }
 
