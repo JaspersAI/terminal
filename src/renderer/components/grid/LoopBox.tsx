@@ -472,7 +472,11 @@ export function LoopBox({
                 aria-label={`Message ${label}`}
                 autoComplete="off"
                 value={draft}
-                placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
+                placeholder={
+                  chat
+                    ? `Ask ${called} more (@teammate to hold agent)…`
+                    : `Tell ${called} what to do (@teammate to hold agent)…`
+                }
                 onChange={(event) =>
                   updateTileBox(place, (b) =>
                     b.draft === event.target.value ? b : { ...b, draft: event.target.value },
