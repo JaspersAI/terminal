@@ -67,8 +67,14 @@ export function stateNow(workspaceId: string): string {
     state.workspaces.length > 0
       ? `Tabs: ${state.workspaces.map((w) => (w.id === workspaceId ? `${w.name} (active)` : w.name)).join(', ')}.`
       : ''
+  const teammateEmails = [
+    ...(state.collab?.teammates.map((t) => `@${t.email}`) ?? []),
+    ...(state.collab?.outgoingInvites.map((i) => `@${i.inviteeEmail}`) ?? []),
+  ]
+  const teammatesLine = teammateEmails.length > 0 ? `Teammates: ${[...new Set(teammateEmails)].join(', ')}.` : ''
   return [
     ...(tabsLine ? [tabsLine] : []),
+    ...(teammatesLine ? [teammatesLine] : []),
     describeGrid(workspaceId, windowSize, focusedWindow()),
     describeLoops(state, workspaceId, (loop, tabId = workspaceId) => statusNow(state, tabId, loop.id)),
     // What the focused element shows, without its view's instructions: those are for whoever drives it.
