@@ -15,6 +15,7 @@ import {
   ROOM_TITLE_MAX,
   VIEW_TOOLS,
   loopChat,
+  loopOfChat,
   loopName,
   loopTitle,
   gone,
@@ -517,6 +518,19 @@ test('a file that lost its records and kept its tags opens with the same ids, an
 
 test("a loop's chat is filed under its workspace and its id", () => {
   assert.equal(loopChat('w1', 'f12'), 'w1/f12')
+})
+
+test("a chat's room is found by the chat it was given or by its tab and id, and Central's and a build's are no room's", () => {
+  const loops = {
+    w1: { list: [loop('f1', 'One'), { ...loop('f2', 'Two'), chat: 'w0/f2' }] },
+    w2: { list: [loop('f3', 'Three')] },
+  }
+  assert.equal(loopOfChat(loops, 'w1/f1')?.id, 'f1')
+  assert.equal(loopOfChat(loops, 'w0/f2')?.id, 'f2')
+  assert.equal(loopOfChat(loops, 'w1/f2'), undefined)
+  assert.equal(loopOfChat(loops, 'w2/f3')?.id, 'f3')
+  assert.equal(loopOfChat(loops, 'central'), undefined)
+  assert.equal(loopOfChat(loops, 'build/fred'), undefined)
 })
 
 test("a loop's agent may change its own tiles, by element or by panel, and no other's", () => {

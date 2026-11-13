@@ -98,7 +98,6 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
   const chat = loopChat(workspaceId, record ?? loop)
   touchLoop(workspaceId, loop)
   const request = (): Promise<string> => {
-    const latestRecord = loopsOf(workspaceId).list.find((one) => one.id === loop)
     // Where it shows is the work's frame, read as the run begins.
     const place: Place = { workspaceId, on: frameOf(getGrids(workspaceId), loop)?.element.id ?? on }
     return userRequest({
@@ -109,7 +108,6 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
       task,
       ask,
       label: `${loop} `,
-      model: latestRecord?.model ?? null,
       // The whole of it goes on: a room's conversation is its memory of the work.
       goesOn: () => {},
       // Work a task's run started is told so, as the task's own run is: it answers only when there is

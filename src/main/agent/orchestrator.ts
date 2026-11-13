@@ -7,13 +7,11 @@ import { WELCOME_PREFACE } from '../../shared/agent/welcome'
 import { EXCHANGES_MAX } from '../../shared/data/store'
 import { closedCallMessage } from '../../shared/loops/closed'
 import { addressed, LOOP_ID, loopName } from '../../shared/loops/loops'
-import { signsIn } from '../../shared/llm/providers'
 import type { Turn } from '../../shared/llm/llm'
 import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { answerQuestion, withoutSecretPrompts } from '../actions'
 import { recordRun } from '../data/store'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
-import { getProviderConfig } from '../secrets'
 import { getState } from '../state'
 import { expandSlash } from '../skills/skills'
 import { agentLoop } from './agent'
@@ -26,7 +24,7 @@ import type { Tool, ToolContext } from './tools/types'
 import { inBackground } from './utils/lanes'
 import { orchestratorPrompt, stateNow, taskPreface } from './utils/prompt'
 import { begin, ended, running, stop, stopAsked, Stopped } from './utils/runs'
-import { configured } from './utils/settings'
+import { configured, configuredFor, modelFor } from './utils/settings'
 import {
   centralGoesOn,
   citedBy,
@@ -150,8 +148,7 @@ export function runTask(task: TaskRequest): Promise<string> {
     }
     // The provider stays the app's, since its key and base URL are what main holds; only the model
     // changes, so a watch can run on a cheap one, unless the provider is Jaspers, which picks its own.
-    const base = configured()
-    const config = task.model && !signsIn(base.provider) ? { ...base, model: task.model } : base
+    const config = configured(task.model)
     // A /name in the instructions is the skill's own text by the time a model reads it, in this run
     // and in work this run hands on.
     const said = expandSlash(task.instructions) ?? task.instructions
@@ -229,7 +226,7 @@ function closedTarget(call: TaskCall, workspaceId: string): string | null {
  */
 export function runWelcome(workspaceId: string, ask: string, signal: AbortSignal): Promise<string> {
   return inBackground(() => {
-    const config = configured()
+    const config = configuredFor(CENTRAL_CHAT)
     const history: Turn[] = [{ role: 'user', text: ask, context: stateNow(workspaceId) }]
     const entry = begin('welcome', workspaceId, 'welcome', ask)
     signal.addEventListener('abort', () => entry.controller.abort(new Stopped()), { once: true })
@@ -264,7 +261,7 @@ export function runWelcome(workspaceId: string, ask: string, signal: AbortSignal
  * written under one. Resolves false when there is no conversation to put it in.
  */
 export async function said(workspaceId: string, note: string, text: string): Promise<boolean> {
-  const config = getProviderConfig('llm')
+  const config = modelFor(CENTRAL_CHAT)
   if (!config) return false
   const history = threadFor(CENTRAL_CHAT, config)
   // What this workspace's sources brought is here for the words to cite.

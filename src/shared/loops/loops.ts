@@ -867,6 +867,15 @@ export function loopChat(workspaceId: string, loop: string | Pick<Loop, 'id' | '
   return `${workspaceId}/${loop}`
 }
 
+/** The open room whose conversation `chat` is, on any tab; none for Central's chat or a plugin's build. */
+export function loopOfChat(loops: Record<string, { list: readonly Loop[] }>, chat: string): Loop | undefined {
+  for (const [workspaceId, { list }] of Object.entries(loops)) {
+    const found = list.find((loop) => loopChat(workspaceId, loop) === chat)
+    if (found) return found
+  }
+  return undefined
+}
+
 /**
  * What a room's agent is not offered, of what the global assistant has: arranging the window and
  * what is focused in it, the window's cells behind the tiles, the app's settings, and reading or

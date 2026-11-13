@@ -31,7 +31,6 @@ import type { Turn } from '../../../shared/llm/llm'
 import { stripSkillContent } from '../../../shared/skills/skills'
 import { citationsFor } from '../../data/citations'
 import { fileExchange, forgetChat, readExchanges } from '../../data/store'
-import { getProviderConfig } from '../../secrets'
 import {
   dropThread,
   forgetThread,
@@ -42,7 +41,7 @@ import {
 } from '../thread-file'
 import { createThreads, threadKey, type ThreadModel } from '../threads'
 import type { Tool, ToolContext } from '../tools/types'
-import { knownSecrets } from './settings'
+import { knownSecrets, modelFor } from './settings'
 
 // A chat's thread: where it is kept, how much of it goes on, how much of it a round sends, how it is
 // mended and room made in it, and what is read back out of it. And beside it the chat's log, which is
@@ -98,7 +97,7 @@ const forgotten = new Set<string>()
  */
 export function forget(chat: string): void {
   forgotten.add(chat)
-  const config = getProviderConfig('llm')
+  const config = modelFor(chat)
   if (config) {
     const thread = threadFor(chat, config)
     thread.length = 0
@@ -137,7 +136,7 @@ export function join(chat: string, model: ThreadModel, thread: Turn[], fork: For
  * that took its place.
  */
 export function stillOn(chat: string, thread: Turn[], era: number): ThreadModel | null {
-  const now = getProviderConfig('llm')
+  const now = modelFor(chat)
   return now !== null && threadFor(chat, now) === thread && eraOf(thread) === era ? now : null
 }
 
@@ -179,7 +178,7 @@ export function centralGoesOn(history: Turn[], now = Date.now()): void {
  * session in Terminal Sessions and starting a fresh session.
  */
 export function clearChat(chat: string): void {
-  const config = getProviderConfig('llm')
+  const config = modelFor(chat)
   if (config) {
     const thread = threadFor(chat, config)
     startOver(chat, config, thread)
@@ -253,7 +252,7 @@ export async function terminalSessions(): Promise<TerminalSession[]> {
  */
 export async function exchanges(chat: string, limit: number, before?: number): Promise<Exchange[]> {
   const secrets = knownSecrets()
-  const config = before === undefined ? getProviderConfig('llm') : null
+  const config = before === undefined ? modelFor(chat) : null
   const snapshot = config ? threadFor(chat, config).slice() : null
   try {
     return (await readExchanges(chat, limit, before)).map((one) => maskExchange(one, secrets))
