@@ -1,3 +1,4 @@
+import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { describeCatalog } from '../../shared/agent/prompt'
 import {
   SETUP_DEFINITION,
@@ -14,7 +15,7 @@ import { getState, toPublic } from '../state'
 import type { ToolContext } from './tools/types'
 import { request } from './utils/request'
 import { emit, telling, type Live } from './utils/runs'
-import { configured } from './utils/settings'
+import { configuredFor } from './utils/settings'
 
 // The call that sets up a new piece of work: one model call, apart from the orchestrator's thread,
 // with everything installed in front of it, answered by one tool call naming the plugins and skills
@@ -44,7 +45,8 @@ export async function setUpLoop(
   else context.signal?.addEventListener('abort', stopped, { once: true })
   const run: Live = { runId: context.runId, origin: context.task === undefined ? 'user' : 'task', controller }
   emit({ kind: 'status', runId: context.runId, line: 'Choosing plugins for the work' })
-  const config = configured()
+  // Setting a room up is Central's work, and what the user waits through before the room starts.
+  const config = configuredFor(CENTRAL_CHAT)
   try {
     const reply = await request({
       round: 1,
