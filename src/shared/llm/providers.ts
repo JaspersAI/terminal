@@ -265,6 +265,72 @@ export function findProvider<K extends ProviderKind>(kind: K, id: string): Provi
   return (PROVIDERS[kind] as ProviderFor<K>[]).find((p) => p.id === id)
 }
 
+/** The three equal ways onboarding's language model step offers to set up a model. */
+export type LlmSetupPath = 'jaspers' | 'api' | 'local'
+
+export interface LlmSetupChoice {
+  id: LlmSetupPath
+  name: string
+  hint: string
+}
+
+export const LLM_SETUP_PATHS: readonly LlmSetupChoice[] = [
+  {
+    id: 'jaspers',
+    name: 'Jaspers One',
+    hint: 'Models, voice, and web search with one sign-in',
+  },
+  {
+    id: 'api',
+    name: 'Enter LLM API',
+    hint: 'Cloud providers and routers with your API key',
+  },
+  {
+    id: 'local',
+    name: 'Connect Local LLM',
+    hint: 'Ollama or any local OpenAI-compatible server',
+  },
+]
+
+/** Which of onboarding's three equal paths a language model provider belongs to. */
+export function llmSetupPath(provider: Provider): LlmSetupPath {
+  if (signsIn(provider)) return 'jaspers'
+  return provider.tokenRequired ? 'api' : 'local'
+}
+
+/** The language model providers shown under one of onboarding's three setup paths. */
+export function llmProvidersForPath(path: LlmSetupPath): Provider<LlmApi>[] {
+  return PROVIDERS.llm.filter((provider) => llmSetupPath(provider) === path)
+}
+
+/**
+ * The setup path onboarding's language model step opens on: none on a fresh launch so the three
+ * choices sit as equals, or the saved provider's path when returning to the step.
+ */
+export function initialLlmSetupPath(saved: ProviderSetting | null): LlmSetupPath | null {
+  if (!saved) return null
+  const provider = findProvider('llm', saved.providerId)
+  return provider ? llmSetupPath(provider) : null
+}
+
+/**
+ * The provider a setup path starts on when picked: what is already saved when it belongs to that
+ * path, Ollama for local setup so its local defaults are ready at once, and none for API keys so
+ * the user picks their provider first.
+ */
+export function defaultLlmProviderForPath(
+  path: LlmSetupPath,
+  saved: ProviderSetting | null,
+): Provider<LlmApi> | undefined {
+  if (saved) {
+    const existing = findProvider('llm', saved.providerId)
+    if (existing && llmSetupPath(existing) === path) return existing
+  }
+  if (path === 'local') return findProvider('llm', 'ollama')
+  if (path === 'jaspers') return findProvider('llm', JASPERS)
+  return undefined
+}
+
 /** Trim and drop trailing slashes so "https://host/v1/" and "https://host/v1" mean the same thing. */
 export function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '')

@@ -2,6 +2,11 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   findProvider,
+  initialLlmSetupPath,
+  LLM_SETUP_PATHS,
+  llmProvidersForPath,
+  llmSetupPath,
+  defaultLlmProviderForPath,
   marksCache,
   providerChanged,
   providerFields,
@@ -275,4 +280,45 @@ test('Amazon Bedrock searches through a model, so it is the search provider that
   assert.equal(validateProviderInput('search', input), 'Amazon Bedrock needs a model name.')
   assert.equal(validateProviderInput('search', { ...input, model: bedrock.model }), null)
   assert.equal(takesModel('llm', OLLAMA), true)
+})
+
+test('language model setup offers Jaspers One, Enter LLM API, and Connect Local LLM as three equal paths', () => {
+  assert.deepEqual(
+    LLM_SETUP_PATHS.map((choice) => ({ id: choice.id, name: choice.name })),
+    [
+      { id: 'jaspers', name: 'Jaspers One' },
+      { id: 'api', name: 'Enter LLM API' },
+      { id: 'local', name: 'Connect Local LLM' },
+    ],
+  )
+  assert.equal(llmSetupPath(findProvider('llm', 'jaspers')!), 'jaspers')
+  assert.deepEqual(
+    llmProvidersForPath('jaspers').map((p) => p.id),
+    ['jaspers'],
+  )
+  assert.deepEqual(
+    llmProvidersForPath('api').map((p) => p.id),
+    ['anthropic', 'bedrock', 'openai', 'google', 'openrouter', 'groq', 'xai'],
+  )
+  assert.deepEqual(
+    llmProvidersForPath('local').map((p) => p.id),
+    ['ollama', 'custom'],
+  )
+})
+
+test('onboarding opens with no path chosen on a fresh launch, restores a saved path on Back, and pre-selects Ollama for local setup', () => {
+  assert.equal(initialLlmSetupPath(null), null)
+  assert.equal(initialLlmSetupPath({ ...SAVED, providerId: 'jaspers' }), 'jaspers')
+  assert.equal(initialLlmSetupPath({ ...SAVED, providerId: 'anthropic' }), 'api')
+  assert.equal(initialLlmSetupPath(SAVED), 'local')
+  assert.equal(initialLlmSetupPath({ ...SAVED, providerId: 'custom' }), 'local')
+  assert.equal(initialLlmSetupPath({ ...SAVED, providerId: 'unknown' }), null)
+
+  assert.equal(defaultLlmProviderForPath('api', null), undefined)
+  assert.equal(defaultLlmProviderForPath('api', SAVED), undefined)
+  assert.equal(defaultLlmProviderForPath('api', { ...SAVED, providerId: 'openai' })?.id, 'openai')
+  assert.equal(defaultLlmProviderForPath('local', null)?.id, 'ollama')
+  assert.equal(defaultLlmProviderForPath('local', { ...SAVED, providerId: 'anthropic' })?.id, 'ollama')
+  assert.equal(defaultLlmProviderForPath('local', { ...SAVED, providerId: 'custom' })?.id, 'custom')
+  assert.equal(defaultLlmProviderForPath('jaspers', null)?.id, 'jaspers')
 })

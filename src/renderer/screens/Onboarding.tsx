@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactElement, type Ref } from 'react'
-import { JASPERS, PROVIDERS, type Provider } from '../../shared/llm/providers'
+import {
+  defaultLlmProviderForPath,
+  findProvider,
+  initialLlmSetupPath,
+  JASPERS,
+  LLM_SETUP_PATHS,
+  llmProvidersForPath,
+  llmSetupPath,
+  PROVIDERS,
+  type LlmSetupPath,
+  type Provider,
+} from '../../shared/llm/providers'
 import type { ProviderKind } from '../../shared/state'
 import { Directory } from '../components/settings/Directory'
 import { useInstall } from '../components/settings/use-install'
@@ -18,7 +29,8 @@ const STEPS: Step[] = [
   {
     kind: 'llm',
     title: 'Language model',
-    blurb: 'Research and chat run on a language model. Sign in with Jaspers, or pick a provider and paste an API key.',
+    blurb:
+      'Research and chat run on a language model. Choose Jaspers One, enter an LLM API key, or connect a local LLM.',
     skippable: false,
   },
   {
@@ -91,27 +103,41 @@ interface StepFormProps {
 
 /**
  * One provider step. Keyed by step index in `Onboarding`, so every step starts with fresh state. The
- * language model step leads with Sign in with Jaspers, and keeps every other provider folded away
- * under it until asked for; the voice step lists them all.
+ * language model step offers three equal setup paths (`Jaspers One`, `Enter LLM API`, and
+ * `Connect Local LLM`) and renders the chosen path below; the voice step lists all voice providers.
  */
 function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
   const step = STEPS[index]!
-  const leadsWithJaspers = step.kind === 'llm'
-  const choices: Provider[] = leadsWithJaspers ? PROVIDERS.llm.filter((p) => p.id !== JASPERS) : PROVIDERS[step.kind]
+  const isLlm = step.kind === 'llm'
+  const [path, setPath] = useState<LlmSetupPath | null>(() => (isLlm ? initialLlmSetupPath(state.get().llm) : null))
+  const choices: Provider[] = isLlm ? (path && path !== 'jaspers' ? llmProvidersForPath(path) : []) : PROVIDERS.voice
   const form = useProviderForm(step.kind)
-  // Only one of this form's own choices: Jaspers, saved by the sign-in on the model step, is the box above's.
   const provider = form.provider && choices.includes(form.provider) ? form.provider : undefined
-  const [open, setOpen] = useState(!leadsWithJaspers || provider !== undefined)
-  const showsFields = !leadsWithJaspers || provider !== undefined
+  const showsProviders = !isLlm || (path !== null && path !== 'jaspers')
+  const showsFields = !isLlm || provider !== undefined
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const baseUrlInput = useRef<HTMLInputElement>(null)
+  const modelInput = useRef<HTMLInputElement>(null)
   const tokenInput = useRef<HTMLInputElement>(null)
   const keyUrl = provider?.keyUrl
+
+  function selectPath(nextPath: LlmSetupPath): void {
+    setPath(nextPath)
+    setError(null)
+    if (nextPath === 'jaspers') return
+    const current = form.provider
+    if (current && llmSetupPath(current) === nextPath) return
+    const nextProvider = defaultLlmProviderForPath(nextPath, state.get().llm)
+    if (nextProvider) form.select(nextProvider)
+  }
 
   function select(p: Provider): void {
     form.select(p)
     setError(null)
-    tokenInput.current?.focus()
+    if (!p.baseUrl) baseUrlInput.current?.focus()
+    else if (!p.tokenRequired) modelInput.current?.focus()
+    else tokenInput.current?.focus()
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
@@ -138,32 +164,33 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
     <div role="dialog" aria-modal="true" aria-labelledby="onboarding-title" className={FRAME}>
       <StepHeader index={index} title={step.title} blurb={step.blurb} />
 
-      {leadsWithJaspers && (
-        <>
-          <SignInWithJaspers onDone={() => onNext(JASPERS)} />
-          <button
-            type="button"
-            aria-expanded={open}
-            aria-controls={PROVIDER_FORM}
-            onClick={() => setOpen(!open)}
-            className="mt-5 flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <svg
-              viewBox="0 0 6 10"
-              fill="none"
-              aria-hidden
-              className={`h-2.5 w-1.5 stroke-current stroke-[1.5] ${open ? 'rotate-90' : ''}`}
-            >
-              <path d="M1 1 5 5 1 9" />
-            </svg>
-            Other providers
-          </button>
-        </>
+      {isLlm && (
+        <div role="radiogroup" aria-label="Language model setup" className="mt-5 grid grid-cols-3 gap-2">
+          {LLM_SETUP_PATHS.map((choice, i) => {
+            const on = path === choice.id
+            return (
+              <button
+                key={choice.id}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                autoFocus={!path && i === 0}
+                onClick={() => selectPath(choice.id)}
+                className={`border px-3 py-2.5 text-left hover:bg-muted ${on ? 'border-primary ring-1 ring-primary' : 'border-border'}`}
+              >
+                <span className="block text-sm font-medium">{choice.name}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">{choice.hint}</span>
+              </button>
+            )
+          })}
+        </div>
       )}
 
-      {open && (
+      {isLlm && path === 'jaspers' && <SignInWithJaspers onDone={() => onNext(JASPERS)} />}
+
+      {showsProviders && (
         <form id={PROVIDER_FORM} noValidate onSubmit={handleSubmit}>
-          <div role="radiogroup" className={`${leadsWithJaspers ? 'mt-3' : 'mt-5'} grid grid-cols-2 gap-2`}>
+          <div role="radiogroup" className={`${isLlm ? 'mt-4' : 'mt-5'} grid grid-cols-2 gap-2`}>
             {choices.map((p, i) => {
               const on = p.id === provider?.id
               return (
@@ -172,7 +199,7 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
                   type="button"
                   role="radio"
                   aria-checked={on}
-                  autoFocus={!leadsWithJaspers && !provider && i === 0}
+                  autoFocus={!isLlm && !provider && i === 0}
                   onClick={() => select(p)}
                   className={`border px-3 py-2 text-left hover:bg-muted ${on ? 'border-primary ring-1 ring-primary' : 'border-border'}`}
                 >
@@ -186,19 +213,23 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
           {showsFields && (
             <div className="mt-4 space-y-3">
               <Field
+                ref={baseUrlInput}
                 name="baseUrl"
                 label="Base URL"
                 type="text"
                 value={form.baseUrl}
                 placeholder="https://"
+                autoFocus={provider !== undefined && !provider.baseUrl}
                 onChange={form.setBaseUrl}
               />
               <Field
+                ref={modelInput}
                 name="model"
                 label={step.kind === 'llm' ? 'Thinking model' : 'Model'}
                 type="text"
                 value={form.model}
                 placeholder="model name"
+                autoFocus={provider !== undefined && Boolean(provider.baseUrl) && !provider.tokenRequired}
                 onChange={form.setModel}
               />
               {step.kind === 'llm' && (
@@ -225,7 +256,7 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
                       ? `${provider.tokenPrefix}…`
                       : ''
                 }
-                autoFocus={provider !== undefined}
+                autoFocus={provider !== undefined && Boolean(provider.baseUrl) && provider.tokenRequired}
                 onChange={form.setToken}
               />
               <div className="space-y-1">
@@ -247,7 +278,7 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
 
       {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
 
-      {(index > 0 || step.skippable || showsFields) && (
+      {(index > 0 || step.skippable || (showsProviders && showsFields)) && (
         <div className="mt-6 flex items-center justify-between">
           <button type="button" onClick={onBack} className={`${QUIET} ${index === 0 ? 'invisible' : ''}`}>
             Back
@@ -258,7 +289,7 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
                 Skip for now
               </button>
             )}
-            {showsFields && (
+            {showsProviders && showsFields && (
               <button type="submit" form={PROVIDER_FORM} disabled={busy} className={PRIMARY}>
                 Next
               </button>
@@ -271,27 +302,45 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
 }
 
 /**
- * Sign in with Jaspers, first on the language model step: one press for the model, voice, web
- * search, and the Jaspers Screener and the Research Agents. Main sets the three providers up as the
- * sign-in lands and installs the two plugins in the background, so the step after it is Plugins;
- * Back from there lands here signed in, with the way on.
+ * The Jaspers One path on the language model step: one press for the model, voice, web search, and
+ * the Jaspers Screener and the Research Agents. Main sets the three providers up as the sign-in
+ * lands and installs the two plugins in the background, so the step after it is Plugins; Back from
+ * there lands here signed in, with the way on.
  */
 function SignInWithJaspers({ onDone }: { onDone: () => void }): ReactElement {
   const jaspers = state.useAppState((s) => s.jaspers)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  function signIn(): void {
-    setError(null)
-    setBusy(true)
-    state.dispatch({ type: 'jaspers.signIn' }).then(onDone, (err: unknown) => {
-      setError(errorMessage(err))
-      setBusy(false)
+  async function ensureJaspersLlm(): Promise<void> {
+    if (state.get().llm?.providerId === JASPERS) return
+    const jaspersProvider = findProvider('llm', JASPERS)!
+    await state.dispatch({
+      type: 'provider.set',
+      kind: 'llm',
+      input: {
+        providerId: JASPERS,
+        baseUrl: jaspersProvider.baseUrl,
+        model: jaspersProvider.model,
+        fastModel: jaspersProvider.fastModel,
+        token: '',
+      },
     })
   }
 
+  function finishWithJaspers(action: () => Promise<void>): void {
+    setError(null)
+    setBusy(true)
+    action()
+      .then(() => ensureJaspersLlm())
+      .then(onDone, (err: unknown) => {
+        setError(errorMessage(err))
+        setBusy(false)
+      })
+  }
+
   return (
-    <section aria-labelledby="jaspers-sign-in-title" className="mt-5 border border-primary p-4">
+    <section aria-labelledby="jaspers-sign-in-title" className="mt-4 border border-border p-4">
       <h3 id="jaspers-sign-in-title" className="text-sm font-medium">
         Sign in with Jaspers
       </h3>
@@ -302,12 +351,24 @@ function SignInWithJaspers({ onDone }: { onDone: () => void }): ReactElement {
         {jaspers.signedIn ? (
           <>
             <span className="text-sm">Signed in as {jaspers.email ?? 'a Jaspers account'}</span>
-            <button type="button" autoFocus onClick={onDone} className={PRIMARY}>
+            <button
+              type="button"
+              autoFocus
+              disabled={busy}
+              onClick={() => finishWithJaspers(() => Promise.resolve())}
+              className={PRIMARY}
+            >
               Next
             </button>
           </>
         ) : (
-          <button type="button" autoFocus disabled={busy} onClick={signIn} className={PRIMARY}>
+          <button
+            type="button"
+            autoFocus
+            disabled={busy}
+            onClick={() => finishWithJaspers(() => state.dispatch({ type: 'jaspers.signIn' }))}
+            className={PRIMARY}
+          >
             {busy ? 'Waiting for the browser…' : 'Sign in with Jaspers'}
           </button>
         )}
@@ -326,7 +387,7 @@ function SignInWithJaspers({ onDone }: { onDone: () => void }): ReactElement {
  */
 function PluginsStep({ index, onBack }: { index: number; onBack: () => void }): ReactElement {
   const installer = useInstall()
-  const signedIn = state.useAppState((s) => s.jaspers.signedIn)
+  const usingJaspers = state.useAppState((s) => s.jaspers.signedIn && s.llm?.providerId === JASPERS)
   const dialog = useRef<HTMLDivElement>(null)
   const [finishing, setFinishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -360,7 +421,7 @@ function PluginsStep({ index, onBack }: { index: number; onBack: () => void }): 
           index={index}
           title="Plugins"
           blurb={
-            signedIn
+            usingJaspers
               ? 'The Jaspers Screener and the Research Agents come with your Jaspers sign-in. Nothing else is installed until you press Install. Settings > Plugins keeps this list for later.'
               : 'Nothing is installed until you press Install. Settings > Plugins keeps this list for later.'
           }

@@ -28,8 +28,8 @@ export function Welcome({ resume, onBegin }: Props): ReactElement {
           <p className="text-muted-foreground">An open source, extensible desktop terminal for financial research.</p>
         </div>
         <p className="text-sm text-muted-foreground">
-          Setup takes about a minute. Sign in with Jaspers, or pick a language model provider and paste an API key.
-          Voice is optional. Keys are sealed with your system keychain and stored only on this machine.
+          Setup takes about a minute. Choose Jaspers One, enter an LLM API key, or connect a local LLM. Voice is
+          optional. Keys are sealed with your system keychain and stored only on this machine.
         </p>
         <button
           ref={begin}
