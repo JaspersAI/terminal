@@ -1,6 +1,6 @@
 {
   "name": "jaspers-terminal",
-  "version": "0.14.7",
+  "version": "0.14.8",
   "private": true,
   "description": "An open-source financial research terminal and open-inference harness for local, open-weight, and cloud language models.",
   "author": "Jaspers Inc.",
