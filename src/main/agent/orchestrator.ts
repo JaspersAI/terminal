@@ -6,11 +6,13 @@ import { taskNote } from '../../shared/agent/transcript'
 import { WELCOME_PREFACE } from '../../shared/agent/welcome'
 import { EXCHANGES_MAX } from '../../shared/data/store'
 import { closedCallMessage } from '../../shared/loops/closed'
+import { EMPTY_COLLAB, findRoomShare, parseCentralShareCommand } from '../../shared/collab/collab'
 import { addressed, LOOP_ID, loopName } from '../../shared/loops/loops'
 import { signsIn } from '../../shared/llm/providers'
 import type { Turn } from '../../shared/llm/llm'
 import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { answerQuestion, withoutSecretPrompts } from '../actions'
+import { shareRoom } from '../collab/collab'
 import { recordRun } from '../data/store'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { getProviderConfig } from '../secrets'
@@ -84,6 +86,37 @@ function run(input: string, ask?: string): Promise<string> {
   // A message that starts with a room's @name is that room's: it goes straight to its agent
   // as the user's own words, with no routing call, and is filed in its chat, not this one.
   const allOpen = Object.entries(state.loops).flatMap(([tabId, one]) => one.list.map((loop) => ({ tabId, loop })))
+  const collab = state.collab ?? EMPTY_COLLAB
+  const searchableTeammates = [
+    ...collab.teammates,
+    ...collab.outgoingInvites
+      .filter((inv) => !collab.teammates.some((t) => t.email.toLowerCase() === inv.inviteeEmail.toLowerCase()))
+      .map((inv) => ({ accountId: inv.inviteeEmail, email: inv.inviteeEmail, since: inv.createdAt })),
+  ]
+  const shareCmd = parseCentralShareCommand(
+    input,
+    allOpen.map((one) => one.loop),
+    searchableTeammates,
+  )
+  if (shareCmd) {
+    if (shareCmd.kind === 'refuse_central') {
+      fileDirectExchange(CENTRAL_CHAT, input, shareCmd.message)
+      return Promise.resolve(shareCmd.message)
+    }
+    const ownerTab = allOpen.find((one) => one.loop.id === shareCmd.loop.id)?.tabId ?? workspaceId
+    const existingShare = findRoomShare(collab, ownerTab, shareCmd.loop.id, shareCmd.loop.shareId)
+    const existingIds = (existingShare?.members ?? [])
+      .map((m) => m.accountId)
+      .filter((id) => id !== existingShare?.ownerAccountId)
+    const addedIds = [...shareCmd.teammates.map((t) => t.accountId), ...shareCmd.rawEmails]
+    const nextIds = [...new Set([...existingIds, ...addedIds])]
+    const addedLabels = [...new Set([...shareCmd.teammates.map((t) => t.email), ...shareCmd.rawEmails])]
+    return shareRoom(ownerTab, shareCmd.loop.id, nextIds).then(() => {
+      const reply = `Added ${addedLabels.join(', ')} to ${loopName(shareCmd.loop.id)}.`
+      fileDirectExchange(CENTRAL_CHAT, input, reply)
+      return reply
+    })
+  }
   const to = addressed(
     allOpen.map((one) => one.loop),
     input,

@@ -11,7 +11,11 @@ import {
   EMPTY_COLLAB,
   isHumanRoomMessage,
   isSponsoredRoom,
+  matchTeammateMentions,
+  parseCentralShareCommand,
   parseRoomInput,
+  teammateCircleStyle,
+  teammateInitials,
   validateSyncedPluginBundle,
   type CollabState,
 } from './collab.ts'
@@ -233,4 +237,77 @@ test('isSponsoredRoom identifies rooms where execution is sponsored by a remote 
   assert.equal(isSponsoredRoom(collab, 'ws-1', 'f2').sponsored, true)
   assert.equal(isSponsoredRoom(collab, 'ws-1', 'f1').sponsored, false)
   assert.equal(isSponsoredRoom(collab, 'ws-2', 'f2').sponsored, false)
+})
+
+test('teammateInitials and teammateCircleStyle produce distinct colors when the room is active and tab-grey in light and dark mode when inactive', () => {
+  assert.equal(teammateInitials('gleb.biserov@jsprai.com'), 'GB')
+  assert.equal(teammateInitials('seth@jsprai.com'), 'SE')
+  assert.equal(teammateInitials('a@fund.com'), 'AF')
+
+  // Active room: each teammate gets a distinct color in both light and dark mode
+  const active0Light = teammateCircleStyle('acc-1', 0, true, false)
+  const active1Light = teammateCircleStyle('acc-2', 1, true, false)
+  assert.notEqual(active0Light.backgroundColor, active1Light.backgroundColor)
+
+  const active0Dark = teammateCircleStyle('acc-1', 0, true, true)
+  const active1Dark = teammateCircleStyle('acc-2', 1, true, true)
+  assert.notEqual(active0Dark.backgroundColor, active1Dark.backgroundColor)
+
+  // Inactive room: all teammate circles become grey in the exact same color code as unselected tabs
+  const inactiveLight0 = teammateCircleStyle('acc-1', 0, false, false)
+  const inactiveLight1 = teammateCircleStyle('acc-2', 1, false, false)
+  assert.deepEqual(inactiveLight0, {
+    backgroundColor: '#e4e4e7',
+    color: '#52525b',
+    borderColor: '#e5e5e5',
+  })
+  assert.deepEqual(inactiveLight1, inactiveLight0)
+
+  const inactiveDark0 = teammateCircleStyle('acc-1', 0, false, true)
+  const inactiveDark1 = teammateCircleStyle('acc-2', 1, false, true)
+  assert.deepEqual(inactiveDark0, {
+    backgroundColor: '#27272a',
+    color: '#a1a1aa',
+    borderColor: '#3f3f46',
+  })
+  assert.deepEqual(inactiveDark1, inactiveDark0)
+})
+
+test('matchTeammateMentions and parseCentralShareCommand support @tagging teammates in Central, adding them to rooms, and refusing to share Central', () => {
+  const teammates = [
+    { accountId: 'acc-bob', email: 'bob.smith@fund.com', since: 100 },
+    { accountId: 'acc-alice', email: 'alice@fund.com', since: 200 },
+  ]
+  const loops = [
+    {
+      id: 'f1',
+      title: 'NVDA Valuation',
+      desc: 'NVDA DCF',
+      brief: '',
+      plugins: [],
+      skills: [],
+      createdAt: 100,
+    },
+  ]
+
+  const mentions = matchTeammateMentions('add @bo', teammates)
+  assert.equal(mentions?.query, 'bo')
+  assert.deepEqual(
+    mentions?.matches.map((m) => m.email),
+    ['bob.smith@fund.com'],
+  )
+
+  const shareCmd = parseCentralShareCommand('add @bob.smith@fund.com to room 1', loops, teammates)
+  assert.deepEqual(shareCmd, {
+    kind: 'share_room',
+    loop: loops[0],
+    teammates: [teammates[0]],
+    rawEmails: ['bob.smith@fund.com'],
+  })
+
+  const centralRefusal = parseCentralShareCommand('share central with @bob.smith@fund.com', loops, teammates)
+  assert.deepEqual(centralRefusal, {
+    kind: 'refuse_central',
+    message: 'Central cannot be shared. You can add teammates to any room (like room_1) or share a workspace tab.',
+  })
 })

@@ -48,7 +48,6 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
   const scheme = useColorScheme()
   const isDark = scheme === 'dark'
   const collab = useAppState((s) => s.collab ?? EMPTY_COLLAB)
-  const signedIn = useAppState((s) => s.jaspers.signedIn)
   const barRef = useRef<HTMLDivElement>(null)
   const [barWidth, setBarWidth] = useState(1200)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -56,6 +55,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
   const renameInputRef = useRef<HTMLInputElement>(null)
   const [plusHovered, setPlusHovered] = useState(false)
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
+  const [shareEmailDraft, setShareEmailDraft] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
     tabId: string
@@ -408,16 +408,12 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
             }
             className="flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-muted"
           >
-            <span>Share tab</span>
+            <span>Share</span>
             <span className="text-[10px] text-muted-foreground">{menu.showingShare ? '▴' : '▾'}</span>
           </button>
           {menu.showingShare && (
-            <div data-tab-share-panel className="border-y border-border px-3 py-2 text-[11px]">
-              {!signedIn ? (
-                <p className="text-muted-foreground">Sign in with Jaspers in Settings &gt; Team to share tabs.</p>
-              ) : collab.teammates.length === 0 ? (
-                <p className="text-muted-foreground">Invite teammates in Settings &gt; Team first.</p>
-              ) : (
+            <div data-tab-share-panel className="space-y-1.5 border-y border-border px-3 py-2 text-[11px]">
+              {collab.teammates.length > 0 && (
                 <div className="space-y-1">
                   {collab.teammates.map((tm) => {
                     const activeMemberIds = (menuShare?.members ?? [])
@@ -458,6 +454,43 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
                   })}
                 </div>
               )}
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  const trimmed = shareEmailDraft.trim()
+                  if (!trimmed) return
+                  const activeMemberIds = (menuShare?.members ?? [])
+                    .map((m) => m.accountId)
+                    .filter((id) => id !== menuShare?.ownerAccountId)
+                  setShareEmailDraft('')
+                  run(() =>
+                    dispatch({
+                      type: 'tab.share',
+                      id: menuTab.id,
+                      memberAccountIds: [...new Set([...activeMemberIds, trimmed])],
+                    }),
+                  )
+                }}
+                className="flex gap-1"
+              >
+                <input
+                  type="email"
+                  data-tab-share-email
+                  aria-label="Share tab with email"
+                  placeholder="teammate@fund.com"
+                  value={shareEmailDraft}
+                  onChange={(e) => setShareEmailDraft(e.target.value)}
+                  className="min-w-0 flex-1 border border-border bg-background px-1.5 py-0.5 text-[11px] outline-none focus:border-foreground"
+                />
+                <button
+                  type="submit"
+                  data-tab-share-submit
+                  disabled={!shareEmailDraft.trim()}
+                  className="border border-border px-1.5 py-0.5 hover:bg-muted disabled:opacity-40"
+                >
+                  Share
+                </button>
+              </form>
             </div>
           )}
           <button
