@@ -5,7 +5,7 @@
 <h1 align="left">Jaspers Terminal</h1>
 
 <p align="left">
-  Desktop terminal and spreadsheet grid for public-market research, source-available under BSL 1.1.
+  Open-inference desktop terminal and spreadsheet grid for public-market research, source-available under BSL 1.1.
 </p>
 
 <p align="left">
@@ -17,12 +17,14 @@
 
 ---
 
-**Jaspers Terminal** is an Electron desktop application and spreadsheet grid for public-market research on macOS, Windows and Linux. It connects local, open-weight, and cloud language models to MCP servers, TypeScript plugins, and a local SQLite store. Prebuilt installers are available at [jsprai.com/terminal](https://jsprai.com/terminal). It is a research tool, not investment advice: see [DISCLAIMER.md](DISCLAIMER.md) and the [Terms of Use](https://jsprai.com/terms).
+**Jaspers Terminal** is an Electron desktop application and spreadsheet grid for public-market research on macOS, Windows, and Linux, built around an **open-inference agent harness**. It enables local, self-hosted, and open-weight language models (via Ollama, vLLM, `llama.cpp`, LM Studio, OpenRouter, Groq, or any OpenAI-compatible server) alongside cloud providers and Jaspers One to drive live market views, SEC filing analysis, scheduled watches, sandboxed shell pipelines, and plugin generation against MCP servers, TypeScript plugins, and a local SQLite store. Prebuilt installers are available at [jsprai.com/terminal](https://jsprai.com/terminal). It is a research tool, not investment advice: see [DISCLAIMER.md](DISCLAIMER.md) and the [Terms of Use](https://jsprai.com/terms).
 
-To keep prompt sizes bounded across local, open-weight, and cloud models, the harness separates data storage, panel state, and per-tile execution from the main conversation thread:
+To enable local, open-weight, and cloud models to run multi-step financial workflows within bounded context windows and output limits, the harness separates data storage, panel state, tool schemas, and per-room execution from the main conversation thread:
 
-- **Context offloading to local SQLite (`~/Jaspers/data/jaspers.db`):** Tool payloads, time series, and SEC filing text are stored outside the conversation prompt. Every source call is indexed locally into `runs`, `run_rows`, and an external-content FTS5 search index (`docs`), while the model queries slices via SQL (`query`) and reads bounded 4 KB view outputs.
-- **Zod schema contracts and isolated Grid Rooms:** Each tile on the 100 × 100 grid is an independent, numbered room (`room_1`, `room_2`, …) with an isolated agent that is blind to other rooms, its own conversation thread, model and system prompt delegated by Central, and Zod `state` (2 KB max) and `output` (4 KB max) schemas. Every room is saved in memory in chronological order of last activity and is searchable by keyword.
+- **Context offloading to local SQLite (`~/Jaspers/data/jaspers.db`):** Tool payloads, time series, and SEC filing text are stored outside the conversation prompt. Every source call is indexed locally into `runs`, `run_rows`, and an external-content FTS5 search index (`docs`), while the model queries slices via SQL (`query`), reads bounded 4 KB view outputs, and retrieves set-aside tool outputs or paginated panel text on demand (`read_again`, `get`).
+- **Zod schema contracts and isolated Grid Rooms (`room_1`, `room_2`, …):** Each tile on the 100 × 100 grid is an independent, numbered room with an isolated agent that is blind to other rooms, its own conversation thread, model and system prompt delegated by Central, on-demand plugin schema loading (`use_plugin`), and Zod `state` (2 KB max) and `output` (4 KB max) schemas. Every room is saved in memory in chronological order of last activity and is searchable by keyword.
+- **Two-tier model routing (`model` + `fastModel`) and per-room delegation:** Central routes requests, answers quick questions, and selects a new room's plugins and skills on the provider's fast model at low reasoning effort (`FAST_EFFORT = 'low'`), while rooms, scheduled tasks, `build_plugin`, and plugin LLM loops run on the thinking model (`EFFORT = 'high'`) or on a per-room / per-task model override (`create_room { model }`, `schedule_task { model }`), with portable thread conversion (`portable`) across model switches.
+- **Local-model loop recovery:** Automatic context-window mending (`mend` / `shorten`), mid-call output-limit and turn-timeout restatement into smaller steps at low effort (`cutShort` / `resolveRoundFailure`), duplicate and runaway `place_view` tool-call trimming (`trimToolCalls`), and shortened-argument restoration (`restoreInput`) keep smaller or quantized models from failing on multi-round tool loops.
 - **Built-in coding agent (`build_plugin`):** When no installed plugin provides a requested data source or view, a builder loop writes a TypeScript plugin from starter templates, checks its types and esbuild bundles, and runs source calls before placing the view on the grid.
 
 <!-- Screenshot: replace with a capture of a workspace once one is ready.
@@ -46,7 +48,7 @@ Every data source in Jaspers Terminal is either a [Model Context Protocol (MCP)]
 - **Built-in views:** Sortable **Table**, **Chart** (line, area, bar, horizontal bar, scatter, pie, candlestick, heatmap), and **Metric** views render any source or SQL query without a custom React component.
 - **MCP Apps (`ui://`):** MCP servers that provide `text/html;profile=mcp-app` resources render inside sandboxed grid tiles on the `jaspers-app://` scheme.
 - **Source citations:** Sources that return structured `citations` allow the assistant to reference passages (`[^id]`) with the source's quote and URL.
-- **Jaspers Hub:** Plugins and skills are listed and reviewed at [hub.jsprai.com](https://hub.jsprai.com). Jaspers' hosted MCP plugins — **Jaspers Discover** (`jaspers/screener-mcp`) and **Jaspers Research** (`jaspers/research`) — use the same public plugin API as third-party plugins. See [Connections and data](docs/connections-and-data.md) and [Installing plugins](docs/installing-plugins.md).
+- **Jaspers Hub:** Plugins and skills are listed and reviewed at [hub.jsprai.com](https://hub.jsprai.com). Jaspers' hosted MCP plugins — **Jaspers Discover** (`jaspers/screener-mcp`), **the Research Agents** (`jaspers/agents`), and **Jaspers Research** (`jaspers/research`) — use the same public plugin API as third-party plugins. See [Connections and data](docs/connections-and-data.md) and [Installing plugins](docs/installing-plugins.md).
 
 ### 3. TypeScript Runtime & SDK (`@jaspers-ai/sdk`)
 
@@ -60,14 +62,16 @@ The Terminal repository is source-available under [BSL 1.1](LICENSE), which conv
 
 Fetched source data is stored in a local SQLite database at `~/Jaspers/data/jaspers.db`, recorded with the source identifier, arguments, workspace, and timestamp. Records remain on disk by default; prompts and source requests are sent only to the model providers and MCP servers you configure. Stored runs have no automatic expiration, while task watch history retains the latest 20 observations per task (see [How it works](docs/architecture.md)). `~/Jaspers/data/jaspers.db` can be queried directly with `sqlite3`, DuckDB, R, or Python while Jaspers Terminal is running.
 
-### 5. Inference Configuration (Local, Open-Weight, and Cloud Models)
+### 5. Open-Inference Configuration (Local, Open-Weight, and Cloud Models)
 
 Configure local servers, open-weight model routers, or cloud providers in **Settings > Language model**:
 
 - **Local inference servers:** Connect to **Ollama** (`http://localhost:11434/v1`, default `llama3.2`, no API key required) or any **Custom** OpenAI-compatible server including **vLLM**, **llama.cpp** (`llama-server`), and **LM Studio**.
 - **Model routers and cloud providers:** Connect **OpenRouter** (`https://openrouter.ai/api/v1`) and **Groq** (`https://api.groq.com/openai/v1`), connect API keys for **Anthropic**, **Amazon Bedrock**, **OpenAI**, **Google Gemini**, and **xAI**, or sign in with **Jaspers** (Jaspers One) to configure language models, voice transcription, and web search.
-- **Portable conversation threads (`portable`):** Switching providers, base URLs, or models in **Settings > Language model** converts workspace and loop threads via `portable`, stripping provider-specific replay payloads (such as thinking blocks) while retaining user messages, assistant replies, and tool calls.
-- **Per-task model pinning:** Assign a specific model identifier to individual scheduled tasks while keeping another model configured for interactive workspace requests.
+- **Thinking model and fast model (`model` + `fastModel`):** Each provider supports a **thinking model** (used by rooms, scheduled tasks, `build_plugin`, and plugin LLM loops) and an optional **fast model** (used by Central at low reasoning effort for routing, short answers, choosing a new room's plugins, and the welcome). Leaving **Fast model** empty runs everything on the thinking model—for example, to keep a single local model resident in memory on Ollama, vLLM, `llama.cpp`, or LM Studio.
+- **Portable conversation threads (`portable`):** Switching providers, base URLs, or models in **Settings > Language model** converts workspace and room threads in place via `portable`, stripping provider-specific replay payloads (such as thinking blocks) while retaining user messages, assistant replies, and tool calls. Each chat thread runs on one model (`modelFor(chat)`) so threads are not converted back and forth between the fast and thinking models.
+- **Per-room delegation and per-task model pinning:** Central can assign a specific model identifier to an individual room (`create_room { model }`), and scheduled tasks can pin a specific model (`schedule_task { model }`), while keeping another model configured for interactive workspace requests.
+- **Small-context and output-limit resilience:** Automatic context-window mending (`mend` / `shorten`), mid-call output-cutoff and timeout restatement at low effort, duplicate/runaway tool-call trimming (`trimToolCalls`), and on-demand `read_again` retrieval allow local and open-weight models with tighter context or output limits to complete multi-round workflows.
 
 ### 6. Workflow Storage, Scheduling, and SQLite Delta Watches
 
@@ -91,7 +95,7 @@ When enabled in **Settings > Pro mode**, the assistant can execute local multi-l
 flowchart TB
   subgraph Renderer["Renderer Windows (100x100 Multi-Monitor Grid)"]
     Chat["Global Composer & Chat"]
-    Loops["Numbered Grid Loops (loop_1, loop_2, …)"]
+    Loops["Numbered Grid Rooms (room_1, room_2, …)"]
     Frames["Sandboxed Views (jaspers-plugin:// & jaspers-app://)"]
   end
 
@@ -150,10 +154,10 @@ npm run dev
 
 ### Option B: Jaspers One or Cloud Providers
 
-- **Sign in with Jaspers (Jaspers One):** Browser sign-in configures the language model (Google Gemini on Vertex AI: `gemini-3.8-flash` and `gemini-4-argon`), voice transcription (`openai/gpt-4o-mini-transcribe`), and web search, and installs the **Jaspers Screener** (`jaspers/screener-mcp`) and **Jaspers Research** (`jaspers/research`) plugins from [Jaspers Hub](https://hub.jsprai.com).
-- **Direct cloud keys:** Choose **Anthropic** (`claude-opus-5`), **Amazon Bedrock** (`https://bedrock-mantle.<region>.api.aws/anthropic`, default `anthropic.claude-opus-4-8`), **OpenAI** (`gpt-5.4`), **Google** (`gemini-3.8-flash`), or **xAI** (`grok-4.6`), plus optional voice (**ElevenLabs**, **OpenAI**, **Deepgram**, **Cartesia**, or **Custom**) and web search (**Brave Search** or **Amazon Bedrock**).
+- **Sign in with Jaspers (Jaspers One):** Browser sign-in configures the language model (Google Gemini on Vertex AI: `gemini-3.8-flash` and `gemini-4-argon`), voice transcription (`openai/gpt-4o-mini-transcribe`), and web search, and installs the **Jaspers Screener** (`jaspers/screener-mcp`) and **the Research Agents** (`jaspers/agents`) plugins from [Jaspers Hub](https://hub.jsprai.com).
+- **Direct cloud keys:** Choose **Anthropic** (`claude-opus-5`, fast `claude-haiku-5-5`), **Amazon Bedrock** (`https://bedrock-mantle.<region>.api.aws/anthropic`, default `anthropic.claude-opus-4-8`), **OpenAI** (`gpt-5.4`, fast `gpt-5.4-mini`), **Google** (`gemini-3.8-flash`), or **xAI** (`grok-4.6`), plus optional voice (**ElevenLabs**, **OpenAI**, **Deepgram**, **Cartesia**, or **Custom**) and web search (**Brave Search** or **Amazon Bedrock**).
 
-See [Getting started](docs/getting-started.md) for local model configuration, workspace model switching, per-task model pinning, multi-monitor setup, and [packaging](docs/getting-started.md#packaging).
+See [Getting started](docs/getting-started.md) for local model configuration, thinking and fast model routing, workspace model switching, per-room and per-task model pinning, multi-monitor setup, and [packaging](docs/getting-started.md#packaging).
 
 ## Plugin example
 
@@ -198,7 +202,7 @@ See [Writing a plugin](docs/writing-a-plugin.md), the [SDK reference](docs/sdk-r
 
 [Jaspers Hub](https://hub.jsprai.com) lists reviewed plugins and skills. The Terminal ships with no bundled plugins: its directory during setup and in **Settings > Plugins** lists Hub's featured plugins first, then community plugins ordered by stars. The assistant searches the same directory before invoking the coding agent.
 
-**Jaspers Discover** (`jaspers/screener-mcp`) and **Jaspers Research** (`jaspers/research`), along with ~30 official free and vendor plugins (`plugin-tradingview`, `plugin-fmp`, `plugin-earningscall`, `plugin-yfinance`, `plugin-markdown`, and others), are published on Hub under `jaspers` from public repositories at [github.com/JaspersAI](https://github.com/JaspersAI). Plugins and skills can be published from **Settings > Plugins** or **Settings > Skills**; each version is reviewed before listing. See [Publishing a plugin](docs/publishing-a-plugin.md).
+**Jaspers Discover** (`jaspers/screener-mcp`), **the Research Agents** (`jaspers/agents`), and **Jaspers Research** (`jaspers/research`), along with ~30 official free and vendor plugins (`plugin-tradingview`, `plugin-fmp`, `plugin-earningscall`, `plugin-yfinance`, `plugin-markdown`, and others), are published on Hub under `jaspers` from public repositories at [github.com/JaspersAI](https://github.com/JaspersAI). Plugins and skills can be published from **Settings > Plugins** or **Settings > Skills**; each version is reviewed before listing. See [Publishing a plugin](docs/publishing-a-plugin.md).
 
 ## Documentation
 
@@ -207,8 +211,8 @@ Browse the [documentation index](docs/README.md):
 | Guide | What it covers |
 | --- | --- |
 | [Documentation index](docs/README.md) | Overview of user, plugin, workflow, and contributor guides |
-| [Getting started](docs/getting-started.md) | Local LLM setup (Ollama, vLLM, llama.cpp, LM Studio), cloud providers, model pinning, commands, packaging |
-| [How it works](docs/architecture.md) | Prompt and context bounds, SQLite context offloading, `build_plugin` lifecycle, concurrent Grid Loops, project layout |
+| [Getting started](docs/getting-started.md) | Local and open-weight LLM setup (Ollama, vLLM, llama.cpp, LM Studio, OpenRouter, Groq), thinking and fast models, cloud providers, model pinning, commands, packaging |
+| [How it works](docs/architecture.md) | Open-inference harness bounds, SQLite context offloading, loop recovery, `build_plugin` lifecycle, concurrent Grid Rooms, project layout |
 | [Asking the assistant for a plugin](docs/asking-for-a-plugin.md) | The built-in coding agent, the security envelope prompt (`.jaspers-build.json`), and build diagnostics |
 | [Writing a plugin](docs/writing-a-plugin.md) | Build an MCP and React watchlist plugin with `@jaspers-ai/sdk` |
 | [SDK reference](docs/sdk-reference.md) | `definePlugin`, `defineSource`, `defineView`, `ctx` capabilities, hooks, connections, and secrets |

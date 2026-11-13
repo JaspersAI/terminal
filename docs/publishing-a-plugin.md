@@ -26,7 +26,7 @@ watchlist/
   skills/            only if the plugin brings skills, one folder per skill
 ```
 
-A plugin's `skills/` folder ships as it is. `package.json` needs `name`, the plugin id (the same as `definePlugin({ id })`), and `version` (`1.0.0`). `description` is shown when someone installs it, and `jaspers.sdk` records the SDK version the plugin was written against (`"jaspers": { "sdk": "0.2.0" }`). Packages the plugin runs with go in `dependencies`; the SDK, `react`, `zod`, and the type packages stay in `devDependencies`.
+A plugin's `skills/` folder ships as it is. `package.json` needs `name`, the plugin id (the same as `definePlugin({ id })`), and `version` (`1.0.0`). `description` is shown when someone installs it, and `jaspers.sdk` records the SDK version the plugin was written against (`"jaspers": { "sdk": "0.8.0" }`). Packages the plugin runs with go in `dependencies`; the SDK, `react`, `zod`, and the type packages stay in `devDependencies`.
 
 The app never runs npm, so the archive carries the packages the plugin imports. Build it from a copy, leaving out tests, tooling, and dev dependencies, so your own folder keeps them:
 

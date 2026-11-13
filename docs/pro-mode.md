@@ -6,7 +6,7 @@ It is **off** by default (`PRO_MODE_OFF`) until you turn it on in **Settings > P
 
 ## Local Python, R, and CLI execution in `~/Jaspers/shell`
 
-With Pro mode on, the assistant can ask to run a script in Jaspers's dedicated workspace folder, `~/Jaspers/shell` (with macOS `sandbox-exec` confinement and read-only grants for `~/Desktop` and `~/Downloads` on macOS).
+With Pro mode on, the assistant can ask to run a script in Jaspers's dedicated workspace folder, `~/Jaspers/shell` (with macOS `sandbox-exec` confinement and read-only grants for `~/Desktop` and `~/Downloads` on macOS). Quick single commands (< 3–6 seconds) run directly from Central, while extensive or multi-step scraping, file-downloading, and shell workflows spin out an isolated room worker (`create_room`) so they execute in their own room thread without cluttering Central.
 
 - **Multi-line scripts (`COMMAND_MAX = 10,000`):** A `run_shell` call is a script up to 10,000 characters. Multi-line scripts, `cd`, `&&`, `set -e`, pipes, and inline Python/R scripts execute in one shell invocation (`${SHELL || '/bin/sh'} -c` on macOS and Linux; `powershell.exe -NoLogo -NoProfile -NonInteractive -Command` with `ComSpec /d /s /c` fallback on Windows), so a multi-step data pipeline or `.xlsx`/PDF export can be reviewed and approved as a single script.
 - **Full script inspection:** Every script is shown in full before it runs, in a scrollable monospaced box under the question, together with the working directory (`~/Jaspers/shell`) and the timeout ceiling (`timeoutSeconds`). Nothing is shortened or hidden.
