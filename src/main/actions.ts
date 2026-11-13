@@ -193,12 +193,22 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'loop.rename': (raw) => {
     const loop = asString(raw.loop)
     if (!LOOP_ID.test(loop)) throw new Error('loop.rename names a loop by its id.')
-    renameLoop(asString(raw.workspaceId), loop, asString(raw.title ?? raw.name ?? ''))
+    renameLoop(
+      asString(raw.workspaceId),
+      loop,
+      asString(raw.title ?? raw.name ?? ''),
+      raw.desc === undefined ? undefined : asString(raw.desc),
+    )
   },
   'room.rename': (raw) => {
     const room = asString(raw.room)
     if (!LOOP_ID.test(room)) throw new Error('room.rename names a room by its id.')
-    renameLoop(asString(raw.workspaceId), room, asString(raw.title ?? raw.name ?? ''))
+    renameLoop(
+      asString(raw.workspaceId),
+      room,
+      asString(raw.title ?? raw.name ?? ''),
+      raw.desc === undefined ? undefined : asString(raw.desc),
+    )
   },
   'loop.update': (raw) => {
     const loop = asString(raw.loop)
@@ -1038,11 +1048,11 @@ export function removeChecked(workspaceId: string, elementId: string): void {
   syncPluginViewErrors()
 }
 
-/** Sets or clears a room's custom title on whichever tab holds it (open or closed). */
-export function renameLoop(workspaceId: string, loopId: string, rawTitle: string): void {
+/** Sets or clears a room's custom title (and optional description) on whichever tab holds it (open or closed). */
+export function renameLoop(workspaceId: string, loopId: string, rawTitle: string, rawDesc?: string): void {
   update((state) => {
     const tabId = findRoomTab(state, loopId) ?? workspaceId
-    return withLoops(state, tabId, withLoopTitle(state.loops[tabId] ?? NO_LOOPS, loopId, rawTitle))
+    return withLoops(state, tabId, withLoopTitle(state.loops[tabId] ?? NO_LOOPS, loopId, rawTitle, rawDesc))
   })
 }
 

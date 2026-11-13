@@ -18,6 +18,7 @@ import {
   loopOfChat,
   loopName,
   loopTitle,
+  loopHeaderTitle,
   gone,
   isTile,
   named,
@@ -148,6 +149,28 @@ test('withLoopTitle sets, normalizes, caps, and clears custom titles on open and
   const roundTripped = readLoops(namedClosed.list, namedClosed.seq, namedClosed.closed)
   assert.equal(roundTripped.list[0]?.title, 'Macro Rates')
   assert.equal(roundTripped.closed?.[0]?.loop.title, 'Gold Desk')
+
+  // loopHeaderTitle formats a single unified header title, and withLoopTitle updates desc when editing after "Room N".
+  assert.equal(loopHeaderTitle('f74'), 'Room 74')
+  assert.equal(loopHeaderTitle(loop('f74', '')), 'Room 74')
+  assert.equal(
+    loopHeaderTitle(loop('f74', 'Live global stock indices monitor')),
+    'Room 74 · Live global stock indices monitor',
+  )
+  assert.equal(
+    loopHeaderTitle({ ...loop('f74', 'Live global stock indices monitor'), title: 'Global Indices' }),
+    'Global Indices',
+  )
+
+  const editedAfterPrefix = withLoopTitle(namedOpen, 'f1', 'Room 1 · US Treasury Curve')
+  assert.equal(editedAfterPrefix.list[0]?.title, undefined)
+  assert.equal(editedAfterPrefix.list[0]?.desc, 'US Treasury Curve')
+  assert.equal(loopHeaderTitle(editedAfterPrefix.list[0]!), 'Room 1 · US Treasury Curve')
+
+  const clearedSuffix = withLoopTitle(editedAfterPrefix, 'f1', 'Room 1', '')
+  assert.equal(clearedSuffix.list[0]?.title, undefined)
+  assert.equal(clearedSuffix.list[0]?.desc, '')
+  assert.equal(loopHeaderTitle(clearedSuffix.list[0]!), 'Room 1')
 })
 
 test('everything on a grid is a tile but the docked chat', () => {
