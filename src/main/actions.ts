@@ -677,6 +677,9 @@ export function setProvider(kind: ProviderKind, raw: ProviderInput): void {
     model: viaJaspers ? provider.model : raw.model.trim(),
     token: raw.token.trim(),
   }
+  // A fast model is a language model's, named by its user. Jaspers picks its own, read from the
+  // registry as its model is, and a voice or a search has none.
+  const fastModel = kind === 'llm' && !viaJaspers ? (raw.fastModel ?? '').trim() : ''
   const previous = getState()[kind]
   const kept = previous && previous.providerId === input.providerId ? previous.token : null
   const isSignedIn = signedIn()
@@ -684,7 +687,13 @@ export function setProvider(kind: ProviderKind, raw: ProviderInput): void {
   if (error) throw new Error(error)
   // The Jaspers provider's credential is the sign-in: no key is kept for it, pasted or saved.
   const token = viaJaspers ? null : input.token ? seal(input.token) : kept
-  const stored = { providerId: input.providerId, baseUrl: input.baseUrl, model: input.model, token }
+  const stored = {
+    providerId: input.providerId,
+    baseUrl: input.baseUrl,
+    model: input.model,
+    ...(fastModel ? { fastModel } : {}),
+    token,
+  }
   update((state) =>
     kind === 'llm'
       ? {
@@ -1401,9 +1410,16 @@ function asInput(value: unknown): ProviderInput {
     typeof value.providerId === 'string' &&
     typeof value.baseUrl === 'string' &&
     typeof value.model === 'string' &&
-    typeof value.token === 'string'
+    typeof value.token === 'string' &&
+    (value.fastModel === undefined || typeof value.fastModel === 'string')
   ) {
-    return { providerId: value.providerId, baseUrl: value.baseUrl, model: value.model, token: value.token }
+    return {
+      providerId: value.providerId,
+      baseUrl: value.baseUrl,
+      model: value.model,
+      ...(value.fastModel === undefined ? {} : { fastModel: value.fastModel }),
+      token: value.token,
+    }
   }
   throw new Error('Malformed provider input.')
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { ProviderSetting } from '../state'
+import { findProvider } from '../llm/providers.ts'
 import { settingChange, type SettingsNow } from './settings.ts'
 
 const ANTHROPIC: ProviderSetting = {
@@ -77,4 +78,36 @@ test('a call that names no setting, or gives the wrong kind of value, is refused
   assert.throws(() => settingChange({ setting: 'theme', theme: 'blue' }, NOW), /theme is one of system, light, dark/)
   assert.throws(() => settingChange({ setting: 'grid_size', cols: '20', rows: 10 }, NOW), /cols is a whole number/)
   assert.throws(() => settingChange({ setting: 'skill', id: 'dcf', enabled: 'yes' }, NOW), /enabled is true or false/)
+})
+
+test('a model switched by the assistant keeps the fast model saved for the same provider, and takes the default on another', () => {
+  const now: SettingsNow = { ...NOW, providers: { ...NOW.providers, llm: { ...ANTHROPIC, fastModel: 'my-fast' } } }
+  const same = settingChange({ setting: 'provider', kind: 'llm', model: 'claude-sonnet-5' }, now).action
+  assert.ok(same.type === 'provider.set' && same.input.fastModel === 'my-fast')
+  const other = settingChange({ setting: 'provider', kind: 'llm', provider: 'openai' }, now).action
+  assert.ok(other.type === 'provider.set' && other.input.fastModel === findProvider('llm', 'openai')!.fastModel)
+  assert.ok(other.type === 'provider.set' && other.input.fastModel === 'gpt-5.4-mini')
+  // One saved with none keeps none: the assistant changing the model is not the user naming a fast one.
+  const none = settingChange({ setting: 'provider', kind: 'llm', model: 'claude-sonnet-5' }, NOW).action
+  assert.ok(none.type === 'provider.set' && none.input.fastModel === undefined)
+})
+
+test('switching to another provider says which fast model comes with it, and a switch of model on the same provider does not', () => {
+  const now: SettingsNow = { ...NOW, providers: { ...NOW.providers, llm: { ...ANTHROPIC, fastModel: 'my-fast' } } }
+  const other = settingChange({ setting: 'provider', kind: 'llm', provider: 'openai' }, now)
+  assert.equal(
+    other.confirm,
+    'Switch the language model to OpenAI, gpt-5.4 (fast model gpt-5.4-mini)? The conversation goes on with it from the next request.',
+  )
+  assert.match(other.done, /OpenAI, gpt-5\.4 \(fast model gpt-5\.4-mini\)/)
+  const same = settingChange({ setting: 'provider', kind: 'llm', model: 'claude-sonnet-5' }, now)
+  assert.equal(
+    same.confirm,
+    'Switch the language model to Anthropic, claude-sonnet-5? The conversation goes on with it from the next request.',
+  )
+  const ollama = settingChange({ setting: 'provider', kind: 'llm', provider: 'ollama' }, now)
+  assert.equal(
+    ollama.confirm,
+    'Switch the language model to Ollama, llama3.2? The conversation goes on with it from the next request.',
+  )
 })

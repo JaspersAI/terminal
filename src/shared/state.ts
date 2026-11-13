@@ -22,6 +22,8 @@ export interface ProviderSetting {
   providerId: string
   baseUrl: string
   model: string
+  /** A language model's fast model, which the global box runs on. Left out: it has none. */
+  fastModel?: string
   hasToken: boolean
 }
 
@@ -325,6 +327,8 @@ export interface ProviderInput {
   providerId: string
   baseUrl: string
   model: string
+  /** A language model's fast model. Left out or empty, the provider is saved with none. */
+  fastModel?: string
   token: string
 }
 

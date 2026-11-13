@@ -2,7 +2,7 @@ import { useState, type FormEvent, type ReactElement } from 'react'
 import { JASPERS, PROVIDERS, findProvider, signsIn, takesModel } from '../../../shared/llm/providers'
 import type { ProviderKind } from '../../../shared/state'
 import { errorMessage } from '../../lib/errors'
-import { useProviderForm } from '../../lib/provider-form'
+import { FAST_MODEL_HINT, useProviderForm } from '../../lib/provider-form'
 import { dispatch, useAppState } from '../../lib/state'
 import { BUTTON, FIELD, Row } from './Row'
 
@@ -151,7 +151,11 @@ function ProviderSection({ kind, title, blurb, onSaved }: SectionProps): ReactEl
               />
             </Row>
             {takesModel(kind, provider) && (
-              <Row label="Model" htmlFor={id('model')}>
+              <Row
+                label={kind === 'llm' ? 'Thinking model' : 'Model'}
+                htmlFor={id('model')}
+                hint={kind === 'llm' ? 'Rooms, tasks, and the research analysts run on it.' : undefined}
+              >
                 <input
                   id={id('model')}
                   name={`${kind}-model`}
@@ -161,6 +165,21 @@ function ProviderSection({ kind, title, blurb, onSaved }: SectionProps): ReactEl
                   autoComplete="off"
                   spellCheck={false}
                   onChange={(event) => form.setModel(event.target.value)}
+                  className={`${FIELD} font-mono`}
+                />
+              </Row>
+            )}
+            {kind === 'llm' && (
+              <Row label="Fast model" htmlFor={id('fastModel')} hint={FAST_MODEL_HINT}>
+                <input
+                  id={id('fastModel')}
+                  name={`${kind}-fastModel`}
+                  type="text"
+                  value={form.fastModel}
+                  placeholder="none"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => form.setFastModel(event.target.value)}
                   className={`${FIELD} font-mono`}
                 />
               </Row>

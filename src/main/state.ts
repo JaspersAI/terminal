@@ -33,6 +33,8 @@ export interface StoredProvider {
   providerId: string
   baseUrl: string
   model: string
+  /** A language model's fast model. Absent: it has none, as in every file written before there was one. */
+  fastModel?: string
   /** "safe:<base64>" when sealed with safeStorage, "plain:<token>" when the OS offered no encryption. */
   token: string | null
 }
@@ -180,7 +182,15 @@ export function subscribe(listener: Listener): () => void {
 /** The tree as the renderer sees it: each token reduced to whether one is saved, secrets left behind. */
 export function toPublic(state: MainState): AppState {
   const strip = (p: StoredProvider | null) =>
-    p ? { providerId: p.providerId, baseUrl: p.baseUrl, model: p.model, hasToken: p.token !== null } : null
+    p
+      ? {
+          providerId: p.providerId,
+          baseUrl: p.baseUrl,
+          model: p.model,
+          ...(p.fastModel ? { fastModel: p.fastModel } : {}),
+          hasToken: p.token !== null,
+        }
+      : null
   return {
     termsAccepted: state.termsAccepted,
     termsText: state.termsText,
