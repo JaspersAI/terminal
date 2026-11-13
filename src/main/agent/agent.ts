@@ -23,14 +23,13 @@ import {
 import type { Completion, Turn } from '../../shared/llm/llm'
 import { recordUsage, spentToday } from '../data/store'
 import { isLlmSleeping } from '../llm/http'
-import type { ProviderConfig } from '../secrets'
 import { placementGrid } from './tools/grid'
 import type { Tool, ToolContext } from './tools/types'
 import { runCalls } from './utils/calls'
 import { asRun } from './utils/record'
 import { request } from './utils/request'
 import { emit, Stopped, telling, type Live } from './utils/runs'
-import { budget } from './utils/settings'
+import { budget, type LlmConfig } from './utils/settings'
 import { citedBy, mend, offered, putAway, restate, sentOf, shorten, userLine } from './utils/thread'
 
 // The agent loop. One run per request: call the model, run whatever tools it asks for, feed the results
@@ -69,7 +68,7 @@ export interface RunPrompt {
 export interface Request {
   /** In front of every log line: empty for the user, "task t3 " for a task. */
   label: string
-  config: ProviderConfig<'llm'>
+  config: LlmConfig
   history: Turn[]
   context: ToolContext
   prompt: RunPrompt

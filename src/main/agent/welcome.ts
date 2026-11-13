@@ -2,9 +2,9 @@ import { ipcMain } from 'electron'
 import { sleep } from '../../shared/abort'
 import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { EXAMPLE_ASK, EXAMPLE_FALLBACK, EXPLANATION, GREETING, WELCOME_NOTE } from '../../shared/agent/welcome'
-import { getProviderConfig } from '../secrets'
 import { getState, update } from '../state'
 import { runWelcome, said } from './orchestrator'
+import { modelFor } from './utils/settings'
 import { threadFor } from './utils/thread'
 
 // The welcome after setup: three messages the assistant says on its own once the workspace is on
@@ -35,7 +35,7 @@ function startWelcome(): void {
   const state = getState()
   if (!state.onboardingComplete) throw new Error('Finish setup first.')
   if (welcomed) return
-  const config = getProviderConfig('llm')
+  const config = modelFor(CENTRAL_CHAT)
   const workspaceId = state.currentWorkspaceId
   if (!config || threadFor(CENTRAL_CHAT, config).length > 0) return
   welcomed = true

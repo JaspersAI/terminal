@@ -1,7 +1,7 @@
 import { portable } from '../../shared/agent/history.ts'
 import type { Turn } from '../../shared/llm/llm'
 
-/** What a thread is held with: the language model the orchestrator is configured for. */
+/** What a thread is held with: the language model its chat runs on (`modelFor` in utils/settings.ts). */
 export interface ThreadModel {
   provider: { id: string }
   baseUrl: string

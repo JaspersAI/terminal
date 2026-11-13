@@ -6,24 +6,17 @@ import { signsIn } from '../../../shared/llm/providers'
 import { jaspersWakeDelayMs } from '../../jaspers/jaspers'
 import { isLlmSleeping, ProviderError, QUIET_MS, waitUntilLlmAwake, wakeLlm } from '../../llm/http'
 import { complete } from '../../llm/llm'
-import type { ProviderConfig } from '../../secrets'
 import { noteLlm } from './record'
 import { emit, type Live } from './runs'
+import type { LlmConfig } from './settings'
 import { streamer, thinker, writer } from './stream'
-
-/**
- * How hard the model works at a request: as hard for the user's own as for a task's or the welcome's.
- * One level and no way to ask for another: changing it inside a thread costs a provider everything
- * it had cached of the conversation.
- */
-export const EFFORT: Effort = 'high'
 
 /** What one round sends, and to whom the reply is shown. */
 export interface RoundRequest {
   round: number
   /** The loop's label, for Eye: a task's, the welcome's, the builder's, or empty for the user's own. */
   label: string
-  config: ProviderConfig<'llm'>
+  config: LlmConfig
   system: string[]
   history: Turn[]
   tools: ToolDefinition[]
@@ -34,6 +27,7 @@ export interface RoundRequest {
   shown: boolean
   maxTokens?: number
   timeoutMs?: number
+  /** How hard this one round thinks, where it is not as hard as its work does (`config.effort`). */
   effort?: Effort
   /**
    * Whether the caller mends a stalled turn (stream silence or a gateway/request timeout on a long
@@ -68,7 +62,7 @@ export async function request({
   shown,
   maxTokens,
   timeoutMs,
-  effort = EFFORT,
+  effort = config.effort,
   restateOnTimeout = false,
   abortOnSleep = false,
 }: RoundRequest): Promise<Completion> {

@@ -5,7 +5,6 @@ import { failedNote, mask, STOPPED_NOTE } from '../../shared/agent/transcript'
 import { handedTurn } from '../../shared/agent/typed'
 import type { Place } from '../../shared/agent/asking'
 import type { Turn } from '../../shared/llm/llm'
-import { signsIn } from '../../shared/llm/providers'
 import { isSleepWakeError, TASK_EXCLUDED_TOOLS } from '../../shared/tasks/tasks'
 import { asksFor, withoutSecretPrompts } from '../actions'
 import { fileExchange } from '../data/store'
@@ -16,7 +15,7 @@ import { agentLoop, type Request, type RunPrompt, type UserTurn } from './agent'
 import { forgetApprovals } from './tools/shell'
 import type { Tool, ToolContext } from './tools/types'
 import { begin, emit, end, isStopped, stepsOf } from './utils/runs'
-import { configured, knownSecrets } from './utils/settings'
+import { configuredFor, knownSecrets } from './utils/settings'
 import {
   conversationOf,
   eraOf,
@@ -79,8 +78,6 @@ export interface Asked {
   label?: string
   /** The room the request is for and the tile it shows on, when it was sent for a tile. */
   tile?: { loop: string; place: Place }
-  /** Optional room-specific model override chosen by Central. */
-  model?: string | null
 }
 
 /** A message the user added to a run at work: what its turn holds, what the tile shows of it, and the name its window gave it. */
@@ -121,10 +118,8 @@ export async function userRequest({
   state,
   label = '',
   tile,
-  model,
 }: Asked): Promise<string> {
-  const base = configured()
-  const config = model && !signsIn(base.provider) ? { ...base, model } : base
+  const config = configuredFor(chat)
   const thread = threadFor(chat, config)
   const conversationId = conversationOf(chat)
   // /new starts the thread over, unless the user has a skill by that name, which is theirs to have.
