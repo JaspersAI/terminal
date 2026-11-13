@@ -6,6 +6,7 @@ interface Props {
   workspaceId: string
   elementId: string
   panel: Panel | undefined
+  active?: boolean
   focused: boolean
   working?: boolean
   zoom: number
@@ -17,6 +18,7 @@ export function Held({
   workspaceId,
   elementId,
   panel,
+  active = true,
   focused,
   working = false,
   zoom,
@@ -37,6 +39,7 @@ export function Held({
             panelId={panel.id}
             elementId={elementId}
             view={panel.content.view}
+            active={active}
             focused={focused}
             working={working}
             zoom={zoom}

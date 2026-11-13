@@ -12,7 +12,10 @@ import {
   tabsForWindow,
   tabSwatchStyle,
   tabWidthPx,
+  MAX_MOUNTED_TABS,
+  pruneIdleMountedTabIds,
   updateMountedTabIds,
+  updateRecentTabIds,
 } from './tabs.ts'
 
 test('formatTabLabel keeps titles up to the character limit and truncates longer titles with three dots', () => {
@@ -138,4 +141,31 @@ test('updateMountedTabIds keeps visited tabs mounted in stable mount order acros
   const afterClose = [{ id: 't2' }, { id: 't3' }]
   const m5 = updateMountedTabIds(m4, afterClose, 't2')
   assert.deepEqual(m5, ['t2'])
+})
+
+test('updateMountedTabIds caps concurrently mounted tabs and pruneIdleMountedTabIds trims idle background tabs', () => {
+  const tabs = [{ id: 't1' }, { id: 't2' }, { id: 't3' }, { id: 't4' }]
+  assert.equal(MAX_MOUNTED_TABS, 2)
+
+  // Visiting t1 -> t2 -> t3 evicts the oldest inactive tab (t1) while keeping t2 and t3.
+  const m1 = updateMountedTabIds([], tabs, 't1')
+  const m2 = updateMountedTabIds(m1, tabs, 't2')
+  const m3 = updateMountedTabIds(m2, tabs, 't3')
+  assert.deepEqual(m3, ['t2', 't3'])
+
+  // Visiting t1 -> t2 -> t1 (so t1 is most recent, t2 is older) -> t3 evicts t2 and keeps t1 and t3 in stable order.
+  const r1 = updateRecentTabIds([], tabs, 't1')
+  const r2 = updateRecentTabIds(r1, tabs, 't2')
+  const r3 = updateRecentTabIds(r2, tabs, 't1')
+  assert.deepEqual(r3, ['t2', 't1'])
+  const backToT1 = updateMountedTabIds(m2, tabs, 't1', 2, r3)
+  assert.deepEqual(backToT1, ['t1', 't2'])
+  const r4 = updateRecentTabIds(r3, tabs, 't3')
+  const thenT3 = updateMountedTabIds(backToT1, tabs, 't3', 2, r4)
+  assert.deepEqual(thenT3, ['t1', 't3'])
+
+  // After sitting idle on t3, pruneIdleMountedTabIds drops background tab t1 and preserves reference when already pruned.
+  const pruned = pruneIdleMountedTabIds(thenT3, 't3')
+  assert.deepEqual(pruned, ['t3'])
+  assert.equal(pruneIdleMountedTabIds(pruned, 't3'), pruned)
 })

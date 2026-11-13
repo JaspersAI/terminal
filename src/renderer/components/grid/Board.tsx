@@ -102,6 +102,7 @@ export function Board({
               workspaceId={workspaceId}
               elementId={element.id}
               panel={panel}
+              active={active}
               focused={focused && here}
               working={working}
               zoom={zoom}

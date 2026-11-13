@@ -210,15 +210,42 @@ export function tabsForWindow<T extends { id: string; window?: number }>(
   return mainTabs.length > 0 ? mainTabs : workspaces.slice(0, 1)
 }
 
+export const MAX_MOUNTED_TABS = 2
+export const INACTIVE_TAB_IDLE_MS = 60_000
+
+/**
+ * Updates the least-recently-to-most-recently visited tab ID list for `tabs`, moving `currentId`
+ * to the end and pruning removed tabs.
+ */
+export function updateRecentTabIds<T extends { id: string }>(
+  recent: readonly string[],
+  tabs: readonly T[],
+  currentId: string,
+): string[] {
+  const valid = new Set(tabs.map((t) => t.id))
+  const next: string[] = []
+  for (const id of recent) {
+    if (valid.has(id) && id !== currentId && !next.includes(id)) next.push(id)
+  }
+  if (valid.has(currentId)) next.push(currentId)
+  if (next.length === recent.length && next.every((id, index) => id === recent[index])) {
+    return recent as string[]
+  }
+  return next
+}
+
 /**
  * Updates the list of workspace tab IDs whose grids stay mounted in a window. Newly visited tabs
  * (`currentId`) are appended in stable mount order so switching or reordering tabs never moves or
- * reloads mounted iframes, and tabs removed from `tabs` (closed or detached) are pruned.
+ * reloads mounted iframes, tabs removed from `tabs` (closed or detached) are pruned, and the oldest
+ * inactive tabs beyond `maxMounted` are evicted to bound renderer and iframe memory.
  */
 export function updateMountedTabIds<T extends { id: string }>(
   mounted: readonly string[],
   tabs: readonly T[],
   currentId: string,
+  maxMounted: number = MAX_MOUNTED_TABS,
+  recentOrder?: readonly string[],
 ): string[] {
   const valid = new Set(tabs.map((t) => t.id))
   const next: string[] = []
@@ -226,8 +253,35 @@ export function updateMountedTabIds<T extends { id: string }>(
     if (valid.has(id) && !next.includes(id)) next.push(id)
   }
   if (valid.has(currentId) && !next.includes(currentId)) next.push(currentId)
+  const limit = Number.isFinite(maxMounted) ? Math.max(1, Math.floor(maxMounted)) : MAX_MOUNTED_TABS
+  while (next.length > limit) {
+    let evictIndex = -1
+    let oldestRank = Infinity
+    for (let i = 0; i < next.length; i++) {
+      const id = next[i]!
+      if (id === currentId) continue
+      const rank = recentOrder ? recentOrder.indexOf(id) : i
+      const effectiveRank = rank === -1 ? -1 : rank
+      if (evictIndex === -1 || effectiveRank < oldestRank) {
+        evictIndex = i
+        oldestRank = effectiveRank
+      }
+    }
+    if (evictIndex < 0) break
+    next.splice(evictIndex, 1)
+  }
   if (next.length === mounted.length && next.every((id, index) => id === mounted[index])) {
     return mounted as string[]
   }
   return next
+}
+
+/**
+ * Prunes inactive background tabs from `mounted` after the user has stayed on `currentId` past the
+ * idle window, returning the same array reference when `currentId` is already the only mounted tab.
+ */
+export function pruneIdleMountedTabIds(mounted: readonly string[], currentId: string): string[] {
+  if (!mounted.includes(currentId)) return mounted as string[]
+  if (mounted.length === 1 && mounted[0] === currentId) return mounted as string[]
+  return [currentId]
 }

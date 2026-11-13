@@ -1,7 +1,13 @@
-import { useRef, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { chatElement, EMPTY_GRID } from '../../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
-import { updateMountedTabIds } from '../../../shared/tabs/tabs'
+import {
+  INACTIVE_TAB_IDLE_MS,
+  MAX_MOUNTED_TABS,
+  pruneIdleMountedTabIds,
+  updateMountedTabIds,
+  updateRecentTabIds,
+} from '../../../shared/tabs/tabs'
 import { errorMessage } from '../../lib/errors'
 import { currentWorkspace, dispatch, useAppState, windowWorkspaces } from '../../lib/state'
 import { Composer } from '../composer/Composer'
@@ -28,9 +34,24 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
   const app = useAppState()
   const current = currentWorkspace(app)
   const tabs = windowWorkspaces(app)
+  const recentRef = useRef<string[]>([])
+  const recentIds = updateRecentTabIds(recentRef.current, tabs, current.id)
+  recentRef.current = recentIds
   const mountedRef = useRef<string[]>([])
-  const mountedIds = updateMountedTabIds(mountedRef.current, tabs, current.id)
+  const [, setPruneTick] = useState(0)
+  const mountedIds = updateMountedTabIds(mountedRef.current, tabs, current.id, MAX_MOUNTED_TABS, recentIds)
   mountedRef.current = mountedIds
+  useEffect(() => {
+    if (mountedRef.current.length <= 1) return
+    const timer = window.setTimeout(() => {
+      const pruned = pruneIdleMountedTabIds(mountedRef.current, current.id)
+      if (pruned !== mountedRef.current) {
+        mountedRef.current = pruned
+        setPruneTick((n) => n + 1)
+      }
+    }, INACTIVE_TAB_IDLE_MS)
+    return () => window.clearTimeout(timer)
+  }, [current.id, mountedIds.length])
   const docked = useDockedChat(current.id, MAIN_WINDOW)
   const orbOpen = useOrbOpen()
   const totalRooms =

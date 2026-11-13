@@ -682,6 +682,7 @@ export function ElementFrame({
             workspaceId={workspaceId}
             elementId={element.id}
             panel={panel}
+            active={active}
             focused={focused}
             working={working}
             zoom={zoom}
