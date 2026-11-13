@@ -1076,10 +1076,12 @@ test('default new room size on a new screen is top-left quarter for screens 15 i
   const screen13 = { width: 1440, height: 900 }
   const grid16x24: Grid = { ...EMPTY_GRID, size: { cols: 16, rows: 24 } }
 
-  // User prompt without explicit grid size/spot (even when containing financial words like "full", "quarter", "top", "below").
+  // User prompt without explicit grid size/spot (even when containing financial words like "full", "quarter", "top", "below", "Q1 to Q3", "FY23-FY25", "in Q4", "top 50 rows").
   for (const prompt of [
     'spinout a research agents plugin for flws in separate room',
     'provide a full overview of FLWS last quarter earnings and top 10 risks with P/E below 15 right now',
+    'compare revenue from Q1 to Q3 and FY23-FY25 in Q4 across H1-H2',
+    'open a room showing the top 50 rows and 5 columns of the table on H1',
     'start a new room for NVDA',
   ]) {
     assert.equal(asksForRoomSize(prompt), false, prompt)
@@ -1132,7 +1134,11 @@ test('default new room size on a new screen is top-left quarter for screens 15 i
   // Explicit user requests for size or spot are honored.
   assert.equal(asksForRoomSize('open a full screen room for FLWS'), true)
   assert.equal(asksForRoomSize('put a new room in the left half'), true)
+  assert.equal(asksForRoomSize('start a room 8 columns wide'), true)
+  assert.equal(asksForRoomSize('start a room 8 cols by 6 rows'), true)
   assert.equal(asksForRoomSpot('put a new room on the right'), true)
+  assert.equal(asksForRoomSpot('start a room at D3'), true)
+  assert.equal(asksForRoomSpot('start a room at J3 to N10'), true)
   assert.equal(asksForRoomSpot('start a room at J1:P12'), true)
 
   assert.deepEqual(
