@@ -867,10 +867,16 @@ export function loopChat(workspaceId: string, loop: string | Pick<Loop, 'id' | '
   return `${workspaceId}/${loop}`
 }
 
-/** The open room whose conversation `chat` is, on any tab; none for Central's chat or a plugin's build. */
-export function loopOfChat(loops: Record<string, { list: readonly Loop[] }>, chat: string): Loop | undefined {
-  for (const [workspaceId, { list }] of Object.entries(loops)) {
-    const found = list.find((loop) => loopChat(workspaceId, loop) === chat)
+/**
+ * The room whose conversation `chat` is, on any tab, open or closed: a closed room's is still read
+ * from Rooms and goes on when it is reopened. None for Central's chat or a plugin's build.
+ */
+export function loopOfChat(
+  loops: Record<string, { list: readonly Loop[]; closed?: readonly ClosedLoop[] }>,
+  chat: string,
+): Loop | undefined {
+  for (const [workspaceId, { list, closed = [] }] of Object.entries(loops)) {
+    const found = [...list, ...closed.map((one) => one.loop)].find((loop) => loopChat(workspaceId, loop) === chat)
     if (found) return found
   }
   return undefined

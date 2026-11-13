@@ -1361,3 +1361,115 @@ test('a stream that enters a runaway place_view loop after laying out a 2x2 grid
   })
   assert.equal(cutTailAnthropic.stopReason, 'max_tokens')
 })
+
+/** A Chat Completions stand-in that keeps each body it is sent and answers as `answer` says. */
+async function chatServer(
+  answer: (body: Record<string, unknown>, res: ServerResponse) => void,
+): Promise<{ baseUrl: string; bodies: Record<string, unknown>[]; close: () => void }> {
+  const bodies: Record<string, unknown>[] = []
+  const server = createServer(async (req, res: ServerResponse) => {
+    let raw = ''
+    for await (const chunk of req) raw += chunk
+    const body = JSON.parse(raw) as Record<string, unknown>
+    bodies.push(body)
+    answer(body, res)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  return { baseUrl, bodies, close: () => void server.close() }
+}
+const json = (res: ServerResponse, status: number, body: unknown): void => {
+  res.writeHead(status, { 'content-type': 'application/json' })
+  res.end(JSON.stringify(body))
+}
+const HI = {
+  choices: [{ message: { content: 'Hi.' }, finish_reason: 'stop' }],
+  usage: { prompt_tokens: 5, completion_tokens: 2 },
+}
+
+test('a model that refuses a reasoning effort in words of its own is asked again without it, and never with it after', async () => {
+  // Ollama's answer for a model that does not think: nothing in it says "reasoning".
+  const refusal = {
+    error: { message: '"small-local:latest" does not support thinking', type: 'invalid_request_error' },
+  }
+  const served = await chatServer((body, res) =>
+    'reasoning_effort' in body ? json(res, 400, refusal) : json(res, 200, HI),
+  )
+  try {
+    const config = {
+      provider: findProvider('llm', 'ollama')!,
+      baseUrl: served.baseUrl,
+      model: 'small-local',
+      token: null,
+      fetch,
+    }
+    const ask = (text: string) => complete(config, 'System', [{ role: 'user', text }], [], { effort: 'low' })
+    assert.equal((await ask('hi')).text, 'Hi.')
+    assert.deepEqual(
+      served.bodies.map((body) => 'reasoning_effort' in body),
+      [true, false],
+    )
+    assert.equal((await ask('hi again')).text, 'Hi.')
+    assert.deepEqual(
+      served.bodies.map((body) => 'reasoning_effort' in body),
+      [true, false, false],
+    )
+  } finally {
+    served.close()
+  }
+})
+
+test('a streamed request refused for its effort is asked again without it too, which is how the global box asks', async () => {
+  // The name has no "stream" in it: a refusal that says the word is read as a refusal of streaming itself.
+  const refusal = { error: { message: '"small-live:latest" does not support thinking' } }
+  const served = await chatServer((body, res) => {
+    if ('reasoning_effort' in body) return json(res, 400, refusal)
+    if (body.stream !== true) return json(res, 200, HI)
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hi.' }, finish_reason: 'stop' }] })}\n\n`)
+    res.end('data: [DONE]\n\n')
+  })
+  try {
+    const config = {
+      provider: findProvider('llm', 'ollama')!,
+      baseUrl: served.baseUrl,
+      model: 'small-live',
+      token: null,
+      fetch,
+    }
+    const reply = await complete(config, 'System', [{ role: 'user', text: 'hi' }], [], { effort: 'low', stream: true })
+    assert.equal(reply.text, 'Hi.')
+    assert.deepEqual(
+      served.bodies.map((body) => ['reasoning_effort' in body, body.stream]),
+      [
+        [true, true],
+        [false, true],
+      ],
+    )
+  } finally {
+    served.close()
+  }
+})
+
+test('a refusal that is not about the effort is still the answer, and the effort is sent again next time', async () => {
+  const refusal = { error: { message: 'prompt is too long: 300000 tokens > 200000 maximum' } }
+  const served = await chatServer((_body, res) => json(res, 400, refusal))
+  try {
+    const config = {
+      provider: findProvider('llm', 'ollama')!,
+      baseUrl: served.baseUrl,
+      model: 'too-long-local',
+      token: null,
+      fetch,
+    }
+    const ask = () => complete(config, 'System', [{ role: 'user', text: 'hi' }], [], { effort: 'low' })
+    await assert.rejects(ask(), /returned 400: .*prompt is too long/)
+    await assert.rejects(ask(), /returned 400: .*prompt is too long/)
+    assert.deepEqual(
+      served.bodies.map((body) => 'reasoning_effort' in body),
+      [true, false, true, false],
+    )
+  } finally {
+    served.close()
+  }
+})

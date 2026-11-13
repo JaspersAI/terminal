@@ -8,7 +8,6 @@ import { failedNote, STOPPED_NOTE } from '../../shared/agent/transcript'
 import { isPluginId } from '../../shared/plugins/id'
 import { buildRoot } from '../home'
 import { loopsOf, usePlugin } from '../loops/loops'
-import type { ProviderConfig } from '../secrets'
 import { getState, subscribe } from '../state'
 import { agentLoop } from './agent'
 import { REFERENCE } from './build/reference'
@@ -28,7 +27,7 @@ import { sourceTools } from './tools/data'
 import { codingMemoryTools } from './tools/memory'
 import type { ToolContext } from './tools/types'
 import { emit, isStopped, type Live } from './utils/runs'
-import { configured } from './utils/settings'
+import { configuredFor, modelFor } from './utils/settings'
 import { eraOf, join, keepOpen, startOver, threadFor } from './utils/thread'
 import { searchAvailable } from './web/search'
 
@@ -81,8 +80,10 @@ function rememberBuildInRun(runId: string, id: string): void {
   }
 }
 
-function hasOpenBuildThread(id: string, config: ProviderConfig<'llm'>): boolean {
-  return threadFor(buildChat(id), config).length > 0
+function hasOpenBuildThread(id: string): boolean {
+  const chat = buildChat(id)
+  const config = modelFor(chat)
+  return config !== null && threadFor(chat, config).length > 0
 }
 
 function hasStagedFiles(id: string): boolean {
@@ -90,25 +91,25 @@ function hasStagedFiles(id: string): boolean {
   return fs.existsSync(dir) && listFilesSync({ id, live: false, dir }).length > 0
 }
 
-function isUnfinishedBuild(id: string, config: ProviderConfig<'llm'>): boolean {
+function isUnfinishedBuild(id: string): boolean {
   if (!isPluginId(id)) return false
   const owner = ownerOf(id)
   if (owner === 'other') return false
-  const openThread = hasOpenBuildThread(id, config)
+  const openThread = hasOpenBuildThread(id)
   if (getState().plugins[id]?.status === 'ready' && !openThread) return false
   return owner === 'built' || openThread || hasStagedFiles(id)
 }
 
-function resolveLoopBuildId(rawId: string, parent: ToolContext, config: ProviderConfig<'llm'>): string {
+function resolveLoopBuildId(rawId: string, parent: ToolContext): string {
   const loopPlugins =
     parent.loop !== undefined
       ? (loopsOf(parent.workspaceId).list.find((one) => one.id === parent.loop)?.plugins ?? [])
       : []
   const runPlugins = buildsInRun.get(parent.runId) ?? []
   const candidates = [...new Set([...loopPlugins, ...runPlugins])]
-  const unfinished = candidates.filter((candidate) => isUnfinishedBuild(candidate, config))
+  const unfinished = candidates.filter((candidate) => isUnfinishedBuild(candidate))
   const taken = new Set(Object.keys(getState().plugins))
-  if (isPluginId(rawId) && (ownerOf(rawId) !== 'free' || hasOpenBuildThread(rawId, config) || hasStagedFiles(rawId))) {
+  if (isPluginId(rawId) && (ownerOf(rawId) !== 'free' || hasOpenBuildThread(rawId) || hasStagedFiles(rawId))) {
     taken.add(rawId)
   }
   return resolveBuildId(rawId, unfinished, taken)
@@ -119,11 +120,11 @@ export async function runBuild(request: string, rawId: string, parent: ToolConte
   const priorEnd = endedInRun.get(parent.runId)
   if (priorEnd) return approvalEndedMessage(priorEnd.id, priorEnd.ended, priorEnd.widened)
 
-  const config = configured()
-  const id = resolveLoopBuildId(rawId, parent, config)
+  const id = resolveLoopBuildId(rawId, parent)
   if (!isPluginId(id)) {
     throw new Error(`Give the plugin an id: lower-case letters, digits, and dashes, like fred or sec-filings.`)
   }
+  const config = configuredFor(buildChat(id))
   const folder = await openFolder(id, ownerOf(id))
   const session: BuildSession = { id, request, folder, guard: {} }
   const controller = new AbortController()

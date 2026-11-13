@@ -137,7 +137,15 @@ function providerChange(input: Record<string, unknown>, now: SettingsNow): Setti
   const named = model && takesModel(which, provider) ? `${provider.name}, ${model}` : provider.name
   // A provider switched to brings a fast model its user did not name, so the question names it.
   const label = fastModel && !same ? `${named} (fast model ${fastModel})` : named
-  const starts = which === 'llm' ? ' The conversation goes on with it from the next request.' : ''
+  // The switch is asked for in the global box, which runs on the fast model where there is one: the
+  // model named is then the rooms', and the box's own conversation does not move to it.
+  const fast = signsIn(provider) ? provider.fastModel : fastModel
+  const starts =
+    which !== 'llm'
+      ? ''
+      : fast
+        ? ' Rooms go on with it from their next request, and the global box with its fast model.'
+        : ' The conversation goes on with it from the next request.'
   return {
     action: {
       type: 'provider.set',

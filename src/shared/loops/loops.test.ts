@@ -531,6 +531,9 @@ test("a chat's room is found by the chat it was given or by its tab and id, and 
   assert.equal(loopOfChat(loops, 'w2/f3')?.id, 'f3')
   assert.equal(loopOfChat(loops, 'central'), undefined)
   assert.equal(loopOfChat(loops, 'build/fred'), undefined)
+  // A closed room is still a room: its conversation is read from Rooms, and goes on when it is reopened.
+  const closed = { loop: { ...loop('f7', 'Seven'), model: 'its-own' }, window: 1, elements: [], panels: [] }
+  assert.equal(loopOfChat({ w1: { list: [loop('f1', 'One')], closed: [closed] } }, 'w1/f7')?.model, 'its-own')
 })
 
 test("a loop's agent may change its own tiles, by element or by panel, and no other's", () => {
