@@ -29,6 +29,7 @@ import { isTheme, type Theme } from '../shared/app/theme'
 import { EYE_OFF, readEye, type StoredEye } from '../shared/app/eye'
 import { SIGNED_OUT, loadTermsState, readStoredJaspers, type StoredJaspers } from '../shared/app/jaspers'
 import { PRO_MODE_OFF, readProMode, type ProMode } from '../shared/app/pro-mode'
+import { EMPTY_COLLAB } from '../shared/collab/collab'
 import { readAllowedApps } from '../shared/plugins/apps'
 import type { Task } from '../shared/tasks/tasks'
 import { checkWindows, MAIN_WINDOW, withWindows } from '../shared/grid/windows'
@@ -244,6 +245,7 @@ export function load(): MainState {
     secrets: state.secrets ?? {},
     oauth: state.oauth ?? {},
     jaspers: readStoredJaspers(state.jaspers),
+    collab: EMPTY_COLLAB,
     allowedApps: readAllowedApps(state.allowedApps),
   }
 }

@@ -7,6 +7,7 @@ import {
   type Dataset,
   type RunResult,
 } from '../../shared/data/datasets'
+import type { SyncedDataset } from '../../shared/collab/collab'
 import { stableStringify } from '../../shared/data/hash'
 import type { RunRecord } from '../../shared/data/store'
 import { isRefreshableView } from '../../shared/grid/grid'
@@ -75,10 +76,31 @@ export async function runSource(
   if (hasPendingPluginRegistration()) {
     await waitForPluginRegistration(options.signal)
   }
-  const source = getSource(id)
-  if (!source) throw new Error(`Unknown source ${id}.`)
-  const def = source.def
   const workspaceId = options.workspaceId ?? null
+  const source = getSource(id)
+  if (!source) {
+    // A collaborator viewing a shared room or tab may not have the plugin installed locally;
+    // serve hydrated synced datasets from main's cache when available.
+    for (const candidateKey of [
+      stableStringify([id, asArgs(args)]),
+      stableStringify([id, args, workspaceId]),
+      stableStringify([id, args]),
+    ]) {
+      const synced = stillGood(candidateKey, workspaceId)
+      if (synced) {
+        keepCitations(workspaceId, synced.meta)
+        return {
+          kind: 'dataset',
+          datasetId: synced.id,
+          rowCount: synced.rows.length,
+          meta: synced.meta,
+          text: texts.get(synced.id) ?? '',
+        }
+      }
+    }
+    throw new Error(`Unknown source ${id}.`)
+  }
+  const def = source.def
   const declared = (): ConnectionTool | undefined =>
     source.connection && isMcpSource(def)
       ? currentConnections()[source.connection]?.tools.find((one) => one.name === def.tool)
@@ -200,6 +222,56 @@ export function datasetRows(datasetId: string): Record<string, unknown>[] {
   const dataset = datasets.get(datasetId)
   if (!dataset) throw new Error(`Unknown dataset ${datasetId}.`)
   return dataset.rows
+}
+
+/** Exports active datasets so shared rooms and workspace tabs include their underlying data rows. */
+export function exportDatasets(): SyncedDataset[] {
+  const out: SyncedDataset[] = []
+  for (const ds of datasets.values()) {
+    out.push({
+      datasetId: ds.id,
+      source: ds.source,
+      args: ds.args,
+      rows: ds.rows,
+      meta: ds.meta,
+      text: texts.get(ds.id) ?? '',
+      fetchedAt: ds.at,
+    })
+  }
+  return out
+}
+
+/**
+ * Hydrates a dataset synced from a shared room or workspace tab into both the in-memory dataset map
+ * and the local SQLite store (`jaspers.db`), so built-in SQL views and plugin `useData` hooks render
+ * immediately on a collaborator's machine without needing the owner's API keys.
+ */
+export function hydrateSyncedDataset(ds: SyncedDataset, workspaceId: string | null = null): void {
+  if (!ds || typeof ds.source !== 'string' || !Array.isArray(ds.rows)) return
+  const now = Date.now()
+  const ttlMs = 60 * 60_000
+  const id = ds.datasetId || `d_sync_${++seq}`
+  datasets.set(id, {
+    id,
+    source: ds.source,
+    args: ds.args,
+    rows: ds.rows,
+    meta: ds.meta ?? {},
+    at: now,
+    ttlMs,
+  })
+  texts.set(id, ds.text ?? '')
+  expires.set(id, now + ttlMs + KEEP_MS)
+  const mcpKey = stableStringify([ds.source, asArgs(ds.args)])
+  const fnKey = stableStringify([ds.source, ds.args, workspaceId])
+  cache.set(mcpKey, id)
+  cache.set(fnKey, id)
+  file(ds.source, ds.args, mcpKey, workspaceId, {
+    rows: ds.rows,
+    meta: ds.meta ?? {},
+    text: ds.text ?? null,
+    error: null,
+  })
 }
 
 export function resultText(resultId: string): string {

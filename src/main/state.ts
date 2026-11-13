@@ -23,6 +23,7 @@ import type { Theme } from '../shared/app/theme'
 import { EYE_CONSENT, type StoredEye } from '../shared/app/eye'
 import type { StoredJaspers } from '../shared/app/jaspers'
 import type { ProMode } from '../shared/app/pro-mode'
+import { EMPTY_COLLAB, type CollabState } from '../shared/collab/collab'
 import * as persist from './persist'
 
 // The app's state tree. Main owns it, and `update` is the only thing that assigns it: apply a
@@ -100,6 +101,8 @@ export interface MainState {
   oauth: Record<string, StoredOAuth>
   /** The sign-in with Jaspers: its client, its sealed tokens, and who it is for. Opened in jaspers/session.ts, nowhere else. */
   jaspers: StoredJaspers
+  /** Live collaboration state: teammates, invites, and shared rooms/tabs. */
+  collab: CollabState
   /**
    * The connections the user said may show their own pages, each with where it pointed when they
    * said so. Persisted in state.json, read in app-consent.ts, and never sent to a window.
@@ -218,6 +221,7 @@ export function toPublic(state: MainState): AppState {
     proMode: state.proMode,
     // Whether, and as whom: the tokens themselves stay here.
     jaspers: { signedIn: state.jaspers.tokens !== null, email: state.jaspers.email, reason: state.jaspers.reason },
+    collab: state.collab ?? EMPTY_COLLAB,
     eye: {
       recording: state.eye.recording,
       asked: state.eye.consent === EYE_CONSENT,
