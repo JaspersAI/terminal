@@ -253,4 +253,8 @@ test('two terminals collaborate live: teammate invite/accept, sharing a room wit
   assert.equal(reply, 'Owner agent ran NVDA model.')
   assert.equal(aliceNode.promptsRun.length, 1)
   assert.equal(aliceNode.promptsRun[0]!.input, 'Update DCF for Q4 guidance')
+
+  // When Bob runs a fresh source in the shared room, it delegates a 'source' command to Alice!
+  const sourceRes = await bobEngine.runSponsoredSource('ws-1', 'custom-plugin/quotes', { symbol: 'NVDA' }, true)
+  assert.deepEqual(sourceRes, { kind: 'text', resultId: 'r1', text: 'ok' })
 })
