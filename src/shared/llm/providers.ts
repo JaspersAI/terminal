@@ -293,7 +293,7 @@ export const LLM_SETUP_PATHS: readonly LlmSetupChoice[] = [
 ]
 
 /** Which of onboarding's three equal paths a language model provider belongs to. */
-export function llmSetupPath(provider: Provider<LlmApi>): LlmSetupPath {
+export function llmSetupPath(provider: Provider): LlmSetupPath {
   if (signsIn(provider)) return 'jaspers'
   return provider.tokenRequired ? 'api' : 'local'
 }
