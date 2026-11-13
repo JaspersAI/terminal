@@ -11,9 +11,11 @@ import {
 import type { ProviderKind } from '../../shared/state'
 import { dispatch, get, useAppState } from './state'
 
-/** What the fast model is for, under its field in Settings and in setup. */
-export const FAST_MODEL_HINT =
-  'The global box runs on it: routing, short answers, and setting up a room. Leave it empty to run everything on the thinking model.'
+/**
+ * What the fast model is for, under its name in Settings and its field in setup. Short enough to sit
+ * beside the field in a Settings row: a longer line drops the field under it.
+ */
+export const FAST_MODEL_HINT = 'The global box runs on it. Left empty, everything runs on the thinking model.'
 
 interface Draft {
   provider: Provider | undefined
