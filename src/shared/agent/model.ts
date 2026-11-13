@@ -10,8 +10,9 @@ import { CENTRAL_CHAT } from './history.ts'
 
 /**
  * How hard the thinking model works at a request: as hard for a room's as for a task's. A chat keeps
- * the one level it runs at, and nothing in a run asks for another: changing it inside a thread costs
- * a provider everything it had cached of the conversation.
+ * the one level it runs at, since changing it inside a thread costs a provider everything it had
+ * cached of the conversation; the one round that asks for less is a round asked again after it timed
+ * out (`agent.ts`).
  */
 export const EFFORT: Effort = 'high'
 

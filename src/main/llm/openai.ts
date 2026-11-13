@@ -1,4 +1,4 @@
-import { post, sse } from './http.ts'
+import { post, ProviderError, sse } from './http.ts'
 import type { ProviderConfig } from '../secrets'
 import { getAttachedImages } from '../agent/attachments.ts'
 import { trimToolCalls } from '../../shared/agent/rounds.ts'
@@ -50,7 +50,7 @@ interface OpenAiResponse {
   }
 }
 
-/** Models that refused `reasoning_effort` on Chat Completions this session, asked without it from then on. */
+/** Models that answered only once `reasoning_effort` was left out, this session: asked without it from then on. */
 const withoutReasoningEffort = new Set<string>()
 
 export async function openai(
@@ -123,9 +123,15 @@ export async function openai(
   try {
     return await send(effort)
   } catch (err) {
-    if (!effort || !(err instanceof Error) || !/ returned 400: .*reasoning/i.test(err.message)) throw err
+    // A server that does not know the field, or a model that does not think, refuses the request for
+    // it, each in words of its own: one names `reasoning_effort` back, Ollama says the model "does
+    // not support thinking". So a 400 to a request that carried the effort is asked once more
+    // without it, whatever it said, and the model is remembered only when that is answered: a
+    // refusal about something else comes back the same, and is the answer.
+    if (!effort || !(err instanceof ProviderError) || err.status !== 400) throw err
+    const reply = await send(undefined)
     withoutReasoningEffort.add(model)
-    return send(undefined)
+    return reply
   }
 }
 

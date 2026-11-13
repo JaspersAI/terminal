@@ -63,8 +63,9 @@ test('a provider switch keeps what is set on the same provider, takes the defaul
         token: '',
       },
     },
-    confirm: 'Switch the language model to Jaspers? The conversation goes on with it from the next request.',
-    done: 'The language model is now Jaspers. The conversation goes on with it from the next request.',
+    confirm:
+      'Switch the language model to Jaspers? Rooms go on with it from their next request, and the global box with its fast model.',
+    done: 'The language model is now Jaspers. Rooms go on with it from their next request, and the global box with its fast model.',
   })
   assert.throws(
     () => settingChange({ setting: 'provider', kind: 'llm', provider: 'nope' }, NOW),
@@ -97,17 +98,25 @@ test('switching to another provider says which fast model comes with it, and a s
   const other = settingChange({ setting: 'provider', kind: 'llm', provider: 'openai' }, now)
   assert.equal(
     other.confirm,
-    'Switch the language model to OpenAI, gpt-5.4 (fast model gpt-5.4-mini)? The conversation goes on with it from the next request.',
+    'Switch the language model to OpenAI, gpt-5.4 (fast model gpt-5.4-mini)? Rooms go on with it from their next request, and the global box with its fast model.',
   )
   assert.match(other.done, /OpenAI, gpt-5\.4 \(fast model gpt-5\.4-mini\)/)
   const same = settingChange({ setting: 'provider', kind: 'llm', model: 'claude-sonnet-5' }, now)
   assert.equal(
     same.confirm,
-    'Switch the language model to Anthropic, claude-sonnet-5? The conversation goes on with it from the next request.',
+    'Switch the language model to Anthropic, claude-sonnet-5? Rooms go on with it from their next request, and the global box with its fast model.',
   )
   const ollama = settingChange({ setting: 'provider', kind: 'llm', provider: 'ollama' }, now)
   assert.equal(
     ollama.confirm,
     'Switch the language model to Ollama, llama3.2? The conversation goes on with it from the next request.',
+  )
+})
+
+test('a switch to Jaspers, which has a fast model of its own, says the global box goes on with that', () => {
+  const jaspers = settingChange({ setting: 'provider', kind: 'llm', provider: 'jaspers' }, NOW)
+  assert.equal(
+    jaspers.confirm,
+    'Switch the language model to Jaspers? Rooms go on with it from their next request, and the global box with its fast model.',
   )
 })
