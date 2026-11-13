@@ -263,6 +263,10 @@ export function toggleVoice(source: 'orb' | 'command' = 'command'): void {
       }
       if (!pressed) return emitStore({ voice: 'idle' })
       await recorder.start()
+      if (!pressed) {
+        if (recorder.active) void recorder.stop().catch(() => undefined)
+        return emitStore({ voice: 'idle' })
+      }
     } catch (err) {
       pressed = false
       throw err
