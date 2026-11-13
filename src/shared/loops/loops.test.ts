@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { EMPTY_GRID, type Grid, type GridElement, type Panel, type PanelContent } from '../grid/grid.ts'
+import { EMPTY_GRID, placeFrame, type Grid, type GridElement, type Panel, type PanelContent } from '../grid/grid.ts'
 import { SHELL_TOOL, TASK_EXCLUDED_TOOLS } from '../tasks/tasks.ts'
 import {
   addressed,
   adopt,
   asksForLoop,
+  asksForRoomSize,
+  asksForRoomSpot,
   DESC_MAX,
   findAnyRoom,
   findLoop,
@@ -29,6 +31,7 @@ import {
   readLoops,
   elementTarget,
   refreshTarget,
+  resolveNewRoomPlacement,
   resolveRefreshTarget,
   retagged,
   START,
@@ -1064,5 +1067,109 @@ test('a room handoff with brief and no message shows the refined brief in the ro
   assert.deepEqual(
     transcript([turn, { role: 'assistant', text: 'Started.', toolCalls: [], raw: null }], 5).map((e) => e.question),
     [brief],
+  )
+})
+
+test('default new room size on a new screen is top-left quarter for screens 15 inches and larger and left half for screens under 15 inches', () => {
+  const screen16 = { width: 1728, height: 1117 }
+  const screen14 = { width: 1512, height: 982 }
+  const screen13 = { width: 1440, height: 900 }
+  const grid16x24: Grid = { ...EMPTY_GRID, size: { cols: 16, rows: 24 } }
+
+  // User prompt without explicit grid size/spot (even when containing financial words like "full", "quarter", "top", "below").
+  for (const prompt of [
+    'spinout a research agents plugin for flws in separate room',
+    'provide a full overview of FLWS last quarter earnings and top 10 risks with P/E below 15 right now',
+    'start a new room for NVDA',
+  ]) {
+    assert.equal(asksForRoomSize(prompt), false, prompt)
+    assert.equal(asksForRoomSpot(prompt), false, prompt)
+
+    // On a 15"+ screen, even if the model suggests size: 'half' or anchor: 'left' or size: 'full', a new room on a new screen lands in the top-left quarter.
+    for (const modelPlacement of [
+      {},
+      { size: 'half' as const },
+      { size: 'half' as const, anchor: 'left' as const },
+      { size: 'full' as const },
+    ]) {
+      const resolved16 = resolveNewRoomPlacement(modelPlacement, screen16, { emptyGrid: true, asked: prompt })
+      assert.deepEqual(resolved16, { size: 'quarter' })
+      assert.deepEqual(placeFrame(EMPTY_GRID, { ...resolved16, content: { kind: 'frame' } }).element.rect, {
+        x: 0,
+        y: 0,
+        w: 8,
+        h: 6,
+      })
+      assert.deepEqual(placeFrame(grid16x24, { ...resolved16, content: { kind: 'frame' } }).element.rect, {
+        x: 0,
+        y: 0,
+        w: 8,
+        h: 12,
+      })
+    }
+
+    // On a screen under 15 inches, a new room on a new screen lands in the left half.
+    for (const smallScreen of [screen13, screen14]) {
+      for (const modelPlacement of [{}, { size: 'quarter' as const }, { size: 'half' as const }]) {
+        const resolvedSmall = resolveNewRoomPlacement(modelPlacement, smallScreen, { emptyGrid: true, asked: prompt })
+        assert.deepEqual(resolvedSmall, { size: 'half' })
+        assert.deepEqual(placeFrame(EMPTY_GRID, { ...resolvedSmall, content: { kind: 'frame' } }).element.rect, {
+          x: 0,
+          y: 0,
+          w: 8,
+          h: 12,
+        })
+        assert.deepEqual(placeFrame(grid16x24, { ...resolvedSmall, content: { kind: 'frame' } }).element.rect, {
+          x: 0,
+          y: 0,
+          w: 8,
+          h: 24,
+        })
+      }
+    }
+  }
+
+  // Explicit user requests for size or spot are honored.
+  assert.equal(asksForRoomSize('open a full screen room for FLWS'), true)
+  assert.equal(asksForRoomSize('put a new room in the left half'), true)
+  assert.equal(asksForRoomSpot('put a new room on the right'), true)
+  assert.equal(asksForRoomSpot('start a room at J1:P12'), true)
+
+  assert.deepEqual(
+    resolveNewRoomPlacement({ size: 'full' }, screen16, {
+      emptyGrid: true,
+      asked: 'open a full screen room for FLWS',
+    }),
+    { size: 'full' },
+  )
+  assert.deepEqual(
+    resolveNewRoomPlacement({ size: 'half', anchor: 'right' }, screen16, {
+      emptyGrid: true,
+      asked: 'open a room on the right',
+    }),
+    { size: 'quarter', anchor: 'right' },
+  )
+  assert.deepEqual(
+    resolveNewRoomPlacement({ rect: { x: 9, y: 0, w: 7, h: 12 } }, screen16, {
+      emptyGrid: true,
+      asked: 'start a room at J1:P12',
+    }),
+    { size: 'quarter', rect: { x: 9, y: 0, w: 7, h: 12 } },
+  )
+
+  // On a non-empty grid, unrequested size: 'half' on a 15"+ screen is normalized to 'quarter', while custom sizes are preserved.
+  assert.deepEqual(
+    resolveNewRoomPlacement({ size: 'half' }, screen16, {
+      emptyGrid: false,
+      asked: 'spinout another room for MSFT',
+    }),
+    { size: 'quarter' },
+  )
+  assert.deepEqual(
+    resolveNewRoomPlacement({ size: { w: 4, h: 6 } }, screen16, {
+      emptyGrid: false,
+      asked: 'spinout another room for MSFT',
+    }),
+    { size: { w: 4, h: 6 } },
   )
 })
