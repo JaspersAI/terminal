@@ -431,7 +431,15 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           await deps.api.completeCommand(commandId, { result: { reply } })
         } else if (kind === 'refresh') {
           const panelId = typeof payload.panelId === 'string' ? payload.panelId : ''
-          const targetId = panelId || loopId
+          const panelBelongsToRoom =
+            share.kind !== 'room' ||
+            (Boolean(panelId) &&
+              Object.values(grids).some((g) => {
+                const p = g.panels.find((one) => one.id === panelId || one.elementId === panelId)
+                const el = p ? g.elements.find((e) => e.id === p.elementId) : undefined
+                return el?.loop === loopId
+              }))
+          const targetId = panelBelongsToRoom && panelId ? panelId : loopId
           if (targetId) deps.refreshPanel(workspaceId, targetId)
           if (share.kind === 'room' && loopId) await pushRoomShareSnapshot(workspaceId, loopId, undefined, shareId)
           else if (share.kind === 'workspace') await pushWorkspaceShareSnapshot(workspaceId, undefined, shareId)
@@ -678,7 +686,9 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       let targetShare = wsSponsored.sponsored ? wsSponsored.share : null
       if (!targetShare) {
         const plugin = source.split('/')[0] ?? ''
-        for (const loop of state.loops[workspaceId]?.list ?? []) {
+        const tabGrids = state.grids[workspaceId] ?? {}
+        const tabLoops = state.loops[workspaceId] ?? NO_LOOPS
+        for (const loop of tabLoops.list) {
           const roomSponsored = isSponsoredRoom(
             state.collab ?? EMPTY_COLLAB,
             workspaceId,
@@ -686,7 +696,11 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
             loop.shareId,
             ws?.shareId,
           )
-          if (roomSponsored.sponsored && roomSponsored.share && (!plugin || loop.plugins.includes(plugin))) {
+          if (
+            roomSponsored.sponsored &&
+            roomSponsored.share &&
+            (!plugin || plugin === 'core' || collectRoomPlugins(tabGrids, tabLoops, loop.id).has(plugin))
+          ) {
             targetShare = roomSponsored.share
             break
           }

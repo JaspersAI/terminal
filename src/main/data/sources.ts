@@ -118,7 +118,25 @@ export async function runSource(
   }
   if (workspaceId && sponsoredSourceRunner) {
     const delegated = await sponsoredSourceRunner(workspaceId, id, args, options.fresh)
-    if (delegated) return delegated
+    if (delegated) {
+      for (const candidateKey of [
+        stableStringify([id, asArgs(args), workspaceId]),
+        stableStringify([id, args, workspaceId]),
+      ]) {
+        const synced = stillGood(candidateKey, workspaceId)
+        if (synced) {
+          keepCitations(workspaceId, synced.meta)
+          return {
+            kind: 'dataset',
+            datasetId: synced.id,
+            rowCount: synced.rows.length,
+            meta: synced.meta,
+            text: texts.get(synced.id) ?? '',
+          }
+        }
+      }
+      return delegated
+    }
   }
   const source = getSource(id)
   if (!source) {

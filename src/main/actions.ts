@@ -41,6 +41,7 @@ import {
   isTile,
   loopName,
   NO_LOOPS,
+  refreshTarget,
   withLoopFor,
   withLoopAsked,
   withLoopTitle,
@@ -287,7 +288,7 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'panel.refresh': async (raw) => {
     const workspaceId = asString(raw.workspaceId)
     const panelId = asString(raw.panelId)
-    if (await runSponsoredRefreshIfNeeded(workspaceId, panelId)) return
+    await runSponsoredRefreshIfNeeded(workspaceId, panelId)
     refreshChecked(workspaceId, panelId)
   },
   'plugin.setSecret': (raw) => setSecret(asString(raw.plugin), asString(raw.key), asString(raw.value)),
@@ -1385,7 +1386,8 @@ export function refreshChecked(workspaceId: string, panelId: string, at = Date.n
 
 setCollabRefreshCallback((workspaceId, panelId) => {
   try {
-    refreshChecked(workspaceId, panelId)
+    const target = refreshTarget(getGrids(workspaceId), loopsOf(workspaceId).list, panelId)
+    refreshChecked(workspaceId, target)
   } catch {
     // Ignore refresh of a removed panel.
   }
