@@ -481,6 +481,8 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const myAccountId = current.collab?.accountId ?? null
       const myEmail = current.jaspers.email
 
+      const prevLocalIds = new Map((current.collab?.shares ?? []).map((s) => [s.shareId, s.localId]))
+      const prevOptimisticShares = (current.collab?.shares ?? []).filter((s) => s.shareId.startsWith('local-share-'))
       const teammates: Teammate[] = data.teammates.map((t) => ({
         accountId: t.account_id,
         email: t.email,
@@ -488,13 +490,18 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       }))
       const outgoingInvites = data.outgoing_invites.flatMap((raw) => mapInvite(raw) ?? [])
       const incomingInvites = data.incoming_invites.flatMap((raw) => mapInvite(raw) ?? [])
-      const prevLocalIds = new Map((current.collab?.shares ?? []).map((s) => [s.shareId, s.localId]))
-      const shares = data.shares.flatMap((raw) => {
+
+      const serverShares = data.shares.flatMap((raw) => {
         const mapped = mapShareInfo(raw, myAccountId, myEmail)
         if (!mapped) return []
         const keptLocalId = prevLocalIds.get(mapped.shareId)
         return [keptLocalId ? { ...mapped, localId: keptLocalId } : mapped]
       })
+      const serverLocalIds = new Set(serverShares.map((s) => `${s.kind}:${s.localId}`))
+      const shares = [
+        ...serverShares,
+        ...prevOptimisticShares.filter((s) => !serverLocalIds.has(`${s.kind}:${s.localId}`)),
+      ]
       const activeShareIds = new Set(shares.map((s) => s.shareId))
 
       deps.update((s) => {
@@ -560,7 +567,74 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     },
 
     async shareRoom(workspaceId: string, loopId: string, memberAccountIds: string[]): Promise<void> {
-      await pushRoomShareSnapshot(workspaceId, loopId, memberAccountIds)
+      const state = deps.getState()
+      const loop = state.loops[workspaceId]?.list.find((l) => l.id === loopId)
+      if (!loop) return
+      const now = Math.floor(Date.now() / 1000)
+      const existing = findRoomShare(state.collab ?? EMPTY_COLLAB, workspaceId, loopId, loop.shareId)
+      const shareId = existing?.shareId ?? `local-share-room-${workspaceId}-${loopId}`
+      const knownTeammates = state.collab?.teammates ?? []
+      const newTeammates: Teammate[] = []
+      const members: ShareMember[] = []
+      const uniqueIds = [...new Set(memberAccountIds.map((m) => m.trim()).filter(Boolean))]
+      for (const idOrEmail of uniqueIds) {
+        const tm =
+          knownTeammates.find((t) => t.accountId === idOrEmail || t.email.toLowerCase() === idOrEmail.toLowerCase()) ??
+          (idOrEmail.includes('@')
+            ? { accountId: idOrEmail.toLowerCase(), email: idOrEmail.toLowerCase(), since: now }
+            : { accountId: idOrEmail, email: idOrEmail, since: now })
+        if (
+          !knownTeammates.some((t) => t.accountId === tm.accountId) &&
+          !newTeammates.some((t) => t.accountId === tm.accountId)
+        ) {
+          newTeammates.push(tm)
+          if (tm.email.includes('@')) {
+            void deps.api.inviteTeammate(tm.email).catch(() => undefined)
+          }
+        }
+        members.push({ accountId: tm.accountId, email: tm.email, addedAt: now })
+      }
+      const optimisticShare: CollabShareInfo = {
+        shareId,
+        kind: 'room',
+        ownerAccountId: existing?.ownerAccountId ?? state.collab?.accountId ?? 'local',
+        ownerEmail: existing?.ownerEmail ?? state.jaspers.email ?? 'owner',
+        localId: `${workspaceId}/${loopId}`,
+        title: loopTitle(loop),
+        revision: (existing?.revision ?? 0) + 1,
+        members,
+        updatedAt: now,
+        isOwner: existing?.isOwner ?? true,
+      }
+      gate.withRemoteApply(shareId, optimisticShare.revision, () => {
+        deps.update((s) => {
+          const tabLoops = s.loops[workspaceId] ?? NO_LOOPS
+          const updatedList = tabLoops.list.map((l) => (l.id === loopId ? { ...l, shareId } : l))
+          const prevShares = s.collab?.shares ?? []
+          const nextShares = prevShares.some(
+            (sh) => sh.shareId === shareId || sh.localId === `${workspaceId}/${loopId}`,
+          )
+            ? prevShares.map((sh) =>
+                sh.shareId === shareId || sh.localId === `${workspaceId}/${loopId}` ? optimisticShare : sh,
+              )
+            : [...prevShares, optimisticShare]
+          const prevTeammates = s.collab?.teammates ?? []
+          const mergedTeammates = [
+            ...prevTeammates,
+            ...newTeammates.filter((nt) => !prevTeammates.some((pt) => pt.accountId === nt.accountId)),
+          ]
+          return {
+            ...s,
+            loops: { ...s.loops, [workspaceId]: { ...tabLoops, list: updatedList } },
+            collab: { ...(s.collab ?? EMPTY_COLLAB), teammates: mergedTeammates, shares: nextShares },
+          }
+        })
+      })
+      try {
+        await pushRoomShareSnapshot(workspaceId, loopId, uniqueIds)
+      } catch {
+        // Keep optimistic room share when offline or while invited email is still pending acceptance.
+      }
     },
 
     async unshareRoom(workspaceId: string, loopId: string): Promise<void> {
@@ -589,7 +663,69 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     },
 
     async shareWorkspace(workspaceId: string, memberAccountIds: string[]): Promise<void> {
-      await pushWorkspaceShareSnapshot(workspaceId, memberAccountIds)
+      const state = deps.getState()
+      const workspace = state.workspaces.find((w) => w.id === workspaceId)
+      if (!workspace) return
+      const now = Math.floor(Date.now() / 1000)
+      const existing = findWorkspaceShare(state.collab ?? EMPTY_COLLAB, workspaceId, workspace.shareId)
+      const shareId = existing?.shareId ?? `local-share-ws-${workspaceId}`
+      const knownTeammates = state.collab?.teammates ?? []
+      const newTeammates: Teammate[] = []
+      const members: ShareMember[] = []
+      const uniqueIds = [...new Set(memberAccountIds.map((m) => m.trim()).filter(Boolean))]
+      for (const idOrEmail of uniqueIds) {
+        const tm =
+          knownTeammates.find((t) => t.accountId === idOrEmail || t.email.toLowerCase() === idOrEmail.toLowerCase()) ??
+          (idOrEmail.includes('@')
+            ? { accountId: idOrEmail.toLowerCase(), email: idOrEmail.toLowerCase(), since: now }
+            : { accountId: idOrEmail, email: idOrEmail, since: now })
+        if (
+          !knownTeammates.some((t) => t.accountId === tm.accountId) &&
+          !newTeammates.some((t) => t.accountId === tm.accountId)
+        ) {
+          newTeammates.push(tm)
+          if (tm.email.includes('@')) {
+            void deps.api.inviteTeammate(tm.email).catch(() => undefined)
+          }
+        }
+        members.push({ accountId: tm.accountId, email: tm.email, addedAt: now })
+      }
+      const optimisticShare: CollabShareInfo = {
+        shareId,
+        kind: 'workspace',
+        ownerAccountId: existing?.ownerAccountId ?? state.collab?.accountId ?? 'local',
+        ownerEmail: existing?.ownerEmail ?? state.jaspers.email ?? 'owner',
+        localId: workspaceId,
+        title: workspace.name,
+        revision: (existing?.revision ?? 0) + 1,
+        members,
+        updatedAt: now,
+        isOwner: existing?.isOwner ?? true,
+      }
+      gate.withRemoteApply(shareId, optimisticShare.revision, () => {
+        deps.update((s) => {
+          const workspaces = s.workspaces.map((w) => (w.id === workspaceId ? { ...w, shareId } : w))
+          const prevShares = s.collab?.shares ?? []
+          const nextShares = prevShares.some((sh) => sh.shareId === shareId || sh.localId === workspaceId)
+            ? prevShares.map((sh) => (sh.shareId === shareId || sh.localId === workspaceId ? optimisticShare : sh))
+            : [...prevShares, optimisticShare]
+          const prevTeammates = s.collab?.teammates ?? []
+          const mergedTeammates = [
+            ...prevTeammates,
+            ...newTeammates.filter((nt) => !prevTeammates.some((pt) => pt.accountId === nt.accountId)),
+          ]
+          return {
+            ...s,
+            workspaces,
+            collab: { ...(s.collab ?? EMPTY_COLLAB), teammates: mergedTeammates, shares: nextShares },
+          }
+        })
+      })
+      try {
+        await pushWorkspaceShareSnapshot(workspaceId, uniqueIds)
+      } catch {
+        // Keep optimistic workspace share when offline or while invited email is still pending.
+      }
     },
 
     async unshareWorkspace(workspaceId: string): Promise<void> {

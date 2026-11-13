@@ -13,8 +13,9 @@ import {
   type GridElement,
   type Panel,
 } from '../grid/grid.ts'
-import { frameOf, NO_LOOPS, type Loop, type Loops } from '../loops/loops.ts'
+import { frameOf, named, NO_LOOPS, type Loop, type Loops } from '../loops/loops.ts'
 import type { ViewInfo, Workspace } from '../state.ts'
+import { tabSwatchStyle } from '../tabs/tabs.ts'
 
 export interface Teammate {
   accountId: string
@@ -299,6 +300,200 @@ export function isSponsoredWorkspace(
   const wsShare = findWorkspaceShare(collab, workspaceId, workspaceShareId)
   if (wsShare && !wsShare.isOwner) return { sponsored: true, share: wsShare }
   return { sponsored: false, share: wsShare }
+}
+
+/**
+ * Distinct colors from `TAB_PALETTE` assigned to teammates in an active room so each teammate circle
+ * has a clear, recognizable color in both light and dark themes.
+ */
+export const TEAMMATE_CIRCLE_PALETTE: readonly string[] = [
+  '#2563eb',
+  '#0d9488',
+  '#6d28d9',
+  '#be123c',
+  '#0284c7',
+  '#15803d',
+  '#b45309',
+  '#4f46e5',
+  '#0e7490',
+  '#9a3412',
+  '#7e22ce',
+  '#047857',
+]
+
+/**
+ * Extracts 2-letter uppercase initials for a teammate circle from their email address or name
+ * (e.g. `gleb.biserov@jsprai.com` -> `GB`, `seth@jsprai.com` -> `SE`, `a@fund.com` -> `AF`).
+ */
+export function teammateInitials(emailOrName: string): string {
+  const clean = emailOrName.trim()
+  if (!clean) return '??'
+  const [localPart = '', domainPart = ''] = clean.split('@')
+  const words = localPart
+    .split(/[._+\-\s]+/)
+    .map((w) => w.replace(/[^a-zA-Z0-9]/g, ''))
+    .filter(Boolean)
+  if (words.length >= 2) {
+    return `${words[0]![0]!}${words[1]![0]!}`.toUpperCase()
+  }
+  const single = words[0] ?? localPart.replace(/[^a-zA-Z0-9]/g, '')
+  if (single.length >= 2) {
+    return single.slice(0, 2).toUpperCase()
+  }
+  if (single.length === 1) {
+    const domChar = domainPart.replace(/[^a-zA-Z0-9]/g, '')[0] ?? single[0]!
+    return `${single[0]!}${domChar}`.toUpperCase()
+  }
+  return clean.slice(0, 2).toUpperCase()
+}
+
+/**
+ * Computes the background, text, and border colors for a teammate avatar circle at the bottom of a room tile:
+ * - When `roomActive` is true: each teammate gets a distinct color (`TEAMMATE_CIRCLE_PALETTE`) styled via
+ *   `tabSwatchStyle(hex, true, dark)` so it is vivid and high-contrast in both light and dark modes.
+ * - When `roomActive` is false: all teammate circles become grey in the exact same color code as unselected
+ *   tabs (`tabSwatchStyle(null, false, dark)`), staying visible in both light and dark modes.
+ */
+export function teammateCircleStyle(
+  _key: string,
+  index: number,
+  roomActive: boolean,
+  dark: boolean,
+): { backgroundColor: string; color: string; borderColor: string } {
+  if (!roomActive) {
+    return tabSwatchStyle(null, false, dark)
+  }
+  const paletteIndex = Math.abs(Math.trunc(index)) % TEAMMATE_CIRCLE_PALETTE.length
+  const hex = TEAMMATE_CIRCLE_PALETTE[paletteIndex]!
+  return tabSwatchStyle(hex, true, dark)
+}
+
+/**
+ * Returns the teammates present on a room (`ShareMember[]`), excluding the local owner when other
+ * teammates are in the room so the circles show the collaborators sharing the room.
+ */
+export function roomTeammatesOf(
+  collab: CollabState,
+  workspaceId: string,
+  loopId: string,
+  loopShareId?: string,
+): ShareMember[] {
+  const share = findRoomShare(collab, workspaceId, loopId, loopShareId)
+  if (!share) return []
+  const others = share.members.filter((m) => !collab.accountId || m.accountId !== collab.accountId)
+  return others.length > 0 ? others : share.members
+}
+
+/**
+ * Matches a trailing `@<query>` token in Central's command input against `teammates` so teammates are
+ * searchable and taggable in Central.
+ */
+export function matchTeammateMentions(
+  draft: string,
+  teammates: readonly Teammate[],
+): { query: string; prefix: string; matches: Teammate[] } | null {
+  if (teammates.length === 0) return null
+  const match = /(^|\s)@([^\s@]*)$/.exec(draft)
+  if (!match) return null
+  const query = (match[2] ?? '').toLowerCase()
+  const prefix = draft.slice(0, draft.length - (match[2]?.length ?? 0) - 1)
+  const matches = teammates.filter((tm) => {
+    if (!query) return true
+    const email = tm.email.toLowerCase()
+    const initials = teammateInitials(tm.email).toLowerCase()
+    return email.includes(query) || initials.startsWith(query)
+  })
+  if (matches.length === 0) return null
+  return { query, prefix, matches }
+}
+
+/** Replaces the trailing `@<query>` in `draft` with `@<email> `. */
+export function applyTeammateMention(draft: string, email: string): string {
+  const match = /(^|\s)@([^\s@]*)$/.exec(draft)
+  if (!match) return `${draft} @${email} `
+  const prefix = draft.slice(0, draft.length - (match[2]?.length ?? 0) - 1)
+  return `${prefix}@${email} `
+}
+
+/** Resolves one or more teammate queries (emails, `@emails`, handles, or initials) against `teammates`. */
+export function resolveTeammatesByQuery(queries: readonly string[], teammates: readonly Teammate[]): Teammate[] {
+  const found: Teammate[] = []
+  const seen = new Set<string>()
+  for (const raw of queries) {
+    const q = raw.trim().replace(/^@+/, '').toLowerCase()
+    if (!q) continue
+    const hit =
+      teammates.find((t) => t.email.toLowerCase() === q || t.accountId.toLowerCase() === q) ??
+      teammates.find((t) => (t.email.split('@')[0] ?? '').toLowerCase() === q) ??
+      teammates.find((t) => t.email.toLowerCase().includes(q) || teammateInitials(t.email).toLowerCase() === q)
+    if (hit && !seen.has(hit.accountId)) {
+      seen.add(hit.accountId)
+      found.push(hit)
+    }
+  }
+  return found
+}
+
+export type CentralShareCommand =
+  | { kind: 'refuse_central'; message: string }
+  | { kind: 'share_room'; loop: Loop; teammates: Teammate[]; rawEmails: string[] }
+
+export const CENTRAL_SHARE_REFUSAL =
+  'Central cannot be shared. You can add teammates to any room (like room_1) or share a workspace tab.'
+
+/**
+ * Parses a direct Central command to share a room or add a teammate to a room (or detects an attempt
+ * to share Central itself and returns `refuse_central`). Returns `null` when `input` is not a direct
+ * share/add-teammate command.
+ */
+export function parseCentralShareCommand(
+  input: string,
+  loops: readonly Loop[],
+  teammates: readonly Teammate[],
+): CentralShareCommand | null {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+
+  if (/\b(?:share\s+central\b|(?:add|invite)\s+@?[^\s]+\s+(?:to|into|in)\s+central\b)/i.test(trimmed)) {
+    return { kind: 'refuse_central', message: CENTRAL_SHARE_REFUSAL }
+  }
+
+  // Pattern 1: "add @teammate to room 1" / "share @teammate in Room 2"
+  const addMatch = /^(?:please\s+)?(?:add|share|invite)\s+(.+?)\s+(?:to|into|in|with)\s+(.+?)[.!?]*$/i.exec(trimmed)
+  if (addMatch) {
+    const left = addMatch[1]!.trim()
+    const right = addMatch[2]!.trim()
+
+    // Check if `right` names a room (e.g. "add @bob to room 1")
+    const roomRight = named(loops, right)
+    if (roomRight) {
+      const tokens = left
+        .split(/[\s,]+/)
+        .map((t) => t.trim())
+        .filter((t) => t && t.toLowerCase() !== 'and')
+      const matched = resolveTeammatesByQuery(tokens, teammates)
+      const rawEmails = tokens.map((t) => t.replace(/^@+/, '')).filter((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t))
+      if (matched.length > 0 || rawEmails.length > 0) {
+        return { kind: 'share_room', loop: roomRight, teammates: matched, rawEmails }
+      }
+    }
+
+    // Check if `left` names a room (e.g. "share room 1 with @bob")
+    const roomLeft = named(loops, left)
+    if (roomLeft) {
+      const tokens = right
+        .split(/[\s,]+/)
+        .map((t) => t.trim())
+        .filter((t) => t && t.toLowerCase() !== 'and')
+      const matched = resolveTeammatesByQuery(tokens, teammates)
+      const rawEmails = tokens.map((t) => t.replace(/^@+/, '')).filter((t) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t))
+      if (matched.length > 0 || rawEmails.length > 0) {
+        return { kind: 'share_room', loop: roomLeft, teammates: matched, rawEmails }
+      }
+    }
+  }
+
+  return null
 }
 
 /** Builds a portable snapshot of a single Room (`Loop`, frame, child elements, panels, exchanges, datasets, bundles). */
