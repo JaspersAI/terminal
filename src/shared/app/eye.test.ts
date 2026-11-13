@@ -297,6 +297,66 @@ test('frames are triggered by state changes, assistant messages, chart zoom/lege
   assert.equal(captureTrigger({ kind: 'change', run: 't_run' }, { focused: false, taskRuns }), null)
   assert.equal(captureTrigger({ kind: 'run-end', run: 't_run' }, { focused: false, taskRuns }), null)
   assert.equal(captureTrigger({ kind: 'run', name: 'task', run: 't_run' }, { focused: true, taskRuns }), 'run')
+
+  // Non-visual state changes (panel text/summary, loop lastActiveAt, off-screen workspace tabs, or unfocused task state) do not wake screenshots.
+  const visibleWorkspaces = new Set(['ws-active'])
+  assert.equal(
+    captureTrigger(
+      {
+        kind: 'change',
+        data: {
+          ops: [
+            { op: 'replace', path: '/grids/ws-active/1/panels/2/text', value: 'transcript' },
+            { op: 'replace', path: '/grids/ws-active/1/panels/2/summary', value: 'summary' },
+            { op: 'replace', path: '/loops/ws-active/0/lastActiveAt', value: 123 },
+          ],
+        },
+      },
+      { focused: true, visibleWorkspaces },
+    ),
+    null,
+  )
+  assert.equal(
+    captureTrigger(
+      {
+        kind: 'change',
+        data: {
+          ops: [
+            { op: 'replace', path: '/grids/ws-hidden/1/panels/0/output/price', value: 100 },
+            { op: 'replace', path: '/loops/ws-hidden/0/desc', value: 'updated' },
+          ],
+        },
+      },
+      { focused: true, visibleWorkspaces },
+    ),
+    null,
+  )
+  assert.equal(
+    captureTrigger(
+      {
+        kind: 'change',
+        data: { ops: [{ op: 'replace', path: '/tasks/0/running', value: true }] },
+      },
+      { focused: false, visibleWorkspaces },
+    ),
+    null,
+  )
+  // Visual changes on an active workspace still trigger frame capture.
+  assert.equal(
+    captureTrigger(
+      {
+        kind: 'change',
+        data: {
+          ops: [
+            { op: 'replace', path: '/grids/ws-active/1/panels/2/text', value: 'transcript' },
+            { op: 'replace', path: '/grids/ws-active/1/panels/2/output/price', value: 101 },
+          ],
+        },
+      },
+      { focused: true, visibleWorkspaces },
+    ),
+    'change',
+  )
 })
 
 test('coalesced frame triggers keep the highest-priority reason and wait for both settle and cooldown', () => {

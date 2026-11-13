@@ -112,6 +112,7 @@ function switched(on: boolean): void {
   timer = null
   clearCaptureTimer()
   stopMetrics()
+  lastFrames.clear()
   tree = null
 }
 
@@ -361,6 +362,19 @@ export function record(event: EyeEvent): void {
   write(event)
 }
 
+function visibleWorkspaces(state: MainState): ReadonlySet<string> {
+  const open = new Set(openWindows().map((w) => w.number))
+  const visible = new Set<string>()
+  if (open.has(1) && state.currentWorkspaceId) visible.add(state.currentWorkspaceId)
+  for (const ws of state.workspaces) {
+    if (ws.window !== undefined && ws.window > 1 && open.has(ws.window)) {
+      visible.add(ws.id)
+    }
+  }
+  if (visible.size === 0 && state.currentWorkspaceId) visible.add(state.currentWorkspaceId)
+  return visible
+}
+
 /** Writes a line whatever the setting, masked and capped. Answers whether its data was too big to keep. */
 function write(event: EyeEvent): boolean {
   const { text, dropped } = eyeLine({ ...event, at: event.at ?? Date.now() }, masking())
@@ -375,11 +389,18 @@ function write(event: EyeEvent): boolean {
     inFlight++
     if (event.name === 'task' && event.run) taskRuns.add(event.run)
   }
-  const why = getState().eye.recording ? captureTrigger(event, { focused: anyInFront(), taskRuns }) : null
+  const state = getState()
+  const why = state.eye.recording
+    ? captureTrigger(event, {
+        focused: anyInFront(),
+        taskRuns,
+        visibleWorkspaces: visibleWorkspaces(state),
+      })
+    : null
   if (event.kind === 'run-end') {
     inFlight = Math.max(0, inFlight - 1)
     if (event.run) taskRuns.delete(event.run)
-    update((state) => ({ ...state, eye: { ...state.eye, runs: state.eye.runs + 1 } }))
+    update((current) => ({ ...current, eye: { ...current.eye, runs: current.eye.runs + 1 } }))
   }
   if (why !== null) scheduleCapture(why)
   for (const listener of recorded) listener()
