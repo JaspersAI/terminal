@@ -14,6 +14,8 @@ import type { Eye } from './app/eye'
 import type { JaspersSignIn } from './app/jaspers'
 import type { ProMode } from './app/pro-mode'
 import type { UpdateInfo } from './app/updates'
+import type { CollabState } from './collab/collab'
+export type { CollabShareInfo, CollabState, ShareMember, Teammate, TeammateInvite } from './collab/collab'
 
 export type ProviderKind = 'llm' | 'voice' | 'search'
 
@@ -35,6 +37,8 @@ export interface Workspace {
   color?: string | null
   /** Optional window number (> 1) when detached into a "Terminal (copy)" window. */
   window?: number
+  /** Collaboration share id when this workspace tab is shared live with teammates. */
+  shareId?: string
 }
 
 /** Names are trimmed and capped. Main rejects anything else. */
@@ -282,6 +286,8 @@ export interface AppState {
   eye: Eye
   /** The sign-in with Jaspers: whether, and as whom. Its tokens stay in main. */
   jaspers: JaspersSignIn
+  /** Teammates, invitations, and live shared rooms and workspace tabs. */
+  collab?: CollabState
 }
 
 /**
@@ -460,3 +466,11 @@ export type Action =
    * and those windows close. Refused, with what is in the way named, when something cannot be moved.
    */
   | { type: 'window.oneScreen' }
+  | { type: 'collab.invite'; email: string }
+  | { type: 'collab.accept'; invite: string }
+  | { type: 'collab.decline'; invite: string }
+  | { type: 'collab.removeTeammate'; accountId: string }
+  | { type: 'room.share'; workspaceId: string; room: string; memberAccountIds: string[] }
+  | { type: 'room.unshare'; workspaceId: string; room: string }
+  | { type: 'tab.share'; id: string; memberAccountIds: string[] }
+  | { type: 'tab.unshare'; id: string }
