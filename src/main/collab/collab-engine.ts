@@ -84,7 +84,7 @@ export interface CollabEngineDeps<S extends CollabEngineState = CollabEngineStat
   getState(): S
   update(mutate: (state: S) => S): void
   api: CollabApi
-  exportDatasets(workspaceId: string): SyncedDataset[]
+  exportDatasets(workspaceId: string, allowedPlugins?: ReadonlySet<string>): SyncedDataset[]
   hydrateDataset(ds: SyncedDataset, workspaceId?: string): void
   exportBundles(pluginIds: Iterable<string>): SyncedPluginBundle[]
   registerBundle(bundle: SyncedPluginBundle): void
@@ -210,15 +210,34 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         deps.hydrateDataset(ds, targetTabId)
       }
 
-      let mappedLoopId = roomSnap.loop.id
+      const preLoops = state.loops[targetTabId] ?? NO_LOOPS
+      const preExisting =
+        preLoops.list.find((l) => l.shareId === info.shareId) ??
+        (info.isOwner ? preLoops.list.find((l) => l.id === roomSnap.loop.id && !l.shareId) : undefined)
+      const predictedLoopId =
+        preExisting?.id ??
+        (preLoops.list.some((l) => l.id === roomSnap.loop.id)
+          ? `f${Math.max(preLoops.seq, globalSeq(state.loops)) + 1}`
+          : roomSnap.loop.id)
+
+      if (Array.isArray(roomSnap.exchanges)) {
+        await deps.writeRoomExchanges(loopChat(targetTabId, preExisting ?? predictedLoopId), roomSnap.exchanges)
+      }
+
       gate.withRemoteApply(info.shareId, info.revision, () => {
         deps.update((s) => {
           const tabGrids = s.grids[targetTabId] ?? {}
           const tabLoops = s.loops[targetTabId] ?? NO_LOOPS
-          const applied = applyRoomSnapshot(tabGrids, tabLoops, info.shareId, roomSnap, globalSeq(s.loops))
-          mappedLoopId = applied.loopId
+          const applied = applyRoomSnapshot(
+            tabGrids,
+            tabLoops,
+            info.shareId,
+            roomSnap,
+            globalSeq(s.loops),
+            info.isOwner,
+          )
           const prevShares = s.collab?.shares ?? []
-          const localInfo: CollabShareInfo = { ...info, localId: `${targetTabId}/${mappedLoopId}` }
+          const localInfo: CollabShareInfo = { ...info, localId: `${targetTabId}/${applied.loopId}` }
           const nextShares = prevShares.some((sh) => sh.shareId === info.shareId)
             ? prevShares.map((sh) => (sh.shareId === info.shareId ? localInfo : sh))
             : [...prevShares, localInfo]
@@ -230,23 +249,33 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           }
         })
       })
-
-      if (Array.isArray(roomSnap.exchanges)) {
-        const record = deps.getState().loops[targetTabId]?.list.find((l) => l.id === mappedLoopId)
-        await deps.writeRoomExchanges(loopChat(targetTabId, record ?? mappedLoopId), roomSnap.exchanges)
-      }
       return
     }
 
     if (info.kind === 'workspace' && snapshot.kind === 'workspace') {
       const wsSnap = snapshot as unknown as SharedWorkspaceSnapshot
-      let mappedWorkspaceId = wsSnap.workspace.id
+      const state = deps.getState()
+      const preExisting =
+        state.workspaces.find((w) => w.shareId === info.shareId) ??
+        (info.isOwner ? state.workspaces.find((w) => w.id === wsSnap.workspace.id && !w.shareId) : undefined)
+      const predictedWorkspaceId = preExisting?.id ?? `shared-${info.shareId}`
+
+      for (const ds of Array.isArray(wsSnap.datasets) ? wsSnap.datasets : []) {
+        deps.hydrateDataset(ds, predictedWorkspaceId)
+      }
+      if (isRecord(wsSnap.exchangesByLoop)) {
+        for (const [loopId, exList] of Object.entries(wsSnap.exchangesByLoop)) {
+          if (Array.isArray(exList)) {
+            await deps.writeRoomExchanges(`${predictedWorkspaceId}/${loopId}`, exList as Exchange[])
+          }
+        }
+      }
+
       gate.withRemoteApply(info.shareId, info.revision, () => {
         deps.update((s) => {
-          const applied = applyWorkspaceSnapshot(s, info.shareId, wsSnap)
-          mappedWorkspaceId = applied.workspaceId
+          const applied = applyWorkspaceSnapshot(s, info.shareId, wsSnap, info.isOwner)
           const prevShares = s.collab?.shares ?? []
-          const localInfo: CollabShareInfo = { ...info, localId: mappedWorkspaceId }
+          const localInfo: CollabShareInfo = { ...info, localId: applied.workspaceId }
           const nextShares = prevShares.some((sh) => sh.shareId === info.shareId)
             ? prevShares.map((sh) => (sh.shareId === info.shareId ? localInfo : sh))
             : [...prevShares, localInfo]
@@ -259,16 +288,6 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           }
         })
       })
-      for (const ds of Array.isArray(wsSnap.datasets) ? wsSnap.datasets : []) {
-        deps.hydrateDataset(ds, mappedWorkspaceId)
-      }
-      if (isRecord(wsSnap.exchangesByLoop)) {
-        for (const [loopId, exList] of Object.entries(wsSnap.exchangesByLoop)) {
-          if (Array.isArray(exList)) {
-            await deps.writeRoomExchanges(`${mappedWorkspaceId}/${loopId}`, exList as Exchange[])
-          }
-        }
-      }
     }
   }
 
@@ -285,8 +304,9 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     if (!loop) return null
     const chat = loopChat(workspaceId, loop)
     const exchanges = await deps.readRoomExchanges(chat)
-    const datasets = deps.exportDatasets(workspaceId)
-    const bundles = deps.exportBundles(collectRoomPlugins(grids, loops, loopId))
+    const roomPlugins = collectRoomPlugins(grids, loops, loopId)
+    const datasets = deps.exportDatasets(workspaceId, roomPlugins)
+    const bundles = deps.exportBundles(roomPlugins)
     const snapshot = buildRoomSnapshot(grids, loops, loopId, { exchanges, datasets, bundles })
     if (!snapshot) return null
 
@@ -301,7 +321,6 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     })
     const info = mapShareInfo(res.share, state.collab?.accountId ?? null, state.jaspers.email)
     if (!info) return null
-    gate.recordLocalPush(info.shareId, info.revision)
     const localInfo: CollabShareInfo = { ...info, localId: `${workspaceId}/${loopId}` }
 
     gate.withRemoteApply(info.shareId, info.revision, () => {
@@ -336,8 +355,9 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     for (const loop of loops.list) {
       exchangesByLoop[loop.id] = await deps.readRoomExchanges(loopChat(workspaceId, loop))
     }
-    const datasets = deps.exportDatasets(workspaceId)
-    const bundles = deps.exportBundles(collectWorkspacePlugins(grids, loops))
+    const wsPlugins = collectWorkspacePlugins(grids, loops)
+    const datasets = deps.exportDatasets(workspaceId, wsPlugins)
+    const bundles = deps.exportBundles(wsPlugins)
     const snapshot = buildWorkspaceSnapshot(workspace, grids, loops, {
       exchangesByLoop,
       datasets,
@@ -354,7 +374,6 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     })
     const info = mapShareInfo(res.share, state.collab?.accountId ?? null, state.jaspers.email)
     if (!info) return null
-    gate.recordLocalPush(info.shareId, info.revision)
     const localInfo: CollabShareInfo = { ...info, localId: workspaceId }
 
     gate.withRemoteApply(info.shareId, info.revision, () => {
@@ -386,33 +405,49 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       try {
         const state = deps.getState()
         const share = state.collab?.shares.find((s) => s.shareId === shareId)
+        if (!share || !share.isOwner) {
+          await deps.api.completeCommand(commandId, { error: 'Not the share owner.' })
+          continue
+        }
         let workspaceId = state.currentWorkspaceId
         let loopId = typeof payload.loopId === 'string' ? payload.loopId : ''
-        if (share?.kind === 'room') {
+        if (share.kind === 'room') {
           const [wId, lId] = share.localId.split('/')
           if (wId) workspaceId = wId
           if (lId) loopId = lId
-        } else if (share?.kind === 'workspace') {
+        } else if (share.kind === 'workspace') {
           workspaceId = share.localId
         }
+        const grids = state.grids[workspaceId] ?? {}
+        const loops = state.loops[workspaceId] ?? NO_LOOPS
+        const allowedPlugins =
+          share.kind === 'room' ? collectRoomPlugins(grids, loops, loopId) : collectWorkspacePlugins(grids, loops)
 
         if (kind === 'prompt') {
           const input = typeof payload.input === 'string' ? payload.input : ''
           const reply = await deps.runRoomPrompt(workspaceId, loopId, input)
-          if (share?.kind === 'room') await pushRoomShareSnapshot(workspaceId, loopId, undefined, shareId)
-          else if (share?.kind === 'workspace') await pushWorkspaceShareSnapshot(workspaceId, undefined, shareId)
+          if (share.kind === 'room') await pushRoomShareSnapshot(workspaceId, loopId, undefined, shareId)
+          else if (share.kind === 'workspace') await pushWorkspaceShareSnapshot(workspaceId, undefined, shareId)
           await deps.api.completeCommand(commandId, { result: { reply } })
         } else if (kind === 'refresh') {
           const panelId = typeof payload.panelId === 'string' ? payload.panelId : ''
-          if (panelId) deps.refreshPanel(workspaceId, panelId)
-          if (share?.kind === 'room' && loopId) await pushRoomShareSnapshot(workspaceId, loopId, undefined, shareId)
-          else if (share?.kind === 'workspace') await pushWorkspaceShareSnapshot(workspaceId, undefined, shareId)
+          const targetId = panelId || loopId
+          if (targetId) deps.refreshPanel(workspaceId, targetId)
+          if (share.kind === 'room' && loopId) await pushRoomShareSnapshot(workspaceId, loopId, undefined, shareId)
+          else if (share.kind === 'workspace') await pushWorkspaceShareSnapshot(workspaceId, undefined, shareId)
           await deps.api.completeCommand(commandId, { result: { refreshed: true } })
         } else if (kind === 'source') {
           const source = typeof payload.source === 'string' ? payload.source : ''
+          const plugin = source.split('/')[0] ?? ''
+          if (plugin && plugin !== 'core' && !allowedPlugins.has(plugin)) {
+            await deps.api.completeCommand(commandId, {
+              error: `Source ${source} is not enabled in this shared space.`,
+            })
+            continue
+          }
           const run = await deps.runSource(source, payload.args, workspaceId)
-          if (share?.kind === 'room' && loopId) await pushRoomShareSnapshot(workspaceId, loopId, undefined, shareId)
-          else if (share?.kind === 'workspace') await pushWorkspaceShareSnapshot(workspaceId, undefined, shareId)
+          if (share.kind === 'room' && loopId) await pushRoomShareSnapshot(workspaceId, loopId, undefined, shareId)
+          else if (share.kind === 'workspace') await pushWorkspaceShareSnapshot(workspaceId, undefined, shareId)
           await deps.api.completeCommand(commandId, { result: { run } })
         } else {
           await deps.api.completeCommand(commandId, { error: `Unknown command kind ${kind}.` })
@@ -445,20 +480,46 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       }))
       const outgoingInvites = data.outgoing_invites.flatMap((raw) => mapInvite(raw) ?? [])
       const incomingInvites = data.incoming_invites.flatMap((raw) => mapInvite(raw) ?? [])
-      const shares = data.shares.flatMap((raw) => mapShareInfo(raw, myAccountId, myEmail) ?? [])
+      const prevLocalIds = new Map((current.collab?.shares ?? []).map((s) => [s.shareId, s.localId]))
+      const shares = data.shares.flatMap((raw) => {
+        const mapped = mapShareInfo(raw, myAccountId, myEmail)
+        if (!mapped) return []
+        const keptLocalId = prevLocalIds.get(mapped.shareId)
+        return [keptLocalId ? { ...mapped, localId: keptLocalId } : mapped]
+      })
+      const activeShareIds = new Set(shares.map((s) => s.shareId))
 
-      deps.update((s) => ({
-        ...s,
-        collab: {
-          ...(s.collab ?? EMPTY_COLLAB),
-          connected: true,
-          teammates,
-          outgoingInvites,
-          incomingInvites,
-          shares,
-          error: null,
-        },
-      }))
+      deps.update((s) => {
+        const nextLoops: Record<string, Loops> = {}
+        for (const [tabId, tabLoops] of Object.entries(s.loops)) {
+          nextLoops[tabId] = {
+            ...tabLoops,
+            list: tabLoops.list.map((l) => {
+              if (!l.shareId || activeShareIds.has(l.shareId)) return l
+              const { shareId: _gone, ...rest } = l
+              return rest
+            }),
+          }
+        }
+        return {
+          ...s,
+          workspaces: s.workspaces.map((w) => {
+            if (!w.shareId || activeShareIds.has(w.shareId)) return w
+            const { shareId: _gone, ...rest } = w
+            return rest
+          }),
+          loops: nextLoops,
+          collab: {
+            ...(s.collab ?? EMPTY_COLLAB),
+            connected: true,
+            teammates,
+            outgoingInvites,
+            incomingInvites,
+            shares,
+            error: null,
+          },
+        }
+      })
 
       for (const rawShare of data.shares) {
         await applyRemoteShare(rawShare)
@@ -608,6 +669,41 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         }
       }
       return false
+    },
+
+    async runSponsoredSource(workspaceId: string, source: string, args: unknown, _fresh?: boolean): Promise<unknown> {
+      const state = deps.getState()
+      const ws = state.workspaces.find((w) => w.id === workspaceId)
+      const wsSponsored = isSponsoredWorkspace(state.collab ?? EMPTY_COLLAB, workspaceId, ws?.shareId)
+      let targetShare = wsSponsored.sponsored ? wsSponsored.share : null
+      if (!targetShare) {
+        const plugin = source.split('/')[0] ?? ''
+        for (const loop of state.loops[workspaceId]?.list ?? []) {
+          const roomSponsored = isSponsoredRoom(
+            state.collab ?? EMPTY_COLLAB,
+            workspaceId,
+            loop.id,
+            loop.shareId,
+            ws?.shareId,
+          )
+          if (roomSponsored.sponsored && roomSponsored.share && (!plugin || loop.plugins.includes(plugin))) {
+            targetShare = roomSponsored.share
+            break
+          }
+        }
+      }
+      if (!targetShare) return null
+      const res = await deps.api.enqueueCommand(targetShare.shareId, {
+        kind: 'source',
+        payload: { source, args },
+        wait: true,
+      })
+      await this.refreshState()
+      if (typeof res.command.error === 'string' && res.command.error) {
+        throw new Error(res.command.error)
+      }
+      const result = isRecord(res.command.result) ? res.command.result : {}
+      return result.run ?? null
     },
   }
 }
