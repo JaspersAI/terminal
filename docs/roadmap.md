@@ -5,7 +5,7 @@ Features land one at a time, as they are needed. Nothing here is scheduled. Belo
 ## Implemented capabilities
 
 - **Custom screeners:** Quantitative factor screens and qualitative SEC filing screens via **Jaspers Discover** (`jaspers/screener-mcp` on [Jaspers Hub](https://hub.jsprai.com)) and SQL/plugin queries over `~/Jaspers/data/jaspers.db`, paired with NYSE market-calendar scheduled refreshes and SQLite delta watches ([Skills](skills.md)).
-- **Analyst rooms:** Concurrent numbered Grid Loops (`loop_1`, `loop_2`, …) and plugin-hosted model loops (`capabilities: ["llm", "skills"]`, such as **Jaspers Research**) running separate agents on the grid for valuation, credit, accounting, industry research, risks, and fact-checking, each with its own conversation thread, views, and [Agent Skills](skills.md#skills-in-a-plugin).
+- **Analyst rooms:** Concurrent numbered Grid Rooms (`room_1`, `room_2`, …) and plugin-hosted model loops (`capabilities: ["llm", "skills"]`, such as **the Research Agents** and **Jaspers Research**) running separate agents on the grid for valuation, credit, accounting, industry research, risks, and fact-checking, each with its own conversation thread, views, and [Agent Skills](skills.md#skills-in-a-plugin).
 - **Excel export and grid formulas:** Empty grid cells evaluate Excel formulas (`NPV`, `IRR`, `PV`, `FV`, `PMT`, `INDEX`, `MATCH`, `VLOOKUP`, `SUMIF`, and arrow-key cell/range pointing) on the grid, while document-producing plugins (`files` capability, see [`docs/templates/document/`](templates/README.md)) and [Pro mode](pro-mode.md) scripts export tables and `.xlsx` workbooks to disk.
 
 ## Research and data plugins
@@ -32,6 +32,6 @@ Features land one at a time, as they are needed. Nothing here is scheduled. Belo
 
 ## Collaboration features
 
-- **Analyst rooms:** specialized agents for **valuation, credit, accounting, industry research, risks, and fact-checking** run concurrently in numbered Grid Loops and skill-driven research plugins; shared multi-user rooms across machines are planned.
+- **Analyst rooms:** specialized agents for **valuation, credit, accounting, industry research, risks, and fact-checking** run concurrently in numbered Grid Rooms and skill-driven research plugins; shared multi-user rooms across machines are planned.
 - Automatic **source citation, contradiction detection, and model-to-filing tie-outs**. The chat already shows the sources a reply cites, when a server gives its quotes as [citations](connections-and-data.md#citations-in-the-chat); citing on its own, from any source, is still to come.
 - **Export:** Excel export (`.xlsx` workbooks via document plugins and Pro mode, alongside Excel formulas on the grid) and Markdown/PDF investment memos are implemented; native PowerPoint export and direct portfolio-management system integrations are planned.
