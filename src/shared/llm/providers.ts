@@ -19,6 +19,12 @@ export interface Provider<Api extends string = string> {
   baseUrl: string
   /** Default model, editable by the user like the base URL. Empty means the user has to supply one. */
   model: string
+  /**
+   * A language model provider's small, quick model, which the global box runs on in place of `model`
+   * (`shared/agent/model.ts`); editable by the user like the model. Left out, the provider has none
+   * and everything runs on `model`.
+   */
+  fastModel?: string
   /** Where to create an API key. Opened in the system browser. */
   keyUrl?: string
   /** Keys from this provider start with this. Used to warn about a likely paste mistake, never to block. */
@@ -31,6 +37,8 @@ export interface Provider<Api extends string = string> {
  * models on Vertex AI (`gemini-3.8-flash` and `gemini-4-argon`) for language models and OpenRouter
  * for voice and search, in OpenAI's shapes. The server is the jaspers-account repo; the base URL here
  * is the public gateway, and main follows Account's address instead when the environment names another.
+ * Jaspers picks the model, not the app: a request that names `fast` runs on the account's fast
+ * model, and one that names anything else on its model.
  */
 export const JASPERS = 'jaspers'
 const JASPERS_URL = gatewayUrl(JASPERS_ACCOUNT)
@@ -49,6 +57,7 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       api: 'openai',
       baseUrl: JASPERS_URL,
       model: 'gemini-4-argon',
+      fastModel: 'fast',
       tokenRequired: true,
     },
     {
@@ -58,6 +67,7 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       api: 'anthropic',
       baseUrl: 'https://api.anthropic.com',
       model: 'claude-opus-5',
+      fastModel: 'claude-haiku-5-5',
       keyUrl: 'https://console.anthropic.com/settings/keys',
       tokenPrefix: 'sk-ant-',
       tokenRequired: true,
@@ -79,6 +89,7 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       api: 'openai-responses',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-5.4',
+      fastModel: 'gpt-5.4-mini',
       keyUrl: 'https://platform.openai.com/api-keys',
       tokenPrefix: 'sk-',
       tokenRequired: true,
@@ -90,6 +101,8 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       api: 'openai',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
       model: 'gemini-3.8-flash',
+      // The same model: what is quick about it in the global box is that it thinks less there.
+      fastModel: 'gemini-3.8-flash',
       keyUrl: 'https://aistudio.google.com/apikey',
       tokenPrefix: 'AIza',
       tokenRequired: true,
@@ -101,6 +114,7 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       api: 'openai',
       baseUrl: 'https://openrouter.ai/api/v1',
       model: 'anthropic/claude-opus-5.5',
+      fastModel: 'anthropic/claude-haiku-5.5',
       keyUrl: 'https://openrouter.ai/keys',
       tokenPrefix: 'sk-or-',
       tokenRequired: true,
@@ -256,11 +270,19 @@ export function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }
 
-/** The base URL and model a form shows for a provider: what is saved when it is the saved provider, else its defaults. Jaspers always uses its own. */
-export function providerFields(saved: ProviderSetting | null, provider: Provider): { baseUrl: string; model: string } {
-  if (signsIn(provider)) return { baseUrl: provider.baseUrl, model: provider.model }
-  if (saved?.providerId === provider.id) return { baseUrl: saved.baseUrl, model: saved.model }
-  return { baseUrl: provider.baseUrl, model: provider.model }
+/**
+ * The base URL and models a form shows for a provider: what is saved when it is the saved provider,
+ * else its defaults. Jaspers always uses its own. A provider saved before there was a fast model has
+ * none: it runs as it did until its user names one.
+ */
+export function providerFields(
+  saved: ProviderSetting | null,
+  provider: Provider,
+): { baseUrl: string; model: string; fastModel: string } {
+  if (!signsIn(provider) && saved?.providerId === provider.id) {
+    return { baseUrl: saved.baseUrl, model: saved.model, fastModel: saved.fastModel ?? '' }
+  }
+  return { baseUrl: provider.baseUrl, model: provider.model, fastModel: provider.fastModel ?? '' }
 }
 
 /** A provider as main stores it: the token sealed, or none. */
@@ -337,7 +359,10 @@ export function providerChanged(saved: ProviderSetting | null, input: ProviderIn
   if (saved?.providerId !== input.providerId) return true
   if (input.providerId === JASPERS) return false
   return (
-    normalizeBaseUrl(input.baseUrl) !== saved.baseUrl || input.model.trim() !== saved.model || input.token.trim() !== ''
+    normalizeBaseUrl(input.baseUrl) !== saved.baseUrl ||
+    input.model.trim() !== saved.model ||
+    (input.fastModel ?? '').trim() !== (saved.fastModel ?? '') ||
+    input.token.trim() !== ''
   )
 }
 

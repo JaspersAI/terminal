@@ -130,10 +130,20 @@ function providerChange(input: Record<string, unknown>, now: SettingsNow): Setti
     ? provider.baseUrl
     : (optionalWords(input.base_url) ?? (same ? current.baseUrl : provider.baseUrl))
   if (!baseUrl) throw new Error(`${provider.name} needs base_url: it has no address of its own.`)
-  const label = model && takesModel(which, provider) ? `${provider.name}, ${model}` : provider.name
+  // The fast model goes with the provider, not with the model named here: what is saved for the
+  // same provider, the default on another. Jaspers picks its own, and a voice or a search has none.
+  const fastModel =
+    which !== 'llm' || signsIn(provider) ? '' : same ? (current.fastModel ?? '') : (provider.fastModel ?? '')
+  const named = model && takesModel(which, provider) ? `${provider.name}, ${model}` : provider.name
+  // A provider switched to brings a fast model its user did not name, so the question names it.
+  const label = fastModel && !same ? `${named} (fast model ${fastModel})` : named
   const starts = which === 'llm' ? ' The conversation goes on with it from the next request.' : ''
   return {
-    action: { type: 'provider.set', kind: which, input: { providerId: provider.id, baseUrl, model, token: '' } },
+    action: {
+      type: 'provider.set',
+      kind: which,
+      input: { providerId: provider.id, baseUrl, model, ...(fastModel ? { fastModel } : {}), token: '' },
+    },
     confirm: `Switch the ${KIND_NAME[which]} to ${label}?${starts}`,
     done: `The ${KIND_NAME[which]} is now ${label}.${starts}`,
   }

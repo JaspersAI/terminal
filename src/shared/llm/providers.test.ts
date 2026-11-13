@@ -24,9 +24,21 @@ const OLLAMA = findProvider('llm', 'ollama')!
 const ANTHROPIC = findProvider('llm', 'anthropic')!
 
 test('a form shows what is saved for the saved provider, and the defaults for any other, while Jaspers always keeps its own defaults', () => {
-  assert.deepEqual(providerFields(SAVED, OLLAMA), { baseUrl: 'http://gpu-box:11434/v1', model: 'qwen3' })
-  assert.deepEqual(providerFields(SAVED, ANTHROPIC), { baseUrl: 'https://api.anthropic.com', model: 'claude-opus-5' })
-  assert.deepEqual(providerFields(null, OLLAMA), { baseUrl: 'http://localhost:11434/v1', model: 'llama3.2' })
+  assert.deepEqual(providerFields(SAVED, OLLAMA), {
+    baseUrl: 'http://gpu-box:11434/v1',
+    model: 'qwen3',
+    fastModel: '',
+  })
+  assert.deepEqual(providerFields(SAVED, ANTHROPIC), {
+    baseUrl: 'https://api.anthropic.com',
+    model: 'claude-opus-5',
+    fastModel: 'claude-haiku-5-5',
+  })
+  assert.deepEqual(providerFields(null, OLLAMA), {
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'llama3.2',
+    fastModel: '',
+  })
   const jaspers = findProvider('llm', 'jaspers')!
   const staleJaspers: ProviderSetting = {
     providerId: 'jaspers',
@@ -37,7 +49,43 @@ test('a form shows what is saved for the saved provider, and the defaults for an
   assert.deepEqual(providerFields(staleJaspers, jaspers), {
     baseUrl: 'https://account.jsprai.com/v1',
     model: 'gemini-4-argon',
+    fastModel: 'fast',
   })
+})
+
+test('a form shows the saved fast model for the saved provider, the default for any other, and none where none was saved', () => {
+  const saved: ProviderSetting = { ...SAVED, providerId: 'anthropic', fastModel: 'my-fast' }
+  assert.equal(providerFields(saved, ANTHROPIC).fastModel, 'my-fast')
+  assert.equal(providerFields(saved, OLLAMA).fastModel, '')
+  // One saved before there was a fast model has none, and is not handed the default behind its user's back.
+  assert.equal(providerFields({ ...SAVED, providerId: 'anthropic' }, ANTHROPIC).fastModel, '')
+  assert.equal(providerFields(null, ANTHROPIC).fastModel, 'claude-haiku-5-5')
+  assert.equal(providerFields(saved, findProvider('llm', 'openai')!).fastModel, 'gpt-5.4-mini')
+  assert.equal(providerFields(saved, findProvider('llm', 'jaspers')!).fastModel, 'fast')
+})
+
+test('a fast model typed in, changed, or cleared is a change to save', () => {
+  const saved: ProviderSetting = { ...SAVED, fastModel: 'small' }
+  const input = { providerId: 'ollama', baseUrl: SAVED.baseUrl, model: SAVED.model, token: '' }
+  assert.equal(providerChanged(saved, { ...input, fastModel: 'small' }), false)
+  assert.equal(providerChanged(saved, { ...input, fastModel: ' small ' }), false)
+  assert.equal(providerChanged(saved, { ...input, fastModel: 'other' }), true)
+  assert.equal(providerChanged(saved, { ...input, fastModel: '' }), true)
+  assert.equal(providerChanged(saved, input), true)
+  assert.equal(providerChanged(SAVED, { ...input, fastModel: 'small' }), true)
+  assert.equal(providerChanged(SAVED, input), false)
+})
+
+test('the providers with a small model of their own name it as their fast model, and the rest name none', () => {
+  const fast = (id: string): string | undefined => findProvider('llm', id)!.fastModel
+  assert.deepEqual(['jaspers', 'anthropic', 'openai', 'google', 'openrouter'].map(fast), [
+    'fast',
+    'claude-haiku-5-5',
+    'gpt-5.4-mini',
+    'gemini-3.8-flash',
+    'anthropic/claude-haiku-5.5',
+  ])
+  for (const id of ['bedrock', 'groq', 'xai', 'ollama', 'custom']) assert.equal(fast(id), undefined, id)
 })
 
 test('a form holds no change while it reads as what main would store, or when Jaspers is already saved', () => {

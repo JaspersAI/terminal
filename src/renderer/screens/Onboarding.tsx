@@ -4,7 +4,7 @@ import type { ProviderKind } from '../../shared/state'
 import { Directory } from '../components/settings/Directory'
 import { useInstall } from '../components/settings/use-install'
 import { errorMessage } from '../lib/errors'
-import { useProviderForm } from '../lib/provider-form'
+import { FAST_MODEL_HINT, useProviderForm } from '../lib/provider-form'
 import * as state from '../lib/state'
 
 interface Step {
@@ -195,12 +195,23 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
               />
               <Field
                 name="model"
-                label="Model"
+                label={step.kind === 'llm' ? 'Thinking model' : 'Model'}
                 type="text"
                 value={form.model}
                 placeholder="model name"
                 onChange={form.setModel}
               />
+              {step.kind === 'llm' && (
+                <Field
+                  name="fastModel"
+                  label="Fast model"
+                  type="text"
+                  value={form.fastModel}
+                  placeholder="none"
+                  hint={FAST_MODEL_HINT}
+                  onChange={form.setFastModel}
+                />
+              )}
               <Field
                 ref={tokenInput}
                 name="token"
@@ -380,12 +391,14 @@ interface FieldProps {
   type: 'text' | 'password'
   value: string
   placeholder: string
+  /** A muted line under the field: what it is for. */
+  hint?: string
   autoFocus?: boolean
   onChange: (value: string) => void
   ref?: Ref<HTMLInputElement>
 }
 
-function Field({ name, label, type, value, placeholder, autoFocus, onChange, ref }: FieldProps): ReactElement {
+function Field({ name, label, type, value, placeholder, hint, autoFocus, onChange, ref }: FieldProps): ReactElement {
   return (
     <label className="block">
       <span className="block text-sm font-medium">{label}</span>
@@ -401,6 +414,7 @@ function Field({ name, label, type, value, placeholder, autoFocus, onChange, ref
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 w-full border border-border bg-background px-3 py-2 font-mono text-sm"
       />
+      {hint && <span className="mt-1 block text-xs text-muted-foreground">{hint}</span>}
     </label>
   )
 }

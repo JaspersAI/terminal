@@ -34,6 +34,8 @@ export interface ProviderConfig<K extends ProviderKind> {
   provider: ProviderFor<K>
   baseUrl: string
   model: string
+  /** A language model's fast model, which the global box runs on. Absent or empty: it has none. */
+  fastModel?: string
   token: string | null
   /** What a request goes out through: as the Jaspers account for the Jaspers provider, plainly for every other. */
   fetch: FetchLike
@@ -45,11 +47,19 @@ export function getProviderConfig<K extends ProviderKind>(kind: K): ProviderConf
   if (!stored || !provider) return null
   // The Jaspers provider's credential is the sign-in, and its address and model follow Account's: the gateway is a service of Account's own.
   if (signsIn(provider))
-    return { provider, baseUrl: gatewayAddress(), model: provider.model, token: null, fetch: asAccount }
+    return {
+      provider,
+      baseUrl: gatewayAddress(),
+      model: provider.model,
+      fastModel: provider.fastModel,
+      token: null,
+      fetch: asAccount,
+    }
   return {
     provider,
     baseUrl: stored.baseUrl,
     model: stored.model,
+    fastModel: stored.fastModel,
     token: stored.token ? unseal(stored.token) : null,
     fetch,
   }
