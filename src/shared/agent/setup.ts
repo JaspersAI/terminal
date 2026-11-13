@@ -23,7 +23,7 @@ export const SETUP_DEFINITION: ToolDefinition = {
         type: 'array',
         items: { type: 'string' },
         description:
-          'The installed plugins it needs, by id. Empty when none fits (such as a local shell, file-download, or web-scraping task, or when its agent will find or build one).',
+          'The installed plugins it needs, by id. Empty when none fits (such as a local shell, file-download, web-scraping, or open-web / private-startup research task, or when its agent will find or build one).',
       },
       skills: {
         type: 'array',
@@ -37,7 +37,7 @@ export const SETUP_DEFINITION: ToolDefinition = {
 
 /** The setup call's system prompt: what it is for, then everything installed. */
 export function setupSystem(catalog: string): string {
-  return `You set up a new piece of work inside Jaspers Terminal, a financial research app. Each piece of work has a tile on the user's grid and an agent of its own, which places the installed plugins' views, calls their sources, and runs web or shell workflows. You are given what the work is and what its agent is to do; choose the installed plugins and skills its agent is told of in full, and answer only by calling ${SETUP_TOOL}. Choose by what each plugin's views and sources do, never by its name alone, and leave plugins empty when the work is a local shell, file-download, or web-scraping task that no installed plugin handles. Do not choose a chart-only plugin when the user asked for a watchlist, screen, or table without charts, even if they asked for technical indicators that a chart view can plot as studies. What is installed:\n\n${catalog}`
+  return `You set up a new piece of work inside Jaspers Terminal, a financial research app. Each piece of work has a tile on the user's grid and an agent of its own, which places the installed plugins' views, calls their sources, and runs web or shell workflows. You are given what the work is and what its agent is to do; choose the installed plugins and skills its agent is told of in full, and answer only by calling ${SETUP_TOOL}. Choose by what each plugin's views and sources do, never by its name alone, and leave plugins empty when the work is a local shell, file-download, web-scraping, or open-web research task (such as profiling a private startup, non-public company, protocol, or web topic using built-in search_web and fetch_page) that no installed plugin handles. Choose research or agents only for SEC-reporting public-company filings or research-store document analysis, never for private startups or general web searches. Do not choose a chart-only plugin when the user asked for a watchlist, screen, or table without charts, even if they asked for technical indicators that a chart view can plot as studies. What is installed:\n\n${catalog}`
 }
 
 /** What the setup call is asked: the work as the orchestrator described it, and the user's own words. */
@@ -62,6 +62,28 @@ export interface SetUp {
  */
 export function setUpOf(input: Record<string, unknown>, plugins: readonly string[], skills: readonly string[]): SetUp {
   return { plugins: idsIn(input.plugins, plugins), skills: idsIn(input.skills, skills) }
+}
+
+/**
+ * Resolves `given` plugins and skills directly without calling the setup model when nothing is
+ * installed, when `given.plugins` names at least one installed plugin, or when `given.plugins` was
+ * explicitly passed as `[]` (such as for a web-research, scraping, or shell room that needs no plugin).
+ * Returns `null` when the setup model should choose the plugins.
+ */
+export function directSetUp(
+  given: { plugins?: unknown[]; skills?: unknown[] } | undefined,
+  plugins: readonly string[],
+  skills: readonly string[],
+): SetUp | null {
+  const direct =
+    given?.plugins !== undefined || given?.skills !== undefined
+      ? setUpOf({ plugins: given.plugins ?? [], skills: given.skills ?? [] }, plugins, skills)
+      : { plugins: [], skills: [] }
+  const explicitEmptyPlugins = Array.isArray(given?.plugins) && given.plugins.length === 0
+  if (direct.plugins.length > 0 || explicitEmptyPlugins || (plugins.length === 0 && skills.length === 0)) {
+    return direct
+  }
+  return null
 }
 
 function idsIn(value: unknown, have: readonly string[]): string[] {

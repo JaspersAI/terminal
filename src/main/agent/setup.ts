@@ -1,6 +1,7 @@
 import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { describeCatalog } from '../../shared/agent/prompt'
 import {
+  directSetUp,
   SETUP_DEFINITION,
   SETUP_EFFORT,
   SETUP_TIMEOUT_MS,
@@ -31,13 +32,12 @@ export async function setUpLoop(
   const state = toPublic(getState())
   const havePlugins = Object.keys(state.plugins)
   const haveSkills = usableSkills(state, 'model').map((one) => one.id)
+  const resolved = directSetUp(given, havePlugins, haveSkills)
+  if (resolved) return resolved
   const direct =
     given?.plugins !== undefined || given?.skills !== undefined
       ? setUpOf({ plugins: given.plugins ?? [], skills: given.skills ?? [] }, havePlugins, haveSkills)
       : { plugins: [], skills: [] }
-  if (direct.plugins.length > 0 || (havePlugins.length === 0 && haveSkills.length === 0)) {
-    return direct
-  }
   const log = (line: string): void => console.log(`[agent] setup ${line}`)
   const controller = new AbortController()
   const stopped = (): void => controller.abort(context.signal?.reason)

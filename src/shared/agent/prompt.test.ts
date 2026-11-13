@@ -1335,3 +1335,15 @@ test('agent prompts instruct Central and room agents to include an "as of YYYY-M
     /- asked: "how old is the summary\?"\n  when: as of 2026-11-\d{2} \d{1,2}(?::\d{2})?(?:am|pm) \S+\n  said: Fresh\./,
   )
 })
+
+test('orchestrator and room rules triage public-company SEC research vs web-based startup or non-SEC searches before opening research/room or agents/chat', () => {
+  assert.match(ROUTER_RULES, /research\/room and agents\/chat are strictly for SEC-reporting public companies/i)
+  assert.match(ROUTER_RULES, /private startups.*never.*research\/room or agents\/chat/i)
+  assert.match(ROUTER_RULES, /search_web and fetch_page/i)
+  for (const rules of [LOOP_RULES, loopRules(false)]) {
+    assert.match(rules, /research\/room and agents\/chat.*SEC-reporting public companies/i)
+    assert.match(rules, /private startup.*search_web and fetch_page/i)
+    assert.match(rules, /never.*research\/room or agents\/chat/i)
+  }
+  assert.match(loopRules(false), /web-based startup or company profile.*full Markdown answer or profile in your reply/i)
+})

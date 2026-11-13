@@ -213,7 +213,7 @@ function createRoomTool(context: ToolContext): Tool {
         brief: {
           type: 'string',
           description:
-            "What its agent is to do, in words written for it. It says what it found in its own conversation, so ask it only for the views the user asked for (or no views when the work is a shell, file-download, or scraping task into ~/Jaspers/shell) — placing and driving a plugin's own view from the start (such as screener-mcp/screener for any stock screen, including ranked or top-N subsets, never a generic core/table in its place), never unrequested chart views alongside a watchlist or table (where indicators belong as numeric columns), never one chart per symbol unless the user asked for separate charts, and never a note or a written summary on the grid.",
+            "What its agent is to do, in words written for it. It says what it found in its own conversation, so ask it only for the views the user asked for (or no views when the work is a web-based private-startup or non-SEC profile, shell, file-download, or scraping task into ~/Jaspers/shell) — placing and driving a plugin's own view from the start (such as screener-mcp/screener for any stock screen, including ranked or top-N subsets, never a generic core/table in its place; and research/room or agents/chat only for SEC-reporting public companies and SEC filings, never for private startups or general web searches, which use search_web and fetch_page), never unrequested chart views alongside a watchlist or table (where indicators belong as numeric columns), never one chart per symbol unless the user asked for separate charts, and never a note or a written summary on the grid.",
         },
         systemPrompt: {
           type: 'string',
@@ -228,7 +228,8 @@ function createRoomTool(context: ToolContext): Tool {
         plugins: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of installed plugin ids to equip the room with.',
+          description:
+            'Optional list of installed plugin ids to equip the room with. Pass [] for web-based startup/non-SEC research, scraping, or shell tasks that use built-in search_web, fetch_page, or run_shell rather than an installed plugin.',
         },
         skills: {
           type: 'array',
