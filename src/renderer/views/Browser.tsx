@@ -20,7 +20,7 @@ import {
   type BrowserTab,
 } from '../../shared/grid/browser'
 import { errorMessage } from '../lib/errors'
-import { dispatch, useAppState } from '../lib/state'
+import { currentWorkspace, dispatch, useAppState } from '../lib/state'
 import { displayAddress, publishedOutput, sameBrowserSnapshot, tabLabel, viewportVisible } from './browser-view'
 import type { ViewProps } from './index'
 
@@ -64,6 +64,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
   const [stateUrl] = usePanelState<string>(panel, 'url', DEFAULT_BROWSER_URL)
   const working = usePanelWorking()
   const refreshedAt = useData(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`)
+  const tabActive = useAppState((s) => currentWorkspace(s).id === panel.workspaceId)
   const updateAvailable = useAppState((s) => (s.updates.status === 'ready' ? s.updates.available : null))
 
   const initialAddress = normalizeBrowserUrl(stateUrl) || DEFAULT_BROWSER_URL
@@ -124,6 +125,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
     const bounds = rectOf(anchor)
     const hasUrl = Boolean(normalizeBrowserUrl(stateUrl) || snapshot.url || DEFAULT_BROWSER_URL)
     const visible =
+      tabActive &&
       hasUrl &&
       inputError === null &&
       viewportVisible({
@@ -144,7 +146,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
           error: errorMessage(err),
         })),
     )
-  }, [panel.workspaceId, panel.id, stateUrl, snapshot.url, refreshedAt, inputError])
+  }, [tabActive, panel.workspaceId, panel.id, stateUrl, snapshot.url, refreshedAt, inputError])
 
   const syncRef = useRef(syncBounds)
   syncRef.current = syncBounds
@@ -155,7 +157,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
 
   useEffect(() => {
     const anchor = viewportRef.current
-    if (!anchor) return
+    if (!anchor || !tabActive) return
     let frameId: number | null = null
     const schedule = (): void => {
       if (frameId !== null) return
@@ -184,10 +186,16 @@ export function Browser({ panel }: ViewProps): ReactElement {
       mutationObserver.disconnect()
       window.removeEventListener('resize', schedule)
       window.removeEventListener('scroll', schedule, true)
+    }
+  }, [tabActive, panel.workspaceId, panel.id])
+
+  useEffect(
+    () => () => {
       lastSyncRef.current = ''
       void window.app.browser.detach(panel.workspaceId, panel.id).catch(() => undefined)
-    }
-  }, [panel.workspaceId, panel.id])
+    },
+    [panel.workspaceId, panel.id],
+  )
 
   function runAction(action: BrowserAction, targetUrl?: string): void {
     setInputError(null)

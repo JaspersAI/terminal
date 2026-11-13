@@ -18,6 +18,7 @@ interface Props {
   elementId: string
   /** A registry id, like core/note. */
   view: string
+  active?: boolean
   focused: boolean
   working?: boolean
   zoom: number
@@ -41,6 +42,7 @@ export function ViewHost({
   panelId,
   elementId,
   view,
+  active = true,
   focused,
   working = false,
   zoom,
@@ -67,6 +69,7 @@ export function ViewHost({
         sandbox={sandbox}
         microphone={plugins[plugin]?.capabilities.includes('microphone') ?? false}
         title={views[view]?.title ?? view}
+        active={active}
         focused={focused}
         working={working}
         zoom={zoom}
@@ -98,6 +101,7 @@ interface FrameProps {
   /** Whether the plugin declared `microphone`, which its views' dictation needs. */
   microphone: boolean
   title: string
+  active: boolean
   focused: boolean
   working: boolean
   zoom: number
@@ -119,6 +123,7 @@ function PluginView({
   sandbox,
   microphone,
   title,
+  active,
   focused,
   working,
   zoom,
@@ -126,6 +131,9 @@ function PluginView({
 }: FrameProps): ReactElement {
   const frame = useRef<HTMLIFrameElement>(null)
   const bridge = useMemo(() => hostBridgeFor(workspaceId), [workspaceId])
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const flushActiveRef = useRef<(() => void) | null>(null)
   const initialWorking = useRef(working)
   const workingNow = useRef(working)
   workingNow.current = working
@@ -139,11 +147,38 @@ function PluginView({
     const iframe = frame.current
     if (!iframe) return
     const subscriptions = new Map<number, () => void>()
+    const deferredSubs = new Map<number, unknown>()
+    let deferredOutput: { panel: { id: string; workspaceId: string }; output: Record<string, unknown> } | null = null
+    let deferredText: { panel: { id: string; workspaceId: string }; text: string | null } | null = null
+    let publishedOutputOnce = false
+    let publishedTextOnce = false
     let nextSub = 1
     // Dictation records here, in the app's window, so the frame gets the words and never the audio.
     const recorder = new Recorder()
 
     const post = (message: unknown): void => iframe.contentWindow?.postMessage(message, '*')
+
+    flushActiveRef.current = () => {
+      for (const [subId, value] of deferredSubs) {
+        if (subscriptions.has(subId)) post({ method: 'store.changed', params: { subId, value } })
+      }
+      deferredSubs.clear()
+      if (deferredOutput) {
+        const pending = deferredOutput
+        deferredOutput = null
+        void bridge.publish(pending.panel, pending.output).catch(() => undefined)
+      }
+      if (deferredText) {
+        const pending = deferredText
+        deferredText = null
+        void bridge.publishText(pending.panel, pending.text).catch(() => undefined)
+      }
+      const box = iframe.getBoundingClientRect()
+      const scale = zoomRef.current
+      if (box.width > 0 || box.height > 0) {
+        post({ method: 'resize', params: { width: box.width / scale, height: box.height / scale } })
+      }
+    }
 
     function onMessage(event: MessageEvent): void {
       // Only this element's own frame. Its origin is opaque, or shared with every frame of its
@@ -183,6 +218,7 @@ function PluginView({
         const subId = Number(params['subId'])
         subscriptions.get(subId)?.()
         subscriptions.delete(subId)
+        deferredSubs.delete(subId)
         post({ id: request.id, result: null })
         return
       }
@@ -205,8 +241,15 @@ function PluginView({
       const held: unknown[] = []
       let replied = false
       const deliver = (value: unknown): void => {
-        if (replied) post({ method: 'store.changed', params: { subId, value } })
-        else held.push(value)
+        if (!replied) {
+          held.push(value)
+          return
+        }
+        if (!activeRef.current) {
+          deferredSubs.set(subId, value)
+          return
+        }
+        post({ method: 'store.changed', params: { subId, value } })
       }
       try {
         const key = liveKeyOf(path)
@@ -232,10 +275,26 @@ function PluginView({
         }
         case 'panel.setState':
           return bridge.setState(panel, params['path'] as string[], params['value'])
-        case 'panel.publish':
-          return bridge.publish(panel, params['output'] as Record<string, unknown>)
-        case 'panel.publishText':
-          return bridge.publishText(panel, params['text'] as string | null)
+        case 'panel.publish': {
+          const output = params['output'] as Record<string, unknown>
+          if (!activeRef.current && publishedOutputOnce) {
+            deferredOutput = { panel, output }
+            return null
+          }
+          publishedOutputOnce = true
+          deferredOutput = null
+          return bridge.publish(panel, output)
+        }
+        case 'panel.publishText': {
+          const text = params['text'] as string | null
+          if (!activeRef.current && publishedTextOnce) {
+            deferredText = { panel, text }
+            return null
+          }
+          publishedTextOnce = true
+          deferredText = null
+          return bridge.publishText(panel, text)
+        }
         case 'source.run':
           // The frame's own workspace, never one the frame names: a plugin's code reads it as ctx.workspace.
           return runSourceIn(workspaceId, String(params['source']), params['args'], { fresh: params['fresh'] === true })
@@ -266,20 +325,27 @@ function PluginView({
     window.addEventListener('message', onMessage)
     // A frame cannot measure the element it fills, so the size it is drawn at is sent to it.
     const observer = new ResizeObserver((entries) => {
+      if (!activeRef.current) return
       const box = entries[0]?.contentRect
       const scale = zoomRef.current
       if (box) post({ method: 'resize', params: { width: box.width / scale, height: box.height / scale } })
     })
     observer.observe(iframe)
     return () => {
+      flushActiveRef.current = null
       window.removeEventListener('message', onMessage)
       observer.disconnect()
       for (const unsubscribe of subscriptions.values()) unsubscribe()
       subscriptions.clear()
+      deferredSubs.clear()
       // A view that goes away while listening lets go of the microphone.
       if (recorder.active) void recorder.stop()
     }
   }, [workspaceId, bridge, plugin, name, panelId, microphone])
+
+  useEffect(() => {
+    if (active) flushActiveRef.current?.()
+  }, [active])
 
   // Nothing in the SDK reads this yet; it is the half of the protocol the host owns.
   useEffect(() => {
