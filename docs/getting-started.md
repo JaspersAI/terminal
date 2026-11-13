@@ -26,7 +26,7 @@ On first launch, choose how you want to run inference, or change it at any time 
 
 ### Option 1: Local and open-weight models (Ollama, vLLM, llama.cpp, LM Studio, OpenRouter, Groq)
 
-Open **Other providers** during setup (or **Settings > Language model**) to connect a local inference server or an open-weight model router:
+Choose **Connect Local LLM** during setup for a local server, or **Enter LLM API** for a hosted open-weight router (or configure any provider in **Settings > Language model**):
 
 | Provider | Default Base URL | Default Model | API Key | Notes |
 | --- | --- | --- | --- | --- |
@@ -49,7 +49,7 @@ While you are signed in with Jaspers, **Account**, at the head of Settings' list
 
 ### Option 3: Direct cloud provider keys
 
-Under **Other providers** (or **Settings > Language model**), you can also bring your own API keys for cloud providers. API keys are sealed in your OS keychain:
+Under **Enter LLM API** during setup (or **Settings > Language model**), you can also bring your own API keys for cloud providers. API keys are sealed in your OS keychain:
 
 | Provider | Default Base URL | Default Model | Key Prefix |
 | --- | --- | --- | --- |

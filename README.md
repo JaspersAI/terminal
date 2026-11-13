@@ -142,16 +142,16 @@ npm run dev
    ollama pull llama3.2
    ollama serve
    ```
-   On first launch (or in **Settings > Language model**), choose **Other providers > Ollama**. The default base URL (`http://localhost:11434/v1`) and model (`llama3.2`) are pre-filled; replace the model name with any tag you pulled (such as `qwen2.5-coder:32b` or `deepseek-r1:32b`).
+   On first launch, choose **Connect Local LLM > Ollama** (or select **Ollama** in **Settings > Language model**). The default base URL (`http://localhost:11434/v1`) and model (`llama3.2`) are pre-filled; replace the model name with any tag you pulled (such as `qwen2.5-coder:32b` or `deepseek-r1:32b`).
 2. **vLLM, llama.cpp (`llama-server`), or LM Studio:**
-   Choose **Other providers > Custom**, enter your local OpenAI-compatible base URL (for example `http://localhost:8000/v1` for vLLM, `http://localhost:8080/v1` for `llama.cpp`, or `http://localhost:1234/v1` for LM Studio) and model identifier. No API key is required unless your server enforces one.
+   Choose **Connect Local LLM > Custom** (or **Settings > Language model > Custom**), enter your local OpenAI-compatible base URL (for example `http://localhost:8000/v1` for vLLM, `http://localhost:8080/v1` for `llama.cpp`, or `http://localhost:1234/v1` for LM Studio) and model identifier. No API key is required unless your server enforces one.
 3. **Hosted open-weight providers:**
-   Choose **OpenRouter** (`https://openrouter.ai/api/v1`) or **Groq** (`https://api.groq.com/openai/v1`, default `openai/gpt-oss-120b`) and paste your key, which is stored in your OS keychain.
+   Choose **Enter LLM API** during setup (or **Settings > Language model**), select **OpenRouter** (`https://openrouter.ai/api/v1`) or **Groq** (`https://api.groq.com/openai/v1`, default `openai/gpt-oss-120b`), and paste your key, which is stored in your OS keychain.
 
 ### Option B: Jaspers One or Cloud Providers
 
-- **Sign in with Jaspers (Jaspers One):** Browser sign-in configures the language model (Google Gemini on Vertex AI: `gemini-3.8-flash` and `gemini-4-argon`), voice transcription (`openai/gpt-4o-mini-transcribe`), and web search, and installs the **Jaspers Screener** (`jaspers/screener-mcp`) and **Jaspers Research** (`jaspers/research`) plugins from [Jaspers Hub](https://hub.jsprai.com).
-- **Direct cloud keys:** Choose **Anthropic** (`claude-opus-5`), **Amazon Bedrock** (`https://bedrock-mantle.<region>.api.aws/anthropic`, default `anthropic.claude-opus-4-8`), **OpenAI** (`gpt-5.4`), **Google** (`gemini-3.8-flash`), or **xAI** (`grok-4.6`), plus optional voice (**ElevenLabs**, **OpenAI**, **Deepgram**, **Cartesia**, or **Custom**) and web search (**Brave Search** or **Amazon Bedrock**).
+- **Jaspers One (Sign in with Jaspers):** Choose **Jaspers One** during setup; browser sign-in configures the language model (Google Gemini on Vertex AI: `gemini-3.8-flash` and `gemini-4-argon`), voice transcription (`openai/gpt-4o-mini-transcribe`), and web search, and installs the **Jaspers Screener** (`jaspers/screener-mcp`) and **Jaspers Research** (`jaspers/research`) plugins from [Jaspers Hub](https://hub.jsprai.com).
+- **Direct cloud keys:** Choose **Enter LLM API** during setup to select **Anthropic** (`claude-opus-5`), **Amazon Bedrock** (`https://bedrock-mantle.<region>.api.aws/anthropic`, default `anthropic.claude-opus-4-8`), **OpenAI** (`gpt-5.4`), **Google** (`gemini-3.8-flash`), or **xAI** (`grok-4.6`), plus optional voice (**ElevenLabs**, **OpenAI**, **Deepgram**, **Cartesia**, or **Custom**) and web search (**Brave Search** or **Amazon Bedrock**).
 
 See [Getting started](docs/getting-started.md) for local model configuration, workspace model switching, per-task model pinning, multi-monitor setup, and [packaging](docs/getting-started.md#packaging).
 
