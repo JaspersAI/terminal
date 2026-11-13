@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react'
 import { endedAs, type Exchange } from '../../../shared/agent/transcript'
+import { EMPTY_COLLAB, findRoomShare } from '../../../shared/collab/collab'
 import { editedInstructionsPrompt, loopTitle, type Loop } from '../../../shared/loops/loops'
 import { menuOf } from '../../../shared/loops/menu'
 import { formatAsOf } from '../../../shared/tasks/tasks'
@@ -43,6 +44,13 @@ export function LoopMenu({
   const loops = useAppState((s) => s.loops[workspaceId])
   const plugins = useAppState((s) => s.plugins)
   const connections = useAppState((s) => s.connections)
+  const collab = useAppState((s) => s.collab ?? EMPTY_COLLAB)
+  const signedIn = useAppState((s) => s.jaspers.signedIn)
+  const roomShare = useMemo(
+    () => findRoomShare(collab, workspaceId, loop.id, loop.shareId),
+    [collab, workspaceId, loop.id, loop.shareId],
+  )
+  const [inviteEmail, setInviteEmail] = useState('')
   const menu = useMemo(
     () => menuOf({ loops: { [workspaceId]: loops ?? [] }, plugins, connections }, workspaceId, loop.id),
     [workspaceId, loop.id, loops, plugins, connections],
@@ -291,6 +299,92 @@ export function LoopMenu({
           </div>
         ) : (
           <p className="text-muted-foreground">No instructions set</p>
+        )}
+      </section>
+      <section data-menu-share className="border-b border-border p-2">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <h3 className="text-muted-foreground">Share room</h3>
+          {roomShare && (
+            <button
+              type="button"
+              data-menu-unshare-room
+              onClick={() => send({ type: 'room.unshare', workspaceId, room: loop.id })}
+              className="text-muted-foreground underline hover:text-foreground"
+            >
+              {roomShare.isOwner ? 'Stop sharing' : 'Leave'}
+            </button>
+          )}
+        </div>
+        {!signedIn ? (
+          <p className="text-muted-foreground">Sign in with Jaspers in Settings &gt; Team to share rooms.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {collab.teammates.length === 0 ? (
+              <p className="text-muted-foreground">Invite a teammate below to add them to this room.</p>
+            ) : (
+              <ul className="space-y-1">
+                {collab.teammates.map((tm) => {
+                  const activeMemberIds = (roomShare?.members ?? [])
+                    .map((m) => m.accountId)
+                    .filter((id) => id !== roomShare?.ownerAccountId)
+                  const inRoom = activeMemberIds.includes(tm.accountId)
+                  return (
+                    <li key={tm.accountId} className="flex items-center justify-between gap-2">
+                      <span className="truncate">{tm.email}</span>
+                      <button
+                        type="button"
+                        data-share-teammate={tm.accountId}
+                        aria-pressed={inRoom}
+                        onClick={() => {
+                          const nextIds = inRoom
+                            ? activeMemberIds.filter((id) => id !== tm.accountId)
+                            : [...activeMemberIds, tm.accountId]
+                          if (nextIds.length === 0 && roomShare) {
+                            send({ type: 'room.unshare', workspaceId, room: loop.id })
+                          } else {
+                            send({ type: 'room.share', workspaceId, room: loop.id, memberAccountIds: nextIds })
+                          }
+                        }}
+                        className={`border px-1.5 py-0.5 ${
+                          inRoom ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted'
+                        }`}
+                      >
+                        {inRoom ? 'Added' : 'Add'}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+            <form
+              onSubmit={(event) => {
+                event.preventDefault()
+                const trimmed = inviteEmail.trim()
+                if (!trimmed) return
+                send({ type: 'collab.invite', email: trimmed })
+                setInviteEmail('')
+              }}
+              className="flex gap-1 pt-1"
+            >
+              <input
+                type="email"
+                data-menu-invite-email
+                aria-label="Invite teammate by email"
+                placeholder="Invite teammate email…"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                className="min-w-0 flex-1 border border-border bg-background px-1.5 py-0.5 text-xs outline-none focus:border-foreground"
+              />
+              <button
+                type="submit"
+                data-menu-invite-submit
+                disabled={!inviteEmail.trim()}
+                className="border border-border px-1.5 py-0.5 hover:bg-muted disabled:opacity-40"
+              >
+                Invite
+              </button>
+            </form>
+          </div>
         )}
       </section>
       <section className="border-b border-border p-2">
