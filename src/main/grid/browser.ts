@@ -314,43 +314,29 @@ function orbHtml(): string {
     let startAt = performance.now();
 
     function stepVibration(now) {
-      if (currentPhase === 'idle') {
+      if (currentPhase !== 'recording') {
         animFrame = 0;
         return;
       }
       const t = Math.max(0, now - startAt) / 1000;
-      if (currentPhase === 'recording' || currentPhase === 'opening') {
-        const primary = 0.5 + 0.5 * Math.sin(t * 7.2);
-        const shimmer = 0.5 + 0.5 * Math.sin(t * 13.5 + 1.1);
-        const ripple = 0.5 + 0.5 * Math.cos(t * 4.6 + 0.6);
-        const energy = Math.min(1, 0.34 + 0.26 * primary + 0.16 * shimmer);
-        const baseScale = currentPhase === 'opening' ? 0.94 : 1.14;
-        const scaleOffset = (0.025 * primary + 0.015 * shimmer) * (currentPhase === 'opening' ? 0.5 : 1);
-        const gx = 32 + Math.sin(t * 4.8) * 7 + Math.cos(t * 9.3) * 2.5;
-        const gy = 26 + Math.cos(t * 3.9) * 6 + Math.sin(t * 8.1) * 2;
-        const rim = Math.min(0.85, 0.34 + 0.26 * energy);
-        orb.style.transform = 'scale(' + (baseScale + scaleOffset).toFixed(4) + ')';
-        halo.style.transform = 'scale(' + (1.08 + 0.12 * energy + 0.05 * primary).toFixed(4) + ')';
-        halo.style.opacity = Math.min(0.92, 0.42 + 0.34 * energy).toFixed(3);
-        wave.style.transform = 'scale(' + (1.16 + 0.18 * ripple + 0.08 * shimmer).toFixed(4) + ')';
-        wave.style.opacity = Math.min(0.78, 0.22 + 0.28 * (1 - ripple * 0.5)).toFixed(3);
-        gloss.style.setProperty('--gloss', gx.toFixed(1) + '% ' + gy.toFixed(1) + '%');
-        gloss.style.setProperty('--orb-spec', Math.min(0.82, 0.46 + rim * 0.4).toFixed(3));
-        gloss.style.setProperty('--orb-rim', rim.toFixed(3));
-        gloss.style.setProperty('--orb-rim-bottom', (rim * 0.78).toFixed(3));
-      } else {
-        const breath = 0.5 + 0.5 * Math.sin(t * 3.6);
-        const rim = 0.28 + 0.18 * breath;
-        orb.style.transform = 'scale(' + (1.04 + 0.02 * breath).toFixed(4) + ')';
-        halo.style.transform = 'scale(' + (1.06 + 0.08 * breath).toFixed(4) + ')';
-        halo.style.opacity = (0.28 + 0.24 * breath).toFixed(3);
-        wave.style.transform = 'scale(' + (1.12 + 0.12 * (1 - breath)).toFixed(4) + ')';
-        wave.style.opacity = (0.16 + 0.18 * breath).toFixed(3);
-        gloss.style.setProperty('--gloss', (32 + Math.sin(t * 2.4) * 5).toFixed(1) + '% ' + (26 + Math.cos(t * 2.4) * 4).toFixed(1) + '%');
-        gloss.style.setProperty('--orb-spec', (0.46 + rim * 0.4).toFixed(3));
-        gloss.style.setProperty('--orb-rim', rim.toFixed(3));
-        gloss.style.setProperty('--orb-rim-bottom', (rim * 0.78).toFixed(3));
-      }
+      const primary = 0.5 + 0.5 * Math.sin(t * 7.2);
+      const shimmer = 0.5 + 0.5 * Math.sin(t * 13.5 + 1.1);
+      const ripple = 0.5 + 0.5 * Math.cos(t * 4.6 + 0.6);
+      const energy = Math.min(1, 0.34 + 0.26 * primary + 0.16 * shimmer);
+      const baseScale = 1.14;
+      const scaleOffset = 0.025 * primary + 0.015 * shimmer;
+      const gx = 32 + Math.sin(t * 4.8) * 7 + Math.cos(t * 9.3) * 2.5;
+      const gy = 26 + Math.cos(t * 3.9) * 6 + Math.sin(t * 8.1) * 2;
+      const rim = Math.min(0.85, 0.34 + 0.26 * energy);
+      orb.style.transform = 'scale(' + (baseScale + scaleOffset).toFixed(4) + ')';
+      halo.style.transform = 'scale(' + (1.08 + 0.12 * energy + 0.05 * primary).toFixed(4) + ')';
+      halo.style.opacity = Math.min(0.92, 0.42 + 0.34 * energy).toFixed(3);
+      wave.style.transform = 'scale(' + (1.16 + 0.18 * ripple + 0.08 * shimmer).toFixed(4) + ')';
+      wave.style.opacity = Math.min(0.78, 0.22 + 0.28 * (1 - ripple * 0.5)).toFixed(3);
+      gloss.style.setProperty('--gloss', gx.toFixed(1) + '% ' + gy.toFixed(1) + '%');
+      gloss.style.setProperty('--orb-spec', Math.min(0.82, 0.46 + rim * 0.4).toFixed(3));
+      gloss.style.setProperty('--orb-rim', rim.toFixed(3));
+      gloss.style.setProperty('--orb-rim-bottom', (rim * 0.78).toFixed(3));
       animFrame = requestAnimationFrame(stepVibration);
     }
 
@@ -390,10 +376,11 @@ function orbHtml(): string {
         currentPhase = nextPhase;
         startAt = performance.now();
       }
-      orb.className = currentPhase === 'idle' ? '' : 'active';
-      if (currentPhase === 'idle') {
+      const radiating = currentPhase === 'recording';
+      orb.className = radiating ? 'active' : '';
+      if (!radiating) {
         if (animFrame) { cancelAnimationFrame(animFrame); animFrame = 0; }
-        orb.style.transform = 'scale(1)';
+        orb.style.transform = currentPhase === 'opening' ? 'scale(0.94)' : 'scale(1)';
         halo.style.opacity = '0';
         halo.style.transform = 'scale(1)';
         wave.style.opacity = '0';

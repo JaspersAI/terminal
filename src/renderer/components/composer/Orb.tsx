@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement } from 'react'
 import logo from '../../assets/jaspers-logo-black.png'
 import { useAppState } from '../../lib/state'
-import { orbBaseScale, orbVibration } from './orb-motion'
+import { orbBaseScale, orbIsRadiating, orbVibration } from './orb-motion'
 import { useRequest, voiceLevel } from './request'
 import { Spring } from './spring'
 
@@ -46,7 +46,7 @@ export function FloatingOrb(): ReactElement {
     if (waveRef.current) {
       waveRef.current.style.translate = `${tx}px ${ty}px`
     }
-    if (gloss.current && phaseRef.current === 'idle') {
+    if (gloss.current && !orbIsRadiating(phaseRef.current)) {
       gloss.current.style.setProperty('--gloss', `${(32 + v.x * 3).toFixed(1)}% ${(26 + v.y * 3).toFixed(1)}%`)
     }
   }))
@@ -54,9 +54,9 @@ export function FloatingOrb(): ReactElement {
   useEffect(() => spring.set({ scale: baseScale }), [spring, baseScale])
   useEffect(() => () => spring.stop(), [spring])
 
-  // Continuous luminous light vibration while the orb is active (opening, recording, transcribing, thinking).
+  // Continuous luminous light vibration only while the orb is actively listening (`recording`).
   useEffect(() => {
-    if (phase === 'idle') {
+    if (!orbIsRadiating(phase)) {
       if (haloRef.current) {
         haloRef.current.style.opacity = '0'
         haloRef.current.style.scale = '1'
@@ -76,7 +76,7 @@ export function FloatingOrb(): ReactElement {
     let frame = 0
     const startAt = performance.now()
     const tick = (now: number): void => {
-      const vibe = orbVibration(phase, now - startAt, phase === 'recording' ? voiceLevel() : 0)
+      const vibe = orbVibration(phase, now - startAt, voiceLevel())
       spring.set({ scale: orbBaseScale(phase, false) + vibe.scaleOffset })
       if (haloRef.current) {
         haloRef.current.style.scale = vibe.haloScale.toFixed(4)
@@ -204,10 +204,9 @@ export function FloatingOrb(): ReactElement {
     if (hasVoice) toggleVoice('orb')
   }
 
-  const activeShadow =
-    phase === 'idle'
-      ? 'shadow-[0_14px_24px_-10px_rgba(0,0,0,0.6)] hover:shadow-[0_22px_34px_-12px_rgba(0,0,0,0.55)]'
-      : 'shadow-[0_0_22px_3px_rgba(255,255,255,0.32),0_14px_24px_-10px_rgba(0,0,0,0.6)]'
+  const activeShadow = orbIsRadiating(phase)
+    ? 'shadow-[0_0_22px_3px_rgba(255,255,255,0.32),0_14px_24px_-10px_rgba(0,0,0,0.6)]'
+    : 'shadow-[0_14px_24px_-10px_rgba(0,0,0,0.6)] hover:shadow-[0_22px_34px_-12px_rgba(0,0,0,0.55)]'
 
   return (
     <div

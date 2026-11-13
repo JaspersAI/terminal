@@ -1,18 +1,32 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { orbBaseScale, orbVibration } from './orb-motion.ts'
+import { orbBaseScale, orbIsRadiating, orbVibration } from './orb-motion.ts'
 
-test('idle orb rests without light vibration and scales up only when hovered', () => {
+test('orb radiates only when recording and rests in all non-listening phases', () => {
+  assert.equal(orbIsRadiating('recording'), true)
+  assert.equal(orbIsRadiating('idle'), false)
+  assert.equal(orbIsRadiating('opening'), false)
+  assert.equal(orbIsRadiating('transcribing'), false)
+  assert.equal(orbIsRadiating('thinking'), false)
+
+  for (const phase of ['idle', 'opening', 'transcribing', 'thinking'] as const) {
+    const rest = orbVibration(phase, 500, 0.8)
+    assert.equal(rest.active, false, `expected ${phase} not to radiate`)
+    assert.equal(rest.scaleOffset, 0)
+    assert.equal(rest.haloScale, 1)
+    assert.equal(rest.haloOpacity, 0)
+    assert.equal(rest.waveScale, 1)
+    assert.equal(rest.waveOpacity, 0)
+    assert.equal(rest.glossX, 32)
+    assert.equal(rest.glossY, 26)
+  }
+
   assert.equal(orbBaseScale('idle', false), 1)
   assert.equal(orbBaseScale('idle', true), 1.08)
-
-  const rest = orbVibration('idle', 500, 0.8)
-  assert.equal(rest.active, false)
-  assert.equal(rest.scaleOffset, 0)
-  assert.equal(rest.haloOpacity, 0)
-  assert.equal(rest.waveOpacity, 0)
-  assert.equal(rest.glossX, 32)
-  assert.equal(rest.glossY, 26)
+  assert.equal(orbBaseScale('transcribing', false), 1)
+  assert.equal(orbBaseScale('transcribing', true), 1.08)
+  assert.equal(orbBaseScale('thinking', false), 1)
+  assert.equal(orbBaseScale('thinking', true), 1.08)
 })
 
 test('pressing the orb to listen produces a continuous light vibration that varies over time even in silence', () => {
@@ -46,16 +60,4 @@ test('voice audio energy amplifies the recording orb light vibration and scale p
   assert.ok(loud.haloOpacity > quiet.haloOpacity)
   assert.ok(loud.waveScale > quiet.waveScale)
   assert.ok(loud.rimGlow > quiet.rimGlow)
-})
-
-test('transcribing and thinking keep a gentle luminous pulse without fading the sphere', () => {
-  assert.equal(orbBaseScale('transcribing', false), 1.04)
-  assert.equal(orbBaseScale('thinking', false), 1.04)
-
-  const a = orbVibration('transcribing', 100, 0)
-  const b = orbVibration('transcribing', 550, 0)
-  assert.equal(a.active, true)
-  assert.ok(a.haloOpacity > 0.2)
-  assert.notEqual(a.haloOpacity, b.haloOpacity)
-  assert.notEqual(a.glossX, b.glossX)
 })
