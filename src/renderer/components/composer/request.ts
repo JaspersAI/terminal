@@ -128,6 +128,7 @@ export function clearResponsePreview(): void {
 
 export function setOrbOpen(orbOpen: boolean): void {
   if (store.orbOpen === orbOpen) return
+  if (!orbOpen && voiceSource === 'orb') cancelVoice()
   emitStore({ orbOpen })
 }
 
