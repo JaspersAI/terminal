@@ -4,6 +4,7 @@ import {
   extractRows,
   isDatasetStillGood,
   mapToolResult,
+  supersededDatasetExpiry,
   type Dataset,
   type RunResult,
 } from '../../shared/data/datasets'
@@ -159,6 +160,10 @@ export async function runSource(
       return { result: { kind: 'text', resultId, text }, citations: value }
     }
     const datasetId = `d${++seq}`
+    const previousId = cache.get(key)
+    if (previousId && previousId !== datasetId && expires.has(previousId)) {
+      expires.set(previousId, supersededDatasetExpiry(expires.get(previousId), now))
+    }
     datasets.set(datasetId, {
       id: datasetId,
       source: source.id,

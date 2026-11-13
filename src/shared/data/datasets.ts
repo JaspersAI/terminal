@@ -96,6 +96,22 @@ export function canShareInFlight(options: {
   return options.ttlMs > 0 && !options.fresh && !options.signal && !options.raw
 }
 
+/** Grace period a dataset superseded by a newer run for the same key stays readable for in-flight views. */
+export const SUPERSEDED_KEEP_MS = 30_000
+
+/**
+ * Computes the shortened expiry timestamp for a dataset whose cache key has been superseded by a
+ * newer run, bounding its remaining retention to at most `keepMs` from `now`.
+ */
+export function supersededDatasetExpiry(
+  currentExpiry: number | undefined,
+  now: number,
+  keepMs: number = SUPERSEDED_KEEP_MS,
+): number {
+  const cap = now + Math.max(0, keepMs)
+  return currentExpiry !== undefined ? Math.min(currentExpiry, cap) : cap
+}
+
 /**
  * Whether a cached dataset is still valid at `now`: within its TTL and fetched on or after the
  * workspace's latest panel `refreshedAt` stamp (so a panel refreshed while its tab was inactive,

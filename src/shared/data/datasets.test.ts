@@ -15,6 +15,8 @@ import {
   extractRows,
   isDatasetStillGood,
   mapToolResult,
+  SUPERSEDED_KEEP_MS,
+  supersededDatasetExpiry,
 } from './datasets.ts'
 
 test('an array of objects is the rows, with nothing around them', () => {
@@ -250,6 +252,12 @@ test('concurrent shareable source calls for the same key share one execution, wh
   assert.equal(isDatasetStillGood({ at: 1_000, ttlMs: 60_000 }, 20_000, 1_000), true)
   assert.equal(isDatasetStillGood({ at: 1_000, ttlMs: 60_000 }, 20_000, 1_500), false)
   assert.equal(isDatasetStillGood({ at: 1_000, ttlMs: 60_000 }, 62_000, null), false)
+
+  // A dataset superseded by a fresh run for the same key has its expiry shortened to at most SUPERSEDED_KEEP_MS from now.
+  assert.equal(SUPERSEDED_KEEP_MS, 30_000)
+  assert.equal(supersededDatasetExpiry(360_000, 10_000), 40_000)
+  assert.equal(supersededDatasetExpiry(25_000, 10_000), 25_000)
+  assert.equal(supersededDatasetExpiry(undefined, 10_000), 40_000)
 })
 
 test('shouldRetrySourceRun retries a failed source only when a connection becomes ready or the source itself is registered', () => {

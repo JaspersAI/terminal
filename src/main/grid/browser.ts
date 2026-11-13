@@ -869,6 +869,11 @@ function createNativeView(
       closedByManager = true
       if (!webContents.isDestroyed()) {
         raw.setVisible(false)
+        try {
+          if (webContents.debugger.isAttached()) webContents.debugger.detach()
+        } catch {
+          // Ignore debugger detach errors on closing WebContents.
+        }
         webContents.close()
       }
     },
@@ -963,7 +968,15 @@ function manager(): BrowserManager {
 /** Keeps native browser views in sync with workspace switches, panel state updates, and removed tiles. */
 export function startBrowsers(): void {
   manager().sweep(getState())
-  subscribe((next) => manager().sweep(next))
+  subscribe((next, prev) => {
+    if (
+      next.grids !== prev.grids ||
+      next.currentWorkspaceId !== prev.currentWorkspaceId ||
+      next.workspaces !== prev.workspaces
+    ) {
+      manager().sweep(next)
+    }
+  })
 }
 
 export function registerBrowserIpc(): void {

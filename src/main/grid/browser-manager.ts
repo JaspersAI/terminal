@@ -176,8 +176,8 @@ const ACTIONS = new Set<BrowserAction>([
 ])
 /** Chromium's `ERR_ABORTED`, fired when a redirect or a new navigation supersedes one in flight. */
 const ERR_ABORTED = -3
-/** Background tabs and inactive-workspace browser views discard their native WebContentsView after 5 minutes idle. */
-export const DEFAULT_IDLE_SUSPEND_MS = 5 * 60_000
+/** Background tabs and inactive-workspace browser views discard their native WebContentsView after 1 minute idle. */
+export const DEFAULT_IDLE_SUSPEND_MS = 60_000
 export const DEFAULT_HYDRATION_DELAYS_MS: readonly number[] = [350, 1_000, 2_200]
 export const DEFAULT_SETTLE_TIMEOUT_MS = 4_000
 export const DEFAULT_HYDRATION_WINDOW_MS = 1_500
