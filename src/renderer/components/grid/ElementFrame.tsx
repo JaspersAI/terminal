@@ -385,10 +385,11 @@ export function ElementFrame({
         if (!focused) send({ type: 'element.focus', workspaceId, elementId: element.id })
       }}
       onPointerUp={() => {
-        if (loop && !central && draggedTeammate && draggedTeammate.sourceRoomId !== loop.id) {
-          const dropped = draggedTeammate
-          draggedTeammate = null
-          setTeammateDropOver(false)
+        if (!draggedTeammate) return
+        const dropped = draggedTeammate
+        draggedTeammate = null
+        setTeammateDropOver(false)
+        if (loop && !central && dropped.sourceRoomId !== loop.id) {
           const existingIds = roomTeammates.map((m) => m.accountId)
           send({
             type: 'room.share',
@@ -794,6 +795,15 @@ export function ElementFrame({
                       email: member.email,
                       sourceRoomId: loop.id,
                     }
+                    const clear = (): void => {
+                      window.removeEventListener('pointerup', clear)
+                      window.removeEventListener('pointercancel', clear)
+                      queueMicrotask(() => {
+                        draggedTeammate = null
+                      })
+                    }
+                    window.addEventListener('pointerup', clear, { once: true })
+                    window.addEventListener('pointercancel', clear, { once: true })
                   }}
                   onDragStart={(event) => {
                     event.stopPropagation()

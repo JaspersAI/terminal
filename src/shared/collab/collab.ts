@@ -380,8 +380,17 @@ export function roomTeammatesOf(
 ): ShareMember[] {
   const share = findRoomShare(collab, workspaceId, loopId, loopShareId)
   if (!share) return []
-  const others = share.members.filter((m) => !collab.accountId || m.accountId !== collab.accountId)
-  return others.length > 0 ? others : share.members
+  return share.members.filter((m) => {
+    if (collab.accountId !== null && m.accountId === collab.accountId) return false
+    if (
+      share.isOwner &&
+      (m.accountId === share.ownerAccountId ||
+        (share.ownerEmail && m.email.toLowerCase() === share.ownerEmail.toLowerCase()))
+    ) {
+      return false
+    }
+    return true
+  })
 }
 
 /**

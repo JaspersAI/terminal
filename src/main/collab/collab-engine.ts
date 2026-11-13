@@ -311,8 +311,11 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     if (!snapshot) return null
 
     const existing = findRoomShare(state.collab ?? EMPTY_COLLAB, workspaceId, loopId, shareId ?? loop.shareId)
+    const remoteShareId = [existing?.shareId, shareId].find(
+      (id): id is string => typeof id === 'string' && id.length > 0 && !id.startsWith('local-share-'),
+    )
     const res = await deps.api.upsertShare({
-      ...(existing?.shareId ? { share_id: existing.shareId } : shareId ? { share_id: shareId } : {}),
+      ...(remoteShareId ? { share_id: remoteShareId } : {}),
       kind: 'room',
       local_id: existing && !existing.isOwner ? existing.localId : `${workspaceId}/${loopId}`,
       title: loopTitle(loop),
@@ -328,8 +331,10 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         const tabLoops = s.loops[workspaceId] ?? NO_LOOPS
         const updatedList = tabLoops.list.map((l) => (l.id === loopId ? { ...l, shareId: info.shareId } : l))
         const prevShares = s.collab?.shares ?? []
-        const nextShares = prevShares.some((sh) => sh.shareId === info.shareId)
-          ? prevShares.map((sh) => (sh.shareId === info.shareId ? localInfo : sh))
+        const matchesRoom = (sh: CollabShareInfo): boolean =>
+          sh.shareId === info.shareId || (sh.kind === 'room' && sh.localId === localInfo.localId)
+        const nextShares = prevShares.some(matchesRoom)
+          ? prevShares.map((sh) => (matchesRoom(sh) ? localInfo : sh))
           : [...prevShares, localInfo]
         return {
           ...s,
@@ -364,8 +369,11 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       bundles,
     })
     const existing = findWorkspaceShare(state.collab ?? EMPTY_COLLAB, workspaceId, shareId ?? workspace.shareId)
+    const remoteShareId = [existing?.shareId, shareId].find(
+      (id): id is string => typeof id === 'string' && id.length > 0 && !id.startsWith('local-share-'),
+    )
     const res = await deps.api.upsertShare({
-      ...(existing?.shareId ? { share_id: existing.shareId } : shareId ? { share_id: shareId } : {}),
+      ...(remoteShareId ? { share_id: remoteShareId } : {}),
       kind: 'workspace',
       local_id: existing && !existing.isOwner ? existing.localId : workspaceId,
       title: workspace.name,
@@ -380,8 +388,10 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       deps.update((s) => {
         const workspaces = s.workspaces.map((w) => (w.id === workspaceId ? { ...w, shareId: info.shareId } : w))
         const prevShares = s.collab?.shares ?? []
-        const nextShares = prevShares.some((sh) => sh.shareId === info.shareId)
-          ? prevShares.map((sh) => (sh.shareId === info.shareId ? localInfo : sh))
+        const matchesWs = (sh: CollabShareInfo): boolean =>
+          sh.shareId === info.shareId || (sh.kind === 'workspace' && sh.localId === localInfo.localId)
+        const nextShares = prevShares.some(matchesWs)
+          ? prevShares.map((sh) => (matchesWs(sh) ? localInfo : sh))
           : [...prevShares, localInfo]
         return {
           ...s,
@@ -641,8 +651,8 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const state = deps.getState()
       const loop = state.loops[workspaceId]?.list.find((l) => l.id === loopId)
       const share = findRoomShare(state.collab ?? EMPTY_COLLAB, workspaceId, loopId, loop?.shareId)
-      if (share) {
-        await deps.api.deleteShare(share.shareId)
+      if (share && !share.shareId.startsWith('local-share-')) {
+        await deps.api.deleteShare(share.shareId).catch(() => undefined)
       }
       deps.update((s) => {
         const tabLoops = s.loops[workspaceId] ?? NO_LOOPS
@@ -656,7 +666,10 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           loops: { ...s.loops, [workspaceId]: { ...tabLoops, list: updatedList } },
           collab: {
             ...(s.collab ?? EMPTY_COLLAB),
-            shares: (s.collab?.shares ?? []).filter((sh) => sh.shareId !== share?.shareId),
+            shares: (s.collab?.shares ?? []).filter(
+              (sh) =>
+                sh.shareId !== share?.shareId && !(sh.kind === 'room' && sh.localId === `${workspaceId}/${loopId}`),
+            ),
           },
         }
       })
@@ -732,8 +745,8 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const state = deps.getState()
       const workspace = state.workspaces.find((w) => w.id === workspaceId)
       const share = findWorkspaceShare(state.collab ?? EMPTY_COLLAB, workspaceId, workspace?.shareId)
-      if (share) {
-        await deps.api.deleteShare(share.shareId)
+      if (share && !share.shareId.startsWith('local-share-')) {
+        await deps.api.deleteShare(share.shareId).catch(() => undefined)
       }
       deps.update((s) => ({
         ...s,
@@ -744,7 +757,9 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         }),
         collab: {
           ...(s.collab ?? EMPTY_COLLAB),
-          shares: (s.collab?.shares ?? []).filter((sh) => sh.shareId !== share?.shareId),
+          shares: (s.collab?.shares ?? []).filter(
+            (sh) => sh.shareId !== share?.shareId && !(sh.kind === 'workspace' && sh.localId === workspaceId),
+          ),
         },
       }))
     },
