@@ -53,6 +53,8 @@ export interface Loop {
   systemPrompt?: string
   /** Canonical chat key (`<originTabId>/<id>`) so a room moved or reopened across tabs keeps its thread. */
   chat?: string
+  /** Collaboration share id when this room is shared live with teammates. */
+  shareId?: string
   /** What happened to it since it was made, oldest first, for the room log. Absent until the first. */
   log?: LoopChange[]
 }
@@ -590,6 +592,7 @@ function readRecord(raw: unknown, taken: readonly Loop[]): Loop | null {
       ? { systemPrompt: one.systemPrompt.trim() }
       : {}),
     ...(typeof one.chat === 'string' && one.chat.trim() ? { chat: one.chat.trim() } : {}),
+    ...(typeof one.shareId === 'string' && one.shareId.trim() ? { shareId: one.shareId.trim() } : {}),
     ...(log.length > 0 ? { log } : {}),
   }
 }

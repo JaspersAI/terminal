@@ -25,6 +25,14 @@ import {
   type Rect,
 } from '../../../shared/grid/grid'
 import { waitingViews } from '../../../shared/plugins/needs'
+import {
+  EMPTY_COLLAB,
+  isSponsoredRoom,
+  roomTeammatesOf,
+  teammateCircleStyle,
+  teammateInitials,
+} from '../../../shared/collab/collab'
+import { useColorScheme } from '../../lib/color-scheme'
 import { noteZoom } from '../../lib/eye'
 import { useAppState } from '../../lib/state'
 import { Board } from './Board'
@@ -70,6 +78,8 @@ interface Props {
 
 /** Above every element of a grid, floating ones too: where a tile with a menu hanging from its bar is drawn. */
 const HANGING = 1000
+const TEAMMATE_DRAG_MIME = 'application/x-jaspers-teammate'
+let draggedTeammate: { accountId: string; email: string; sourceRoomId: string } | null = null
 
 /**
  * One element of a window on the cells main gave it: a bar across the top saying what it is, and
@@ -204,17 +214,29 @@ export function ElementFrame({
   const frame = content?.kind === 'frame'
   const plugins = useAppState((s) => s.plugins)
   const connections = useAppState((s) => s.connections)
+  const collab = useAppState((s) => s.collab ?? EMPTY_COLLAB)
+  const workspace = useAppState((s) => s.workspaces.find((w) => w.id === workspaceId))
+  const isDark = useColorScheme() === 'dark'
+  const roomTeammates = useMemo(
+    () => (loop ? roomTeammatesOf(collab, workspaceId, loop.id, loop.shareId) : []),
+    [collab, workspaceId, loop],
+  )
+  const [teammateDropOver, setTeammateDropOver] = useState(false)
+  const sponsored = useMemo(
+    () => (loop ? isSponsoredRoom(collab, workspaceId, loop.id, loop.shareId, workspace?.shareId).sponsored : false),
+    [collab, workspaceId, loop, workspace?.shareId],
+  )
   // The asks the user set aside in this tile, by name: their views are drawn as they are.
   const [setAside, setSetAside] = useState<ReadonlySet<string>>(() => new Set())
   // The views inside that have nothing to show until their plugin is given what it needs.
   const waiting = useMemo(
     () =>
       frame
-        ? waitingViews(layoutOf(grid, element.id).panels, views, plugins, connections).filter(
+        ? waitingViews(layoutOf(grid, element.id).panels, views, plugins, connections, sponsored).filter(
             (one) => !setAside.has(one.name),
           )
         : [],
-    [frame, grid, element.id, views, plugins, connections, setAside],
+    [frame, grid, element.id, views, plugins, connections, sponsored, setAside],
   )
   const undrawn = useMemo(() => new Set(waiting.map((one) => one.elementId)), [waiting])
   const need = waiting[0] ?? null
@@ -361,6 +383,56 @@ export function ElementFrame({
       onPointerDown={() => {
         setSelected(true)
         if (!focused) send({ type: 'element.focus', workspaceId, elementId: element.id })
+      }}
+      onPointerUp={() => {
+        if (!draggedTeammate) return
+        const dropped = draggedTeammate
+        draggedTeammate = null
+        setTeammateDropOver(false)
+        if (loop && !central && dropped.sourceRoomId !== loop.id) {
+          const existingIds = roomTeammates.map((m) => m.accountId)
+          send({
+            type: 'room.share',
+            workspaceId,
+            room: loop.id,
+            memberAccountIds: [...new Set([...existingIds, dropped.accountId])],
+          })
+        }
+      }}
+      onDragOver={(event) => {
+        if (!loop || central) return
+        if (draggedTeammate || event.dataTransfer.types.includes(TEAMMATE_DRAG_MIME)) {
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'copy'
+          if (!teammateDropOver) setTeammateDropOver(true)
+        }
+      }}
+      onDragLeave={() => {
+        if (teammateDropOver) setTeammateDropOver(false)
+      }}
+      onDrop={(event) => {
+        if (!loop || central) return
+        setTeammateDropOver(false)
+        let payload = draggedTeammate
+        draggedTeammate = null
+        if (!payload) {
+          try {
+            const raw = event.dataTransfer.getData(TEAMMATE_DRAG_MIME)
+            if (raw) payload = JSON.parse(raw) as { accountId: string; email: string; sourceRoomId: string }
+          } catch {
+            payload = null
+          }
+        }
+        if (!payload || payload.sourceRoomId === loop.id) return
+        event.preventDefault()
+        event.stopPropagation()
+        const existingIds = roomTeammates.map((m) => m.accountId)
+        send({
+          type: 'room.share',
+          workspaceId,
+          room: loop.id,
+          memberAccountIds: [...new Set([...existingIds, payload.accountId])],
+        })
       }}
       style={
         {
@@ -694,6 +766,73 @@ export function ElementFrame({
                 : undefined
             }
           />
+        )}
+        {loop && !central && roomTeammates.length > 0 && (
+          <div
+            data-room-teammates
+            data-room-active={focused && active}
+            className="flex shrink-0 items-center justify-end gap-1 border-t border-border/60 bg-background/90 px-2 py-1"
+          >
+            {roomTeammates.map((member, idx) => {
+              const circleStyle = teammateCircleStyle(
+                member.accountId || member.email,
+                idx,
+                Boolean(focused && active),
+                isDark,
+              )
+              const initials = teammateInitials(member.email)
+              return (
+                <div
+                  key={member.accountId || member.email}
+                  data-teammate-circle={member.accountId}
+                  data-teammate-email={member.email}
+                  data-teammate-initials={initials}
+                  draggable
+                  title={`${member.email} (drag to another room to add)`}
+                  onPointerDown={(event) => {
+                    event.stopPropagation()
+                    draggedTeammate = {
+                      accountId: member.accountId,
+                      email: member.email,
+                      sourceRoomId: loop.id,
+                    }
+                    const clear = (): void => {
+                      window.removeEventListener('pointerup', clear)
+                      window.removeEventListener('pointercancel', clear)
+                      queueMicrotask(() => {
+                        draggedTeammate = null
+                      })
+                    }
+                    window.addEventListener('pointerup', clear, { once: true })
+                    window.addEventListener('pointercancel', clear, { once: true })
+                  }}
+                  onDragStart={(event) => {
+                    event.stopPropagation()
+                    const payload = {
+                      accountId: member.accountId,
+                      email: member.email,
+                      sourceRoomId: loop.id,
+                    }
+                    draggedTeammate = payload
+                    event.dataTransfer.effectAllowed = 'copy'
+                    event.dataTransfer.setData(TEAMMATE_DRAG_MIME, JSON.stringify(payload))
+                    event.dataTransfer.setData('text/plain', `@${member.email}`)
+                  }}
+                  onDragEnd={() => {
+                    draggedTeammate = null
+                  }}
+                  style={{
+                    backgroundColor: circleStyle.backgroundColor,
+                    color: circleStyle.color,
+                    borderColor: circleStyle.borderColor,
+                  }}
+                  className="flex h-5 w-5 shrink-0 cursor-grab items-center justify-center rounded-full border text-[9px] leading-none font-semibold tracking-tight shadow-xs transition-colors select-none"
+                >
+                  {initials}
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
       {frameEdges(element.mode).map((handle) => (

@@ -230,9 +230,10 @@ export function LoopBox({
     return () => observer.disconnect()
   }, [asked, zoom])
 
-  // What was said before: read on mount with no finished row up, and when opened with unread exchanges.
+  // What was said before: read on mount with no finished row up, when opened with unread exchanges,
+  // or when a shared room's lastActiveAt timestamp advances remotely while idle.
   useEffect(() => {
-    if (!shouldRead) return
+    if (!shouldRead && (!loop.shareId || working)) return
     let current = true
     const done = over(now.current)
     readingOlder.current = false
@@ -246,7 +247,7 @@ export function LoopBox({
     return () => {
       current = false
     }
-  }, [shouldRead, place, loop.id])
+  }, [shouldRead, place, loop.id, loop.shareId, loop.lastActiveAt, working])
 
   /** The page ahead of what is drawn, asked for as the reader nears its top. */
   const older = useCallback(() => {
@@ -472,7 +473,11 @@ export function LoopBox({
                 aria-label={`Message ${label}`}
                 autoComplete="off"
                 value={draft}
-                placeholder={chat ? `Ask ${called} more…` : `Tell ${called} what to do…`}
+                placeholder={
+                  chat
+                    ? `Ask ${called} more (@teammate to hold agent)…`
+                    : `Tell ${called} what to do (@teammate to hold agent)…`
+                }
                 onChange={(event) =>
                   updateTileBox(place, (b) =>
                     b.draft === event.target.value ? b : { ...b, draft: event.target.value },

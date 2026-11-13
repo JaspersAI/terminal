@@ -9,7 +9,15 @@ import {
 } from 'react'
 import { askedIn } from '../../../shared/agent/asking'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
+import {
+  applyTeammateMention,
+  EMPTY_COLLAB,
+  matchTeammateMentions,
+  teammateCircleStyle,
+  teammateInitials,
+} from '../../../shared/collab/collab'
 import { formatAsOf } from '../../../shared/tasks/tasks'
+import { useColorScheme } from '../../lib/color-scheme'
 import { currentWorkspace, useAppState } from '../../lib/state'
 import { useEarlier, useNoticeTimer } from './conversation'
 import { PHASE_TEXT } from './phase'
@@ -38,7 +46,10 @@ export function Composer(): ReactElement {
   const question = useAppState((s) => askedIn(s.questions))
   const notices = useAppState((s) => s.notices)
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
+  const collab = useAppState((s) => s.collab ?? EMPTY_COLLAB)
+  const isDark = useColorScheme() === 'dark'
   const [expanded, setExpanded] = useState(false)
+  const [mentionIndex, setMentionIndex] = useState(0)
   const request = useRequest()
   const {
     draft,
@@ -62,6 +73,15 @@ export function Composer(): ReactElement {
   const told = notices.find((one) => one.chat === CENTRAL_CHAT || one.chat === workspaceId)?.id ?? null
   const more = useEarlier({ request, workspaceId, when: true, said: told, welcome })
   useNoticeTimer(notice?.id ?? null)
+
+  const taggableTeammates = [
+    ...collab.teammates,
+    ...collab.outgoingInvites
+      .filter((inv) => !collab.teammates.some((t) => t.email.toLowerCase() === inv.inviteeEmail.toLowerCase()))
+      .map((inv) => ({ accountId: inv.inviteeEmail, email: inv.inviteeEmail, since: inv.createdAt })),
+  ]
+  const mentionMatch = matchTeammateMentions(draft, taggableTeammates)
+  const activeMention = mentionMatch?.matches[Math.min(mentionIndex, (mentionMatch?.matches.length ?? 1) - 1)] ?? null
 
   const latestLive = shown[shown.length - 1]
   const voiceStatus = phase !== 'idle' && phase !== 'thinking' ? PHASE_TEXT[phase] : null
@@ -110,6 +130,24 @@ export function Composer(): ReactElement {
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
+    if (mentionMatch && mentionMatch.matches.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setMentionIndex((i) => (i + 1) % mentionMatch.matches.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setMentionIndex((i) => (i - 1 + mentionMatch.matches.length) % mentionMatch.matches.length)
+        return
+      }
+      if (event.key === 'Tab' && activeMention) {
+        event.preventDefault()
+        setDraft(applyTeammateMention(draft, activeMention.email))
+        setMentionIndex(0)
+        return
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       submit()
@@ -154,7 +192,11 @@ export function Composer(): ReactElement {
           <span className="h-6 w-5 shrink-0" aria-hidden />
         </div>
       ) : (
-        <form onSubmit={submit} data-command-line-column className="flex w-full min-w-0 flex-1 items-start gap-1">
+        <form
+          onSubmit={submit}
+          data-command-line-column
+          className="relative flex w-full min-w-0 flex-1 items-start gap-1"
+        >
           <div
             data-command-line-box
             onClick={() => {
@@ -343,6 +385,49 @@ export function Composer(): ReactElement {
               {expanded ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
             </svg>
           </button>
+          {mentionMatch && (
+            <div
+              data-central-mention-menu
+              role="listbox"
+              aria-label="Teammates"
+              className="absolute top-full left-0 z-50 mt-0.5 max-h-40 w-72 overflow-y-auto border border-border bg-background py-1 text-xs shadow-lg"
+            >
+              {mentionMatch.matches.map((tm, idx) => {
+                const circleStyle = teammateCircleStyle(tm.accountId, idx, true, isDark)
+                const selected = idx === Math.min(mentionIndex, mentionMatch.matches.length - 1)
+                return (
+                  <button
+                    key={tm.accountId}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    data-central-mention-option={tm.email}
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      setDraft(applyTeammateMention(draft, tm.email))
+                      setMentionIndex(0)
+                      inputRef.current?.focus()
+                    }}
+                    className={`flex w-full items-center gap-2 px-2.5 py-1 text-left ${
+                      selected ? 'bg-muted font-medium' : 'hover:bg-muted'
+                    }`}
+                  >
+                    <span
+                      style={{
+                        backgroundColor: circleStyle.backgroundColor,
+                        color: circleStyle.color,
+                        borderColor: circleStyle.borderColor,
+                      }}
+                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[8px] leading-none font-semibold"
+                    >
+                      {teammateInitials(tm.email)}
+                    </span>
+                    <span className="truncate">@{tm.email}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </form>
       )}
     </div>

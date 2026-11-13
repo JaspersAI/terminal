@@ -2,6 +2,7 @@ import type { Place } from '../../shared/agent/asking'
 import { shownQuestion } from '../../shared/agent/attachments'
 import type { Handed } from '../../shared/agent/typed'
 import { closedLoop } from '../../shared/loops/closed'
+import { EMPTY_COLLAB, isSponsoredRoom, parseRoomInput } from '../../shared/collab/collab'
 import { loopChat, frameOf, gone, LOOP_ID, shut } from '../../shared/loops/loops'
 import type { Exchange } from '../../shared/agent/transcript'
 import { findRoomTab, loopsOf, touchLoop } from '../loops/loops'
@@ -12,7 +13,7 @@ import { NEW_THREAD, turnText, userRequest, type Added } from './request'
 import { loopTools } from './tools'
 import { loopPrompt, loopStateNow, taskPreface } from './utils/prompt'
 import { stopChat } from './utils/runs'
-import { exchanges, forget } from './utils/thread'
+import { exchanges, fileDirectExchange, forget } from './utils/thread'
 import { createTurns } from './utils/turns'
 
 // A room's requests: a message sent in its frame's box, answered by its own agent. It is the same
@@ -22,6 +23,17 @@ import { createTurns } from './utils/turns'
 // flight; one that arrives while the run is writing its reply waits, and begins the next.
 
 const turns = createTurns()
+
+let sponsoredPromptHandler: ((workspaceId: string, loopId: string, input: string) => Promise<string>) | null = null
+let roomExchangeHooks: ((workspaceId: string, loopId: string) => void) | null = null
+
+export function setCollabLoopHooks(hooks: {
+  runSponsoredPrompt: (workspaceId: string, loopId: string, input: string) => Promise<string>
+  onRoomExchange: (workspaceId: string, loopId: string) => void
+}): void {
+  sponsoredPromptHandler = hooks.runSponsoredPrompt
+  roomExchangeHooks = hooks.onRoomExchange
+}
 
 /** The room a tile or room id belongs to, and which tab holds it. The docked chat has none. */
 function loopOn(preferredTabId: string, on: string): { workspaceId: string; loop: string; elementId: string } {
@@ -94,9 +106,36 @@ interface Sent {
 
 /** One request of a room's, shown in its frame: its own chat, prompt, and tools, in its turn. */
 function runOn(workspaceId: string, loop: string, on: string, { input, ask, written, task }: Sent): Promise<string> {
+  const stateNowSnapshot = getState()
   const record = loopsOf(workspaceId).list.find((one) => one.id === loop)
   const chat = loopChat(workspaceId, record ?? loop)
+
+  // "People First -> Agent after": a message starting with `@` in a room addresses a person in the
+  // room, records directly in the room's conversation transcript, syncs to teammates, and makes the
+  // default room agent sit still and hold without running the LLM.
+  if (task === undefined && !written) {
+    const parsed = parseRoomInput(input, stateNowSnapshot.jaspers.email)
+    if (parsed.kind === 'human') {
+      touchLoop(workspaceId, loop)
+      fileDirectExchange(chat, parsed.formattedQuestion, parsed.answer)
+      roomExchangeHooks?.(workspaceId, loop)
+      return Promise.resolve(parsed.answer)
+    }
+    const ws = stateNowSnapshot.workspaces.find((w) => w.id === workspaceId)
+    const sponsored = isSponsoredRoom(
+      stateNowSnapshot.collab ?? EMPTY_COLLAB,
+      workspaceId,
+      loop,
+      record?.shareId,
+      ws?.shareId,
+    )
+    if (sponsored.sponsored && sponsoredPromptHandler) {
+      return sponsoredPromptHandler(workspaceId, loop, input)
+    }
+  }
+
   touchLoop(workspaceId, loop)
+
   const request = (): Promise<string> => {
     // Where it shows is the work's frame, read as the run begins.
     const place: Place = { workspaceId, on: frameOf(getGrids(workspaceId), loop)?.element.id ?? on }
@@ -119,6 +158,8 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
       // What is sent to this room while the run is at work joins it. A run on a task's limits takes
       // nothing: what the user sends then waits, and runs as theirs.
       added: task === undefined ? () => turns.takeWaiting<Added>(chat) : undefined,
+    }).finally(() => {
+      roomExchangeHooks?.(workspaceId, loop)
     })
   }
   // /new does not wait: it starts the conversation over under whatever is still working, as it does

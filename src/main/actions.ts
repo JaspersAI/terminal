@@ -41,6 +41,7 @@ import {
   isTile,
   loopName,
   NO_LOOPS,
+  refreshTarget,
   withLoopFor,
   withLoopAsked,
   withLoopTitle,
@@ -115,6 +116,18 @@ import { connect } from './plugins/mcp'
 import { dismissNotice } from './app/notices'
 import { authorize } from './plugins/oauth'
 import { checkSignIn, signIn, signOut, signedIn } from './jaspers/jaspers'
+import {
+  acceptTeammateInvite,
+  declineTeammateInvite,
+  inviteTeammate,
+  removeTeammate,
+  runSponsoredRefreshIfNeeded,
+  setCollabRefreshCallback,
+  shareRoom,
+  shareWorkspace,
+  unshareRoom,
+  unshareWorkspace,
+} from './collab/collab'
 import { allowApps } from './plugins/app-consent'
 import { getLive } from './plugins/live'
 import { getView } from './plugins/registry'
@@ -272,8 +285,11 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'panel.fail': (raw) => {
     failPanelChecked(asString(raw.workspaceId), asString(raw.panelId), asString(raw.error))
   },
-  'panel.refresh': (raw) => {
-    refreshChecked(asString(raw.workspaceId), asString(raw.panelId))
+  'panel.refresh': async (raw) => {
+    const workspaceId = asString(raw.workspaceId)
+    const panelId = asString(raw.panelId)
+    await runSponsoredRefreshIfNeeded(workspaceId, panelId)
+    refreshChecked(workspaceId, panelId)
   },
   'plugin.setSecret': (raw) => setSecret(asString(raw.plugin), asString(raw.key), asString(raw.value)),
   'plugin.remove': (raw) => removeInstalled(asString(raw.id)),
@@ -323,6 +339,22 @@ const HANDLERS: Record<Action['type'], Handler> = {
   },
   'window.allScreens': () => allScreensWithNotice(),
   'window.oneScreen': () => oneScreenOrNotice(),
+  'collab.invite': (raw) => inviteTeammate(asString(raw.email)),
+  'collab.accept': (raw) => acceptTeammateInvite(asString(raw.invite)),
+  'collab.decline': (raw) => declineTeammateInvite(asString(raw.invite)),
+  'collab.removeTeammate': (raw) => removeTeammate(asString(raw.accountId)),
+  'room.share': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.share names a room by its id.')
+    return shareRoom(asString(raw.workspaceId), room, asStringArray(raw.memberAccountIds))
+  },
+  'room.unshare': (raw) => {
+    const room = asString(raw.room)
+    if (!LOOP_ID.test(room)) throw new Error('room.unshare names a room by its id.')
+    return unshareRoom(asString(raw.workspaceId), room)
+  },
+  'tab.share': (raw) => shareWorkspace(asString(raw.id), asStringArray(raw.memberAccountIds)),
+  'tab.unshare': (raw) => unshareWorkspace(asString(raw.id)),
 }
 
 /** Applies an action from the renderer. Anything malformed throws, with a message for the user. */
@@ -1361,6 +1393,15 @@ export function refreshChecked(workspaceId: string, panelId: string, at = Date.n
   return updated
 }
 
+setCollabRefreshCallback((workspaceId, panelId) => {
+  try {
+    const target = refreshTarget(getGrids(workspaceId), loopsOf(workspaceId).list, panelId)
+    refreshChecked(workspaceId, target)
+  } catch {
+    // Ignore refresh of a removed panel.
+  }
+})
+
 /** Synchronizes `errors` on every `ready` plugin with the active runtime view errors on `state.grids`. */
 function syncPluginViewErrors(): void {
   update((state) => {
@@ -1427,6 +1468,11 @@ function asInput(value: unknown): ProviderInput {
 function asString(value: unknown): string {
   if (typeof value === 'string') return value
   throw new Error('Malformed argument.')
+}
+
+function asStringArray(value: unknown): string[] {
+  if (Array.isArray(value) && value.every((item): item is string => typeof item === 'string')) return value
+  throw new Error('Expected an array of strings.')
 }
 
 function asBoolean(value: unknown): boolean {

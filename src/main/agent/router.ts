@@ -1,4 +1,5 @@
 import { handedBy } from '../../shared/agent/typed'
+import { CENTRAL_SHARE_REFUSAL, EMPTY_COLLAB, findRoomShare, resolveTeammatesByQuery } from '../../shared/collab/collab'
 import {
   asksForLoop,
   handoffSummary,
@@ -25,6 +26,7 @@ import {
   settlePanel,
   updateLoop,
 } from '../actions'
+import { shareRoom } from '../collab/collab'
 import { gridSizeOf } from '../grid/grid'
 import { findRoomTab } from '../loops/loops'
 import { getState, toPublic } from '../state'
@@ -41,7 +43,15 @@ import { askedBy } from './utils/runs'
 // permanently deleted.
 
 export function routerTools(context: ToolContext): Tool[] {
-  return [createRoomTool(context), updateRoom, closeRoomTool, reopenRoomTool, deleteRoomTool, detachTabTool]
+  return [
+    createRoomTool(context),
+    updateRoom,
+    closeRoomTool,
+    reopenRoomTool,
+    deleteRoomTool,
+    detachTabTool,
+    shareRoomTool,
+  ]
 }
 
 const ROOM = { type: 'string', description: 'Its name, like room_3.' } as const
@@ -197,6 +207,66 @@ const detachTabTool: Tool = {
     }
     detachTab(target.id)
     return `Detached ${target.name} into Terminal (copy).`
+  },
+}
+
+const shareRoomTool: Tool = {
+  name: 'share_room',
+  description:
+    'Adds one or more teammates (by email, @mention, or name) as live editors to a room on the grid. Central itself cannot be shared; only rooms (like room_1) can be shared here.',
+  parameters: {
+    type: 'object',
+    properties: {
+      room: ROOM,
+      loop: ROOM,
+      teammates: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Teammate emails or @mentions to add to the room.',
+      },
+      teammate: {
+        type: 'string',
+        description: 'A single teammate email or @mention to add to the room.',
+      },
+    },
+  },
+  async run(input, { workspaceId }) {
+    const rawRoom = String(input.room ?? input.loop ?? '').trim()
+    if (/^@?central$/i.test(rawRoom)) {
+      throw new Error(CENTRAL_SHARE_REFUSAL)
+    }
+    const state = toPublic(getState())
+    const loop = findLoop(state, workspaceId, asRoomArg(input))
+    const ownerTabId = findRoomTab(getState(), loop.id) ?? workspaceId
+    const collab = state.collab ?? EMPTY_COLLAB
+    const allKnown = [
+      ...collab.teammates,
+      ...collab.outgoingInvites.map((inv) => ({
+        accountId: inv.inviteeEmail,
+        email: inv.inviteeEmail,
+        since: inv.createdAt,
+      })),
+    ]
+    const rawList = [
+      ...(Array.isArray(input.teammates) ? input.teammates.filter((x): x is string => typeof x === 'string') : []),
+      ...(typeof input.teammate === 'string' ? [input.teammate] : []),
+    ]
+    const matched = resolveTeammatesByQuery(rawList, allKnown)
+    const rawEmails = rawList
+      .map((s) => s.trim().replace(/^@+/, ''))
+      .filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s))
+    const idsToAdd = [...new Set([...matched.map((m) => m.accountId), ...rawEmails])]
+    if (idsToAdd.length === 0) {
+      throw new Error('Specify at least one teammate email or @teammate to add to the room.')
+    }
+    const existingShare = findRoomShare(collab, ownerTabId, loop.id, loop.shareId)
+    const existingIds = (existingShare?.members ?? [])
+      .map((m) => m.accountId)
+      .filter((id) => id !== existingShare?.ownerAccountId)
+    const nextIds = [...new Set([...existingIds, ...idsToAdd])]
+    await shareRoom(ownerTabId, loop.id, nextIds)
+    const labels = [...new Set([...matched.map((m) => m.email), ...rawEmails])]
+    return `Added ${labels.join(', ')} to ${loopName(loop.id)}.`
   },
 }
 

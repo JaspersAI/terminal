@@ -6,6 +6,7 @@ import { APP_SCHEME } from '../../shared/plugins/apps'
 import { viewPolicy } from '../../shared/plugins/plugins'
 import { pageAt } from './app-pages'
 import { bundlePath } from './plugins'
+import { getSyncedBundle } from './synced-bundles'
 import { getState } from '../state'
 
 // Where a plugin's view runs: an iframe on two schemes of our own. jaspers-plugin://<id>/ is the
@@ -72,10 +73,21 @@ export function registerViewHost(): void {
     const url = new URL(request.url)
     const id = url.hostname
     if (!PLUGIN_ID.test(id)) return notFound()
+    const localPlugin = getState().plugins[id]
+    const synced = localPlugin ? null : getSyncedBundle(id)
     if (url.pathname === '/index.html') {
-      return new Response(indexHtml(getState().plugins[id]?.frames ?? []), { headers: headers(TYPES['.html']!) })
+      const frames = localPlugin?.frames ?? synced?.frames ?? []
+      return new Response(indexHtml(frames), { headers: headers(TYPES['.html']!) })
     }
     if (!PLUGIN_FILES.has(url.pathname)) return notFound()
+    if (!localPlugin && synced) {
+      if (url.pathname === '/bundle.js') {
+        return new Response(synced.bundleJs, { headers: headers(TYPES['.js']!) })
+      }
+      if (url.pathname === '/bundle.css' && synced.bundleCss) {
+        return new Response(synced.bundleCss, { headers: headers(TYPES['.css']!) })
+      }
+    }
     return serve(inside(path.dirname(bundlePath(id)), url.pathname))
   })
 

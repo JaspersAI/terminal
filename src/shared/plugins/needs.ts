@@ -52,7 +52,9 @@ export function waitingViews(
   views: Record<string, ViewInfo>,
   plugins: Record<string, PluginInfo>,
   connections: Record<string, ConnectionInfo>,
+  sponsored = false,
 ): WaitingView[] {
+  if (sponsored) return []
   return panels.flatMap((panel): WaitingView[] => {
     const view = panel.content.kind === 'view' ? views[panel.content.view] : undefined
     const plugin = view?.plugin

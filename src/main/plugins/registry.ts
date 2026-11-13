@@ -106,6 +106,28 @@ export function unregisterPlugin(plugin: string): void {
   project()
 }
 
+/**
+ * Registers view definitions from a synced collaboration bundle when the plugin is not locally
+ * installed, so `ViewHost` and `placeChecked` recognize the view and mount its sandboxed iframe.
+ */
+export function registerSyncedViews(plugin: string, syncedViews: readonly ViewInfo[]): void {
+  if (getState().plugins[plugin]) return
+  let changed = false
+  for (const info of syncedViews) {
+    if (!info.id.startsWith(`${plugin}/`) || views.has(info.id)) continue
+    views.set(info.id, {
+      id: info.id,
+      plugin,
+      title: info.title || info.id,
+      state: z.record(z.string(), z.unknown()),
+      output: z.record(z.string(), z.unknown()),
+      renders: info.renders,
+    })
+    changed = true
+  }
+  if (changed) project()
+}
+
 export function getView(id: string): ViewDef | undefined {
   return views.get(id)
 }
