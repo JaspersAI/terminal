@@ -10,7 +10,7 @@ import { THINKING, type AgentEvent, type AgentOrigin } from '../../../shared/age
 import type { Place } from '../../../shared/agent/asking'
 import { shownQuestion } from '../../../shared/agent/attachments.ts'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript.ts'
-import { normalizeLoopTitle, type Loop, type LoopStatus } from '../../../shared/loops/loops.ts'
+import { loopNumber, loopTitle, parseLoopHeader, type Loop, type LoopStatus } from '../../../shared/loops/loops.ts'
 import { answered, failed, heard, over, sent, without, type LiveExchange } from '../composer/live.ts'
 
 /** What a message says while the one before it is still being worked on. */
@@ -191,13 +191,87 @@ export function shouldToggleHeaderMode(state: { renaming: boolean; onButton: boo
 }
 
 /**
- * The title string to dispatch for `room.rename` when committing an inline room title edit, or
- * `null` when the normalized title is unchanged. Returns `''` when clearing a custom title back to `Room N`.
+ * Initial cursor/selection range when opening inline room header editing:
+ * when the header starts with `Room N`, places the cursor after `Room N` (and its separator) and
+ * selects all content after `Room N` without selecting `Room N` itself.
  */
-export function roomRenameChange(loop: Pick<Loop, 'id' | 'title'>, draft: string): string | null {
-  const next = normalizeLoopTitle(loop.id, draft)
-  if (next === loop.title) return null
-  return next ?? ''
+export function roomRenameSelection(loop: Pick<Loop, 'id'>, draft: string): { start: number; end: number } {
+  const n = loopNumber(loop.id)
+  const match = new RegExp(`^((?:(?:room|loop)[\\s_#-]*|f)${n})(\\s*[·:\\-—]+\\s*|\\s+)?`, 'i').exec(draft)
+  if (!match) return { start: 0, end: draft.length }
+  const fullPrefix = match[0] ?? ''
+  const roomOnly = match[1] ?? ''
+  if (draft.length > fullPrefix.length) {
+    return { start: fullPrefix.length, end: draft.length }
+  }
+  return { start: roomOnly.length, end: roomOnly.length }
+}
+
+/**
+ * Handles Backspace/Delete in the room header input so the first press clears the selected content
+ * after `Room N` (leaving the cursor right after `Room N`), and a second press ("double backspace/delete")
+ * removes `Room N` itself so the user can replace `Room N`.
+ */
+export function roomRenameKeyDown(
+  loop: Pick<Loop, 'id'>,
+  draft: string,
+  selectionStart: number,
+  selectionEnd: number,
+  key: string,
+): { draft: string; start: number; end: number } | null {
+  if (key !== 'Backspace' && key !== 'Delete') return null
+  const n = loopNumber(loop.id)
+  const prefix = loopTitle(loop.id)
+  const prefixWithSep = new RegExp(`^(?:(?:room|loop)[\\s_#-]*|f)${n}(?:\\s*[·:\\-—]+\\s*|\\s+)?$`, 'i')
+  if (selectionStart < selectionEnd && selectionEnd === draft.length) {
+    const before = draft.slice(0, selectionStart)
+    if (prefixWithSep.test(before)) {
+      return { draft: prefix, start: prefix.length, end: prefix.length }
+    }
+    return null
+  }
+  if (selectionStart === selectionEnd && selectionStart === draft.length && prefixWithSep.test(draft)) {
+    const roomOnly = new RegExp(`^(?:(?:room|loop)[\\s_#-]*|f)${n}$`, 'i')
+    if (roomOnly.test(draft)) {
+      return { draft: '', start: 0, end: 0 }
+    }
+    return { draft: prefix, start: prefix.length, end: prefix.length }
+  }
+  return null
+}
+
+/**
+ * Formats live typing in the room header input: when the draft is `Room N` and the user types text
+ * right after `Room N`, inserts the ` · ` separator automatically.
+ */
+export function roomRenameDraftChange(loop: Pick<Loop, 'id'>, prevDraft: string, nextDraft: string): string {
+  const prefix = loopTitle(loop.id)
+  if (prevDraft === prefix && nextDraft.startsWith(prefix) && nextDraft.length > prefix.length) {
+    const suffix = nextDraft.slice(prefix.length)
+    if (/^[\s·:\-—]+$/.test(suffix)) return `${prefix} · `
+    const cleanedSuffix = suffix.replace(/^[·:\-—\s]+/, '')
+    return cleanedSuffix ? `${prefix} · ${cleanedSuffix}` : `${prefix} · `
+  }
+  return nextDraft
+}
+
+/**
+ * The title string to dispatch for `room.rename` when committing an inline room title edit, or
+ * `null` when the normalized title is unchanged. Returns `''` when clearing a custom title or subtitle back to `Room N`.
+ */
+export function roomRenameChange(loop: Pick<Loop, 'id' | 'title'> & { desc?: string }, draft: string): string | null {
+  const parsed = parseLoopHeader(loop.id, draft)
+  const currentDesc = loop.desc?.trim() ?? ''
+  if (parsed.desc !== undefined && parsed.desc.length > 0) {
+    if (!loop.title && currentDesc === parsed.desc) return null
+    return `${loopTitle(loop.id)} · ${parsed.desc}`
+  }
+  if (parsed.title === undefined) {
+    if (!loop.title && !currentDesc) return null
+    return ''
+  }
+  if (parsed.title === loop.title) return null
+  return parsed.title
 }
 
 /**
