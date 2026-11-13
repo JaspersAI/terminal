@@ -73,3 +73,9 @@ test('a view nothing is known of, and a frame, wait on nothing', () => {
   const frame = { elementId: 'e1', content: { kind: 'frame' } } as Panel
   assert.deepEqual(waitingViews([frame, viewPanel('e2', 'gone/view')], {}, {}, {}), [])
 })
+
+test('views in an owner-sponsored shared room wait on nothing locally', () => {
+  const views = { 'news/feed': viewInfo('news/feed', 'news', 'News feed') }
+  const plugins = { news: plugin({ secrets: [{ key: 'apikey', label: 'Finnhub API key', set: false }] }) }
+  assert.deepEqual(waitingViews([viewPanel('e3', 'news/feed')], views, plugins, {}, true), [])
+})

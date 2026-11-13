@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { allScreensWithNotice, askForMissingSecret, dispatch, oneScreenOrNotice } from './actions'
 import { watchLoops } from './agent/loop'
+import { startCollab } from './collab/collab'
 import { registerAgentIpc, runTask, runTaskCall, taskSaid } from './agent/orchestrator'
 import { registerWelcomeIpc } from './agent/welcome'
 import { closeAll, followSignIn, onMissingSecret, suspendRetries, wakeRetries } from './plugins/mcp'
@@ -147,6 +148,7 @@ app.whenReady().then(async () => {
   registerAgentIpc()
   // A loop that is gone stops what it was doing and is forgotten.
   watchLoops()
+  startCollab()
   registerWelcomeIpc()
   registerVoiceIpc()
   registerLiveIpc()
