@@ -239,6 +239,8 @@ export interface AppState {
   workspaces: Workspace[]
   /** Always the id of one of `workspaces`. */
   currentWorkspaceId: string
+  /** The user's persistent grid size setting (columns × rows), remembered across restarts and applied to tabs. */
+  gridSize?: GridSize
   /** One record of grids per workspace, keyed by window number: 1 is the main window. Main keeps a grid for every open window, and a closed window's grid until that number opens again. */
   grids: Record<string, Record<number, Grid>>
   /** Each workspace's loops, oldest first: a unit of work, whose frame on a grid and the tiles inside it name it by its id. */

@@ -836,7 +836,7 @@ export function createWorkspace(targetWindow?: number): void {
       ...state,
       workspaces: [...state.workspaces, workspace],
       currentWorkspaceId: targetWindow && targetWindow > MAIN_WINDOW ? state.currentWorkspaceId : workspace.id,
-      grids: { ...state.grids, [workspace.id]: withWindows({}, state.windows) },
+      grids: { ...state.grids, [workspace.id]: withWindows({}, state.windows, state.gridSize) },
       loops: { ...state.loops, [workspace.id]: { seq, list: [] } },
     }
   })

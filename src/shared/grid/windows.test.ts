@@ -44,6 +44,11 @@ test('every open window gets a grid, and a record that has them all is kept', ()
   assert.equal(some[1], EMPTY_GRID)
   assert.equal(withWindows(some, [2]), some)
   assert.equal(withWindows(some, []), some)
+
+  const customSize = { cols: 16, rows: 24 }
+  const custom = withWindows({}, [2], customSize)
+  assert.deepEqual(custom[1]?.size, customSize)
+  assert.deepEqual(custom[2]?.size, customSize)
 })
 
 test('the window under a screen point, the focused one first, never the source', () => {

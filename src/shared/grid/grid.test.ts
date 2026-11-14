@@ -9,7 +9,12 @@ import {
   rectProblem,
   presetSlots,
   PRESET_NAMES,
+  fitGridSize,
+  readGridSize,
+  resolveStoredGridSize,
   resizeGrid,
+  resizeWorkspaceGrids,
+  sameGridSize,
   SIZE_MIN,
   sizeProblem,
   type Anchor,
@@ -1755,4 +1760,84 @@ test('docking the chat uses available free space before shrinking or floating ov
       ['e2', 'tiled', r(13, 0, 3, 12)],
     ],
   )
+})
+
+test('resizing a grid with framed rooms checks the frame on the window grid and fits child views inside the frame', () => {
+  const tall: Grid = { ...EMPTY_GRID, size: { cols: 16, rows: 24 } }
+  const framed = placeFramed(tall, {
+    content: view('option-chain/table'),
+    loop: 'f1',
+    rect: r(0, 0, 8, 6),
+  }).grid
+  // The child view e2 inside frame e1 was placed at full size (16×24), while frame e1 is 8×6 at the top-left.
+  // Shrinking the grid back to 16×12 succeeds because e1 fits inside 16×12, and e2 is fitted inside 16×12.
+  const shrunk = resizeGrid(framed, { cols: 16, rows: 12 }).grid
+  assert.deepEqual(shrunk.size, { cols: 16, rows: 12 })
+  assert.deepEqual(shrunk.elements.find((e) => e.id === 'e1')?.rect, r(0, 0, 8, 6))
+  assert.deepEqual(shrunk.elements.find((e) => e.id === 'e2')?.rect, r(0, 0, 16, 12))
+
+  // Maximized top-level element updates its full-grid rect when the grid is resized while keeping restoreRect.
+  const maxed = setMode(shrunk, 'e1', 'maximized').grid
+  const grown = resizeGrid(maxed, { cols: 20, rows: 24 }).grid
+  const maxedFrame = grown.elements.find((e) => e.id === 'e1')!
+  assert.deepEqual(maxedFrame.rect, r(0, 0, 20, 24))
+  assert.deepEqual(maxedFrame.restoreRect, r(0, 0, 8, 6))
+})
+
+test('fitGridSize and resolveStoredGridSize remember the user grid setting and apply it persistently across tabs', () => {
+  const custom: GridSize = { cols: 16, rows: 24 }
+  assert.equal(sameGridSize(custom, { cols: 16, rows: 24 }), true)
+  assert.equal(sameGridSize(custom, DEFAULT_SIZE), false)
+  assert.deepEqual(readGridSize({ cols: 16, rows: 24 }), custom)
+  assert.deepEqual(readGridSize({ cols: 2, rows: 2 }), DEFAULT_SIZE)
+  assert.deepEqual(readGridSize(undefined, custom), custom)
+
+  // A tab still at default 16×12 grows to the user's 16×24 grid setting.
+  const defaultTab = placeFramed(EMPTY_GRID, {
+    content: view('screener/table'),
+    loop: 'f1',
+    rect: r(0, 0, 8, 12),
+  }).grid
+  const fittedDefault = fitGridSize(defaultTab, custom)
+  assert.deepEqual(fittedDefault.size, custom)
+
+  // A tab with an element at column 20 keeps 20 columns when fitted against 16×24 so nothing falls outside.
+  const wideTab = placeFramed(
+    { ...EMPTY_GRID, size: { cols: 20, rows: 24 } },
+    { content: view('core/table'), loop: 'f2', rect: r(12, 0, 8, 12) },
+  ).grid
+  const fittedWide = fitGridSize(wideTab, custom)
+  assert.deepEqual(fittedWide.size, { cols: 20, rows: 24 })
+
+  // Explicit stored gridSize in state.json wins, including when set back to DEFAULT_SIZE.
+  const workspaces = [{ id: 'ws-1' }, { id: 'ws-2' }, { id: 'ws-3' }]
+  const gridsByWs: Record<string, Record<number, Grid>> = {
+    'ws-1': { 1: EMPTY_GRID },
+    'ws-2': { 1: { ...EMPTY_GRID, size: custom } },
+    'ws-3': { 1: EMPTY_GRID },
+  }
+  assert.deepEqual(resolveStoredGridSize({ cols: 20, rows: 18 }, workspaces, 'ws-1', gridsByWs), {
+    cols: 20,
+    rows: 18,
+  })
+  assert.deepEqual(resolveStoredGridSize(DEFAULT_SIZE, workspaces, 'ws-2', gridsByWs), DEFAULT_SIZE)
+
+  // Legacy state.json without gridSize infers the user's non-default grid size from the current tab or most recent tab.
+  assert.deepEqual(resolveStoredGridSize(undefined, workspaces, 'ws-2', gridsByWs), custom)
+  assert.deepEqual(resolveStoredGridSize(undefined, workspaces, 'ws-1', gridsByWs), custom)
+
+  // Changing grid size on the active tab updates all other tabs that fit, while preserving wider tabs' required columns.
+  const resizedAll = resizeWorkspaceGrids(
+    {
+      'ws-1': { 1: defaultTab },
+      'ws-2': { 1: EMPTY_GRID, 2: EMPTY_GRID },
+      'ws-3': { 1: wideTab },
+    },
+    'ws-1',
+    custom,
+  )
+  assert.deepEqual(resizedAll['ws-1']?.[1]?.size, custom)
+  assert.deepEqual(resizedAll['ws-2']?.[1]?.size, custom)
+  assert.deepEqual(resizedAll['ws-2']?.[2]?.size, custom)
+  assert.deepEqual(resizedAll['ws-3']?.[1]?.size, { cols: 20, rows: 24 })
 })

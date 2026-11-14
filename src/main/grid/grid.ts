@@ -7,7 +7,7 @@ import {
   layoutOf,
   moveAcross,
   panelOf,
-  resizeGrid,
+  resizeWorkspaceGrids,
   setMode,
   setZoom,
   withLayout,
@@ -51,30 +51,27 @@ export function getGrid(workspaceId: string, window: number): Grid {
 
 /**
  * A workspace's grid size. Every window of it carries the same one, so the main window's grid is the
- * answer; a workspace nothing has been stored for yet is the default.
+ * answer; a workspace nothing has been stored for yet takes the user's persistent grid size setting.
  */
 export function gridSizeOf(workspaceId: string): GridSize {
-  const grids = getState().grids[workspaceId]
-  return grids?.[MAIN_WINDOW]?.size ?? Object.values(grids ?? {})[0]?.size ?? DEFAULT_SIZE
+  const state = getState()
+  const grids = state.grids[workspaceId]
+  return grids?.[MAIN_WINDOW]?.size ?? Object.values(grids ?? {})[0]?.size ?? state.gridSize ?? DEFAULT_SIZE
 }
 
 /**
- * Resizes every window's grid of one workspace, in one change: the size is the workspace's, so its
- * windows never differ. Any window that would lose an element or a written cell refuses, and nothing
- * is written: the error names what is in the way, with the window it is in when it is not this one.
+ * Resizes every window's grid of the target workspace, persists `size` as the user's grid setting,
+ * and applies `size` across the other workspaces (growing only where another workspace has elements
+ * or written cells beyond `size`). Any window of `workspaceId` that would lose an element or a
+ * written cell refuses, and nothing is written.
  */
 export function setGridSize(workspaceId: string, size: GridSize): GridSize {
-  const grids = getGrids(workspaceId)
-  const resized: Record<number, Grid> = {}
-  for (const [key, grid] of Object.entries(grids)) {
-    try {
-      resized[Number(key)] = resizeGrid(grid, size).grid
-    } catch (error) {
-      const why = error instanceof Error ? error.message : String(error)
-      throw new Error(Number(key) === MAIN_WINDOW ? why : `Window ${key}: ${why}`)
-    }
-  }
-  write(workspaceId, resized)
+  const nextGrids = resizeWorkspaceGrids(getState().grids, workspaceId, size)
+  update((state) => ({
+    ...state,
+    gridSize: size,
+    grids: nextGrids,
+  }))
   return size
 }
 

@@ -207,7 +207,9 @@ export function openWindow(n?: number, tabId?: string): number {
     return {
       ...state,
       windows: next,
-      grids: Object.fromEntries(Object.entries(state.grids).map(([id, grids]) => [id, withWindows(grids, next)])),
+      grids: Object.fromEntries(
+        Object.entries(state.grids).map(([id, grids]) => [id, withWindows(grids, next, state.gridSize)]),
+      ),
     }
   })
   createWindow(number, true, at, tabId)
@@ -444,7 +446,9 @@ export function useAllScreens(): { windows: number[]; displays: number; surplus:
       return {
         ...state,
         windows: next,
-        grids: Object.fromEntries(Object.entries(state.grids).map(([id, grids]) => [id, withWindows(grids, next)])),
+        grids: Object.fromEntries(
+          Object.entries(state.grids).map(([id, grids]) => [id, withWindows(grids, next, state.gridSize)]),
+        ),
       }
     })
   }
