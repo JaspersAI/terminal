@@ -89,7 +89,7 @@ export interface Loops {
 export const NO_LOOPS: Loops = { seq: 0, list: [] }
 
 export const DESC_MAX = 80
-export const ROOM_TITLE_MAX = 80
+export const ROOM_TITLE_MAX = 160
 
 /** What is known of a tile when its loop is made for it: its view's title and plugin, and what it shows. */
 export interface TileSeen {
@@ -275,22 +275,58 @@ export function loopTitle(loop: string | Pick<Loop, 'id' | 'title'>): string {
   return `Room ${loopNumber(loop)}`
 }
 
-/** Normalizes a custom room title, or returns undefined when blank or equal to the room's default Room N / room_N name. */
-export function normalizeLoopTitle(id: string, rawTitle: string): string | undefined {
-  const cleaned = rawTitle.trim().replace(/\s+/g, ' ').slice(0, ROOM_TITLE_MAX).trim()
-  if (!cleaned) return undefined
-  const n = loopNumber(id)
-  if (new RegExp(`^(?:(?:room|loop)[\\s_#-]*|f)${n}$`, 'i').test(cleaned)) return undefined
-  return cleaned
+/** What a room's header bar shows as its single title: its custom title when set, else Room N · <desc> when desc is non-empty, else Room N. */
+export function loopHeaderTitle(loop: string | Pick<Loop, 'id' | 'title' | 'desc'>): string {
+  if (typeof loop === 'string') return loopTitle(loop)
+  const custom = loop.title?.trim()
+  if (custom) return custom
+  const base = loopTitle(loop.id)
+  const desc = loop.desc.trim()
+  return desc ? `${base} · ${desc}` : base
 }
 
-/** Sets or clears a room's custom title on an open or closed room record. Returns the same object when unchanged. */
-export function withLoopTitle(loops: Loops, loopId: string, rawTitle: string): Loops {
-  const nextTitle = normalizeLoopTitle(loopId, rawTitle)
+/**
+ * Splits a raw room header edit into either a default `Room N` prefix with an updated description
+ * after it, or a custom title replacing `Room N`.
+ */
+export function parseLoopHeader(id: string, rawTitle: string): { title: string | undefined; desc?: string } {
+  const cleaned = rawTitle.trim().replace(/\s+/g, ' ').slice(0, ROOM_TITLE_MAX).trim()
+  if (!cleaned) return { title: undefined }
+  const n = loopNumber(id)
+  if (new RegExp(`^(?:(?:room|loop)[\\s_#-]*|f)${n}(?:\\s*[·:\\-—]+)?$`, 'i').test(cleaned)) {
+    return { title: undefined }
+  }
+  const prefixed = new RegExp(
+    `^(?:(?:room|loop)[\\s_#-]*|f)${n}(?:\\s*[·:\\-—]+\\s*|\\s+|(?=[A-Za-z]))(.+)$`,
+    'i',
+  ).exec(cleaned)
+  if (prefixed) {
+    const after = (prefixed[1] ?? '').replace(/^[·:\-—\s]+/, '').trim()
+    return after ? { title: undefined, desc: after.slice(0, ROOM_TITLE_MAX) } : { title: undefined, desc: '' }
+  }
+  return { title: cleaned }
+}
+
+/** Normalizes a custom room title, or returns undefined when blank or equal to the room's default Room N / room_N name. */
+export function normalizeLoopTitle(id: string, rawTitle: string): string | undefined {
+  return parseLoopHeader(id, rawTitle).title
+}
+
+/** Sets or clears a room's custom title (and optional description) on an open or closed room record. Returns the same object when unchanged. */
+export function withLoopTitle(loops: Loops, loopId: string, rawTitle: string, rawDesc?: string): Loops {
+  const parsed = parseLoopHeader(loopId, rawTitle)
+  const nextTitle = parsed.title
+  const nextDesc =
+    rawDesc !== undefined ? rawDesc.trim().replace(/\s+/g, ' ').slice(0, ROOM_TITLE_MAX).trim() : parsed.desc
   const apply = (loop: Loop): Loop => {
-    if (loop.title === nextTitle) return loop
+    const targetDesc = nextDesc !== undefined ? nextDesc : loop.desc
+    if (loop.title === nextTitle && loop.desc === targetDesc) return loop
     const { title: _prev, ...rest } = loop
-    return nextTitle ? { ...rest, title: nextTitle } : rest
+    return {
+      ...rest,
+      desc: targetDesc,
+      ...(nextTitle ? { title: nextTitle } : {}),
+    }
   }
   const openTarget = loops.list.find((one) => one.id === loopId)
   if (openTarget) {

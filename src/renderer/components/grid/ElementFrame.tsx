@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -29,7 +30,7 @@ import { noteZoom } from '../../lib/eye'
 import { useAppState } from '../../lib/state'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
-import { loopTitle, ROOM_TITLE_MAX, showsChat } from '../../../shared/loops/loops'
+import { loopHeaderTitle, loopTitle, ROOM_TITLE_MAX, showsChat } from '../../../shared/loops/loops'
 import { formatAsOf } from '../../../shared/tasks/tasks'
 import {
   barLabel,
@@ -37,6 +38,9 @@ import {
   canZoomLoop,
   isTitleTap,
   roomRenameChange,
+  roomRenameDraftChange,
+  roomRenameKeyDown,
+  roomRenameSelection,
   roomUpdatedAt,
   shouldToggleHeaderMode,
   tileBoxSeen,
@@ -140,9 +144,10 @@ export function ElementFrame({
   const [renaming, setRenaming] = useState(false)
   const [renameDraft, setRenameDraft] = useState('')
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null)
   const cancellingRenameRef = useRef(false)
-  const renameOpenedAtRef = useRef(0)
   const titlePressRef = useRef<{ x: number; y: number; button: number } | null>(null)
+  const titleTappedAtRef = useRef(0)
   const prevFocused = useRef(focused)
   useEffect(() => {
     if (!focused || !active) {
@@ -157,26 +162,37 @@ export function ElementFrame({
     }
     prevFocused.current = focused
   }, [focused, active])
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!renaming) return
-    requestAnimationFrame(() => {
-      renameInputRef.current?.focus()
-      renameInputRef.current?.select()
+    const input = renameInputRef.current
+    const sel = pendingSelectionRef.current
+    if (!input || !sel) return
+    pendingSelectionRef.current = null
+    input.focus()
+    input.setSelectionRange(sel.start, sel.end)
+    const frameId = requestAnimationFrame(() => {
+      if (renameInputRef.current === input && document.activeElement !== input) {
+        input.focus()
+        input.setSelectionRange(sel.start, sel.end)
+      }
     })
-  }, [renaming])
+    return () => cancelAnimationFrame(frameId)
+  }, [renaming, renameDraft])
   // A deep research loop's field invites follow-up questions; any other invites view commands.
   const chat = loop !== undefined && showsChat(loop)
   const place = useMemo(() => ({ workspaceId, on: element.id }), [workspaceId, element.id])
   const { expanded, live, earlier } = useTileBox(place)
   const activity = useMemo(() => boxActivity(live), [live])
   const called = loop ? loopTitle(loop) : ''
+  const headerTitle = loop ? loopHeaderTitle(loop) : ''
   const startRename = useCallback(() => {
     if (!loop) return
+    const initial = loopHeaderTitle(loop)
     cancellingRenameRef.current = false
-    renameOpenedAtRef.current = Date.now()
+    pendingSelectionRef.current = roomRenameSelection(loop, initial)
     setMenu(false)
     setZoomPopover(false)
-    setRenameDraft(loopTitle(loop))
+    setRenameDraft(initial)
     setRenaming(true)
   }, [loop])
   const commitRename = useCallback(() => {
@@ -188,7 +204,15 @@ export function ElementFrame({
     cancellingRenameRef.current = true
     setRenaming(false)
     const change = roomRenameChange(loop, renameDraft)
-    if (change !== null) send({ type: 'room.rename', workspaceId, room: loop.id, title: change })
+    if (change !== null) {
+      send({
+        type: 'room.rename',
+        workspaceId,
+        room: loop.id,
+        title: change,
+        ...(change === '' ? { desc: '' } : {}),
+      })
+    }
   }, [loop, renameDraft, workspaceId])
   const cancelRename = useCallback(() => {
     cancellingRenameRef.current = true
@@ -231,7 +255,7 @@ export function ElementFrame({
   )
   const roomAsOf = useMemo(() => (roomStamp ? formatAsOf(roomStamp) : ''), [roomStamp])
   const empty = frame && !grid.elements.some((e) => e.parent === element.id && !undrawn.has(e.id))
-  const label = frame ? (loop ? `${called}, ${loop.desc}` : '') : title
+  const label = frame ? headerTitle : title
   const minimized = element.mode === 'minimized'
   const zoom = elementZoom(element)
   const prevZoom = useRef(zoom)
@@ -391,16 +415,26 @@ export function ElementFrame({
           titlePressRef.current = null
           if (!press || renaming) return
           if (isTitleTap(press.x, press.y, event.clientX, event.clientY, press.button)) {
-            startRename()
+            titleTappedAtRef.current = Date.now()
+          } else {
+            titleTappedAtRef.current = 0
           }
         }}
         onPointerCancel={() => {
           titlePressRef.current = null
+          titleTappedAtRef.current = 0
         }}
         onDoubleClick={(event) => {
           const target = event.target instanceof Element ? event.target : null
           const onButton = Boolean(target?.closest('button, input'))
-          const onTitle = Boolean(target?.closest('[data-room-title]'))
+          const onTitle =
+            Boolean(target?.closest('[data-room-title]')) ||
+            (loop !== undefined && Date.now() - titleTappedAtRef.current < 500)
+          if (onTitle && !renaming && !onButton) {
+            titleTappedAtRef.current = 0
+            startRename()
+            return
+          }
           if (!shouldToggleHeaderMode({ renaming, onButton, onTitle })) return
           if (minimized) toggleMinimized(workspaceId, element)
           else toggleMaximized(workspaceId, element)
@@ -427,58 +461,76 @@ export function ElementFrame({
                 autoComplete="off"
                 spellCheck={false}
                 onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  if (Date.now() - renameOpenedAtRef.current < 400) {
-                    event.currentTarget.select()
-                  }
-                }}
+                onClick={(event) => event.stopPropagation()}
                 onDoubleClick={(event) => {
                   event.stopPropagation()
-                  event.currentTarget.select()
+                  event.currentTarget.setSelectionRange(0, event.currentTarget.value.length)
                 }}
-                onChange={(event) => setRenameDraft(event.target.value)}
+                onChange={(event) => {
+                  const raw = event.target.value
+                  const next = roomRenameDraftChange(loop, renameDraft, raw)
+                  if (next !== raw) {
+                    pendingSelectionRef.current = { start: next.length, end: next.length }
+                  }
+                  setRenameDraft(next)
+                }}
                 onBlur={commitRename}
                 onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
                   if (event.key === 'Escape') {
                     event.preventDefault()
                     event.stopPropagation()
                     cancelRename()
-                  } else if (event.key === 'Enter') {
+                    return
+                  }
+                  if (event.key === 'Enter') {
                     event.preventDefault()
                     event.stopPropagation()
                     commitRename()
+                    return
+                  }
+                  const el = event.currentTarget
+                  const step = roomRenameKeyDown(
+                    loop,
+                    renameDraft,
+                    el.selectionStart ?? renameDraft.length,
+                    el.selectionEnd ?? renameDraft.length,
+                    event.key,
+                  )
+                  if (step) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    pendingSelectionRef.current = { start: step.start, end: step.end }
+                    setRenameDraft(step.draft)
                   }
                 }}
-                className="h-4 w-40 max-w-full shrink-0 border-b border-foreground bg-background px-1 text-xs leading-none font-medium text-foreground outline-none"
+                className="h-4 min-w-0 flex-1 border-b border-foreground bg-background px-1 text-xs leading-none font-medium text-foreground outline-none"
               />
             ) : (
-              <span
-                id={active ? `loop-title-${element.id}` : undefined}
-                data-room-title
-                title="Click or double-click to rename room"
-                onPointerDown={(event) => {
-                  if (event.button === 0) {
-                    titlePressRef.current = { x: event.clientX, y: event.clientY, button: event.button }
-                  }
-                }}
-                onDoubleClick={(event) => {
-                  event.stopPropagation()
-                  startRename()
-                }}
-                className="max-w-[50%] shrink-0 cursor-text truncate hover:text-foreground hover:underline"
-              >
-                {called}
-              </span>
+              <>
+                <span
+                  id={active ? `loop-title-${element.id}` : undefined}
+                  data-room-title
+                  title={`${headerTitle}${roomAsOf ? ` (${roomAsOf})` : ''} — Double-click to rename room`}
+                  onPointerDown={(event) => {
+                    if (event.button === 0) {
+                      titlePressRef.current = { x: event.clientX, y: event.clientY, button: event.button }
+                    }
+                  }}
+                  onDoubleClick={(event) => {
+                    event.stopPropagation()
+                    startRename()
+                  }}
+                  className="min-w-0 cursor-text truncate hover:text-foreground hover:underline"
+                >
+                  {headerTitle}
+                </span>
+                {roomAsOf && (
+                  <span data-room-header-meta title={roomAsOf} className="shrink-0 pl-1 text-muted-foreground">
+                    {`· ${roomAsOf}`}
+                  </span>
+                )}
+              </>
             )}
-            <span
-              data-room-header-meta
-              title={loop.desc ? `${loop.desc}${roomAsOf ? ` (${roomAsOf})` : ''}` : roomAsOf || undefined}
-              className="min-w-0 flex-1 truncate"
-            >
-              {loop.desc ? ` · ${loop.desc}` : ''}
-              {roomAsOf ? ` · ${roomAsOf}` : ''}
-            </span>
           </div>
         ) : (
           <span

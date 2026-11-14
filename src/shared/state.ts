@@ -370,8 +370,8 @@ export type Action =
   | { type: 'loop.reopen'; workspaceId: string; loop: string; window?: number }
   | { type: 'room.reopen'; workspaceId: string; room: string; window?: number }
   /** Sets or clears a room's custom title. An empty string or the default Room N / room_N resets it. */
-  | { type: 'loop.rename'; workspaceId: string; loop: string; title: string }
-  | { type: 'room.rename'; workspaceId: string; room: string; title: string }
+  | { type: 'loop.rename'; workspaceId: string; loop: string; title: string; desc?: string }
+  | { type: 'room.rename'; workspaceId: string; room: string; title: string; desc?: string }
   /** Updates a room's description, brief, or systemPrompt instructions. */
   | {
       type: 'loop.update'

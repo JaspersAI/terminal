@@ -19,6 +19,9 @@ import {
   loopBoxSplit,
   loopBoxSplitHeight,
   roomRenameChange,
+  roomRenameDraftChange,
+  roomRenameKeyDown,
+  roomRenameSelection,
   roomUpdatedAt,
   shouldReadTileBox,
   shouldToggleHeaderMode,
@@ -401,6 +404,45 @@ test('clicking or double-clicking a room title opens rename without triggering h
   assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, ''), '')
   assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'Room 3'), '')
   assert.equal(roomRenameChange({ id: 'f3', title: 'Macro Rates' }, 'room_3'), '')
+
+  // Unified room header title: selects content after "Room X", supports double backspace/delete to replace "Room X", and commits subtitle edits.
+  const room74 = { id: 'f74', desc: 'Live global stock indices monitor' }
+  const initialDraft = 'Room 74 · Live global stock indices monitor'
+  const sel = roomRenameSelection(room74, initialDraft)
+  assert.deepEqual(sel, { start: 10, end: initialDraft.length })
+  assert.equal(initialDraft.slice(0, sel.start), 'Room 74 · ')
+  assert.equal(initialDraft.slice(sel.start, sel.end), 'Live global stock indices monitor')
+
+  // When a room has only "Room 74" with no description, cursor is placed right after "Room 74" with nothing selected.
+  assert.deepEqual(roomRenameSelection({ id: 'f74' }, 'Room 74'), { start: 7, end: 7 })
+  // When a room has a custom title without "Room 74", the whole custom title is selected.
+  assert.deepEqual(roomRenameSelection({ id: 'f74' }, 'Global Macro'), { start: 0, end: 12 })
+
+  // First Backspace/Delete deletes the selected content after "Room 74", placing cursor right after "Room 74".
+  const firstBack = roomRenameKeyDown(room74, initialDraft, sel.start, sel.end, 'Backspace')
+  assert.deepEqual(firstBack, { draft: 'Room 74', start: 7, end: 7 })
+  const firstDel = roomRenameKeyDown(room74, initialDraft, sel.start, sel.end, 'Delete')
+  assert.deepEqual(firstDel, { draft: 'Room 74', start: 7, end: 7 })
+
+  // Second Backspace/Delete ("double backspace/delete") deletes "Room 74" so the user can replace it.
+  const secondBack = roomRenameKeyDown(room74, firstBack!.draft, firstBack!.start, firstBack!.end, 'Backspace')
+  assert.deepEqual(secondBack, { draft: '', start: 0, end: 0 })
+  const secondDel = roomRenameKeyDown(room74, firstDel!.draft, firstDel!.start, firstDel!.end, 'Delete')
+  assert.deepEqual(secondDel, { draft: '', start: 0, end: 0 })
+
+  // Typing after "Room 74" automatically inserts the " · " separator.
+  assert.equal(roomRenameDraftChange(room74, 'Room 74', 'Room 74G'), 'Room 74 · G')
+  assert.equal(roomRenameDraftChange(room74, 'Room 74', 'Room 74 '), 'Room 74 · ')
+  assert.equal(roomRenameDraftChange(room74, '', 'Global'), 'Global')
+
+  // Committing unified header edits: unchanged returns null, edited subtitle returns "Room 74 · ...", cleared subtitle returns "".
+  assert.equal(roomRenameChange(room74, initialDraft), null)
+  assert.equal(roomRenameChange(room74, 'Room 74 · Global Stock Watch'), 'Room 74 · Global Stock Watch')
+  assert.equal(roomRenameChange(room74, 'Room 74 Global Stock Watch'), 'Room 74 · Global Stock Watch')
+  assert.equal(roomRenameChange(room74, 'Room 74'), '')
+  assert.equal(roomRenameChange(room74, 'Room 74 · '), '')
+  assert.equal(roomRenameChange(room74, ''), '')
+  assert.equal(roomRenameChange(room74, 'Global Stock Watch'), 'Global Stock Watch')
 })
 
 test('boxHeard and boxSettled stamp completion timestamps, and roomUpdatedAt resolves the latest timestamp across room metadata, panels, and exchanges', () => {
