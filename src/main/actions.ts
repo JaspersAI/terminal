@@ -109,7 +109,7 @@ import {
   moveElementAcross,
   setGridSize,
 } from './grid/grid'
-import { openWindow, surplusNote, useAllScreens, useOneScreen, windowOf } from './grid/windows'
+import { defaultRoomSize, openWindow, surplusNote, useAllScreens, useOneScreen, windowOf } from './grid/windows'
 import { installDefaultsForSignUp, removeInstalled } from './plugins/install'
 import { connect } from './plugins/mcp'
 import { dismissNotice } from './app/notices'
@@ -899,9 +899,6 @@ export function deleteWorkspace(id: string): void {
 /** A view's output is what the model reads; cap it so one cannot fill the context window. */
 const OUTPUT_MAX = 4096
 
-/** How much of a window a piece of work's frame takes when nobody says: it holds every view the work shows. */
-const FRAME_SIZE = 'half'
-
 /**
  * Puts a view on a workspace's grid. The view has to be installed and to accept the state. Every tile
  * belongs to a loop, and this is where that is kept. What a loop shows is inside its frame: a tile
@@ -952,10 +949,18 @@ export function placeChecked(
       now,
       globalSeq(getState().loops),
     )
+    const defaultSize = placement.replace === undefined ? (placement.size ?? defaultRoomSize(window)) : placement.size
     const placed = changeWindow(
       workspaceId,
       window,
-      (grid) => placeFramed(grid, { ...placement, content, state, loop: made.loop.id }),
+      (grid) =>
+        placeFramed(grid, {
+          ...placement,
+          ...(defaultSize !== undefined ? { size: defaultSize } : {}),
+          content,
+          state,
+          loop: made.loop.id,
+        }),
       (next) => withLoops(next, workspaceId, made.loops),
     )
     if (placement.replace !== undefined) syncPluginViewErrors()
@@ -990,15 +995,20 @@ export function createLoop(
   const { element } = changeGrid(
     workspaceId,
     window,
-    (grid) => placeView(grid, frameRequest(placement, made.loop.id)),
+    (grid) => placeView(grid, frameRequest(placement, made.loop.id, window)),
     (next) => withLoops(next, workspaceId, made.loops),
   )
   return { loop: made.loop, element }
 }
 
-/** A loop's frame as it is placed: where the orchestrator said, half a window when it did not. */
-function frameRequest(placement: Placement, loop?: string) {
-  return { ...placement, size: placement.size ?? FRAME_SIZE, content: { kind: 'frame' } as const, loop }
+/** A loop's frame as it is placed: where the orchestrator said, or top-left quarter on 15"+ screens and left half under 15". */
+function frameRequest(placement: Placement, loop?: string, window = MAIN_WINDOW) {
+  return {
+    ...placement,
+    size: placement.size ?? defaultRoomSize(window),
+    content: { kind: 'frame' } as const,
+    loop,
+  }
 }
 
 /**
@@ -1006,7 +1016,7 @@ function frameRequest(placement: Placement, loop?: string) {
  * before the user is asked to start the work, so they are not asked to start what cannot be placed.
  */
 export function roomForLoop(workspaceId: string, window: number, placement: Placement): void {
-  placeFrame(getGrid(workspaceId, window), frameRequest(placement))
+  placeFrame(getGrid(workspaceId, window), frameRequest(placement, undefined, window))
 }
 
 /** The loop an element on the workspace's grids belongs to, when it is there and has one. */

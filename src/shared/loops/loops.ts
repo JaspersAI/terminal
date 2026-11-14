@@ -26,7 +26,9 @@ import {
   type GridSize,
   type Panel,
   type PanelContent,
+  type Placement,
 } from '../grid/grid.ts'
+import { defaultRoomSizeForScreen, type ScreenDimensions } from '../grid/screens.ts'
 
 export interface Loop {
   /**
@@ -1004,6 +1006,81 @@ export function asksForLoop(asked: string | undefined, answered = false): boolea
     if (START_LOOP_CLAUSE.test(trimmed)) return true
   }
   return false
+}
+
+const PERIOD_TOKEN = /^(?:Q[1-4]|H[12]|FY\d+|CY\d+)$/i
+
+function hasExplicitCellRange(text: string): boolean {
+  for (const match of text.matchAll(/\b([A-Z]{1,2}[1-9]\d*)\s*(:|to|-)\s*([A-Z]{1,2}[1-9]\d*)\b/gi)) {
+    const [, start = '', sep = '', end = ''] = match
+    if (PERIOD_TOKEN.test(start) || PERIOD_TOKEN.test(end)) continue
+    if (sep === ':') return true
+    const colStart = start.replace(/\d+$/, '').toUpperCase()
+    const colEnd = end.replace(/\d+$/, '').toUpperCase()
+    if (colStart !== colEnd) return true
+  }
+  return false
+}
+
+const ROOM_SIZE_CLAUSE =
+  /\b(?:(?:full|whole|entire)[- ]?(?:screen|window|grid|tab|size|width|height)|(?:left|right|top|bottom|upper|lower)\s+(?:half|quarter|third|quadrant)|(?:top|bottom|upper|lower)[- ](?:left|right)\s+(?:quarter|quadrant)|(?:half|quarter|third)\s+(?:of\s+)?(?:the\s+)?(?:screen|window|grid|tab|width|height)|(?:half|quarter)[- ](?:screen|window|grid|size|sized|width)|(?:wide|tall)\s+(?:room|tile|loop|panel|view)|size\s*[:=]?\s*(?:full|half|quarter|third|wide|tall)|\d+\s*[x×]\s*\d+|\d+\s+by\s+\d+(?:\s+cells?)?|\d+\s+(?:cols?|columns?)\s*(?:by|x|×|,|\s+and)\s*\d+\s*rows?|\d+\s+(?:cols?|columns?|rows?|cells?)\s+(?:wide|tall|high))\b/i
+
+const ROOM_SPOT_CLAUSE =
+  /\b(?:(?:on|in|at|to|into|along)\s+(?:the\s+)?(?:(?:top|bottom|upper|lower)[- ]?(?:left|right)|left|right|top|bottom|center|middle)(?:\s+(?:side|edge|half|quarter|corner|quadrant|of\s+the\s+(?:screen|window|grid|tab)))?|(?:top|bottom|upper|lower)[- ](?:left|right)(?:\s+(?:quarter|corner|quadrant))?|(?:beside|next\s+to|to\s+the\s+(?:left|right)\s+of|below|under(?:neath)?|beneath|above|on\s+top\s+of)\s+(?:@?(?:room|loop)[\s_#-]*\d+|e\d+|p\d+|the\s+(?:chart|table|room|loop|tile|panel|view|screener|browser|chat))|(?:at|cells?)\s+(?!(?:Q[1-4]|H[12]|FY\d+|CY\d+)\b)[A-Z]{1,2}[1-9]\d*)\b/i
+
+export function asksForRoomSize(asked: string | undefined): boolean {
+  if (!asked) return false
+  const text = typedWords(asked).trim()
+  if (!text) return false
+  return ROOM_SIZE_CLAUSE.test(text) || hasExplicitCellRange(text)
+}
+
+export function asksForRoomSpot(asked: string | undefined): boolean {
+  if (!asked) return false
+  const text = typedWords(asked).trim()
+  if (!text) return false
+  return ROOM_SPOT_CLAUSE.test(text) || hasExplicitCellRange(text)
+}
+
+/**
+ * Resolves a new room's placement on a screen: defaults to `'quarter'` (top-left quarter on a new
+ * screen) for screens 15 inches and larger, and `'half'` (left half on a new screen) for screens
+ * under 15 inches, ignoring unrequested model size/spot overrides on a new screen while honoring
+ * sizes and positions the user asked for.
+ */
+export function resolveNewRoomPlacement(
+  placement: Placement,
+  screen: ScreenDimensions | null | undefined,
+  options?: { emptyGrid?: boolean; asked?: string },
+): Placement {
+  const defaultSize = defaultRoomSizeForScreen(screen)
+  if (options?.asked === undefined) {
+    return {
+      ...placement,
+      size: placement.size ?? defaultSize,
+    }
+  }
+  const sizeAsked = asksForRoomSize(options.asked)
+  const spotAsked = asksForRoomSpot(options.asked)
+  if (options.emptyGrid) {
+    if (!sizeAsked && !spotAsked) {
+      return { size: defaultSize }
+    }
+    const size = sizeAsked ? (placement.size ?? defaultSize) : defaultSize
+    const anchor = spotAsked || sizeAsked ? placement.anchor : undefined
+    const rect = spotAsked || sizeAsked ? placement.rect : undefined
+    return {
+      size,
+      ...(anchor !== undefined ? { anchor } : {}),
+      ...(rect !== undefined ? { rect } : {}),
+    }
+  }
+  const size =
+    !sizeAsked && placement.size === 'half' && defaultSize === 'quarter' ? 'quarter' : (placement.size ?? defaultSize)
+  return {
+    ...placement,
+    size,
+  }
 }
 
 /**

@@ -12,11 +12,13 @@ import {
   type WindowBounds,
 } from '../../shared/grid/windows'
 import {
+  defaultRoomSizeForScreen,
   rescueWindows,
   spreadWindows,
   surplusWindows,
   type Display,
   type ScreenArea,
+  type ScreenDimensions,
   type WindowOn,
 } from '../../shared/grid/screens'
 import { gatherIntoMain } from './grid'
@@ -268,6 +270,28 @@ export function windowOf(n: number): BrowserWindow | undefined {
 export function windowSize(n: number): string | null {
   const win = windows.get(n)
   return win && !win.isDestroyed() ? win.getContentSize().join('×') : null
+}
+
+/** The dimensions of the display a window sits on (or the primary display when not open); null before Electron is ready. */
+export function windowScreenDimensions(n: number = MAIN_WINDOW): ScreenDimensions | null {
+  if (!app.isReady()) return null
+  try {
+    const target = windowOf(n) ?? windowOf(MAIN_WINDOW)
+    const display = target ? screen.getDisplayMatching(target.getBounds()) : screen.getPrimaryDisplay()
+    if (!display?.size) return null
+    return {
+      width: display.size.width,
+      height: display.size.height,
+      ...(typeof display.label === 'string' && display.label.trim() ? { label: display.label.trim() } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+/** The default size of a new room frame on window `n`: `'quarter'` for screens 15 inches and larger, `'half'` for screens under 15 inches. */
+export function defaultRoomSize(n: number = MAIN_WINDOW): 'quarter' | 'half' {
+  return defaultRoomSizeForScreen(windowScreenDimensions(n))
 }
 
 /** Which window a page belongs to, or null for a page that is none of ours. */

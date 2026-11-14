@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  defaultRoomSizeForScreen,
+  isLargeScreen,
   rescueWindows,
+  screenDiagonalInches,
   screenToolsOffered,
   spreadWindows,
   surplusWindows,
@@ -138,4 +141,42 @@ test('the screen tools are offered with a second display, and use_one_screen als
   assert.deepEqual(screenToolsOffered(1, 1), { all: false, one: false })
   assert.deepEqual(screenToolsOffered(2, 1), { all: true, one: true })
   assert.deepEqual(screenToolsOffered(1, 2), { all: false, one: true })
+})
+
+test('screens 15 inches and larger default new rooms to quarter, and screens under 15 inches default to half', () => {
+  // Under 15 inches: 13.3" MacBook Air (1440×900), 13.6" MacBook Air (1470×956), 14.2" MacBook Pro (1512×982), 14" Windows @ 125% (1536×864).
+  for (const small of [
+    { width: 1280, height: 720 },
+    { width: 1280, height: 800 },
+    { width: 1366, height: 768 },
+    { width: 1440, height: 900 },
+    { width: 1470, height: 956 },
+    { width: 1512, height: 982 },
+    { width: 1536, height: 864 },
+    { width: 1536, height: 960 },
+  ]) {
+    assert.equal(screenDiagonalInches(small) < 15, true, `${small.width}×${small.height}`)
+    assert.equal(isLargeScreen(small), false, `${small.width}×${small.height}`)
+    assert.equal(defaultRoomSizeForScreen(small), 'half', `${small.width}×${small.height}`)
+  }
+
+  // 15 inches and larger: 15.3" MacBook Air (1710×1107), 15.4" MacBook Pro (1680×1050), 16.2" MacBook Pro (1728×1117), 1080p (1920×1080), Studio Display / QHD (2560×1440).
+  for (const large of [
+    { width: 1680, height: 1050 },
+    { width: 1710, height: 1107 },
+    { width: 1728, height: 1117 },
+    { width: 1920, height: 1080 },
+    { width: 2560, height: 1440 },
+    { width: 3840, height: 2160 },
+  ]) {
+    assert.equal(screenDiagonalInches(large) >= 15, true, `${large.width}×${large.height}`)
+    assert.equal(isLargeScreen(large), true, `${large.width}×${large.height}`)
+    assert.equal(defaultRoomSizeForScreen(large), 'quarter', `${large.width}×${large.height}`)
+  }
+
+  // Explicit inch label overrides scaled DIP dimensions when present, and missing screen metrics default to quarter.
+  assert.equal(defaultRoomSizeForScreen({ width: 1440, height: 900, label: '16-inch Liquid Retina XDR' }), 'quarter')
+  assert.equal(defaultRoomSizeForScreen({ width: 1800, height: 1169, label: '14-inch Built-in Display' }), 'half')
+  assert.equal(defaultRoomSizeForScreen(null), 'quarter')
+  assert.equal(defaultRoomSizeForScreen(undefined), 'quarter')
 })

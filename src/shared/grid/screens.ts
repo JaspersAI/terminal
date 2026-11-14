@@ -134,3 +134,42 @@ function freeNumber(placements: ScreenPlacement[], open: WindowOn[]): number | n
 export function screenToolsOffered(displays: number, openWindows: number): { all: boolean; one: boolean } {
   return { all: displays > 1, one: displays > 1 || openWindows > 1 }
 }
+
+/** Reference DIP (device-independent pixel) density per physical inch on modern Retina / HiDPI laptop displays (254 PPI / 2x = 127 DIP/in). */
+export const SCREEN_DIP_PER_INCH = 127
+/** Screens 15 inches and larger place new rooms in the top-left quarter; screens under 15 inches use the left half. */
+export const LARGE_SCREEN_MIN_INCHES = 15
+
+export interface ScreenDimensions {
+  width: number
+  height: number
+  label?: string
+}
+
+const LABELED_INCHES = /\b([1-9]\d(?:\.\d+)?)\s*(?:-?\s*inch(?:es)?\b|")/i
+
+/** Estimated screen diagonal in inches from an explicit display label or DIP dimensions (`width` × `height`). */
+export function screenDiagonalInches(screen: ScreenDimensions): number {
+  const labeled = typeof screen.label === 'string' ? LABELED_INCHES.exec(screen.label)?.[1] : undefined
+  if (labeled !== undefined) {
+    const parsed = Number(labeled)
+    if (Number.isFinite(parsed) && parsed >= 10 && parsed <= 100) return parsed
+  }
+  const { width, height } = screen
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return 0
+  return Math.hypot(width, height) / SCREEN_DIP_PER_INCH
+}
+
+/** Whether a display is 15 inches or larger. Defaults to true when no screen metrics are available. */
+export function isLargeScreen(screen: ScreenDimensions | null | undefined): boolean {
+  if (!screen) return true
+  return screenDiagonalInches(screen) >= LARGE_SCREEN_MIN_INCHES
+}
+
+/**
+ * Default room size for a display: `'quarter'` (top-left quarter on a new screen) for screens 15
+ * inches and larger, and `'half'` (left half on a new screen) for screens under 15 inches.
+ */
+export function defaultRoomSizeForScreen(screen: ScreenDimensions | null | undefined): 'quarter' | 'half' {
+  return isLargeScreen(screen) ? 'quarter' : 'half'
+}

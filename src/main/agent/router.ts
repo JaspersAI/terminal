@@ -1,4 +1,6 @@
 import { handedBy } from '../../shared/agent/typed'
+import { layoutOf } from '../../shared/grid/grid'
+import { MAIN_WINDOW } from '../../shared/grid/windows'
 import {
   asksForLoop,
   handoffSummary,
@@ -7,6 +9,7 @@ import {
   named,
   NO,
   notStarted,
+  resolveNewRoomPlacement,
   START,
   startInstructions,
   startQuestion,
@@ -25,7 +28,8 @@ import {
   settlePanel,
   updateLoop,
 } from '../actions'
-import { gridSizeOf } from '../grid/grid'
+import { getGrid, gridSizeOf } from '../grid/grid'
+import { defaultRoomSize, windowScreenDimensions } from '../grid/windows'
 import { findRoomTab } from '../loops/loops'
 import { getState, toPublic } from '../state'
 import { handOver, sendToLoop } from './loop'
@@ -237,8 +241,8 @@ function createRoomTool(context: ToolContext): Tool {
           description: 'Optional list of skill ids to equip the room with.',
         },
         message: MESSAGE,
-        // The tile holds every view the work shows, so it starts at half a window.
-        ...placementProperties(gridSizeOf(context.workspaceId), 'half'),
+        // Defaults to top-left quarter on screens 15 inches and larger, and left half on screens under 15 inches.
+        ...placementProperties(gridSizeOf(context.workspaceId), defaultRoomSize(MAIN_WINDOW)),
         window: WINDOW,
       },
       required: ['desc', 'brief'],
@@ -249,12 +253,18 @@ function createRoomTool(context: ToolContext): Tool {
       const brief = typeof input.brief === 'string' ? input.brief.trim() : ''
       const systemPrompt = typeof input.systemPrompt === 'string' ? input.systemPrompt.trim() : undefined
       const model = checkModel(typeof input.model === 'string' ? input.model : null)
-      const placement = {
-        size: optional(input.size, asSize),
-        anchor: optional(input.anchor, asAnchor),
-        rect: optional(input.rect, (raw) => asRect(raw, gridSizeOf(workspaceId))),
-      }
       const window = asWindow(input.window)
+      const grid = getGrid(workspaceId, window)
+      const emptyGrid = layoutOf(grid).elements.every((e) => e.loop === undefined)
+      const placement = resolveNewRoomPlacement(
+        {
+          size: optional(input.size, asSize),
+          anchor: optional(input.anchor, asAnchor),
+          rect: optional(input.rect, (raw) => asRect(raw, gridSizeOf(workspaceId))),
+        },
+        windowScreenDimensions(window),
+        { emptyGrid, asked: ran.asked },
+      )
       // Sandbox pre-flight: validate that the room frame fits on the tab before setting up or asking the user.
       roomForLoop(workspaceId, window, placement)
       const message = optional(input.message, (value) => asWords(value, 'message'))
