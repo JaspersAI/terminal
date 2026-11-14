@@ -78,7 +78,7 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
     return () => {
       active = false
     }
-  }, [mode, request.earlier.length, request.shown.length])
+  }, [mode, request.earlier.length, request.shown.length, request.working])
 
   const mergedSessions = useMemo(() => {
     if (sessions.length > 0) return sessions
@@ -343,6 +343,9 @@ function SessionRow({ session, defaultExpanded, when }: SessionRowProps): ReactE
               <div key={ex.id ?? idx} className="space-y-1 border-b border-border/60 pb-2 last:border-b-0 last:pb-0">
                 {ex.question && !ex.welcome && (
                   <p className="font-medium text-foreground whitespace-pre-wrap break-words">You: {ex.question}</p>
+                )}
+                {!ex.question && ex.task && (
+                  <p className="text-[11px] font-medium text-muted-foreground">Task {ex.task}</p>
                 )}
                 {ex.steps && ex.steps.length > 0 && (
                   <p className="text-[11px] text-muted-foreground">{ex.steps.join(' · ')}</p>

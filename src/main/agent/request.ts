@@ -1,6 +1,6 @@
 import { shownQuestion, splitAttachments } from '../../shared/agent/attachments'
 import { forkOf } from '../../shared/agent/fork'
-import { closeOff } from '../../shared/agent/history'
+import { CENTRAL_CHAT, closeOff } from '../../shared/agent/history'
 import { failedNote, mask, STOPPED_NOTE } from '../../shared/agent/transcript'
 import { handedTurn } from '../../shared/agent/typed'
 import type { Place } from '../../shared/agent/asking'
@@ -12,6 +12,7 @@ import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { touchLoop } from '../loops/loops'
 import { expandSlash } from '../skills/skills'
 import { agentLoop, type Request, type RunPrompt, type UserTurn } from './agent'
+import { startTerminalSession, waitForThreads } from './thread-file'
 import { forgetApprovals } from './tools/shell'
 import type { Tool, ToolContext } from './tools/types'
 import { begin, emit, end, isStopped, stepsOf } from './utils/runs'
@@ -119,6 +120,7 @@ export async function userRequest({
   label = '',
   tile,
 }: Asked): Promise<string> {
+  if (chat === CENTRAL_CHAT) await waitForThreads()
   const config = configuredFor(chat)
   const thread = threadFor(chat, config)
   const conversationId = conversationOf(chat)
@@ -127,6 +129,7 @@ export async function userRequest({
   if (NEW_THREAD.test(input) && expandSlash(input) === null) {
     startOver(chat, config, thread)
     forgetApprovals(conversationId)
+    if (chat === CENTRAL_CHAT) startTerminalSession()
     // In the chat like anything else said: it marks where what the assistant remembers begins.
     void fileExchange(chat, Date.now(), { question: input, answer: STARTED_OVER })
     return STARTED_OVER
