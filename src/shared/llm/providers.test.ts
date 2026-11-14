@@ -155,12 +155,12 @@ test('a Jaspers key saved as the language model sets voice up with it on the Jas
   assert.deepEqual(voiceWith(JASPERS_LLM, null), {
     providerId: 'jaspers',
     baseUrl: 'https://account.jsprai.com/v1',
-    model: 'openai/gpt-4o-mini-transcribe',
+    model: 'chirp_3',
     token: 'sealed-key',
   })
   // Voice on Jaspers always uses Jaspers' own voice model.
   const before = { providerId: 'jaspers', baseUrl: 'http://127.0.0.1:3350/v1', model: 'openai/whisper-1', token: 'old' }
-  assert.deepEqual(voiceWith(JASPERS_LLM, before), { ...JASPERS_LLM, model: 'openai/gpt-4o-mini-transcribe' })
+  assert.deepEqual(voiceWith(JASPERS_LLM, before), { ...JASPERS_LLM, model: 'chirp_3' })
 })
 
 test('voice on another provider stays, and any other language model leaves voice alone', () => {
@@ -212,7 +212,7 @@ test('signing in sets Jaspers up wherever the user has no provider, and leaves e
     voice: {
       providerId: 'jaspers',
       baseUrl: 'https://account.jsprai.com/v1',
-      model: 'openai/gpt-4o-mini-transcribe',
+      model: 'chirp_3',
       token: null,
     },
     search: { providerId: 'jaspers', baseUrl: 'https://account.jsprai.com/v1', model: '', token: null },
