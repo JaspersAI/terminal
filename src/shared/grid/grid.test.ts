@@ -1782,6 +1782,20 @@ test('resizing a grid with framed rooms checks the frame on the window grid and 
   const maxedFrame = grown.elements.find((e) => e.id === 'e1')!
   assert.deepEqual(maxedFrame.rect, r(0, 0, 20, 24))
   assert.deepEqual(maxedFrame.restoreRect, r(0, 0, 8, 6))
+
+  // Two stacked child views inside a frame on a 16×24 grid scale together without overlapping when shrunk to 16×12.
+  const stackedInside = withLayout(
+    framed,
+    'e1',
+    placeView(setRect(layoutOf(framed, 'e1'), 'e2', r(0, 0, 16, 12)).grid, {
+      content: view('core/chart'),
+      loop: 'f1',
+      rect: r(0, 12, 16, 12),
+    }).grid,
+  )
+  const shrunkStacked = resizeGrid(stackedInside, { cols: 16, rows: 12 }).grid
+  assert.deepEqual(shrunkStacked.elements.find((e) => e.id === 'e2')?.rect, r(0, 0, 16, 6))
+  assert.deepEqual(shrunkStacked.elements.find((e) => e.id === 'e3')?.rect, r(0, 6, 16, 6))
 })
 
 test('fitGridSize and resolveStoredGridSize remember the user grid setting and apply it persistently across tabs', () => {

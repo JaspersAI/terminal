@@ -64,14 +64,19 @@ export function sameGridSize(a: GridSize, b: GridSize): boolean {
   return a.cols === b.cols && a.rows === b.rows
 }
 
-/** Reads a stored grid size, falling back to `fallback` (default 16 × 12) when missing or invalid. */
-export function readGridSize(value: unknown, fallback: GridSize = DEFAULT_SIZE): GridSize {
+/** Parses an untrusted value as a valid `GridSize`, or null when missing or invalid. */
+export function parseGridSize(value: unknown): GridSize | null {
   if (typeof value === 'object' && value !== null) {
     const { cols, rows } = value as { cols?: unknown; rows?: unknown }
     const size = { cols: Number(cols), rows: Number(rows) }
     if (sizeProblem(size) === null) return size
   }
-  return fallback
+  return null
+}
+
+/** Reads a stored grid size, falling back to `fallback` (default 16 × 12) when missing or invalid. */
+export function readGridSize(value: unknown, fallback: GridSize = DEFAULT_SIZE): GridSize {
+  return parseGridSize(value) ?? fallback
 }
 
 export type ElementMode = 'tiled' | 'floating' | 'maximized' | 'minimized'
@@ -1959,21 +1964,111 @@ export function resizeGrid(grid: Grid, size: GridSize): { grid: Grid } {
   return { grid: elements === grid.elements ? { ...grid, size } : { ...grid, size, elements } }
 }
 
-function fitInsideRect(rect: Rect, oldSize: GridSize, newSize: GridSize): Rect {
-  if (rect.x === 0 && rect.y === 0 && rect.w === oldSize.cols && rect.h === oldSize.rows) {
-    return fullRect(newSize)
-  }
-  if (rectProblem(rect, newSize) === null) return rect
-  const fromCols = Math.max(oldSize.cols, rect.x + rect.w)
-  const fromRows = Math.max(oldSize.rows, rect.y + rect.h)
-  const x = clamp(Math.round((rect.x * newSize.cols) / fromCols), 0, newSize.cols - MIN_CELLS)
-  const y = clamp(Math.round((rect.y * newSize.rows) / fromRows), 0, newSize.rows - MIN_CELLS)
-  const right = clamp(Math.round(((rect.x + rect.w) * newSize.cols) / fromCols), x + MIN_CELLS, newSize.cols)
-  const bottom = clamp(Math.round(((rect.y + rect.h) * newSize.rows) / fromRows), y + MIN_CELLS, newSize.rows)
+function scaleRect(rect: Rect, fromSize: GridSize, newSize: GridSize): Rect {
+  const x = clamp(Math.round((rect.x * newSize.cols) / fromSize.cols), 0, newSize.cols - MIN_CELLS)
+  const y = clamp(Math.round((rect.y * newSize.rows) / fromSize.rows), 0, newSize.rows - MIN_CELLS)
+  const right = clamp(Math.round(((rect.x + rect.w) * newSize.cols) / fromSize.cols), x + MIN_CELLS, newSize.cols)
+  const bottom = clamp(Math.round(((rect.y + rect.h) * newSize.rows) / fromSize.rows), y + MIN_CELLS, newSize.rows)
   return { x, y, w: right - x, h: bottom - y }
 }
 
+function resizeFrameChildren(children: GridElement[], oldSize: GridSize, newSize: GridSize): Map<string, GridElement> {
+  const fullOld = fullRect(oldSize)
+  const needsScale =
+    (children.length === 1 && sameRect(homeRect(children[0]!), fullOld)) ||
+    children.some(
+      (c) =>
+        rectProblem(homeRect(c), newSize) !== null || (c.mode !== 'maximized' && rectProblem(c.rect, newSize) !== null),
+    )
+  const fromSize: GridSize = {
+    cols: Math.max(
+      oldSize.cols,
+      ...children.map((c) => {
+        const home = homeRect(c)
+        return home.x + home.w
+      }),
+    ),
+    rows: Math.max(
+      oldSize.rows,
+      ...children.map((c) => {
+        const home = homeRect(c)
+        return home.y + home.h
+      }),
+    ),
+  }
+  const settled: GridElement[] = []
+  const byId = new Map<string, GridElement>()
+  for (const element of children) {
+    if (!needsScale) {
+      if (element.mode === 'maximized') {
+        const full = fullRect(newSize)
+        const updated = sameRect(element.rect, full) ? element : { ...element, rect: full }
+        settled.push(updated)
+        byId.set(element.id, updated)
+      } else {
+        settled.push(element)
+        byId.set(element.id, element)
+      }
+      continue
+    }
+    const scaledHome = scaleRect(homeRect(element), fromSize, newSize)
+    let nextMode = element.mode
+    let nextRestoreMode = element.restoreMode
+    let resolvedHome = scaledHome
+    const holdsCells =
+      element.mode === 'tiled' ||
+      ((element.mode === 'maximized' || element.mode === 'minimized') && element.restoreMode !== 'floating')
+    if (holdsCells) {
+      const checkFootprint = element.mode === 'minimized' ? { ...scaledHome, h: 1 } : scaledHome
+      const blocked = settled.some((s) => overlaps(footprint(s), checkFootprint))
+      if (blocked) {
+        const placed = resolvePlacement(settled, newSize, { rect: scaledHome })
+        if (placed) {
+          resolvedHome = placed.rect
+        } else if (element.mode === 'tiled') {
+          nextMode = 'floating'
+        } else {
+          nextRestoreMode = 'floating'
+        }
+      }
+    }
+    const nextRect =
+      nextMode === 'maximized' ? fullRect(newSize) : nextMode === 'minimized' ? { ...resolvedHome, h: 1 } : resolvedHome
+    const nextRestore = element.restoreRect ? resolvedHome : undefined
+    const same =
+      nextMode === element.mode &&
+      nextRestoreMode === element.restoreMode &&
+      sameRect(element.rect, nextRect) &&
+      (nextRestore === undefined || (element.restoreRect !== undefined && sameRect(element.restoreRect, nextRestore)))
+    const updated: GridElement = same
+      ? element
+      : {
+          ...element,
+          mode: nextMode,
+          rect: nextRect,
+          ...(nextRestore ? { restoreRect: nextRestore } : {}),
+          ...(nextRestoreMode ? { restoreMode: nextRestoreMode } : {}),
+        }
+    settled.push(updated)
+    byId.set(element.id, updated)
+  }
+  return byId
+}
+
 function resizeGridElements(elements: GridElement[], oldSize: GridSize, newSize: GridSize): GridElement[] {
+  const byParent = new Map<string, GridElement[]>()
+  for (const element of elements) {
+    if (element.parent === undefined) continue
+    const list = byParent.get(element.parent)
+    if (list) list.push(element)
+    else byParent.set(element.parent, [element])
+  }
+  const updatedChildren = new Map<string, GridElement>()
+  for (const children of byParent.values()) {
+    for (const [id, child] of resizeFrameChildren(children, oldSize, newSize)) {
+      updatedChildren.set(id, child)
+    }
+  }
   let changed = false
   const next = elements.map((element): GridElement => {
     if (element.parent === undefined) {
@@ -1983,25 +2078,9 @@ function resizeGridElements(elements: GridElement[], oldSize: GridSize, newSize:
       changed = true
       return { ...element, rect: full }
     }
-    const nextRect =
-      element.mode === 'maximized'
-        ? fullRect(newSize)
-        : element.mode === 'minimized'
-          ? { ...fitInsideRect(homeRect(element), oldSize, newSize), h: 1 }
-          : fitInsideRect(element.rect, oldSize, newSize)
-    const nextRestore = element.restoreRect ? fitInsideRect(element.restoreRect, oldSize, newSize) : undefined
-    if (
-      sameRect(element.rect, nextRect) &&
-      (nextRestore === undefined || (element.restoreRect !== undefined && sameRect(element.restoreRect, nextRestore)))
-    ) {
-      return element
-    }
-    changed = true
-    return {
-      ...element,
-      rect: nextRect,
-      ...(nextRestore ? { restoreRect: nextRestore } : {}),
-    }
+    const updated = updatedChildren.get(element.id) ?? element
+    if (updated !== element) changed = true
+    return updated
   })
   return changed ? next : elements
 }
@@ -2048,28 +2127,24 @@ export function resolveStoredGridSize(
   currentWorkspaceId: string,
   gridsByWorkspace: Record<string, Record<number, Grid>>,
 ): GridSize {
-  if (typeof storedGridSize === 'object' && storedGridSize !== null) {
-    const { cols, rows } = storedGridSize as { cols?: unknown; rows?: unknown }
-    const candidate = { cols: Number(cols), rows: Number(rows) }
-    if (sizeProblem(candidate) === null) return candidate
-  }
-  const sizeOfWorkspace = (id: string): GridSize | undefined => {
+  const explicit = parseGridSize(storedGridSize)
+  if (explicit) return explicit
+  const sizeOfWorkspace = (id: string): GridSize | null => {
     const grids = gridsByWorkspace[id]
-    if (!grids) return undefined
-    return grids[1]?.size ?? Object.values(grids)[0]?.size
+    if (!grids) return null
+    return parseGridSize(grids[1]?.size ?? Object.values(grids)[0]?.size)
   }
   const currentSize = sizeOfWorkspace(currentWorkspaceId)
-  if (currentSize && sizeProblem(currentSize) === null && !sameGridSize(currentSize, DEFAULT_SIZE)) {
+  if (currentSize && !sameGridSize(currentSize, DEFAULT_SIZE)) {
     return currentSize
   }
   for (const workspace of [...workspaces].reverse()) {
     const size = sizeOfWorkspace(workspace.id)
-    if (size && sizeProblem(size) === null && !sameGridSize(size, DEFAULT_SIZE)) {
+    if (size && !sameGridSize(size, DEFAULT_SIZE)) {
       return size
     }
   }
-  if (currentSize && sizeProblem(currentSize) === null) return currentSize
-  return DEFAULT_SIZE
+  return currentSize ?? DEFAULT_SIZE
 }
 
 /**

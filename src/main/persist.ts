@@ -6,10 +6,10 @@ import path from 'node:path'
 import {
   DEFAULT_SIZE,
   fitGridSize,
+  parseGridSize,
   readGridSize,
   resolveStoredGridSize,
   sameGridSize,
-  sizeProblem,
   withoutPanels,
   type Grid,
   type GridSize,
@@ -181,15 +181,8 @@ export function load(): MainState {
     storedWorkspaces[w.id] = stored
     storedGrids[w.id] = stored.grids
   }
-  const hasValidStoredGridSize =
-    typeof raw?.gridSize === 'object' &&
-    raw.gridSize !== null &&
-    sizeProblem({
-      cols: Number((raw.gridSize as { cols?: unknown }).cols),
-      rows: Number((raw.gridSize as { rows?: unknown }).rows),
-    }) === null
   const gridSize = resolveStoredGridSize(raw?.gridSize, state.workspaces, state.currentWorkspaceId, storedGrids)
-  if (raw !== null && !hasValidStoredGridSize) {
+  if (raw !== null && parseGridSize(raw.gridSize) === null) {
     stateDirty = true
   }
   const rawGrids: Record<string, Record<number, Grid>> = {}
