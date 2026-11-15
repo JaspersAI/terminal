@@ -95,9 +95,6 @@ export async function runSource(
   args: unknown,
   options: RunOptions = {},
 ): Promise<RunResult & { text: string }> {
-  if (hasPendingPluginRegistration()) {
-    await waitForPluginRegistration(options.signal)
-  }
   const workspaceId = options.workspaceId ?? null
   if (!options.fresh) {
     for (const candidateKey of [
@@ -138,6 +135,9 @@ export async function runSource(
       }
       return delegated
     }
+  }
+  if (hasPendingPluginRegistration()) {
+    await waitForPluginRegistration(options.signal)
   }
   const source = getSource(id)
   if (!source) {

@@ -8,6 +8,7 @@ import {
   EMPTY_GRID,
   layoutOf,
   placeFrame,
+  presetSlots,
   removeElement,
   withLayout,
   type Grid,
@@ -92,6 +93,12 @@ export interface SyncedPluginBundle {
   views: ViewInfo[]
 }
 
+export interface SyncedLiveValue {
+  plugin: string
+  key: string
+  value: unknown
+}
+
 export interface SharedRoomSnapshot {
   kind: 'room'
   loop: Loop
@@ -101,6 +108,7 @@ export interface SharedRoomSnapshot {
   exchanges: Exchange[]
   datasets: SyncedDataset[]
   bundles: SyncedPluginBundle[]
+  live?: SyncedLiveValue[]
 }
 
 export interface SharedWorkspaceSnapshot {
@@ -112,6 +120,7 @@ export interface SharedWorkspaceSnapshot {
   exchangesByLoop: Record<string, Exchange[]>
   datasets: SyncedDataset[]
   bundles: SyncedPluginBundle[]
+  live?: SyncedLiveValue[]
 }
 
 export type ParsedRoomInput =
@@ -511,7 +520,7 @@ export function parseCentralShareCommand(
   return null
 }
 
-/** Builds a portable snapshot of a single Room (`Loop`, frame, child elements, panels, exchanges, datasets, bundles). */
+/** Builds a portable snapshot of a single Room (`Loop`, frame, child elements, panels, exchanges, datasets, bundles, live). */
 export function buildRoomSnapshot(
   grids: Record<number, Grid>,
   loops: Loops,
@@ -520,6 +529,7 @@ export function buildRoomSnapshot(
     exchanges: Exchange[]
     datasets: SyncedDataset[]
     bundles: SyncedPluginBundle[]
+    live?: SyncedLiveValue[]
   },
 ): SharedRoomSnapshot | null {
   const loop = loops.list.find((l) => l.id === loopId)
@@ -538,16 +548,106 @@ export function buildRoomSnapshot(
     exchanges: extras.exchanges,
     datasets: extras.datasets,
     bundles: extras.bundles,
+    ...(extras.live && extras.live.length > 0 ? { live: extras.live } : {}),
   }
 }
 
 const INTERNAL_STORE_TABLES = /\b(?:threads|exchanges|notifications|watched|usage|sqlite_master|sqlite_schema)\b/i
 
-function sanitizeRemotePanel(panel: Panel, isOwner: boolean): Panel {
+function placeSharedRoomFrame(
+  baseGrid: Grid,
+  wantedSize: { w: number; h: number },
+  localLoopId: string,
+): { frameElement: GridElement; gridWithFrame: Grid } {
+  try {
+    const placed = placeFrame(baseGrid, {
+      content: { kind: 'frame' },
+      size: wantedSize,
+      loop: localLoopId,
+    })
+    return {
+      frameElement: placed.element,
+      gridWithFrame: withLayout(baseGrid, undefined, placed.grid),
+    }
+  } catch {
+    const top = layoutOf(baseGrid)
+    if (top.elements.length >= 1 && top.elements.length <= 3) {
+      const slots = presetSlots(top.elements.length === 1 ? '1+1' : '2+2', baseGrid.size)
+      const retiled = top.elements.map((el, idx): GridElement => {
+        const { restoreRect: _r, restoreMode: _m, ...rest } = el
+        return {
+          ...rest,
+          mode: 'tiled',
+          rect: slots[idx] ?? el.rect,
+        }
+      })
+      const compacted = withLayout(baseGrid, undefined, { ...top, elements: retiled })
+      try {
+        const placed = placeFrame(compacted, {
+          content: { kind: 'frame' },
+          size: wantedSize,
+          loop: localLoopId,
+        })
+        return {
+          frameElement: placed.element,
+          gridWithFrame: withLayout(compacted, undefined, placed.grid),
+        }
+      } catch {
+        // Fall through to floating placement
+      }
+    }
+    const nextSeq =
+      Math.max(
+        baseGrid.seq,
+        ...baseGrid.elements.map((e) => Number(e.id.slice(1)) || 0),
+        ...baseGrid.panels.map((p) => Number(p.id.slice(1)) || 0),
+      ) + 1
+    const fId = `e${nextSeq}`
+    const pId = `p${nextSeq}`
+    const maxZ = top.elements.reduce((m, e) => Math.max(m, e.z), 0)
+    const w = Math.min(Math.max(wantedSize.w, 6), baseGrid.size.cols)
+    const h = Math.min(Math.max(wantedSize.h, 6), baseGrid.size.rows)
+    const frameElement: GridElement = {
+      id: fId,
+      panelId: pId,
+      rect: { x: Math.max(0, baseGrid.size.cols - w), y: 0, w, h },
+      z: maxZ + 1,
+      mode: 'floating',
+      loop: localLoopId,
+    }
+    const framePanelObj: Panel = {
+      id: pId,
+      elementId: fId,
+      content: { kind: 'frame' },
+      state: {},
+      output: null,
+      summary: null,
+      text: null,
+      refreshedAt: null,
+    }
+    return {
+      frameElement,
+      gridWithFrame: withLayout(baseGrid, undefined, {
+        ...top,
+        elements: [...top.elements, frameElement],
+        panels: [...top.panels, framePanelObj],
+        focus: [fId, ...top.focus],
+        seq: nextSeq,
+      }),
+    }
+  }
+}
+function sanitizeRemotePanel(panel: Panel, isOwner: boolean, fallbackAgentsChatId?: string): Panel {
   if (isOwner) return panel
   const state = isRecord(panel.state) ? { ...panel.state } : {}
   if (typeof state.sql === 'string' && INTERNAL_STORE_TABLES.test(state.sql)) {
     state.sql = null
+  }
+  if (panel.content.kind === 'view' && panel.content.view === 'agents/chat') {
+    delete state.ask
+    if (!state.conversation && fallbackAgentsChatId) {
+      state.conversation = fallbackAgentsChatId
+    }
   }
   return { ...panel, state }
 }
@@ -593,20 +693,9 @@ export function applyRoomSnapshot(
   const targetWindow = existingFrame?.window ?? 1
   const baseGrid = grids[targetWindow] ?? { ...EMPTY_GRID, size: DEFAULT_SIZE }
 
-  let frameElement: GridElement
-  let gridWithFrame: Grid
-  if (existingFrame) {
-    frameElement = existingFrame.element
-    gridWithFrame = baseGrid
-  } else {
-    const placed = placeFrame(baseGrid, {
-      content: { kind: 'frame' },
-      size: { w: snapshot.frame.rect.w, h: snapshot.frame.rect.h },
-      loop: localLoopId,
-    })
-    frameElement = placed.element
-    gridWithFrame = withLayout(baseGrid, undefined, placed.grid)
-  }
+  const { frameElement, gridWithFrame } = existingFrame
+    ? { frameElement: existingFrame.element, gridWithFrame: baseGrid }
+    : placeSharedRoomFrame(baseGrid, { w: snapshot.frame.rect.w, h: snapshot.frame.rect.h }, localLoopId)
 
   // Remap child elements and panels inside `frameElement.id` with fresh non-colliding ids when needed
   let seq = Math.max(
@@ -618,6 +707,9 @@ export function applyRoomSnapshot(
   const childElements: GridElement[] = []
   const childPanels: Panel[] = []
 
+  const fallbackAgentsChatId = snapshot.live
+    ?.find((entry) => entry.plugin === 'agents' && typeof entry.key === 'string' && entry.key.startsWith('chat/'))
+    ?.key.slice('chat/'.length)
   const snapshotChildPanels = snapshot.panels.filter((p) => p.elementId !== snapshot.frame.id)
   for (let i = 0; i < snapshot.elements.length; i++) {
     const rawEl = snapshot.elements[i]!
@@ -641,6 +733,7 @@ export function applyRoomSnapshot(
           elementId: elId,
         },
         isOwner,
+        fallbackAgentsChatId,
       ),
     )
   }
@@ -683,7 +776,7 @@ export function removeRoomFromWorkspace(
   }
 }
 
-/** Builds a portable snapshot of a whole Workspace tab (`Workspace`, main window `Grid`, `Loops`, exchanges, datasets, bundles). */
+/** Builds a portable snapshot of a whole Workspace tab (`Workspace`, main window `Grid`, `Loops`, exchanges, datasets, bundles, live). */
 export function buildWorkspaceSnapshot(
   workspace: Workspace,
   grids: Record<number, Grid>,
@@ -692,6 +785,7 @@ export function buildWorkspaceSnapshot(
     exchangesByLoop: Record<string, Exchange[]>
     datasets: SyncedDataset[]
     bundles: SyncedPluginBundle[]
+    live?: SyncedLiveValue[]
   },
 ): SharedWorkspaceSnapshot {
   const mainGrid = grids[1] ?? { ...EMPTY_GRID, size: DEFAULT_SIZE }
@@ -708,6 +802,7 @@ export function buildWorkspaceSnapshot(
     exchangesByLoop: extras.exchangesByLoop,
     datasets: extras.datasets,
     bundles: extras.bundles,
+    ...(extras.live && extras.live.length > 0 ? { live: extras.live } : {}),
   }
 }
 
@@ -744,10 +839,13 @@ export function applyWorkspaceSnapshot(
     ? state.workspaces.map((w) => (w.id === existing.id ? updatedWorkspace : w))
     : [...state.workspaces, updatedWorkspace]
 
+  const fallbackAgentsChatId = snapshot.live
+    ?.find((entry) => entry.plugin === 'agents' && typeof entry.key === 'string' && entry.key.startsWith('chat/'))
+    ?.key.slice('chat/'.length)
   const currentGrids = state.grids[workspaceId] ?? {}
   const sanitizedGrid: Grid = {
     ...snapshot.grid,
-    panels: snapshot.grid.panels.map((p) => sanitizeRemotePanel(p, isOwner)),
+    panels: snapshot.grid.panels.map((p) => sanitizeRemotePanel(p, isOwner, fallbackAgentsChatId)),
   }
   const grids: Record<string, Record<number, Grid>> = {
     ...state.grids,

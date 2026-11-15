@@ -335,3 +335,69 @@ test('applyRoomSnapshot on the owner workspace never duplicates the room when tr
   assert.equal(applied.loops.list[0]!.id, 'f1')
   assert.equal(applied.loops.list[0]!.shareId, 'server-share-uuid-1')
 })
+
+test('applyRoomSnapshot makes room on screen when the recipient grid is already full and syncs agents/chat conversation from live values', () => {
+  // Recipient already has a full-screen room covering 16x12 (no free cells on screen)
+  const recipientLoops = withLoopAsked(
+    NO_LOOPS,
+    { desc: 'Local Screen', brief: 'Screen', plugins: [], skills: [] },
+    1000,
+  )
+  const fullRecipient = placeFramed(
+    { ...EMPTY_GRID, size: DEFAULT_SIZE },
+    {
+      content: { kind: 'view', view: 'screener-mcp/screener' },
+      size: 'full',
+      loop: recipientLoops.loop.id,
+    },
+  )
+
+  // Owner shares a Research Agents room with streamed live values
+  const ownerLoops = withLoopAsked(
+    NO_LOOPS,
+    { desc: 'Research Agents', brief: 'Analyze NVDA', plugins: ['agents'], skills: [] },
+    2000,
+  )
+  const ownerPlaced = placeFramed(
+    { ...EMPTY_GRID, size: DEFAULT_SIZE },
+    {
+      content: { kind: 'view', view: 'agents/chat' },
+      state: { ask: '@research-analyst NVDA 10-K summary' },
+      size: 'full',
+      loop: ownerLoops.loop.id,
+    },
+  )
+  const snapshot = buildRoomSnapshot({ 1: ownerPlaced.grid }, ownerLoops.loops, ownerLoops.loop.id, {
+    exchanges: [],
+    datasets: [],
+    bundles: [],
+    live: [
+      {
+        plugin: 'agents',
+        key: 'chat/c-nvda-1',
+        value: {
+          messages: [
+            { seq: 1, role: 'user', text: '@research-analyst NVDA 10-K summary' },
+            { seq: 2, role: 'agent', agent: 'research-analyst', status: 'working', text: 'Streaming NVDA analysis…' },
+          ],
+        },
+      },
+    ],
+  })!
+
+  const applied = applyRoomSnapshot(
+    { 1: fullRecipient.grid },
+    recipientLoops.loops,
+    'share-agents-1',
+    snapshot,
+    1,
+    false,
+  )
+  assert.equal(applied.loops.list.length, 2)
+  const agentsPanel = applied.grids[1]!.panels.find(
+    (p) => p.content.kind === 'view' && p.content.view === 'agents/chat',
+  )
+  assert.ok(agentsPanel)
+  assert.equal(agentsPanel.state.conversation, 'c-nvda-1')
+  assert.equal(agentsPanel.state.ask, undefined)
+})
