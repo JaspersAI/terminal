@@ -30,7 +30,7 @@ import {
   move,
   removeDir,
   USER_AGENT,
-  withInstallLock,
+  withQueuedInstallLock,
 } from './archive-fetch.ts'
 import { readInstallRecord, writeInstallRecord } from './install-record.ts'
 
@@ -98,9 +98,9 @@ export function stageFile(file: string): Promise<Staged> {
   })
 }
 
-/** Stages an item on Hub, as no other install is being checked. */
+/** Stages an item on Hub, waiting if another install is currently being checked. */
 export function stageFromHub(handle: string, name: string): Promise<Staged> {
-  return withInstallLock(() => stageSource({ kind: 'hub', handle, name }))
+  return withQueuedInstallLock(() => stageSource({ kind: 'hub', handle, name }))
 }
 
 /**

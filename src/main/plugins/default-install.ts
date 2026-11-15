@@ -37,8 +37,16 @@ export interface DefaultInstallDeps {
   setInstalling(id: string | null): void
 }
 
-export async function installDefaults(deps: DefaultInstallDeps): Promise<void> {
-  for (const one of DEFAULTS) await installDefault(one, deps)
+let runningDefaults: Promise<void> | null = null
+
+export function installDefaults(deps: DefaultInstallDeps): Promise<void> {
+  if (runningDefaults) return runningDefaults
+  runningDefaults = (async () => {
+    for (const one of DEFAULTS) await installDefault(one, deps)
+  })().finally(() => {
+    runningDefaults = null
+  })
+  return runningDefaults
 }
 
 async function installDefault({ handle, name, called }: Default, deps: DefaultInstallDeps): Promise<void> {
