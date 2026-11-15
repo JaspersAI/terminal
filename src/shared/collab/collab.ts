@@ -8,11 +8,13 @@ import {
   EMPTY_GRID,
   layoutOf,
   placeFrame,
+  removeElement,
   withLayout,
   type Grid,
   type GridElement,
   type Panel,
 } from '../grid/grid.ts'
+import { withoutLoop } from '../loops/closed.ts'
 import { frameOf, named, NO_LOOPS, type Loop, type Loops } from '../loops/loops.ts'
 import type { ViewInfo, Workspace } from '../state.ts'
 import { tabSwatchStyle } from '../tabs/tabs.ts'
@@ -651,6 +653,29 @@ export function applyRoomSnapshot(
     grids: { ...grids, [targetWindow]: { ...mergedGrid, seq } },
     loops: nextLoops,
     loopId: localLoopId,
+  }
+}
+
+/**
+ * Removes a room (`loopId`), its frame, and all of its inner tiles/panels from `grids` and `loops`.
+ */
+export function removeRoomFromWorkspace(
+  grids: Record<number, Grid>,
+  loops: Loops,
+  loopId: string,
+): { grids: Record<number, Grid>; loops: Loops } {
+  const frame = frameOf(grids, loopId)
+  let nextGrids = grids
+  if (frame) {
+    const winGrid = grids[frame.window]
+    if (winGrid) {
+      const removed = withLayout(winGrid, undefined, removeElement(layoutOf(winGrid), frame.element.id).grid)
+      nextGrids = { ...grids, [frame.window]: removed }
+    }
+  }
+  return {
+    grids: nextGrids,
+    loops: withoutLoop(loops, loopId),
   }
 }
 

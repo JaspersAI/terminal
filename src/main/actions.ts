@@ -119,6 +119,7 @@ import { checkSignIn, signIn, signOut, signedIn } from './jaspers/jaspers'
 import {
   acceptTeammateInvite,
   declineTeammateInvite,
+  deleteSharedRoom,
   inviteTeammate,
   removeTeammate,
   runSponsoredRefreshIfNeeded,
@@ -1164,7 +1165,19 @@ function asLoopPatch(raw: Record<string, unknown>): LoopPatch {
  * its run stopped and its conversation forgotten, is done where every way one goes is seen (`watchLoops`).
  */
 export function deleteLoop(workspaceId: string, loopId: string): void {
-  const tabId = findRoomTab(getState(), loopId) ?? workspaceId
+  const initialState = getState()
+  const tabId = findRoomTab(initialState, loopId) ?? workspaceId
+  const existingLoop =
+    initialState.loops[tabId]?.list.find((l) => l.id === loopId) ??
+    initialState.loops[tabId]?.closed?.find((c) => c.loop.id === loopId)?.loop
+  const hasShare =
+    Boolean(existingLoop?.shareId) ||
+    (initialState.collab?.shares ?? []).some(
+      (sh) => sh.kind === 'room' && (sh.shareId === existingLoop?.shareId || sh.localId === `${tabId}/${loopId}`),
+    )
+  if (hasShare) {
+    void deleteSharedRoom(tabId, loopId, existingLoop?.shareId).catch(() => undefined)
+  }
   const frame = frameOf(getGrids(tabId), loopId)
   if (frame) {
     const before = getGrids(tabId)
