@@ -229,7 +229,9 @@ function fakeAccount() {
           emit(everyone(share), { type: 'share.updated' }, who)
         },
         deleteShare: async (id) => {
-          const share = owned(id, account, client)
+          // The owner's account, from any of its terminals.
+          const share = accessible(id, account)
+          if (share.owner !== account) return refuse('forbidden')
           shares.delete(id)
           emit(share.members, { type: 'share.removed', share_id: id })
         },
@@ -316,8 +318,8 @@ function terminal(
   account: string,
   email: string,
   start: Pick<CollabEngineState, 'grids' | 'loops'>,
+  client = `client-${account}`,
 ) {
-  const client = `client-${account}`
   let state: CollabEngineState = {
     workspaces: [{ id: 'ws', name: 'Main' }],
     currentWorkspaceId: 'ws',
@@ -865,4 +867,31 @@ test("a tile's statement over the store is run on the owner's store, and only th
   await settle()
   assert.deepEqual(await other, expected)
   assert.deepEqual(alice.queried, ['select n from t', 'select n from t'])
+})
+
+test('a room held by a terminal that is gone can still be taken back: its account stops sharing it from another', async (t) => {
+  const { server, alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  // The terminal that held the room is closed and never comes back. Its account signs in on a new one.
+  alice.disconnect()
+  const second = terminal(
+    server,
+    'alice',
+    'alice@fund.com',
+    { grids: { ws: { 1: { ...EMPTY_GRID, size: DEFAULT_SIZE } } }, loops: { ws: NO_LOOPS } },
+    'client-alice-new',
+  )
+  await second.connect()
+  await settle()
+  const share = second.state.collab.shares[0]!
+  assert.equal(share.role, 'member', 'another terminal holds it')
+  assert.equal(share.ownerOnline, false)
+  assert.ok(roomOf(second), 'drawn here as a copy')
+
+  await second.engine.leave(share.shareId)
+  await settle()
+  assert.equal(roomOf(second), null)
+  assert.equal(roomOf(bob), null, 'and gone for the teammate too, not left read-only for ever')
+  assert.deepEqual(bob.state.collab.shares, [])
 })

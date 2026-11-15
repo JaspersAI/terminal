@@ -208,13 +208,17 @@ function passing(error: unknown): boolean {
   return error.code === 'busy' || error.code === 'limit' || /^http_(429|5\d\d)$/.test(error.code)
 }
 
-/** A part too large to send, in words: which kind of thing it is. */
+/** What to tell the owner of a part too large to send: what it is, and what a teammate then lacks. */
 function tooLarge(key: string): string {
-  const kind = key.split('/')[0]
-  if (kind === 'data' || kind === 'query') return 'A dataset in a shared room'
-  if (kind === 'bundle') return `The ${key.split('/')[1] ?? ''} plugin's views`
-  if (kind === 'chat') return "A shared room's conversation"
-  return 'Part of a shared room'
+  const [kind, name] = key.split('/')
+  if (kind === 'bundle') {
+    return `The ${name ?? ''} plugin's views are too large to send with a shared room: a teammate sees its tiles only with the plugin installed.`
+  }
+  if (kind === 'data' || kind === 'query') {
+    return 'A dataset in a shared room is too large to send, so teammates do not see it.'
+  }
+  if (kind === 'chat') return "A shared room's conversation is too large to send, so teammates do not see it."
+  return 'Part of a shared room is too large to send, so teammates do not see it.'
 }
 
 export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngineDeps<S>) {
@@ -376,8 +380,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       if (size > PART_BYTES) {
         // More than the server keeps in one part. It is left out, whole, and said once: a teammate
         // is never shown part of a dataset as if it were all of it.
-        if (!memory.oversize.has(key))
-          deps.notice(`${tooLarge(key)} is too large to share with teammates, so they do not see it.`)
+        if (!memory.oversize.has(key)) deps.notice(tooLarge(key))
         memory.oversize.add(key)
         parts.delete(key)
         continue
@@ -1345,10 +1348,17 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       await shareOwn('workspace', workspaceId, null, members)
     },
     stopSharing,
-    /** Gives up this account's place in a teammate's share: its replicas go from this terminal. */
+    /**
+     * Takes a share that is drawn here as a replica off this terminal. A teammate's is left: this
+     * account gives up its place in it. One of this account's own, held by another of its terminals,
+     * has no place to give up, so it stops being shared: that is the only way out when the terminal
+     * that held it is gone for good.
+     */
     async leave(shareId: string): Promise<void> {
       requireConnected()
-      await deps.api.leaveShare(shareId)
+      const own = shareOf(shareId)?.ownerAccountId === deps.getState().collab.accountId
+      if (own) await deps.api.deleteShare(shareId)
+      else await deps.api.leaveShare(shareId)
       await refresh()
     },
 
