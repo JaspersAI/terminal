@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { EMPTY_COLLAB, type SyncedDataset, type SyncedPluginBundle } from '../../shared/collab/collab.ts'
+import {
+  EMPTY_COLLAB,
+  type SyncedDataset,
+  type SyncedLiveValue,
+  type SyncedPluginBundle,
+} from '../../shared/collab/collab.ts'
 import { DEFAULT_SIZE, EMPTY_GRID, placeFramed } from '../../shared/grid/grid.ts'
 import { NO_LOOPS, withLoopAsked } from '../../shared/loops/loops.ts'
 import type { Exchange } from '../../shared/agent/transcript.ts'
@@ -27,6 +32,7 @@ function makeNode(accountId: string, email: string) {
   const listeners = new Set<(next: CollabEngineState, prev: CollabEngineState) => void>()
   const hydratedDatasets: SyncedDataset[] = []
   const registeredBundles: SyncedPluginBundle[] = []
+  const liveStore = new Map<string, unknown>()
   const exchangesByChat = new Map<string, Exchange[]>()
   const promptsRun: { workspaceId: string; loopId: string; input: string }[] = []
 
@@ -36,6 +42,7 @@ function makeNode(accountId: string, email: string) {
     },
     hydratedDatasets,
     registeredBundles,
+    liveStore,
     exchangesByChat,
     promptsRun,
     update(mutate: (s: CollabEngineState) => CollabEngineState) {
@@ -200,6 +207,17 @@ test('two terminals collaborate live: teammate invite/accept, sharing a room wit
       },
     ],
     registerBundle: (b) => aliceNode.registeredBundles.push(b),
+    exportLive: (): SyncedLiveValue[] => [
+      {
+        plugin: 'agents',
+        key: 'chat/c-stream-1',
+        value: {
+          messages: [{ seq: 1, role: 'agent', agent: 'research-analyst', status: 'working', text: 'Streaming…' }],
+        },
+      },
+    ],
+    hydrateLive: (entry) => aliceNode.liveStore.set(`${entry.plugin}:${entry.key}`, entry.value),
+    getLive: (plugin, key) => aliceNode.liveStore.get(`${plugin}:${key}`),
     readRoomExchanges: async (chat) => aliceNode.exchangesByChat.get(chat) ?? [],
     writeRoomExchanges: async (chat, list) => {
       aliceNode.exchangesByChat.set(chat, list)
@@ -226,6 +244,9 @@ test('two terminals collaborate live: teammate invite/accept, sharing a room wit
     hydrateDataset: (ds) => bobNode.hydratedDatasets.push(ds),
     exportBundles: () => [],
     registerBundle: (b) => bobNode.registeredBundles.push(b),
+    exportLive: () => [],
+    hydrateLive: (entry) => bobNode.liveStore.set(`${entry.plugin}:${entry.key}`, entry.value),
+    getLive: (plugin, key) => bobNode.liveStore.get(`${plugin}:${key}`),
     readRoomExchanges: async (chat) => bobNode.exchangesByChat.get(chat) ?? [],
     writeRoomExchanges: async (chat, list) => {
       bobNode.exchangesByChat.set(chat, list)
@@ -249,6 +270,11 @@ test('two terminals collaborate live: teammate invite/accept, sharing a room wit
   assert.deepEqual(bobNode.hydratedDatasets[0]!.rows, [{ symbol: 'NVDA', price: 142.5 }])
   assert.equal(bobNode.registeredBundles.length, 1)
   assert.equal(bobNode.registeredBundles[0]!.plugin, 'custom-plugin')
+  assert.deepEqual(bobNode.liveStore.get('agents:chat/c-stream-1'), {
+    messages: [{ seq: 1, role: 'agent', agent: 'research-analyst', status: 'working', text: 'Streaming…' }],
+  })
+  const openConvRes = await bobEngine.runSponsoredSource('ws-1', 'agents/open-conversation', { id: 'c-stream-1' })
+  assert.deepEqual(openConvRes, { kind: 'text', resultId: 'synced-chat-c-stream-1', text: 'c-stream-1' })
 
   // When Bob sends a normal room prompt in the shared room, it delegates to Alice (the owner)!
   const reply = await bobEngine.runSponsoredPrompt('ws-1', 'f1', 'Update DCF for Q4 guidance')

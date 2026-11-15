@@ -18,6 +18,7 @@ import {
   type SharedWorkspaceSnapshot,
   type ShareMember,
   type SyncedDataset,
+  type SyncedLiveValue,
   type SyncedPluginBundle,
   type Teammate,
   type TeammateInvite,
@@ -89,6 +90,9 @@ export interface CollabEngineDeps<S extends CollabEngineState = CollabEngineStat
   hydrateDataset(ds: SyncedDataset, workspaceId?: string): void
   exportBundles(pluginIds: Iterable<string>): SyncedPluginBundle[]
   registerBundle(bundle: SyncedPluginBundle): void
+  exportLive?(allowedPlugins?: ReadonlySet<string>): SyncedLiveValue[]
+  hydrateLive?(entry: SyncedLiveValue): void
+  getLive?(plugin: string, key: string): unknown
   readRoomExchanges(chat: string): Promise<Exchange[]>
   writeRoomExchanges(chat: string, exchanges: Exchange[]): Promise<void>
   runRoomPrompt(workspaceId: string, loopId: string, input: string): Promise<string>
@@ -168,6 +172,10 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         if (plugin) set.add(plugin)
       }
     }
+    if (set.has('agents') || set.has('research')) {
+      set.add('agents')
+      set.add('research')
+    }
     return set
   }
 
@@ -183,6 +191,10 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         if (plugin) set.add(plugin)
       }
     }
+    if (set.has('agents') || set.has('research')) {
+      set.add('agents')
+      set.add('research')
+    }
     return set
   }
 
@@ -194,10 +206,15 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     const snapshot = isRecord(rawShare.snapshot) ? rawShare.snapshot : null
     if (!snapshot) return
 
-    // Hydrate bundles and datasets first so views mount with data and code ready
+    // Hydrate bundles, live values, and datasets first so views mount with data and code ready
     for (const rawBundle of Array.isArray(snapshot.bundles) ? snapshot.bundles : []) {
       const valid = validateSyncedPluginBundle(rawBundle)
       if (valid) deps.registerBundle(valid)
+    }
+    for (const rawLive of Array.isArray(snapshot.live) ? snapshot.live : []) {
+      if (isRecord(rawLive) && typeof rawLive.plugin === 'string' && typeof rawLive.key === 'string') {
+        deps.hydrateLive?.({ plugin: rawLive.plugin, key: rawLive.key, value: rawLive.value })
+      }
     }
 
     if (info.kind === 'room' && snapshot.kind === 'room') {
@@ -292,9 +309,14 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           const nextShares = prevShares.some((sh) => sh.shareId === info.shareId)
             ? prevShares.map((sh) => (sh.shareId === info.shareId ? localInfo : sh))
             : [...prevShares, localInfo]
+          const currentTabEmpty =
+            !info.isOwner &&
+            (s.grids[s.currentWorkspaceId]?.[1]?.elements.length ?? 0) === 0 &&
+            (s.loops[s.currentWorkspaceId]?.list.length ?? 0) === 0
           return {
             ...s,
             workspaces: applied.workspaces,
+            currentWorkspaceId: currentTabEmpty ? applied.workspaceId : s.currentWorkspaceId,
             grids: applied.grids,
             loops: applied.loops,
             collab: { ...(s.collab ?? EMPTY_COLLAB), shares: nextShares },
@@ -318,9 +340,23 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     const chat = loopChat(workspaceId, loop)
     const exchanges = await deps.readRoomExchanges(chat)
     const roomPlugins = collectRoomPlugins(grids, loops, loopId)
+    for (const grid of Object.values(grids)) {
+      const elemIds = new Set(grid.elements.filter((e) => e.loop === loopId).map((e) => e.id))
+      for (const panel of grid.panels) {
+        if (!elemIds.has(panel.elementId) || panel.content.kind !== 'view') continue
+        if (panel.content.view === 'agents/chat') {
+          const convId =
+            isRecord(panel.state) && typeof panel.state.conversation === 'string' ? panel.state.conversation.trim() : ''
+          if (convId && deps.getLive && deps.getLive('agents', `chat/${convId}`) === undefined) {
+            await deps.runSource('agents/open-conversation', { id: convId }, workspaceId).catch(() => undefined)
+          }
+        }
+      }
+    }
     const datasets = deps.exportDatasets(workspaceId, roomPlugins)
     const bundles = deps.exportBundles(roomPlugins)
-    const snapshot = buildRoomSnapshot(grids, loops, loopId, { exchanges, datasets, bundles })
+    const live = deps.exportLive?.(roomPlugins) ?? []
+    const snapshot = buildRoomSnapshot(grids, loops, loopId, { exchanges, datasets, bundles, live })
     if (!snapshot) return null
 
     const existing = findRoomShare(state.collab ?? EMPTY_COLLAB, workspaceId, loopId, shareId ?? loop.shareId)
@@ -386,12 +422,24 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       exchangesByLoop[loop.id] = await deps.readRoomExchanges(loopChat(workspaceId, loop))
     }
     const wsPlugins = collectWorkspacePlugins(grids, loops)
+    for (const grid of Object.values(grids)) {
+      for (const panel of grid.panels) {
+        if (panel.content.kind !== 'view' || panel.content.view !== 'agents/chat') continue
+        const convId =
+          isRecord(panel.state) && typeof panel.state.conversation === 'string' ? panel.state.conversation.trim() : ''
+        if (convId && deps.getLive && deps.getLive('agents', `chat/${convId}`) === undefined) {
+          await deps.runSource('agents/open-conversation', { id: convId }, workspaceId).catch(() => undefined)
+        }
+      }
+    }
     const datasets = deps.exportDatasets(workspaceId, wsPlugins)
     const bundles = deps.exportBundles(wsPlugins)
+    const live = deps.exportLive?.(wsPlugins) ?? []
     const snapshot = buildWorkspaceSnapshot(workspace, grids, loops, {
       exchangesByLoop,
       datasets,
       bundles,
+      live,
     })
     const existing = findWorkspaceShare(state.collab ?? EMPTY_COLLAB, workspaceId, shareId ?? workspace.shareId)
     const remoteShareId = [existing?.shareId, shareId].find(
@@ -1013,6 +1061,12 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     },
 
     async runSponsoredSource(workspaceId: string, source: string, args: unknown, _fresh?: boolean): Promise<unknown> {
+      if (source === 'agents/open-conversation' && isRecord(args) && typeof args.id === 'string' && args.id.trim()) {
+        const wantedId = args.id.trim()
+        if (deps.getLive?.('agents', `chat/${wantedId}`) !== undefined) {
+          return { kind: 'text', resultId: `synced-chat-${wantedId}`, text: wantedId }
+        }
+      }
       const state = deps.getState()
       const ws = state.workspaces.find((w) => w.id === workspaceId)
       const wsSponsored = isSponsoredWorkspace(state.collab ?? EMPTY_COLLAB, workspaceId, ws?.shareId)

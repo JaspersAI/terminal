@@ -9,6 +9,7 @@ import { fileExchange, forgetChat } from '../data/store'
 import { exportDatasets, hydrateSyncedDataset, runSource, setSponsoredSourceRunner } from '../data/sources'
 import type { RunResult } from '../../shared/data/datasets'
 import { asAccount, gatewayAddress, onSignInChange, signedIn } from '../jaspers/jaspers'
+import { exportLiveValues, getLive, hydrateSyncedLive, onLiveChange } from '../plugins/live'
 import { bundlePath } from '../plugins/plugins'
 import { registerSyncedViews } from '../plugins/registry'
 import { keepSyncedBundle } from '../plugins/synced-bundles'
@@ -144,6 +145,9 @@ const engine = createCollabEngine({
     const kept = keepSyncedBundle(bundle)
     if (kept) registerSyncedViews(kept.plugin, kept.views)
   },
+  exportLive: (allowedPlugins) => exportLiveValues(allowedPlugins),
+  hydrateLive: (entry) => hydrateSyncedLive(entry),
+  getLive: (plugin, key) => getLive(plugin, key),
   readRoomExchanges: (chat) => readChatExchanges(chat, 100),
   writeRoomExchanges: replaceRoomExchanges,
   runRoomPrompt: (workspaceId, loopId, input) => sendToLoop(workspaceId, loopId, { typed: input }),
@@ -286,6 +290,21 @@ export function startCollab(): void {
           if (findRoomShare(next.collab ?? EMPTY_COLLAB, ws.id, loop.id, loop.shareId)) {
             scheduleRoomPush(ws.id, loop.id)
           }
+        }
+      }
+    }
+  })
+
+  onLiveChange((_plugin, _key) => {
+    if (!signedIn() || engine.gate.isApplyingRemote()) return
+    const state = getState()
+    for (const ws of state.workspaces) {
+      if (findWorkspaceShare(state.collab ?? EMPTY_COLLAB, ws.id, ws.shareId)) {
+        scheduleWorkspacePush(ws.id)
+      }
+      for (const loop of state.loops[ws.id]?.list ?? []) {
+        if (findRoomShare(state.collab ?? EMPTY_COLLAB, ws.id, loop.id, loop.shareId)) {
+          scheduleRoomPush(ws.id, loop.id)
         }
       }
     }
