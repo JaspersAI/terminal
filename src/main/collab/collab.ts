@@ -1,383 +1,345 @@
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { app } from 'electron'
 import type { Exchange } from '../../shared/agent/transcript'
-import { EMPTY_COLLAB, findRoomShare, findWorkspaceShare, type SyncedPluginBundle } from '../../shared/collab/collab'
-import { addNotice } from '../app/notices'
-import { setCollabLoopHooks, sendToLoop } from '../agent/loop'
-import { exchanges as readChatExchanges } from '../agent/utils/thread'
-import { fileExchange, forgetChat } from '../data/store'
-import { exportDatasets, hydrateSyncedDataset, runSource, setSponsoredSourceRunner } from '../data/sources'
+import { HUMAN_ROOM_ANSWER, shareTargets } from '../../shared/collab/collab'
+import {
+  CHAT_SHARED,
+  type ReplicaPanel,
+  type SyncedBundle,
+  type SyncedDataset,
+  type SyncedQuery,
+} from '../../shared/collab/parts'
 import type { RunResult } from '../../shared/data/datasets'
+import { withWindows } from '../../shared/grid/windows'
+import { loopChat, NO_LOOPS } from '../../shared/loops/loops'
+import { sendToLoop, setCollabLoopHooks } from '../agent/loop'
+import { exchanges as readExchanges, fileDirectExchange } from '../agent/utils/thread'
+import { addNotice } from '../app/notices'
+import {
+  datasetRows,
+  dropReplicaDatasets,
+  keepReplicaDataset,
+  onSourceRan,
+  replicaDataset,
+  runSource,
+} from '../data/sources'
+import { fileExchange, forgetChat, query } from '../data/store'
 import { asAccount, gatewayAddress, onSignInChange, signedIn } from '../jaspers/jaspers'
-import { exportLiveValues, getLive, hydrateSyncedLive, onLiveChange } from '../plugins/live'
+import { touchLoop } from '../loops/loops'
+import { dropReplicaLive, getLive, onLiveChange, setReplicaLive } from '../plugins/live'
 import { bundlePath } from '../plugins/plugins'
-import { registerSyncedViews } from '../plugins/registry'
-import { keepSyncedBundle } from '../plugins/synced-bundles'
+import { registerSyncedViews, unregisterSyncedViews } from '../plugins/registry'
+import { dropSyncedBundles, keepSyncedBundle } from '../plugins/synced-bundles'
 import { getState, subscribe, update } from '../state'
-import { createCollabEngine, type CollabApi } from './collab-engine'
+import { CLIENT_HEADER, collabApi } from './api'
+import { createCollabEngine } from './collab-engine'
+import { readEvent } from './wire'
 
-// Main-process collaboration service: connects to `/v1/collab/*` on Jaspers Account using the
-// signed-in account's bearer (`asAccount`), maintains the live SSE event stream, syncs shared
-// Rooms and Workspace tabs, and handles owner-sponsored commands.
+// Working with teammates, in main: the engine (collab-engine.ts) given this app to work on, the
+// event stream it follows, and what the rest of main asks of it. Everything goes out as the
+// signed-in account, through Jaspers Account's /v1/collab.
 
-const PUSH_DEBOUNCE_MS = 180
 const RECONNECT_MS = 5_000
-const POLL_MS = 4_000
 
-let sseController: AbortController | null = null
-let reconnectTimer: NodeJS.Timeout | null = null
-let pollTimer: NodeJS.Timeout | null = null
-const pushTimers = new Map<string, NodeJS.Timeout>()
-let refreshCallback: ((workspaceId: string, panelId: string) => void) | null = null
-
-export function setCollabRefreshCallback(cb: (workspaceId: string, panelId: string) => void): void {
-  refreshCallback = cb
-}
-
-function collabUrl(subpath: string): string {
-  return `${gatewayAddress()}/collab${subpath}`
-}
-
-async function callJson<T>(subpath: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  if (init.body && !headers.has('content-type')) {
-    headers.set('content-type', 'application/json')
+/**
+ * This terminal's name to the server, made once and kept beside the state. An account may be signed
+ * in on several terminals, and a shared room lives on one: this is how the server tells them apart.
+ */
+function clientId(): string {
+  const file = path.join(app.getPath('userData'), 'collab-client')
+  try {
+    const kept = fs.readFileSync(file, 'utf8').trim()
+    if (/^[A-Za-z0-9_-]{8,64}$/.test(kept)) return kept
+  } catch {
+    // Not made yet.
   }
-  const res = await asAccount(collabUrl(subpath), { ...init, headers })
-  const text = await res.text()
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    try {
-      const parsed = JSON.parse(text) as { error?: { message?: string } | string; message?: string }
-      if (typeof parsed.error === 'object' && parsed.error?.message) msg = parsed.error.message
-      else if (typeof parsed.error === 'string') msg = parsed.error
-      else if (typeof parsed.message === 'string') msg = parsed.message
-    } catch {
-      if (text.trim()) msg = text.trim().slice(0, 200)
-    }
-    throw new Error(msg)
-  }
-  return (text ? JSON.parse(text) : {}) as T
+  const made = randomUUID()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, made)
+  return made
 }
 
-const api: CollabApi = {
-  fetchState: () => callJson('/state'),
-  inviteTeammate: (email) => callJson('/teammates', { method: 'POST', body: JSON.stringify({ email }) }),
-  acceptInvite: (invite) => callJson('/teammates/accept', { method: 'POST', body: JSON.stringify({ invite }) }),
-  declineInvite: (invite) => callJson('/teammates/decline', { method: 'POST', body: JSON.stringify({ invite }) }),
-  removeTeammate: (accountId) => callJson(`/teammates/${encodeURIComponent(accountId)}`, { method: 'DELETE' }),
-  upsertShare: (input) => callJson('/shares', { method: 'POST', body: JSON.stringify(input) }),
-  deleteShare: (shareId) => callJson(`/shares/${encodeURIComponent(shareId)}`, { method: 'DELETE' }),
-  enqueueCommand: (shareId, input) =>
-    callJson(`/shares/${encodeURIComponent(shareId)}/commands`, {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }),
-  claimCommands: async () => {
-    const res = await callJson<{ commands: Record<string, unknown>[] }>('/commands/claim', {
-      method: 'POST',
-      body: '{}',
-    })
-    return Array.isArray(res.commands) ? res.commands : []
-  },
-  completeCommand: (commandId, outcome) =>
-    callJson(`/commands/${encodeURIComponent(commandId)}/complete`, {
-      method: 'POST',
-      body: JSON.stringify(outcome),
-    }),
+/** What actions.ts does to a panel, handed over as it loads: it imports this file, so this one cannot import it. */
+interface Hands {
+  setPanelState(workspaceId: string, elementId: string, path: string[], value: unknown): void
+  refreshPanel(workspaceId: string, elementId: string): void
+}
+let hands: Hands | null = null
+
+export function setCollabHands(given: Hands): void {
+  hands = given
 }
 
-function exportLocalPluginBundles(pluginIds: Iterable<string>): SyncedPluginBundle[] {
+const id = clientId()
+const api = collabApi(gatewayAddress, (url, init) => asAccount(url, init), id)
+
+/** A plugin's compiled views as last read off disk, until it is built again. */
+const built = new Map<string, { version: number; bundle: SyncedBundle }>()
+
+function bundleOf(plugin: string): SyncedBundle | null {
   const state = getState()
-  const out: SyncedPluginBundle[] = []
-  for (const id of new Set(pluginIds)) {
-    const plugin = state.plugins[id]
-    if (!plugin || id === 'core') continue
-    const jsFile = bundlePath(id)
-    const cssFile = path.join(path.dirname(jsFile), 'bundle.css')
-    let bundleJs = ''
-    try {
-      bundleJs = fs.readFileSync(jsFile, 'utf8')
-    } catch {
-      continue
-    }
-    if (!bundleJs) continue
-    let bundleCss: string | null = null
-    try {
-      if (fs.existsSync(cssFile)) bundleCss = fs.readFileSync(cssFile, 'utf8')
-    } catch {
-      bundleCss = null
-    }
-    const views = Object.values(state.views).filter((v) => v.plugin === id)
-    out.push({
-      plugin: id,
-      bundleJs,
-      ...(bundleCss ? { bundleCss } : {}),
-      frames: plugin.frames,
-      views,
-    })
+  const info = state.plugins[plugin]
+  const cached = built.get(plugin)
+  if (!info || info.status !== 'ready') return cached?.bundle ?? null
+  if (cached?.version === info.version) return cached.bundle
+  const file = bundlePath(plugin)
+  let bundleJs: string
+  try {
+    bundleJs = fs.readFileSync(file, 'utf8')
+  } catch {
+    return null
   }
-  return out
+  if (!bundleJs) return null
+  let bundleCss: string | undefined
+  try {
+    bundleCss = fs.readFileSync(path.join(path.dirname(file), 'bundle.css'), 'utf8')
+  } catch {
+    // A plugin need not have styles of its own.
+  }
+  const bundle: SyncedBundle = {
+    plugin,
+    bundleJs,
+    ...(bundleCss ? { bundleCss } : {}),
+    frames: info.frames,
+    views: Object.values(state.views).filter((view) => view.plugin === plugin),
+  }
+  built.set(plugin, { version: info.version, bundle })
+  return bundle
 }
 
-async function replaceRoomExchanges(chat: string, list: Exchange[]): Promise<void> {
-  const existing = await readChatExchanges(chat, 100).catch(() => [])
-  if (
-    existing.length === list.length &&
-    existing.every((e, i) => e.question === list[i]?.question && e.answer === list[i]?.answer)
-  ) {
-    return
+/** A run's answer as a teammate is sent it. The same rows give the same object, so it is hashed once. */
+const sent = new WeakMap<object, SyncedDataset>()
+
+function asSynced(source: string, args: unknown, result: RunResult & { text: string }): SyncedDataset {
+  if (result.kind !== 'dataset') return { source, args, rows: [], meta: {}, text: result.text, fetchedAt: Date.now() }
+  const rows = datasetRows(result.datasetId)
+  let synced = sent.get(rows)
+  if (!synced) {
+    synced = { source, args, rows, meta: result.meta, text: result.text, fetchedAt: Date.now() }
+    sent.set(rows, synced)
   }
-  forgetChat(chat)
-  for (const ex of list) {
-    await fileExchange(chat, ex.at ?? Date.now(), ex)
+  return synced
+}
+
+/**
+ * A replica's conversation brought up to the room's: the exchanges it lacks are filed after what it
+ * has. When the room's own log no longer holds what the replica has within the same stretch (its
+ * owner started the conversation over), the replica's is replaced. It is a copy: nothing in it was
+ * ever written here.
+ */
+async function fileExchanges(chat: string, incoming: Exchange[]): Promise<void> {
+  const local = await readExchanges(chat, CHAT_SHARED * 2).catch(() => [])
+  const theirs = new Set(incoming.map((one) => one.at))
+  const first = incoming[0]?.at ?? Infinity
+  const strays = local.some((one) => (one.at ?? 0) >= first && !theirs.has(one.at))
+  if (strays) forgetChat(chat)
+  const mine = strays ? new Set<number | undefined>() : new Set(local.map((one) => one.at))
+  for (const exchange of [...incoming].sort((a, b) => (a.at ?? 0) - (b.at ?? 0))) {
+    if (!mine.has(exchange.at)) await fileExchange(chat, exchange.at ?? Date.now(), exchange)
   }
 }
+
+const replicaDatasetId = (shareId: string, key: string): string => `${shareId}:${key}`
 
 const engine = createCollabEngine({
+  clientId: id,
+  api,
   getState,
   update,
-  api,
-  exportDatasets: (workspaceId, allowedPlugins) => exportDatasets(workspaceId, allowedPlugins),
-  hydrateDataset: (ds, workspaceId) => hydrateSyncedDataset(ds, workspaceId ?? null),
-  exportBundles: exportLocalPluginBundles,
-  registerBundle: (bundle) => {
-    const kept = keepSyncedBundle(bundle)
-    if (kept) registerSyncedViews(kept.plugin, kept.views)
-  },
-  exportLive: (allowedPlugins) => exportLiveValues(allowedPlugins),
-  hydrateLive: (entry) => hydrateSyncedLive(entry),
-  getLive: (plugin, key) => getLive(plugin, key),
-  readRoomExchanges: (chat) => readChatExchanges(chat, 100),
-  writeRoomExchanges: replaceRoomExchanges,
-  runRoomPrompt: (workspaceId, loopId, input) => sendToLoop(workspaceId, loopId, { typed: input }),
-  refreshPanel: (workspaceId, panelId) => refreshCallback?.(workspaceId, panelId),
-  runSource: (source, args, workspaceId) => runSource(source, args, { fresh: true, workspaceId }),
+  now: Date.now,
+  digest: (text) => createHash('sha256').update(text).digest('hex'),
   notice: (text) => addNotice('collab', text),
+
+  exchanges: async (chat) => (await readExchanges(chat, CHAT_SHARED)).sort((a, b) => (a.at ?? 0) - (b.at ?? 0)),
+  bundle: bundleOf,
+  live: (plugin, key) => getLive(plugin, key),
+  hasPlugin: (plugin) => Object.hasOwn(getState().plugins, plugin),
+  emptyGrids: (state) => withWindows({}, state.windows),
+
+  runPrompt: (workspaceId, loopId, input) => sendToLoop(workspaceId, loopId, { typed: input }),
+  fileMessage: (workspaceId, loopId, question) => {
+    const loop = (getState().loops[workspaceId] ?? NO_LOOPS).list.find((one) => one.id === loopId)
+    fileDirectExchange(loopChat(workspaceId, loop ?? loopId), question, HUMAN_ROOM_ANSWER)
+    touchLoop(workspaceId, loopId)
+  },
+  setPanelState: (workspaceId, elementId, at, value) => hands?.setPanelState(workspaceId, elementId, at, value),
+  refreshPanel: (workspaceId, elementId) => hands?.refreshPanel(workspaceId, elementId),
+  runSource: async (workspaceId, source, args) =>
+    asSynced(source, args, await runSource(source, args, { workspaceId })),
+  query: (sql, limit) => query({ sql, ...(limit !== undefined ? { limit } : {}) }),
+
+  keepBundle: (shareId, bundle) => {
+    keepSyncedBundle(shareId, bundle)
+    registerSyncedViews(bundle.plugin, bundle.views)
+  },
+  keepDataset: (shareId, key, dataset) =>
+    keepReplicaDataset(replicaDatasetId(shareId, key), dataset, dataset.text, dataset.fetchedAt),
+  keepLive: (shareId, live) => setReplicaLive(shareId, live.plugin, live.key, live.value),
+  dropShare: (shareId) => {
+    dropReplicaDatasets(`${shareId}:`)
+    dropReplicaLive(shareId)
+    for (const plugin of dropSyncedBundles(shareId)) unregisterSyncedViews(plugin)
+  },
+  fileExchanges,
 })
 
-function scheduleRoomPush(workspaceId: string, loopId: string): void {
-  const key = `room:${workspaceId}/${loopId}`
-  const prev = pushTimers.get(key)
-  if (prev) clearTimeout(prev)
-  pushTimers.set(
-    key,
-    setTimeout(() => {
-      pushTimers.delete(key)
-      void engine.pushRoomShareSnapshot(workspaceId, loopId).catch(() => undefined)
-    }, PUSH_DEBOUNCE_MS),
-  )
-}
+// The event stream.
 
-function scheduleWorkspacePush(workspaceId: string): void {
-  const key = `ws:${workspaceId}`
-  const prev = pushTimers.get(key)
-  if (prev) clearTimeout(prev)
-  pushTimers.set(
-    key,
-    setTimeout(() => {
-      pushTimers.delete(key)
-      void engine.pushWorkspaceShareSnapshot(workspaceId).catch(() => undefined)
-    }, PUSH_DEBOUNCE_MS),
-  )
-}
+let stream: AbortController | null = null
+let retry: NodeJS.Timeout | null = null
 
-async function connectStream(): Promise<void> {
-  if (!signedIn()) return
-  sseController?.abort()
+async function follow(): Promise<void> {
+  stream?.abort()
   const controller = new AbortController()
-  sseController = controller
+  stream = controller
   try {
-    await engine.refreshState()
-    const res = await asAccount(collabUrl('/events'), {
-      headers: { accept: 'text/event-stream' },
+    const response = await asAccount(`${gatewayAddress()}/collab/events`, {
+      headers: { accept: 'text/event-stream', [CLIENT_HEADER]: id },
       signal: controller.signal,
     })
-    if (!res.ok || !res.body) throw new Error(`SSE status ${res.status}`)
-    const reader = res.body.getReader()
+    if (!response.ok || !response.body) throw new Error(`The event stream answered ${response.status}.`)
+    await engine.connected()
+    const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
-    while (!controller.signal.aborted) {
+    for (;;) {
       const chunk = await reader.read()
       if (chunk.done) break
       buffer += decoder.decode(chunk.value, { stream: true })
       const blocks = buffer.split('\n\n')
       buffer = blocks.pop() ?? ''
       for (const block of blocks) {
-        const dataLine = block
+        const data = block
           .split('\n')
           .find((line) => line.startsWith('data:'))
           ?.slice(5)
-          .trim()
-        if (!dataLine) continue
+        if (!data) continue
+        let event
         try {
-          const event = JSON.parse(dataLine) as {
-            type?: string
-            share?: Record<string, unknown>
-            share_id?: string
-          }
-          if (event.type === 'share.updated' && event.share) {
-            await engine.applyRemoteShare(event.share)
-          } else if (event.type === 'share.removed' && typeof event.share_id === 'string') {
-            engine.removeRemoteShare(event.share_id)
-          } else if (event.type === 'command.created') {
-            await engine.processPendingCommands()
-          } else {
-            await engine.refreshState()
-          }
+          event = readEvent(JSON.parse(data))
         } catch {
-          // Ignore malformed SSE event frames.
+          continue
         }
+        // Not waited for: reading a room's parts must not hold up what is said after it.
+        if (event) void engine.event(event).catch(() => undefined)
       }
     }
   } catch {
-    // Reconnect after a short delay while signed in.
+    // Closed, refused, or never opened: tried again below while there is someone signed in.
   } finally {
-    if (sseController === controller && signedIn()) {
-      if (reconnectTimer) clearTimeout(reconnectTimer)
-      reconnectTimer = setTimeout(() => void connectStream(), RECONNECT_MS)
-      reconnectTimer.unref?.()
+    if (stream === controller) {
+      stream = null
+      engine.disconnected()
+      if (signedIn()) {
+        retry = setTimeout(() => void follow(), RECONNECT_MS)
+        retry.unref?.()
+      }
     }
   }
 }
 
-function stopStream(): void {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-  sseController?.abort()
-  sseController = null
-  update((s) => ({ ...s, collab: EMPTY_COLLAB }))
+function stop(): void {
+  if (retry) clearTimeout(retry)
+  retry = null
+  const open = stream
+  stream = null
+  open?.abort()
 }
 
 export function startCollab(): void {
-  setSponsoredSourceRunner(
-    (workspaceId, source, args, fresh) =>
-      engine.runSponsoredSource(workspaceId, source, args, fresh) as Promise<(RunResult & { text: string }) | null>,
-  )
   setCollabLoopHooks({
-    runSponsoredPrompt: (workspaceId, loopId, input) => engine.runSponsoredPrompt(workspaceId, loopId, input),
-    onRoomExchange: (workspaceId, loopId) => {
-      const state = getState()
-      const loop = state.loops[workspaceId]?.list.find((l) => l.id === loopId)
-      const ws = state.workspaces.find((w) => w.id === workspaceId)
-      if (findRoomShare(state.collab ?? EMPTY_COLLAB, workspaceId, loopId, loop?.shareId)) {
-        scheduleRoomPush(workspaceId, loopId)
-      }
-      if (findWorkspaceShare(state.collab ?? EMPTY_COLLAB, workspaceId, ws?.shareId)) {
-        scheduleWorkspacePush(workspaceId)
-      }
-    },
+    prompt: (shareId, room, input) => engine.prompt(shareId, room, input),
+    message: (shareId, room, text) => engine.message(shareId, room, text),
+    said: (workspaceId, loopId) => engine.said(workspaceId, loopId),
   })
-
+  // A tab whose grid, rooms, or name changed: whatever of it is shared is sent again.
   subscribe((next, prev) => {
-    if (!signedIn() || engine.gate.isApplyingRemote()) return
-    for (const ws of next.workspaces) {
+    for (const workspace of next.workspaces) {
       if (
-        next.grids[ws.id] !== prev.grids[ws.id] ||
-        next.loops[ws.id] !== prev.loops[ws.id] ||
-        ws !== prev.workspaces.find((w) => w.id === ws.id)
+        next.grids[workspace.id] !== prev.grids[workspace.id] ||
+        next.loops[workspace.id] !== prev.loops[workspace.id] ||
+        workspace !== prev.workspaces.find((one) => one.id === workspace.id)
       ) {
-        if (findWorkspaceShare(next.collab ?? EMPTY_COLLAB, ws.id, ws.shareId)) {
-          scheduleWorkspacePush(ws.id)
-        }
-        for (const loop of next.loops[ws.id]?.list ?? []) {
-          if (findRoomShare(next.collab ?? EMPTY_COLLAB, ws.id, loop.id, loop.shareId)) {
-            scheduleRoomPush(ws.id, loop.id)
-          }
-        }
+        engine.changed(workspace.id)
       }
     }
   })
-
-  onLiveChange((_plugin, _key) => {
-    if (!signedIn() || engine.gate.isApplyingRemote()) return
-    const state = getState()
-    for (const ws of state.workspaces) {
-      if (findWorkspaceShare(state.collab ?? EMPTY_COLLAB, ws.id, ws.shareId)) {
-        scheduleWorkspacePush(ws.id)
-      }
-      for (const loop of state.loops[ws.id]?.list ?? []) {
-        if (findRoomShare(state.collab ?? EMPTY_COLLAB, ws.id, loop.id, loop.shareId)) {
-          scheduleRoomPush(ws.id, loop.id)
-        }
-      }
-    }
+  onLiveChange((plugin, key) => engine.liveChanged(plugin, key))
+  onSourceRan((source, args, workspaceId, result) => {
+    if (workspaceId) engine.ran(workspaceId, source, args, () => asSynced(source, args, result))
   })
-
-  const startSync = (): void => {
-    void connectStream()
-    if (!pollTimer) {
-      pollTimer = setInterval(() => {
-        if (signedIn()) void engine.refreshState().catch(() => undefined)
-      }, POLL_MS)
-      pollTimer.unref?.()
-    }
-  }
-
   onSignInChange((nowSignedIn) => {
-    if (nowSignedIn) startSync()
-    else stopStream()
+    stop()
+    if (nowSignedIn) void follow()
+    else engine.signedOut()
   })
-  if (signedIn()) startSync()
+  if (signedIn()) void follow()
 }
 
-export function inviteTeammate(email: string): Promise<void> {
-  return engine.inviteTeammate(email)
-}
+// People.
 
-export function acceptTeammateInvite(invite: string): Promise<void> {
-  return engine.acceptInvite(invite)
-}
+export const inviteTeammate = (email: string): Promise<void> => engine.invite(email)
+export const acceptTeammateInvite = (invite: string): Promise<void> => engine.accept(invite)
+export const declineTeammateInvite = (invite: string): Promise<void> => engine.decline(invite)
+export const removeTeammate = (accountId: string): Promise<void> => engine.removeTeammate(accountId)
 
-export function declineTeammateInvite(invite: string): Promise<void> {
-  return engine.declineInvite(invite)
-}
+// Sharing.
 
-export function removeTeammate(accountId: string): Promise<void> {
-  return engine.removeTeammate(accountId)
-}
-
-export function shareRoom(workspaceId: string, loopId: string, memberAccountIds: string[]): Promise<void> {
-  return engine.shareRoom(workspaceId, loopId, memberAccountIds)
-}
-
-function cancelRoomPush(workspaceId: string, loopId: string): void {
-  const key = `room:${workspaceId}/${loopId}`
-  const prev = pushTimers.get(key)
-  if (prev) {
-    clearTimeout(prev)
-    pushTimers.delete(key)
+/** Who was named, as accounts and addresses; refused when a name is neither a teammate nor an address. */
+function membersOf(named: readonly string[]): string[] {
+  const { members, unknown } = shareTargets(named, getState().collab.teammates)
+  if (unknown.length > 0) {
+    throw new Error(`No teammate is called ${unknown.join(', ')}. Name them by their email address.`)
   }
+  return members
 }
 
-export function unshareRoom(workspaceId: string, loopId: string): Promise<void> {
-  cancelRoomPush(workspaceId, loopId)
-  return engine.unshareRoom(workspaceId, loopId)
+/** Shares a room with exactly these people (teammates, or addresses to invite); with none, stops sharing it. */
+export function shareRoom(workspaceId: string, loopId: string, named: readonly string[]): Promise<void> {
+  return engine.shareRoom(workspaceId, loopId, membersOf(named))
 }
 
-export function deleteSharedRoom(workspaceId: string, loopId: string, shareId?: string): Promise<void> {
-  cancelRoomPush(workspaceId, loopId)
-  return engine.deleteSharedRoom(workspaceId, loopId, shareId)
+export function shareTab(workspaceId: string, named: readonly string[]): Promise<void> {
+  return engine.shareTab(workspaceId, membersOf(named))
 }
 
-export function shareWorkspace(workspaceId: string, memberAccountIds: string[]): Promise<void> {
-  return engine.shareWorkspace(workspaceId, memberAccountIds)
+export const stopSharing = (shareId: string): Promise<void> => engine.stopSharing(shareId)
+export const leaveShare = (shareId: string): Promise<void> => engine.leave(shareId)
+
+// A replica: a teammate's room drawn here. What its views and its box ask is the owner's to answer.
+
+/** The replica tile a panel or element id names on a tab, or null when the tile is this terminal's own. */
+export function replicaAt(workspaceId: string, panelOrElement: string): ReplicaPanel | null {
+  return engine.replica(workspaceId, panelOrElement)
 }
 
-export function unshareWorkspace(workspaceId: string): Promise<void> {
-  return engine.unshareWorkspace(workspaceId)
+/** Why a share cannot be written to right now, or null when it can. */
+export const readOnly = (shareId: string): string | null => engine.writable(shareId)
+
+export function replicaSet(panel: ReplicaPanel, at: string[], value: unknown): void {
+  engine.set(panel, at, value)
 }
 
-export function runSponsoredRefreshIfNeeded(workspaceId: string, panelId: string): Promise<boolean> {
-  return engine.runSponsoredRefresh(workspaceId, panelId)
+export const replicaRefresh = (panel: ReplicaPanel): Promise<void> => engine.refreshTile(panel)
+
+export async function replicaSource(
+  workspaceId: string,
+  panel: ReplicaPanel,
+  source: string,
+  args: unknown,
+): Promise<RunResult & { text: string }> {
+  const datasetId = replicaDatasetId(panel.shareId, await engine.source(workspaceId, panel, source, args))
+  const kept = replicaDataset(datasetId)
+  if (!kept) throw new Error('The room has no data for this yet.')
+  const { dataset, text } = kept
+  // A source that answered in words and no rows is still that: its text, read by id.
+  if (dataset.rows.length === 0 && text) return { kind: 'text', resultId: datasetId, text }
+  return { kind: 'dataset', datasetId, rowCount: dataset.rows.length, meta: dataset.meta, text }
 }
 
-export function refreshCollabState(): void {
-  if (signedIn()) void engine.refreshState().catch(() => undefined)
-}
+export const replicaQuery = (panel: ReplicaPanel, sql: string, limit: number | undefined): Promise<SyncedQuery> =>
+  engine.query(panel, sql, limit)
+
+export const replicaWatch = (shareId: string, plugin: string, key: string): void => engine.watch(shareId, plugin, key)

@@ -8,7 +8,6 @@ import {
   type Dataset,
   type RunResult,
 } from '../../shared/data/datasets'
-import type { SyncedDataset } from '../../shared/collab/collab'
 import { stableStringify } from '../../shared/data/hash'
 import type { RunRecord } from '../../shared/data/store'
 import { isRefreshableView } from '../../shared/grid/grid'
@@ -47,7 +46,6 @@ const DEFAULT_TTL_MS = 60_000
 const KEEP_MS = 5 * 60_000
 
 const datasets = new Map<string, Dataset>()
-const datasetWorkspaces = new Map<string, string | null>()
 const texts = new Map<string, string>()
 /** source and arguments → the dataset that answered them, while it is still good. */
 const cache = new Map<string, string>()
@@ -57,26 +55,6 @@ const expires = new Map<string, number>()
 const workbooks = new Map<string, WorkbookTable[]>()
 const inFlight = createInFlightMap<{ result: RunResult & { text: string }; citations: unknown }>()
 let seq = 0
-
-let sponsoredSourceRunner:
-  | ((
-      workspaceId: string,
-      source: string,
-      args: unknown,
-      fresh?: boolean,
-    ) => Promise<(RunResult & { text: string }) | null>)
-  | null = null
-
-export function setSponsoredSourceRunner(
-  runner: (
-    workspaceId: string,
-    source: string,
-    args: unknown,
-    fresh?: boolean,
-  ) => Promise<(RunResult & { text: string }) | null>,
-): void {
-  sponsoredSourceRunner = runner
-}
 
 export interface RunOptions {
   /** Skip a dataset still good for these arguments and fetch again; the new one takes its place for everyone. */
@@ -89,61 +67,33 @@ export interface RunOptions {
   raw?: (result: unknown) => void
 }
 
+type RanListener = (id: string, args: unknown, workspaceId: string | null, result: RunResult & { text: string }) => void
+const ranListeners = new Set<RanListener>()
+
+/** Hears every run that answered, with the arguments as whoever asked gave them: a served dataset is one too. */
+export function onSourceRan(listener: RanListener): void {
+  ranListeners.add(listener)
+}
+
 /** Runs one source by registry id. Throws with the server's own words when it refuses. */
 export async function runSource(
   id: string,
   args: unknown,
   options: RunOptions = {},
 ): Promise<RunResult & { text: string }> {
-  const workspaceId = options.workspaceId ?? null
-  if (!options.fresh) {
-    for (const candidateKey of [
-      stableStringify([id, asArgs(args), workspaceId]),
-      stableStringify([id, args, workspaceId]),
-    ]) {
-      const synced = stillGood(candidateKey, workspaceId)
-      if (synced) {
-        keepCitations(workspaceId, synced.meta)
-        return {
-          kind: 'dataset',
-          datasetId: synced.id,
-          rowCount: synced.rows.length,
-          meta: synced.meta,
-          text: texts.get(synced.id) ?? '',
-        }
-      }
-    }
-  }
-  if (workspaceId && sponsoredSourceRunner) {
-    const delegated = await sponsoredSourceRunner(workspaceId, id, args, options.fresh)
-    if (delegated) {
-      for (const candidateKey of [
-        stableStringify([id, asArgs(args), workspaceId]),
-        stableStringify([id, args, workspaceId]),
-      ]) {
-        const synced = stillGood(candidateKey, workspaceId)
-        if (synced) {
-          keepCitations(workspaceId, synced.meta)
-          return {
-            kind: 'dataset',
-            datasetId: synced.id,
-            rowCount: synced.rows.length,
-            meta: synced.meta,
-            text: texts.get(synced.id) ?? '',
-          }
-        }
-      }
-      return delegated
-    }
-  }
+  const result = await run(id, args, options)
+  for (const listener of ranListeners) listener(id, args, options.workspaceId ?? null, result)
+  return result
+}
+
+async function run(id: string, args: unknown, options: RunOptions): Promise<RunResult & { text: string }> {
   if (hasPendingPluginRegistration()) {
     await waitForPluginRegistration(options.signal)
   }
   const source = getSource(id)
-  if (!source) {
-    throw new Error(`Unknown source ${id}.`)
-  }
+  if (!source) throw new Error(`Unknown source ${id}.`)
   const def = source.def
+  const workspaceId = options.workspaceId ?? null
   const declared = (): ConnectionTool | undefined =>
     source.connection && isMcpSource(def)
       ? currentConnections()[source.connection]?.tools.find((one) => one.name === def.tool)
@@ -237,7 +187,6 @@ export async function runSource(
       at: now,
       ttlMs,
     })
-    datasetWorkspaces.set(datasetId, workspaceId)
     texts.set(datasetId, text)
     expires.set(datasetId, now + Math.max(0, ttlMs) + KEEP_MS)
     cache.set(key, datasetId)
@@ -266,76 +215,41 @@ function file(
 }
 
 /** The rows of one run. They live as long as the dataset does, which is its source's TTL. */
+/**
+ * Rows a teammate's room sent, kept for the views of its replica here (main/collab/). They are read
+ * by id like any dataset, are filed under no arguments, so no run of this terminal's own is ever
+ * answered from them, and stay until their share goes.
+ */
+export function keepReplicaDataset(
+  id: string,
+  dataset: Pick<Dataset, 'source' | 'args' | 'rows' | 'meta'>,
+  text: string,
+  at: number,
+): void {
+  datasets.set(id, { id, ...dataset, at, ttlMs: 0 })
+  texts.set(id, text)
+  expires.set(id, Number.MAX_SAFE_INTEGER)
+}
+
+/** What a replica dataset holds, for the answer a view's run is given. */
+export function replicaDataset(id: string): { dataset: Dataset; text: string } | null {
+  const dataset = datasets.get(id)
+  return dataset ? { dataset, text: texts.get(id) ?? '' } : null
+}
+
+export function dropReplicaDatasets(prefix: string): void {
+  for (const id of [...datasets.keys()]) {
+    if (!id.startsWith(prefix)) continue
+    datasets.delete(id)
+    texts.delete(id)
+    expires.delete(id)
+  }
+}
+
 export function datasetRows(datasetId: string): Record<string, unknown>[] {
   const dataset = datasets.get(datasetId)
   if (!dataset) throw new Error(`Unknown dataset ${datasetId}.`)
   return dataset.rows
-}
-
-/** Exports active datasets scoped to `workspaceId` and `allowedPlugins` so shared rooms and tabs include only their own data rows. */
-export function exportDatasets(workspaceId?: string | null, allowedPlugins?: ReadonlySet<string>): SyncedDataset[] {
-  const out: SyncedDataset[] = []
-  for (const ds of datasets.values()) {
-    const dsWorkspace = datasetWorkspaces.get(ds.id) ?? null
-    if (workspaceId !== undefined && workspaceId !== null && dsWorkspace !== null && dsWorkspace !== workspaceId) {
-      continue
-    }
-    if (allowedPlugins) {
-      const plugin = ds.source.split('/')[0] ?? ''
-      if (plugin && plugin !== 'core' && !allowedPlugins.has(plugin)) continue
-    }
-    out.push({
-      datasetId: ds.id,
-      source: ds.source,
-      args: ds.args,
-      rows: ds.rows,
-      meta: ds.meta,
-      text: texts.get(ds.id) ?? '',
-      fetchedAt: ds.at,
-    })
-  }
-  return out
-}
-
-/**
- * Hydrates a dataset synced from a shared room or workspace tab into both the in-memory dataset map
- * and the local SQLite store (`jaspers.db`), so built-in SQL views and plugin `useData` hooks render
- * immediately on a collaborator's machine without needing the owner's API keys.
- */
-export function hydrateSyncedDataset(ds: SyncedDataset, workspaceId: string | null = null): void {
-  if (!ds || typeof ds.source !== 'string' || !Array.isArray(ds.rows)) return
-  const now = Date.now()
-  const minAt = (workspaceRefreshedAt(workspaceId) ?? 0) + 1
-  const at = Math.max(now, typeof ds.fetchedAt === 'number' ? ds.fetchedAt : 0, minAt)
-  const ttlMs = 60 * 60_000
-  const requestedId = ds.datasetId || `d_sync_${++seq}`
-  const existingOwner = datasetWorkspaces.get(requestedId)
-  const id =
-    datasets.has(requestedId) && existingOwner !== undefined && existingOwner !== workspaceId
-      ? `d_sync_${workspaceId ?? 'shared'}_${requestedId}`
-      : requestedId
-  datasets.set(id, {
-    id,
-    source: ds.source,
-    args: ds.args,
-    rows: ds.rows,
-    meta: ds.meta ?? {},
-    at,
-    ttlMs,
-  })
-  datasetWorkspaces.set(id, workspaceId)
-  texts.set(id, ds.text ?? '')
-  expires.set(id, now + ttlMs + KEEP_MS)
-  const wsMcpKey = stableStringify([ds.source, asArgs(ds.args), workspaceId])
-  const wsFnKey = stableStringify([ds.source, ds.args, workspaceId])
-  cache.set(wsMcpKey, id)
-  cache.set(wsFnKey, id)
-  file(ds.source, ds.args, wsMcpKey, workspaceId, {
-    rows: ds.rows,
-    meta: ds.meta ?? {},
-    text: ds.text ?? null,
-    error: null,
-  })
 }
 
 export function resultText(resultId: string): string {
@@ -435,7 +349,6 @@ function sweep(now: number): void {
     if (until > now) continue
     expires.delete(id)
     datasets.delete(id)
-    datasetWorkspaces.delete(id)
     texts.delete(id)
   }
   for (const [key, id] of cache) if (!datasets.has(id)) cache.delete(key)

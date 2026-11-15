@@ -119,16 +119,16 @@ import { checkSignIn, signIn, signOut, signedIn } from './jaspers/jaspers'
 import {
   acceptTeammateInvite,
   declineTeammateInvite,
-  deleteSharedRoom,
   inviteTeammate,
-  refreshCollabState,
+  leaveShare,
   removeTeammate,
-  runSponsoredRefreshIfNeeded,
-  setCollabRefreshCallback,
+  replicaAt,
+  replicaRefresh,
+  replicaSet,
+  setCollabHands,
   shareRoom,
-  shareWorkspace,
-  unshareRoom,
-  unshareWorkspace,
+  shareTab,
+  stopSharing,
 } from './collab/collab'
 import { allowApps } from './plugins/app-consent'
 import { getLive } from './plugins/live'
@@ -172,6 +172,7 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'element.focus': (raw) => focus(asString(raw.workspaceId), asString(raw.elementId)),
   'element.remove': (raw) => {
     const elementId = asString(raw.elementId)
+    ownTile(asString(raw.workspaceId), elementId)
     removeChecked(asString(raw.workspaceId), elementId)
   },
   'loop.delete': (raw) => {
@@ -239,6 +240,7 @@ const HANDLERS: Record<Action['type'], Handler> = {
     const workspaceId = asString(raw.workspaceId)
     const elementId = asString(raw.elementId)
     const mode = asMode(raw.mode)
+    ownTile(workspaceId, elementId)
     try {
       changeMode(workspaceId, elementId, mode)
     } catch (err) {
@@ -253,20 +255,25 @@ const HANDLERS: Record<Action['type'], Handler> = {
     }
   },
   'element.setZoom': (raw) => {
+    ownTile(asString(raw.workspaceId), asString(raw.elementId))
     changeZoom(asString(raw.workspaceId), asString(raw.elementId), asFiniteNumber(raw.zoom))
   },
   'element.setRect': (raw) => {
     const elementId = asString(raw.elementId)
     const rect = asRect(raw.rect)
+    ownTile(asString(raw.workspaceId), elementId)
     changeGridOf(asString(raw.workspaceId), elementId, (grid) => setRect(grid, elementId, rect))
   },
   'element.swap': (raw) => {
     const elementId = asString(raw.elementId)
     const otherId = asString(raw.otherId)
+    ownTile(asString(raw.workspaceId), elementId)
+    ownTile(asString(raw.workspaceId), otherId)
     changeGridOf(asString(raw.workspaceId), elementId, (grid) => swapElements(grid, elementId, otherId))
   },
   'element.moveAcross': (raw) => {
     const elementId = asString(raw.elementId)
+    ownTile(asString(raw.workspaceId), elementId)
     moveElementAcross(asString(raw.workspaceId), elementId, asWindow(raw.window), { rect: asRect(raw.rect) })
   },
   'element.place': (raw) => {
@@ -286,7 +293,14 @@ const HANDLERS: Record<Action['type'], Handler> = {
     setGridSize(asString(raw.workspaceId), asGridSize(raw.size))
   },
   'panel.setState': (raw) => {
-    setPanelStateChecked(asString(raw.workspaceId), asString(raw.panelId), asPath(raw.path), raw.value)
+    const workspaceId = asString(raw.workspaceId)
+    const panelId = asString(raw.panelId)
+    const path = asPath(raw.path)
+    // A tile of a teammate's room: the edit is the owner's to take, and is shown here meanwhile.
+    // It is refused, before anything changes here, while the owner's terminal cannot be reached.
+    const replica = replicaAt(workspaceId, panelId)
+    if (replica) replicaSet(replica, path, raw.value)
+    setPanelStateChecked(workspaceId, panelId, path, raw.value)
   },
   'panel.publish': (raw) => {
     publishChecked(asString(raw.workspaceId), asString(raw.panelId), asRecord(raw.output))
@@ -300,7 +314,9 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'panel.refresh': async (raw) => {
     const workspaceId = asString(raw.workspaceId)
     const panelId = asString(raw.panelId)
-    await runSponsoredRefreshIfNeeded(workspaceId, panelId)
+    // A teammate's room fetches on its owner's terminal: what it fetched comes back with the room.
+    const replica = replicaAt(workspaceId, panelId)
+    if (replica) await replicaRefresh(replica)
     refreshChecked(workspaceId, panelId)
   },
   'plugin.setSecret': (raw) => setSecret(asString(raw.plugin), asString(raw.key), asString(raw.value)),
@@ -358,15 +374,22 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'room.share': (raw) => {
     const room = asString(raw.room)
     if (!LOOP_ID.test(room)) throw new Error('room.share names a room by its id.')
-    return shareRoom(asString(raw.workspaceId), room, asStringArray(raw.memberAccountIds))
+    return shareRoom(asString(raw.workspaceId), room, asStringArray(raw.members))
   },
+  // Its owner stops sharing it; a teammate leaves it, and it goes from this terminal.
   'room.unshare': (raw) => {
     const room = asString(raw.room)
     if (!LOOP_ID.test(room)) throw new Error('room.unshare names a room by its id.')
-    return unshareRoom(asString(raw.workspaceId), room)
+    const loop = loopsOf(asString(raw.workspaceId)).list.find((one) => one.id === room)
+    if (!loop?.shareId) return
+    return loop.replica ? leaveShare(loop.shareId) : stopSharing(loop.shareId)
   },
-  'tab.share': (raw) => shareWorkspace(asString(raw.id), asStringArray(raw.memberAccountIds)),
-  'tab.unshare': (raw) => unshareWorkspace(asString(raw.id)),
+  'tab.share': (raw) => shareTab(asString(raw.id), asStringArray(raw.members)),
+  'tab.unshare': (raw) => {
+    const tab = getState().workspaces.find((one) => one.id === asString(raw.id))
+    if (!tab?.shareId) return
+    return tab.replica ? leaveShare(tab.shareId) : stopSharing(tab.shareId)
+  },
 }
 
 /** Applies an action from the renderer. Anything malformed throws, with a message for the user. */
@@ -782,7 +805,6 @@ export function acceptTerms(): void {
 export function completeOnboarding(): void {
   if (!getState().llm) throw new Error('Pick a language model provider first.')
   update((state) => ({ ...state, onboardingComplete: true }))
-  refreshCollabState()
 }
 
 // Tabs (Workspaces).
@@ -838,6 +860,7 @@ export function detachTab(id: string): void {
 }
 
 export function renameWorkspace(id: string, rawName: string): void {
+  ownTab(id)
   const name = rawName.trim()
   if (!name || name.length > WORKSPACE_NAME_MAX) {
     throw new Error(`Tab names are 1 to ${WORKSPACE_NAME_MAX} characters.`)
@@ -849,6 +872,7 @@ export function renameWorkspace(id: string, rawName: string): void {
 }
 
 export function colorWorkspace(id: string, rawColor: string | null): void {
+  ownTab(id)
   const color = rawColor === null ? null : rawColor.trim().toLowerCase()
   if (color !== null && !isTabColor(color)) {
     throw new Error('Choose a color from the 32-color palette, or null for default grayscale.')
@@ -887,6 +911,13 @@ export function selectWorkspace(id: string): void {
  * Closing the current tab makes its neighbor current, the one after it or else the one before.
  */
 export function deleteWorkspace(id: string): void {
+  const tab = getState().workspaces.find((one) => one.id === id)
+  if (tab?.shareId && tab.replica) {
+    // A teammate's tab is left, not closed: it goes from this terminal when the server has let go of it.
+    void leaveShare(tab.shareId).catch((err: unknown) => addNotice('collab', message(err)))
+    return
+  }
+  if (tab?.shareId) void stopSharing(tab.shareId).catch(() => undefined)
   update((state) => {
     const index = state.workspaces.findIndex((w) => w.id === id)
     if (index < 0) throw new Error('Unknown tab.')
@@ -966,6 +997,9 @@ export function placeChecked(
     throw new Error(`Unknown view ${content.view}. Installed: ${installed}.`)
   }
   if (state) checkState(content, state)
+  // A teammate's room, and a teammate's tab, hold what their owner's terminal puts there.
+  if (loop) ownRoom(workspaceId, loop, 'laid out')
+  else ownTab(workspaceId)
   const had = loopsOf(workspaceId)
   if (loop !== undefined && !had.list.some((one) => one.id === loop)) throw new Error(`Unknown work ${loop}.`)
   if (!isTile(content)) {
@@ -1036,6 +1070,7 @@ export function createLoop(
   spec: LoopSpec,
   placement: Placement,
 ): { loop: Loop; element: GridElement } {
+  ownTab(workspaceId)
   const made = withLoopAsked(loopsOf(workspaceId), spec, Date.now(), globalSeq(getState().loops))
   const { element } = changeGrid(
     workspaceId,
@@ -1095,6 +1130,7 @@ export function removeChecked(workspaceId: string, elementId: string): void {
 
 /** Sets or clears a room's custom title (and optional description) on whichever tab holds it (open or closed). */
 export function renameLoop(workspaceId: string, loopId: string, rawTitle: string, rawDesc?: string): void {
+  ownRoom(workspaceId, loopId, 'renamed')
   update((state) => {
     const tabId = findRoomTab(state, loopId) ?? workspaceId
     return withLoops(state, tabId, withLoopTitle(state.loops[tabId] ?? NO_LOOPS, loopId, rawTitle, rawDesc))
@@ -1103,6 +1139,7 @@ export function renameLoop(workspaceId: string, loopId: string, rawTitle: string
 
 /** Closes a room: its frame goes, with every tile inside it, and the room is kept in memory to reopen. One that is not open is nothing to do. */
 export function closeLoop(workspaceId: string, loopId: string): void {
+  ownRoom(workspaceId, loopId, 'closed')
   const tabId = findRoomTab(getState(), loopId) ?? workspaceId
   const frame = frameOf(getGrids(tabId), loopId)
   if (frame) removeChecked(tabId, frame.element.id)
@@ -1143,6 +1180,7 @@ export function reopenLoop(workspaceId: string, loopId: string, window?: number)
 
 /** Updates a room's `desc`, `brief`, or `systemPrompt` across any tab. */
 export function updateLoop(workspaceId: string, loopId: string, patch: LoopPatch, now = Date.now()): void {
+  ownRoom(workspaceId, loopId, 'changed')
   update((state) => {
     const tabId = findRoomTab(state, loopId) ?? workspaceId
     return withLoops(state, tabId, withLoopUpdated(state.loops[tabId] ?? NO_LOOPS, loopId, patch, now))
@@ -1172,14 +1210,17 @@ export function deleteLoop(workspaceId: string, loopId: string): void {
   const existingLoop =
     initialState.loops[tabId]?.list.find((l) => l.id === loopId) ??
     initialState.loops[tabId]?.closed?.find((c) => c.loop.id === loopId)?.loop
-  const hasShare =
-    Boolean(existingLoop?.shareId) ||
-    (initialState.collab?.shares ?? []).some(
-      (sh) => sh.kind === 'room' && (sh.shareId === existingLoop?.shareId || sh.localId === `${tabId}/${loopId}`),
-    )
-  if (hasShare) {
-    void deleteSharedRoom(tabId, loopId, existingLoop?.shareId).catch(() => undefined)
+  if (existingLoop?.shareId && existingLoop.replica) {
+    // A teammate's room is not this terminal's to delete. Leaving it takes it off this grid; one
+    // that came with a shared tab goes when the tab is left.
+    if (initialState.workspaces.find((one) => one.id === tabId)?.replica) {
+      throw new Error('This room is part of a tab a teammate shared. Leave the tab to take it off this terminal.')
+    }
+    void leaveShare(existingLoop.shareId).catch((err: unknown) => addNotice('collab', message(err)))
+    return
   }
+  // Deleted for good, so no longer shared: teammates' copies of it go.
+  if (existingLoop?.shareId) void stopSharing(existingLoop.shareId).catch(() => undefined)
   const frame = frameOf(getGrids(tabId), loopId)
   if (frame) {
     const before = getGrids(tabId)
@@ -1428,14 +1469,51 @@ export function refreshChecked(workspaceId: string, panelId: string, at = Date.n
   return updated
 }
 
-setCollabRefreshCallback((workspaceId, panelId) => {
-  try {
-    const target = refreshTarget(getGrids(workspaceId), loopsOf(workspaceId).list, panelId)
-    refreshChecked(workspaceId, target)
-  } catch {
-    // Ignore refresh of a removed panel.
-  }
+// What a teammate asks of a tile in a shared room of this terminal's own, done as the user's own
+// hand would do it: the same checks, the same schema.
+setCollabHands({
+  setPanelState: (workspaceId, elementId, path, value) => {
+    setPanelStateChecked(workspaceId, elementId, path, value)
+  },
+  refreshPanel: (workspaceId, elementId) => {
+    refreshChecked(workspaceId, refreshTarget(getGrids(workspaceId), loopsOf(workspaceId).list, elementId))
+  },
 })
+
+/** Whose a room is, when it is a teammate's: for saying why something is not done to it here. */
+function ownerOf(shareId: string | undefined): string {
+  return getState().collab.shares.find((one) => one.shareId === shareId)?.ownerEmail ?? 'a teammate'
+}
+
+/** Refuses a change to a teammate's room that only its owner's terminal makes. */
+function ownRoom(workspaceId: string, loopId: string, done: string): void {
+  const tabId = findRoomTab(getState(), loopId) ?? workspaceId
+  const loop = loopsOf(tabId).list.find((one) => one.id === loopId)
+  if (!loop?.replica) return
+  throw new Error(
+    `${loopName(loopId)} is ${ownerOf(loop.shareId)}'s room: it is ${done} on their terminal. Leave it to take it off this one.`,
+  )
+}
+
+/** Refuses a change to a tab that is a copy of a teammate's: it follows theirs. */
+function ownTab(id: string): void {
+  const tab = getState().workspaces.find((one) => one.id === id)
+  if (tab?.replica)
+    throw new Error(`This tab is ${ownerOf(tab.shareId)}'s: it follows theirs. Leave it to take it off this terminal.`)
+}
+
+/**
+ * Refuses moving, resizing, or closing a tile inside a teammate's room: the room is laid out on its
+ * owner's terminal, and a change made here would be undone by the next one made there. The room's
+ * own frame is this terminal's to place.
+ */
+function ownTile(workspaceId: string, elementId: string): void {
+  const replica = replicaAt(workspaceId, elementId)
+  if (!replica) return
+  const { grid } = findElement(workspaceId, elementId)
+  if (grid.elements.find((one) => one.id === elementId || one.panelId === elementId)?.parent === undefined) return
+  throw new Error(`This room is ${ownerOf(replica.shareId)}'s: its tiles are arranged on their terminal.`)
+}
 
 /** Synchronizes `errors` on every `ready` plugin with the active runtime view errors on `state.grids`. */
 function syncPluginViewErrors(): void {

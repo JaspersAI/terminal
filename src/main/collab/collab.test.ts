@@ -1,319 +1,868 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
-import {
-  EMPTY_COLLAB,
-  type SyncedDataset,
-  type SyncedLiveValue,
-  type SyncedPluginBundle,
-} from '../../shared/collab/collab.ts'
-import { DEFAULT_SIZE, EMPTY_GRID, placeFramed } from '../../shared/grid/grid.ts'
-import { NO_LOOPS, withLoopAsked } from '../../shared/loops/loops.ts'
+import { createHash } from 'node:crypto'
+import { test, type TestContext } from 'node:test'
 import type { Exchange } from '../../shared/agent/transcript.ts'
-import { createCollabEngine, type CollabEngineState } from './collab-engine.ts'
+import { EMPTY_COLLAB, HUMAN_ROOM_ANSWER } from '../../shared/collab/collab.ts'
+import type { SyncedBundle, SyncedDataset } from '../../shared/collab/parts.ts'
+import {
+  DEFAULT_SIZE,
+  EMPTY_GRID,
+  layoutOf,
+  placeFramed,
+  setIn,
+  type Grid,
+  type Panel,
+} from '../../shared/grid/grid.ts'
+import { frameOf, NO_LOOPS, withLoopAsked, type Loop } from '../../shared/loops/loops.ts'
+import { createCollabEngine, type CollabEngine, type CollabEngineState } from './collab-engine.ts'
+import { CollabError, readCommand, readEvent, readManifest, readState, type CollabApi } from './wire.ts'
 
-function makeNode(accountId: string, email: string) {
-  const made = withLoopAsked(
-    NO_LOOPS,
-    { desc: 'NVDA Earnings', brief: 'Analyze Q3', plugins: ['custom-plugin'], skills: [] },
-    1000,
-  )
-  const placed = placeFramed(
-    { ...EMPTY_GRID, size: DEFAULT_SIZE, cells: { A1: '100' } },
-    { content: { kind: 'view', view: 'custom-plugin/board' }, state: { ticker: 'NVDA' }, loop: made.loop.id },
-  )
-  let state: CollabEngineState = {
-    workspaces: [{ id: 'ws-1', name: 'Main Tab' }],
-    currentWorkspaceId: 'ws-1',
-    grids: { 'ws-1': { 1: placed.grid } },
-    loops: { 'ws-1': made.loops },
-    jaspers: { email, tokens: 'tok' },
-    collab: { ...EMPTY_COLLAB, accountId },
+// Two terminals and a server made of maps. The server here does what jaspers-account's /v1/collab
+// does as far as the engine can tell: it keeps shares as parts, lets only the owner's terminal write
+// them, queues commands for the owner, and tells whoever is connected what moved.
+
+const sha = (text: string): string => createHash('sha256').update(text).digest('hex')
+
+interface FakeShare {
+  id: string
+  kind: 'room' | 'workspace'
+  owner: string
+  client: string
+  localId: string
+  title: string
+  members: string[]
+  pending: string[]
+  parts: Map<string, string>
+}
+
+function fakeAccount() {
+  const emails = new Map<string, string>()
+  const teammates = new Set<string>()
+  const invites: { id: string; from: string; to: string }[] = []
+  const shares = new Map<string, FakeShare>()
+  const commands = new Map<string, { raw: Record<string, unknown>; share: string; sender: string; status: string }>()
+  const streams = new Map<string, (raw: unknown) => void>()
+  /** Every write of parts, for counting: which share, which keys, and who wrote. */
+  const writes: { share: string; keys: string[]; removed: string[]; by: string }[] = []
+  let seq = 0
+
+  const pair = (a: string, b: string): string => [a, b].sort().join('|')
+  const refuse = (code: string, message = code): never => {
+    throw new CollabError(code, message)
   }
-  const listeners = new Set<(next: CollabEngineState, prev: CollabEngineState) => void>()
-  const hydratedDatasets: SyncedDataset[] = []
-  const registeredBundles: SyncedPluginBundle[] = []
-  const liveStore = new Map<string, unknown>()
-  const exchangesByChat = new Map<string, Exchange[]>()
-  const promptsRun: { workspaceId: string; loopId: string; input: string }[] = []
+  const emit = (accounts: Iterable<string>, raw: unknown, except?: string): void => {
+    for (const account of new Set(accounts)) {
+      for (const [who, deliver] of streams) {
+        if (who.startsWith(`${account}/`) && who !== except) queueMicrotask(() => deliver(raw))
+      }
+    }
+  }
+  const everyone = (share: FakeShare): string[] => [share.owner, ...share.members]
+  const info = (share: FakeShare, me: string): Record<string, unknown> => ({
+    share_id: share.id,
+    kind: share.kind,
+    owner_account_id: share.owner,
+    owner_email: emails.get(share.owner),
+    owner_client_id: share.client,
+    local_id: share.localId,
+    title: share.title,
+    revision: 1,
+    members: share.members.map((account) => ({ account_id: account, email: emails.get(account), added_at: 1 })),
+    pending_emails: me === share.owner ? share.pending : [],
+    updated_at: 1,
+  })
+  const manifestOf = (share: FakeShare): Record<string, string> =>
+    Object.fromEntries([...share.parts].map(([key, body]) => [key, sha(body)]))
+  const accessible = (id: string, me: string): FakeShare => {
+    const share = shares.get(id)
+    if (!share || !everyone(share).includes(me)) return refuse('not_found')
+    return share
+  }
+  const owned = (id: string, me: string, client: string): FakeShare => {
+    const share = accessible(id, me)
+    if (share.owner !== me || share.client !== client) return refuse('forbidden')
+    return share
+  }
 
   return {
-    get state() {
-      return state
+    writes,
+    shares,
+    /** Makes two accounts teammates, as an accepted invitation would. */
+    befriend(a: string, b: string): void {
+      teammates.add(pair(a, b))
     },
-    hydratedDatasets,
-    registeredBundles,
-    liveStore,
-    exchangesByChat,
-    promptsRun,
-    update(mutate: (s: CollabEngineState) => CollabEngineState) {
-      const prev = state
-      const next = mutate(prev)
-      if (next !== prev) {
-        state = next
-        for (const fn of listeners) fn(next, prev)
+    /** A part written past the owner's terminal, as a faulty or hostile one might write it. */
+    plant(shareId: string, key: string, value: unknown): void {
+      const share = shares.get(shareId)!
+      share.parts.set(key, JSON.stringify(value))
+      emit(share.members, {
+        type: 'share.changed',
+        share_id: shareId,
+        changed: { [key]: sha(JSON.stringify(value)) },
+        removed: [],
+      })
+    },
+    connect(account: string, client: string, engine: CollabEngine): () => void {
+      const who = `${account}/${client}`
+      streams.set(who, (raw) => {
+        const event = readEvent(raw)
+        if (event) void engine.event(event).catch(() => undefined)
+      })
+      emit([...emails.keys()], { type: 'presence', account_id: account, client_id: client, online: true }, who)
+      return () => {
+        streams.delete(who)
+        emit([...emails.keys()], { type: 'presence', account_id: account, client_id: client, online: false })
       }
     },
-    subscribe(fn: (next: CollabEngineState, prev: CollabEngineState) => void) {
-      listeners.add(fn)
-      return () => listeners.delete(fn)
+    api(account: string, email: string, client: string): CollabApi {
+      emails.set(account, email)
+      const who = `${account}/${client}`
+      return {
+        state: async () =>
+          readState(
+            {
+              account_id: account,
+              email,
+              teammates: [...emails.keys()]
+                .filter((other) => teammates.has(pair(account, other)) && other !== account)
+                .map((other) => ({ account_id: other, email: emails.get(other), since: 1 })),
+              outgoing_invites: invites
+                .filter((one) => one.from === account)
+                .map((one) => ({
+                  invite_id: one.id,
+                  inviter_account_id: one.from,
+                  inviter_email: email,
+                  invitee_email: one.to,
+                  created_at: 1,
+                })),
+              incoming_invites: invites
+                .filter((one) => one.to === email)
+                .map((one) => ({
+                  invite_id: one.id,
+                  inviter_account_id: one.from,
+                  inviter_email: emails.get(one.from),
+                  invitee_email: one.to,
+                  created_at: 1,
+                })),
+              shares: [...shares.values()]
+                .filter((share) => everyone(share).includes(account))
+                .map((share) => info(share, account)),
+              online: [...streams.keys()].map((one) => ({
+                account_id: one.split('/')[0],
+                client_id: one.split('/')[1],
+              })),
+            },
+            client,
+          ),
+        invite: async (to) => {
+          invites.push({ id: `inv-${++seq}`, from: account, to })
+          const invitee = [...emails].find(([, address]) => address === to)?.[0]
+          if (invitee) emit([invitee], { type: 'invite.created' })
+        },
+        accept: async (id) => {
+          const invite = invites.find((one) => one.id === id && one.to === email) ?? refuse('not_found')
+          invites.splice(invites.indexOf(invite), 1)
+          teammates.add(pair(invite.from, account))
+          emit([invite.from, account], { type: 'teammate.accepted' })
+          for (const share of shares.values()) {
+            if (share.owner !== invite.from || !share.pending.includes(email)) continue
+            share.pending = share.pending.filter((one) => one !== email)
+            share.members.push(account)
+            emit([account], { type: 'share.added', share: info(share, account), manifest: manifestOf(share) })
+            emit([share.owner], { type: 'share.updated' })
+          }
+        },
+        decline: async (id) => {
+          const index = invites.findIndex((one) => one.id === id)
+          if (index >= 0) invites.splice(index, 1)
+        },
+        removeTeammate: async (other) => {
+          teammates.delete(pair(account, other))
+          emit([account, other], { type: 'teammate.removed', account_id: other })
+        },
+        createShare: async ({ kind, localId, title }) => {
+          const existing = [...shares.values()].find(
+            (one) => one.owner === account && one.kind === kind && one.localId === localId,
+          )
+          if (existing) return existing.id
+          const id = `share-${++seq}`
+          shares.set(id, {
+            id,
+            kind,
+            owner: account,
+            client,
+            localId,
+            title,
+            members: [],
+            pending: [],
+            parts: new Map(),
+          })
+          return id
+        },
+        manifest: async (id) => readManifest(manifestOf(accessible(id, account))),
+        setMembers: async (id, wanted) => {
+          const share = owned(id, account, client)
+          const before = share.members
+          const members: string[] = []
+          const pending: string[] = []
+          for (const one of wanted) {
+            const byEmail = [...emails].find(([, address]) => address === one)?.[0]
+            const teammate = [one, byEmail].find((other) => other && teammates.has(pair(account, other)))
+            if (teammate) members.push(teammate)
+            else if (one.includes('@')) {
+              pending.push(one)
+              if (!invites.some((invite) => invite.from === account && invite.to === one)) {
+                invites.push({ id: `inv-${++seq}`, from: account, to: one })
+                if (byEmail) emit([byEmail], { type: 'invite.created' })
+              }
+            } else refuse('not_teammate')
+          }
+          share.members = members
+          share.pending = pending
+          for (const added of members.filter((one) => !before.includes(one))) {
+            emit([added], { type: 'share.added', share: info(share, added), manifest: manifestOf(share) })
+          }
+          emit(
+            before.filter((one) => !members.includes(one)),
+            { type: 'share.removed', share_id: id },
+          )
+          emit(everyone(share), { type: 'share.updated' }, who)
+        },
+        deleteShare: async (id) => {
+          const share = owned(id, account, client)
+          shares.delete(id)
+          emit(share.members, { type: 'share.removed', share_id: id })
+        },
+        leaveShare: async (id) => {
+          const share = accessible(id, account)
+          share.members = share.members.filter((one) => one !== account)
+          emit([account], { type: 'share.removed', share_id: id })
+          emit(everyone(share), { type: 'share.updated' })
+        },
+        writeParts: async (id, body) => {
+          const share = owned(id, account, client)
+          const changed: Record<string, string> = {}
+          for (const [key, value] of Object.entries(body.set)) {
+            const text = JSON.stringify(value)
+            if (share.parts.get(key) === text) continue
+            share.parts.set(key, text)
+            changed[key] = sha(text)
+          }
+          const removed = body.remove.filter((key) => share.parts.delete(key))
+          writes.push({ share: id, keys: Object.keys(changed), removed, by: who })
+          if (Object.keys(changed).length > 0 || removed.length > 0) {
+            emit(everyone(share), { type: 'share.changed', share_id: id, changed, removed }, who)
+          }
+          return readManifest(manifestOf(share))
+        },
+        readParts: async (id, keys) => {
+          const share = accessible(id, account)
+          return Object.fromEntries(
+            keys.filter((key) => share.parts.has(key)).map((key) => [key, JSON.parse(share.parts.get(key)!)]),
+          )
+        },
+        sendCommand: async (id, kind, payload) => {
+          const share = accessible(id, account)
+          if (!streams.has(`${share.owner}/${share.client}`)) return refuse('owner_offline', 'The owner is offline.')
+          const commandId = `cmd-${++seq}`
+          commands.set(commandId, {
+            share: id,
+            sender: account,
+            status: 'pending',
+            raw: {
+              command_id: commandId,
+              share_id: id,
+              sender_account_id: account,
+              sender_client_id: client,
+              sender_email: email,
+              kind,
+              payload,
+            },
+          })
+          emit([share.owner], { type: 'command.created', share_id: id, command_id: commandId })
+          return commandId
+        },
+        claim: async () => {
+          const mine = [...commands.values()].filter(
+            (one) =>
+              one.status === 'pending' &&
+              shares.get(one.share)?.owner === account &&
+              shares.get(one.share)?.client === client,
+          )
+          for (const one of mine) one.status = 'running'
+          return mine.flatMap((one) => readCommand(one.raw) ?? [])
+        },
+        complete: async (commandId, outcome) => {
+          const command = commands.get(commandId)
+          if (!command || command.status !== 'running') return refuse('forbidden')
+          command.status = outcome.error ? 'failed' : 'completed'
+          emit([command.sender], {
+            type: 'command.finished',
+            command_id: commandId,
+            share_id: command.share,
+            status: command.status,
+            error: outcome.error ?? null,
+            result: outcome.result ?? {},
+          })
+        },
+      }
     },
   }
 }
 
-test('two terminals collaborate live: teammate invite/accept, sharing a room with synced datasets & compiled view bundles, and owner-sponsored agent prompt execution', async () => {
-  const aliceNode = makeNode('acc-alice', 'alice@fund.com')
-  const bobNode = makeNode('acc-bob', 'bob@fund.com')
-  // Give Bob an empty initial tab so Alice's shared room lands cleanly on Bob's grid
-  bobNode.update((s) => ({
-    ...s,
-    grids: { 'ws-1': { 1: { ...EMPTY_GRID, size: DEFAULT_SIZE } } },
-    loops: { 'ws-1': NO_LOOPS },
-  }))
+/** One terminal: a tree, the things an engine asks of the app, and a record of what it was asked to do. */
+function terminal(
+  server: ReturnType<typeof fakeAccount>,
+  account: string,
+  email: string,
+  start: Pick<CollabEngineState, 'grids' | 'loops'>,
+) {
+  const client = `client-${account}`
+  let state: CollabEngineState = {
+    workspaces: [{ id: 'ws', name: 'Main' }],
+    currentWorkspaceId: 'ws',
+    ...start,
+    jaspers: { email },
+    collab: EMPTY_COLLAB,
+  }
+  const chats = new Map<string, Exchange[]>()
+  const filed = new Map<string, Exchange[]>()
+  const prompts: string[] = []
+  const notices: string[] = []
+  const ran: string[] = []
+  const bundles: string[] = []
+  const datasets = new Map<string, SyncedDataset>()
+  const installed = new Set<string>()
+  const lives = new Map<string, unknown>()
+  const queried: string[] = []
+  const keptLive = new Map<string, unknown>()
+  const built = new Map<string, SyncedBundle>()
+  let stamp = 1_000
 
-  // Shared in-memory server state for the two engines
-  const serverShares = new Map<string, Record<string, unknown>>()
-  const serverCommands = new Map<string, Record<string, unknown>>()
-  let revSeq = 0
-
-  const makeApi = (callerId: string, callerEmail: string) => ({
-    async fetchState() {
-      return {
-        teammates:
-          callerId === 'acc-alice'
-            ? [{ account_id: 'acc-bob', email: 'bob@fund.com', since: 100 }]
-            : [{ account_id: 'acc-alice', email: 'alice@fund.com', since: 100 }],
-        outgoing_invites: [],
-        incoming_invites: [],
-        shares: [...serverShares.values()],
-        pending_commands: [...serverCommands.values()].filter(
-          (c) => c.status === 'pending' && callerId === 'acc-alice',
-        ),
+  const engine = createCollabEngine<CollabEngineState>({
+    clientId: client,
+    api: server.api(account, email, client),
+    getState: () => state,
+    update(mutate) {
+      const before = state
+      state = mutate(before)
+      for (const tab of state.workspaces) {
+        if (state.grids[tab.id] !== before.grids[tab.id] || state.loops[tab.id] !== before.loops[tab.id])
+          engine.changed(tab.id)
       }
     },
-    async inviteTeammate(email: string) {
-      return {
-        invite: {
-          invite_id: 'inv-1',
-          token: 'tok-1',
-          inviter_account_id: callerId,
-          inviter_email: callerEmail,
-          invitee_email: email,
-          status: 'pending' as const,
-          created_at: 100,
-        },
-      }
+    now: () => ++stamp,
+    digest: sha,
+    notice: (text) => notices.push(text),
+    exchanges: async (chat) => chats.get(chat) ?? [],
+    bundle: (plugin) => built.get(plugin) ?? null,
+    live: (plugin, key) => lives.get(`${plugin}/${key}`),
+    hasPlugin: (plugin) => installed.has(plugin),
+    emptyGrids: () => ({ 1: { ...EMPTY_GRID, size: DEFAULT_SIZE } }),
+    runPrompt: async (_tab, _loop, input) => {
+      prompts.push(input)
+      return `answer to: ${input}`
     },
-    async acceptInvite(_invite: string) {
-      return {
-        teammate: { account_id: 'acc-alice', email: 'alice@fund.com', since: 100 },
-      }
+    fileMessage: (tab, loop, question) => {
+      const chat = `${tab}/${loop}`
+      chats.set(chat, [...(chats.get(chat) ?? []), { at: ++stamp, question, answer: HUMAN_ROOM_ANSWER }])
     },
-    async declineInvite(_invite: string) {
-      return { declined: true as const }
+    setPanelState: (tab, elementId, path, value) => {
+      const grid = state.grids[tab]![1]!
+      if (path[0] === 'forbidden') throw new Error('The view refuses that.')
+      const panels = grid.panels.map((panel) =>
+        panel.elementId === elementId ? { ...panel, state: setIn(panel.state, path, value) } : panel,
+      )
+      const before = state
+      state = { ...state, grids: { ...state.grids, [tab]: { ...state.grids[tab], 1: { ...grid, panels } } } }
+      if (state !== before) engine.changed(tab)
     },
-    async removeTeammate(_accountId: string) {
-      return { removed: true }
+    refreshPanel: () => undefined,
+    runSource: async (_tab, source, args) => {
+      ran.push(source)
+      return { source, args, rows: [{ ticker: 'NVDA', price: 900 + ran.length }], meta: {}, text: '', fetchedAt: stamp }
     },
-    async upsertShare(input: Record<string, unknown>) {
-      const share_id = (input.share_id as string | undefined) ?? 'share-1'
-      const share = {
-        share_id,
-        kind: input.kind,
-        owner_account_id: 'acc-alice',
-        owner_email: 'alice@fund.com',
-        local_id: input.local_id,
-        title: input.title,
-        snapshot: input.snapshot,
-        revision: ++revSeq,
-        members: [
-          { account_id: 'acc-alice', email: 'alice@fund.com', added_at: 100 },
-          { account_id: 'acc-bob', email: 'bob@fund.com', added_at: 100 },
-        ],
-        updated_at: 100 + revSeq,
-      }
-      serverShares.set(share_id, share)
-      return { share }
+    query: async (sql) => {
+      queried.push(sql)
+      return { columns: ['n'], rows: [[1]], rowCount: 1, truncated: false }
     },
-    async deleteShare(shareId: string) {
-      serverShares.delete(shareId)
-      aliceEngine.removeRemoteShare(shareId)
-      bobEngine.removeRemoteShare(shareId)
-      return { deleted: true }
-    },
-    async enqueueCommand(shareId: string, input: { kind: string; payload: Record<string, unknown> }) {
-      const cmd = {
-        command_id: 'cmd-1',
-        share_id: shareId,
-        sender_account_id: callerId,
-        sender_email: callerEmail,
-        kind: input.kind,
-        payload: input.payload,
-        status: 'pending',
-        result: null,
-        error: null,
-        created_at: 200,
-        updated_at: 200,
-      }
-      serverCommands.set(cmd.command_id, cmd)
-      // Trigger owner to claim & execute
-      await aliceEngine.processPendingCommands()
-      const updated = serverCommands.get(cmd.command_id)!
-      return { command: updated }
-    },
-    async claimCommands() {
-      const list = [...serverCommands.values()].filter((c) => c.status === 'pending' && callerId === 'acc-alice')
-      for (const c of list) c.status = 'running'
-      return list
-    },
-    async completeCommand(commandId: string, outcome: { result?: Record<string, unknown>; error?: string }) {
-      const cmd = serverCommands.get(commandId)!
-      cmd.status = outcome.error ? 'failed' : 'completed'
-      cmd.result = outcome.result ?? null
-      cmd.error = outcome.error ?? null
-      return { command: cmd }
+    keepBundle: (_share, bundle) => bundles.push(bundle.plugin),
+    keepDataset: (_share, key, dataset) => datasets.set(key, dataset),
+    keepLive: (_share, live) => keptLive.set(`${live.plugin}/${live.key}`, live.value),
+    dropShare: () => undefined,
+    fileExchanges: async (chat, exchanges) => {
+      filed.set(chat, exchanges)
     },
   })
 
-  const aliceEngine = createCollabEngine({
-    getState: () => aliceNode.state,
-    update: (m) => aliceNode.update(m),
-    api: makeApi('acc-alice', 'alice@fund.com'),
-    exportDatasets: () => [
+  let hangUp: (() => void) | null = null
+  return {
+    engine,
+    chats,
+    filed,
+    prompts,
+    notices,
+    ran,
+    bundles,
+    datasets,
+    installed,
+    built,
+    lives,
+    keptLive,
+    queried,
+    get state() {
+      return state
+    },
+    async connect(): Promise<void> {
+      hangUp = server.connect(account, client, engine)
+      await engine.connected()
+    },
+    disconnect(): void {
+      hangUp?.()
+      hangUp = null
+      engine.disconnected()
+    },
+    /** Changes which view a tile shows. */
+    show(elementId: string, view: string): void {
+      const grid = state.grids.ws![1]!
+      const panels = grid.panels.map((panel) =>
+        panel.elementId === elementId ? { ...panel, content: { kind: 'view' as const, view } } : panel,
+      )
+      state = { ...state, grids: { ...state.grids, ws: { ...state.grids.ws, 1: { ...grid, panels } } } }
+      engine.changed('ws')
+    },
+    /** The app's own edit of a tile's state, as an action makes it. */
+    edit(elementId: string, path: string[], value: unknown): void {
+      const grid = state.grids.ws![1]!
+      const panels = grid.panels.map((panel) =>
+        panel.elementId === elementId ? { ...panel, state: setIn(panel.state, path, value) } : panel,
+      )
+      state = { ...state, grids: { ...state.grids, ws: { ...state.grids.ws, 1: { ...grid, panels } } } }
+      engine.changed('ws')
+    },
+  }
+}
+
+/** Everything a tab's room holds: its record, and its tiles' panels in the frame. */
+function roomOf(node: { state: CollabEngineState }, tab = 'ws'): { loop: Loop; panels: Panel[]; grid: Grid } | null {
+  const loop = node.state.loops[tab]?.list[0]
+  const frame = loop ? frameOf(node.state.grids[tab] ?? {}, loop.id) : undefined
+  if (!loop || !frame) return null
+  const grid = node.state.grids[tab]![frame.window]!
+  return { loop, grid, panels: layoutOf(grid, frame.element.id).panels }
+}
+
+/** Alice with one room holding a note, Bob with an empty tab, the two of them teammates and connected. */
+async function pair(t: TestContext) {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const server = fakeAccount()
+  const made = withLoopAsked(NO_LOOPS, { desc: 'NVDA earnings', brief: 'Read Q3', plugins: [], skills: [] }, 1000)
+  const placed = placeFramed(
+    { ...EMPTY_GRID, size: DEFAULT_SIZE },
+    { content: { kind: 'view', view: 'core/note' }, state: { text: 'first' }, loop: made.loop.id },
+  )
+  const alice = terminal(server, 'alice', 'alice@fund.com', {
+    grids: { ws: { 1: placed.grid } },
+    loops: { ws: made.loops },
+  })
+  const bob = terminal(server, 'bob', 'bob@fund.com', {
+    grids: { ws: { 1: { ...EMPTY_GRID, size: DEFAULT_SIZE } } },
+    loops: { ws: NO_LOOPS },
+  })
+  server.befriend('alice', 'bob')
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 12; i++) {
+      t.mock.timers.tick(300)
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+  }
+  await alice.connect()
+  await bob.connect()
+  await settle()
+  return { server, alice, bob, settle, room: made.loop.id, note: placed.element.id }
+}
+
+test('a room shared with a teammate is drawn on their grid as a replica, tiles and conversation with it', async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  alice.chats.set(`ws/${room}`, [{ at: 5, question: 'what moved?', answer: 'margins' }])
+
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+
+  const replica = roomOf(bob)
+  assert.ok(replica, "the room is on the teammate's grid")
+  assert.deepEqual(replica.loop.replica?.room, room)
+  assert.equal(replica.loop.desc, 'NVDA earnings')
+  assert.deepEqual(
+    replica.panels.map((panel) => panel.state),
+    [{ text: 'first' }],
+  )
+  assert.deepEqual(bob.filed.get(`ws/${replica.loop.id}`), [{ at: 5, question: 'what moved?', answer: 'margins' }])
+  assert.equal(bob.state.collab.shares[0]?.role, 'member')
+  assert.equal(bob.state.collab.shares[0]?.ownerOnline, true)
+  assert.ok(bob.notices.some((text) => text.includes('alice@fund.com shared a room')))
+  // The owner's own room is the one it was: marked shared, nothing else.
+  assert.equal(roomOf(alice)?.loop.replica, undefined)
+  assert.ok(roomOf(alice)?.loop.shareId)
+})
+
+test('only what changed is sent, nothing is sent when nothing did, and a teammate never writes a room', async (t) => {
+  const { server, alice, bob, settle, room, note } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const sent = server.writes.length
+
+  // Two idle terminals, for as long as anyone cares to wait.
+  for (let i = 0; i < 5; i++) await settle()
+  assert.equal(server.writes.length, sent, 'idle terminals write nothing')
+
+  alice.edit(note, ['text'], 'second')
+  await settle()
+  assert.deepEqual(
+    server.writes.slice(sent).map((write) => write.keys),
+    [[`room/${room}`]],
+  )
+  assert.deepEqual(roomOf(bob)?.panels[0]?.state, { text: 'second' })
+
+  await settle()
+  assert.equal(server.writes.length, sent + 1, 'the teammate taking it in sends nothing back')
+  assert.ok(server.writes.every((write) => write.by === 'alice/client-alice'))
+})
+
+test('an edit in a replica shows at once, reaches the owner, and is not undone by an older copy on its way', async (t) => {
+  const { alice, bob, settle, room, note } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const tile = roomOf(bob)!.panels[0]!
+  const panel = bob.engine.replica('ws', tile.id)!
+  assert.equal(panel.tile, note)
+
+  // As the action does: told to the engine, then made in the tree.
+  bob.engine.set(panel, ['text'], 'bob typed')
+  bob.edit(tile.elementId, ['text'], 'bob typed')
+  // The owner changes something else before the edit has reached it: the copy that arrives is older.
+  alice.edit(note, ['size'], 'large')
+  t.mock.timers.tick(100)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(roomOf(bob)?.panels[0]?.state.text, 'bob typed')
+
+  await settle()
+  assert.deepEqual(roomOf(alice)?.panels[0]?.state, { text: 'bob typed', size: 'large' })
+  assert.deepEqual(roomOf(bob)?.panels[0]?.state, { text: 'bob typed', size: 'large' })
+})
+
+test("an edit the owner's view refuses is taken back in the replica", async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const tile = roomOf(bob)!.panels[0]!
+  bob.engine.set(bob.engine.replica('ws', tile.id)!, ['forbidden'], true)
+  bob.edit(tile.elementId, ['forbidden'], true)
+  await settle()
+  assert.deepEqual(roomOf(alice)?.panels[0]?.state, { text: 'first' })
+  assert.deepEqual(roomOf(bob)?.panels[0]?.state, { text: 'first' })
+})
+
+test("a teammate's question runs on the owner's terminal under their name; a message to people runs nothing", async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const shareId = bob.state.collab.shares[0]!.shareId
+
+  const asked = bob.engine.prompt(shareId, room, 'what is the margin?')
+  await settle()
+  assert.equal(await asked, 'answer to: [bob@fund.com] what is the margin?')
+  assert.deepEqual(alice.prompts, ['[bob@fund.com] what is the margin?'])
+
+  assert.equal(await bob.engine.message(shareId, room, '@alice look at this'), HUMAN_ROOM_ANSWER)
+  await settle()
+  assert.equal(alice.prompts.length, 1, 'the agent was not run')
+  assert.deepEqual(
+    alice.chats.get(`ws/${room}`)?.map((one) => one.question),
+    ['[bob@fund.com] @alice look at this'],
+  )
+  assert.deepEqual(
+    bob.filed.get(`ws/${roomOf(bob)!.loop.id}`)?.map((one) => one.question),
+    ['[bob@fund.com] @alice look at this'],
+  )
+})
+
+test("a replica's view gets its rows from the owner, and a source no tile of the room uses is refused", async (t) => {
+  const { alice, bob, settle, room, note } = await pair(t)
+  alice.edit(note, ['source'], 'core/prices')
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const panel = bob.engine.replica('ws', roomOf(bob)!.panels[0]!.id)!
+
+  const asked = bob.engine.source('ws', panel, 'core/prices', { ticker: 'NVDA' })
+  await settle()
+  const key = await asked
+  assert.deepEqual(alice.ran, ['core/prices'])
+  assert.deepEqual(bob.datasets.get(key)?.rows, [{ ticker: 'NVDA', price: 901 }])
+
+  const other = bob.engine.source('ws', panel, 'core/mcp', { connection: 'mail', tool: 'send' })
+  const refused = assert.rejects(other, /not part of this room/)
+  await settle()
+  await refused
+  assert.deepEqual(alice.ran, ['core/prices'], 'nothing else ran')
+})
+
+test('while the owner is away the replica stays as it was and is read-only', async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const shareId = bob.state.collab.shares[0]!.shareId
+  const panel = bob.engine.replica('ws', roomOf(bob)!.panels[0]!.id)!
+
+  alice.disconnect()
+  await settle()
+  assert.equal(bob.state.collab.shares[0]?.ownerOnline, false)
+  assert.ok(roomOf(bob), 'the replica is still drawn')
+  assert.match(bob.engine.writable(shareId) ?? '', /alice@fund\.com is offline/)
+  assert.throws(() => bob.engine.set(panel, ['text'], 'x'), /offline/)
+  await assert.rejects(bob.engine.prompt(shareId, room, 'anyone?'), /offline/)
+
+  await alice.connect()
+  await settle()
+  assert.equal(bob.engine.writable(shareId), null)
+})
+
+test("stopping sharing takes the teammate's replica away and leaves the owner's room as it was", async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const before = roomOf(alice)!.panels
+
+  await alice.engine.shareRoom('ws', room, [])
+  await settle()
+  assert.equal(roomOf(bob), null)
+  assert.deepEqual(bob.state.collab.shares, [])
+  assert.equal(roomOf(alice)?.loop.shareId, undefined)
+  assert.deepEqual(roomOf(alice)?.panels, before)
+})
+
+test("a room of this terminal's own that the server no longer lists is unmarked, never removed", async (t) => {
+  const { server, alice, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  // Gone from the server by some other road: another terminal, a cleared database.
+  server.shares.clear()
+  await alice.engine.refresh()
+  await settle()
+  const kept = roomOf(alice)
+  assert.ok(kept, 'the room is still there')
+  assert.equal(kept.loop.shareId, undefined)
+  assert.deepEqual(kept.panels[0]?.state, { text: 'first' })
+})
+
+test('a teammate leaving takes the room off their terminal only', async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  await bob.engine.leave(bob.state.collab.shares[0]!.shareId)
+  await settle()
+  assert.equal(roomOf(bob), null)
+  assert.ok(roomOf(alice)?.loop.shareId, 'still shared, with nobody in it')
+  assert.deepEqual(alice.state.collab.shares[0]?.members, [])
+})
+
+test("signing out takes teammates' rooms off this terminal and keeps its own", async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  bob.engine.signedOut()
+  alice.engine.signedOut()
+  assert.equal(roomOf(bob), null)
+  assert.ok(roomOf(alice)?.loop.shareId, 'shared again when the same account is back')
+  assert.deepEqual(alice.state.collab, EMPTY_COLLAB)
+})
+
+test('an address that is not a teammate is invited, and nothing reaches them until they accept', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const server = fakeAccount()
+  const made = withLoopAsked(NO_LOOPS, { desc: 'Rates', brief: '', plugins: [], skills: [] }, 1000)
+  const placed = placeFramed(
+    { ...EMPTY_GRID, size: DEFAULT_SIZE },
+    { content: { kind: 'view', view: 'core/note' }, state: { text: 'hello' }, loop: made.loop.id },
+  )
+  const alice = terminal(server, 'alice', 'alice@fund.com', {
+    grids: { ws: { 1: placed.grid } },
+    loops: { ws: made.loops },
+  })
+  const dave = terminal(server, 'dave', 'dave@other.com', {
+    grids: { ws: { 1: { ...EMPTY_GRID, size: DEFAULT_SIZE } } },
+    loops: { ws: NO_LOOPS },
+  })
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 12; i++) {
+      t.mock.timers.tick(300)
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+  }
+  await alice.connect()
+  await dave.connect()
+  await settle()
+
+  await alice.engine.shareRoom('ws', made.loop.id, ['dave@other.com'])
+  await settle()
+  assert.deepEqual(alice.state.collab.shares[0]?.pendingEmails, ['dave@other.com'])
+  assert.equal(roomOf(dave), null, 'nothing is drawn for someone who has not accepted')
+  assert.deepEqual(dave.state.collab.teammates, [])
+  assert.equal(dave.state.collab.incomingInvites.length, 1)
+  assert.ok(dave.notices.some((text) => text.includes('alice@fund.com invited you')))
+
+  await dave.engine.accept(dave.state.collab.incomingInvites[0]!.inviteId)
+  await settle()
+  assert.deepEqual(roomOf(dave)?.panels[0]?.state, { text: 'hello' })
+  assert.deepEqual(alice.state.collab.shares[0]?.pendingEmails, [])
+})
+
+test('parts that are not what they should be are ignored, and the replica stays as it was', async (t) => {
+  const { server, alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const shareId = bob.state.collab.shares[0]!.shareId
+
+  server.plant(shareId, `room/${room}`, { tiles: 'not a list' })
+  server.plant(shareId, `room/${room}`, {
+    tiles: [{ id: '../../etc', rect: { x: 0, y: 0, w: 4, h: 4 }, content: { kind: 'view', view: 'core/note' } }],
+  })
+  await settle()
+  assert.equal(roomOf(bob)?.panels.length, 0, 'a tile with a made-up id is not drawn')
+
+  server.plant(shareId, 'share', { kind: 'room', rooms: [{ id: 'not-a-room', rect: {} }] })
+  await settle()
+  assert.equal(roomOf(bob), null, 'a share that lists no real room holds none')
+  assert.ok(roomOf(alice), 'and none of it touches the owner')
+})
+
+test('a built-in view that shows the terminal itself is drawn in a replica as a note saying where it is', async (t) => {
+  const { server, alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  server.plant(bob.state.collab.shares[0]!.shareId, `room/${room}`, {
+    desc: 'x',
+    plugins: [],
+    createdAt: 1,
+    tiles: [
       {
-        datasetId: 'd1',
-        source: 'custom-plugin/quotes',
-        args: { symbol: 'NVDA' },
-        rows: [{ symbol: 'NVDA', price: 142.5 }],
-        meta: {},
-        text: 'NVDA 142.5',
-        fetchedAt: 1000,
+        id: 'e9',
+        rect: { x: 0, y: 0, w: 8, h: 6 },
+        z: 0,
+        mode: 'tiled',
+        content: { kind: 'view', view: 'core/browser' },
+        state: { url: 'https://example.com' },
+        refreshedAt: null,
       },
     ],
-    hydrateDataset: (ds) => aliceNode.hydratedDatasets.push(ds),
-    exportBundles: () => [
-      {
-        plugin: 'custom-plugin',
-        bundleJs: 'export default function Board() {}',
-        frames: [],
-        views: [
-          {
-            id: 'custom-plugin/board',
-            plugin: 'custom-plugin',
-            title: 'Custom Board',
-            renders: [],
-            stateSchema: {},
-          },
-        ],
-      },
-    ],
-    registerBundle: (b) => aliceNode.registeredBundles.push(b),
-    exportLive: (): SyncedLiveValue[] => [
-      {
-        plugin: 'agents',
-        key: 'chat/c-stream-1',
-        value: {
-          messages: [{ seq: 1, role: 'agent', agent: 'research-analyst', status: 'working', text: 'Streaming…' }],
-        },
-      },
-    ],
-    hydrateLive: (entry) => aliceNode.liveStore.set(`${entry.plugin}:${entry.key}`, entry.value),
-    getLive: (plugin, key) => aliceNode.liveStore.get(`${plugin}:${key}`),
-    readRoomExchanges: async (chat) => aliceNode.exchangesByChat.get(chat) ?? [],
-    writeRoomExchanges: async (chat, list) => {
-      aliceNode.exchangesByChat.set(chat, list)
-    },
-    runRoomPrompt: async (workspaceId, loopId, input) => {
-      aliceNode.promptsRun.push({ workspaceId, loopId, input })
-      const chat = `${workspaceId}/${loopId}`
-      const prev = aliceNode.exchangesByChat.get(chat) ?? []
-      aliceNode.exchangesByChat.set(chat, [
-        ...prev,
-        { id: prev.length + 1, at: 2000, question: input, answer: 'Owner agent ran NVDA model.' },
-      ])
-      return 'Owner agent ran NVDA model.'
-    },
-    refreshPanel: () => {},
-    runSource: async () => ({ kind: 'text', resultId: 'r1', text: 'ok' }),
   })
+  await settle()
+  const tile = roomOf(bob)!.panels[0]!
+  assert.deepEqual(tile.content, { kind: 'view', view: 'core/note' })
+  assert.match(String(tile.state.text), /only on alice@fund\.com's terminal/)
+  assert.equal(bob.engine.replica('ws', tile.id)?.tile, null, 'and what is typed in it goes nowhere')
+})
 
-  const bobEngine = createCollabEngine({
-    getState: () => bobNode.state,
-    update: (m) => bobNode.update(m),
-    api: makeApi('acc-bob', 'bob@fund.com'),
-    exportDatasets: () => [],
-    hydrateDataset: (ds) => bobNode.hydratedDatasets.push(ds),
-    exportBundles: () => [],
-    registerBundle: (b) => bobNode.registeredBundles.push(b),
-    exportLive: () => [],
-    hydrateLive: (entry) => bobNode.liveStore.set(`${entry.plugin}:${entry.key}`, entry.value),
-    getLive: (plugin, key) => bobNode.liveStore.get(`${plugin}:${key}`),
-    readRoomExchanges: async (chat) => bobNode.exchangesByChat.get(chat) ?? [],
-    writeRoomExchanges: async (chat, list) => {
-      bobNode.exchangesByChat.set(chat, list)
-    },
-    runRoomPrompt: async () => 'should not run locally on bob',
-    refreshPanel: () => {},
-    runSource: async () => ({ kind: 'text', resultId: 'r1', text: 'ok' }),
-  })
+test("a plugin's views cross for a teammate without the plugin, and not for one who has it", async (t) => {
+  for (const has of [false, true]) {
+    const { alice, bob, settle, room, note } = await pair(t)
+    alice.built.set('custom', { plugin: 'custom', bundleJs: 'export {}', frames: [], views: [] })
+    alice.show(note, 'custom/board')
+    if (has) bob.installed.add('custom')
+    await alice.engine.shareRoom('ws', room, ['bob'])
+    await settle()
+    assert.deepEqual(bob.bundles, has ? [] : ['custom'])
+    assert.deepEqual(roomOf(bob)?.panels[0]?.content, { kind: 'view', view: 'custom/board' })
+    t.mock.timers.reset()
+  }
+})
 
-  await aliceEngine.refreshState()
-  // Alice shares room f1 with Bob
-  await aliceEngine.shareRoom('ws-1', 'f1', ['acc-bob'])
+test('a shared tab is drawn for a teammate as a tab of its own, its rooms where the owner has them', async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareTab('ws', ['bob'])
+  await settle()
 
-  // Bob receives the share update
-  await bobEngine.refreshState()
+  const shareId = bob.state.collab.shares[0]!.shareId
+  const tab = bob.state.workspaces.find((one) => one.replica)
+  assert.ok(tab, 'a tab was made for it')
+  assert.equal(tab.name, 'Main')
+  assert.equal(tab.shareId, shareId)
+  assert.equal(bob.state.loops.ws?.list.length, 0, "nothing was put on the teammate's own tab")
+  const replica = roomOf(bob, tab.id)
+  assert.equal(replica?.loop.replica?.room, room)
+  assert.deepEqual(
+    frameOf(bob.state.grids[tab.id]!, replica!.loop.id)?.element.rect,
+    frameOf(alice.state.grids.ws!, room)?.element.rect,
+  )
 
-  // Bob now has the shared room on his grid, plus the hydrated dataset and compiled plugin view bundle!
-  assert.equal(bobNode.state.loops['ws-1']!.list.length, 1)
-  assert.equal(bobNode.state.loops['ws-1']!.list[0]!.desc, 'NVDA Earnings')
-  assert.equal(bobNode.hydratedDatasets.length, 1)
-  assert.deepEqual(bobNode.hydratedDatasets[0]!.rows, [{ symbol: 'NVDA', price: 142.5 }])
-  assert.equal(bobNode.registeredBundles.length, 1)
-  assert.equal(bobNode.registeredBundles[0]!.plugin, 'custom-plugin')
-  assert.deepEqual(bobNode.liveStore.get('agents:chat/c-stream-1'), {
-    messages: [{ seq: 1, role: 'agent', agent: 'research-analyst', status: 'working', text: 'Streaming…' }],
-  })
-  const openConvRes = await bobEngine.runSponsoredSource('ws-1', 'agents/open-conversation', { id: 'c-stream-1' })
-  assert.deepEqual(openConvRes, { kind: 'text', resultId: 'synced-chat-c-stream-1', text: 'c-stream-1' })
+  await bob.engine.leave(shareId)
+  await settle()
+  assert.equal(
+    bob.state.workspaces.some((one) => one.replica),
+    false,
+  )
+  assert.equal(bob.state.currentWorkspaceId, 'ws')
+  assert.ok(alice.state.workspaces[0]?.shareId, "the owner's tab is still shared, with nobody in it")
+})
 
-  // When Bob sends a normal room prompt in the shared room, it delegates to Alice (the owner)!
-  const reply = await bobEngine.runSponsoredPrompt('ws-1', 'f1', 'Update DCF for Q4 guidance')
-  assert.equal(reply, 'Owner agent ran NVDA model.')
-  assert.equal(aliceNode.promptsRun.length, 1)
-  assert.equal(aliceNode.promptsRun[0]!.input, 'Update DCF for Q4 guidance')
+test('a source whose rows differ on every run is not asked for again and again by the view that reads it', async (t) => {
+  const { alice, bob, settle, room, note } = await pair(t)
+  alice.edit(note, ['source'], 'core/prices')
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const tile = (): Panel => roomOf(bob)!.panels[0]!
+  const panel = bob.engine.replica('ws', tile().id)!
 
-  // When Bob runs a fresh source in the shared room, it delegates a 'source' command to Alice!
-  const sourceRes = await bobEngine.runSponsoredSource('ws-1', 'custom-plugin/quotes', { symbol: 'NVDA' }, true)
-  assert.deepEqual(sourceRes, { kind: 'text', resultId: 'r1', text: 'ok' })
+  // A view reads again whenever its tile is told its data changed, as useData does.
+  let seen = tile().refreshedAt
+  for (let reads = 0; reads < 8; reads++) {
+    const asked = bob.engine.source('ws', panel, 'core/prices', {})
+    await settle()
+    await asked
+    if (tile().refreshedAt === seen) break
+    seen = tile().refreshedAt
+  }
+  assert.equal(alice.ran.length, 1, 'the owner ran it once')
+  assert.equal(bob.datasets.size, 1)
+})
 
-  // When Alice clicks "Stop sharing" (unshareRoom), the server emits share.removed to both Alice and Bob:
-  // Alice's own room and grid elements MUST stay on Alice's grid (only shareId is cleared), while Bob's copy is removed!
-  await aliceEngine.unshareRoom('ws-1', 'f1')
-  await aliceEngine.refreshState()
-  assert.equal(aliceNode.state.loops['ws-1']!.list.length, 1)
-  assert.equal(aliceNode.state.loops['ws-1']!.list[0]!.id, 'f1')
-  assert.equal(aliceNode.state.loops['ws-1']!.list[0]!.shareId, undefined)
-  assert.equal(aliceNode.state.grids['ws-1']![1]!.elements.length, 2)
-  assert.equal(bobNode.state.loops['ws-1']!.list.length, 0)
-  assert.equal(bobNode.state.grids['ws-1']![1]!.elements.length, 0)
+test("a live value a replica's view reads is sent by the owner, and again as it changes; one of a plugin the room does not show is not", async (t) => {
+  const { alice, bob, settle, room, note } = await pair(t)
+  alice.built.set('custom', { plugin: 'custom', bundleJs: 'export {}', frames: [], views: [] })
+  alice.show(note, 'custom/board')
+  alice.lives.set('custom/chat/c1', { messages: ['one'] })
+  alice.lives.set('other/secret', "not the room's")
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const shareId = bob.state.collab.shares[0]!.shareId
+  assert.equal(bob.keptLive.size, 0, 'nothing is sent that no view here reads')
 
-  // And when Alice shares again (even by email, and even when server emits share.updated to Alice during upsertShare),
-  // Alice's workspace never duplicates the room and Bob receives the room immediately!
-  await aliceEngine.shareRoom('ws-1', 'f1', ['bob@fund.com'])
-  await aliceEngine.applyRemoteShare(serverShares.get('share-1')!)
-  assert.equal(aliceNode.state.loops['ws-1']!.list.length, 1)
-  assert.equal(aliceNode.state.loops['ws-1']!.list[0]!.id, 'f1')
+  bob.engine.watch(shareId, 'custom', 'chat/c1')
+  bob.engine.watch(shareId, 'other', 'secret')
+  await settle()
+  assert.deepEqual([...bob.keptLive], [['custom/chat/c1', { messages: ['one'] }]])
 
-  // Make sure Bob has the re-shared room mounted
-  await bobEngine.refreshState()
-  assert.equal(bobNode.state.loops['ws-1']!.list.length, 1)
+  alice.lives.set('custom/chat/c1', { messages: ['one', 'two'] })
+  alice.engine.liveChanged('custom', 'chat/c1')
+  await settle()
+  assert.deepEqual(bob.keptLive.get('custom/chat/c1'), { messages: ['one', 'two'] })
+})
 
-  // Now Alice deletes the room: it must be removed from the server, removed from Bob's grid/loops, and never reappear on Alice's grid!
-  await aliceEngine.deleteSharedRoom('ws-1', 'f1')
-  await bobEngine.refreshState()
-  await aliceEngine.refreshState()
-  assert.equal(bobNode.state.loops['ws-1']!.list.length, 0)
-  assert.equal(bobNode.state.grids['ws-1']![1]!.elements.length, 0)
-  assert.equal(aliceNode.state.loops['ws-1']!.list.length, 0)
-  assert.equal(aliceNode.state.grids['ws-1']![1]!.elements.length, 0)
+test("a tile's statement over the store is run on the owner's store, and only the one the tile holds", async (t) => {
+  const { alice, bob, settle, room, note } = await pair(t)
+  alice.edit(note, ['sql'], 'select n from t')
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const panel = bob.engine.replica('ws', roomOf(bob)!.panels[0]!.id)!
+
+  const expected = { columns: ['n'], rows: [[1]], rowCount: 1, truncated: false }
+  const own = bob.engine.query(panel, 'select n from t', 10)
+  await settle()
+  assert.deepEqual(await own, expected)
+
+  // Whatever the asker says the statement is, what runs, and what comes back, is the tile's own.
+  const other = bob.engine.query(panel, 'select * from exchanges', 10)
+  await settle()
+  assert.deepEqual(await other, expected)
+  assert.deepEqual(alice.queried, ['select n from t', 'select n from t'])
 })

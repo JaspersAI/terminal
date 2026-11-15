@@ -15,6 +15,7 @@ import { skill } from './skills/skill-fixture.ts'
 import type { AppState } from './state.ts'
 import { EYE_OFF } from './app/eye.ts'
 import { PRO_MODE_OFF } from './app/pro-mode.ts'
+import { EMPTY_COLLAB } from './collab/collab.ts'
 
 const WS = 'ws-1'
 
@@ -102,6 +103,7 @@ function fixture(): AppState {
     proMode: PRO_MODE_OFF,
     eye: EYE_OFF,
     jaspers: { signedIn: false, email: null, reason: null },
+    collab: EMPTY_COLLAB,
   }
 }
 

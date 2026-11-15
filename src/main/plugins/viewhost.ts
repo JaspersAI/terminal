@@ -73,20 +73,20 @@ export function registerViewHost(): void {
     const url = new URL(request.url)
     const id = url.hostname
     if (!PLUGIN_ID.test(id)) return notFound()
-    const localPlugin = getState().plugins[id]
-    const localReady = localPlugin?.status === 'ready'
-    const synced = localReady ? null : getSyncedBundle(id)
+    // A plugin installed here draws its own views, whatever state it is in. Only one this terminal
+    // does not have is drawn from what a teammate's shared room sent for it.
+    const local = getState().plugins[id]
+    const synced = local ? null : getSyncedBundle(id)
     if (url.pathname === '/index.html') {
-      const frames = (localReady ? localPlugin?.frames : synced?.frames) ?? []
-      return new Response(indexHtml(frames), { headers: headers(TYPES['.html']!) })
+      return new Response(indexHtml((local ? local.frames : synced?.frames) ?? []), {
+        headers: headers(TYPES['.html']!),
+      })
     }
     if (!PLUGIN_FILES.has(url.pathname)) return notFound()
-    if (!localReady && synced) {
-      if (url.pathname === '/bundle.js') {
-        return new Response(synced.bundleJs, { headers: headers(TYPES['.js']!) })
-      }
-      if (url.pathname === '/bundle.css' && synced.bundleCss) {
-        return new Response(synced.bundleCss, { headers: headers(TYPES['.css']!) })
+    if (synced) {
+      if (url.pathname === '/bundle.js') return new Response(synced.bundleJs, { headers: headers(TYPES['.js']!) })
+      if (url.pathname === '/bundle.css') {
+        return synced.bundleCss ? new Response(synced.bundleCss, { headers: headers(TYPES['.css']!) }) : notFound()
       }
     }
     return serve(inside(path.dirname(bundlePath(id)), url.pathname))

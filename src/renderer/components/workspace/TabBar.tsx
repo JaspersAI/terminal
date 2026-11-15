@@ -8,7 +8,7 @@ import {
   type ReactElement,
 } from 'react'
 import { WORKSPACE_NAME_MAX, type Workspace } from '../../../shared/state'
-import { EMPTY_COLLAB, findWorkspaceShare } from '../../../shared/collab/collab'
+import { tabSharing } from '../../../shared/collab/collab'
 import {
   formatTabLabel,
   newTabButtonStyle,
@@ -21,6 +21,8 @@ import {
 import { useColorScheme } from '../../lib/color-scheme'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
+import { SharePanel } from '../collab/SharePanel'
+import { TeammateBadge } from '../collab/TeammateBadge'
 
 interface Props {
   workspaces: Workspace[]
@@ -47,7 +49,7 @@ const DETACH_DRAG_Y_PX = 40
 export function TabBar({ workspaces, currentId }: Props): ReactElement {
   const scheme = useColorScheme()
   const isDark = scheme === 'dark'
-  const collab = useAppState((s) => s.collab ?? EMPTY_COLLAB)
+  const collab = useAppState((s) => s.collab)
   const barRef = useRef<HTMLDivElement>(null)
   const [barWidth, setBarWidth] = useState(1200)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -55,7 +57,6 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
   const renameInputRef = useRef<HTMLInputElement>(null)
   const [plusHovered, setPlusHovered] = useState(false)
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
-  const [shareEmailDraft, setShareEmailDraft] = useState('')
   const menuRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
     tabId: string
@@ -216,7 +217,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
   }
 
   const menuTab = menu ? workspaces.find((w) => w.id === menu.tabId) : undefined
-  const menuShare = menuTab ? findWorkspaceShare(collab, menuTab.id, menuTab.shareId) : null
+  const menuSharing = menuTab ? tabSharing(collab, menuTab) : null
   const plusSwatch = newTabButtonStyle(isDark, plusHovered)
 
   return (
@@ -230,6 +231,10 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
       {workspaces.map((tab, index) => {
         const active = tab.id === currentId
         const isRenaming = renamingId === tab.id
+        /** Whose tab this is, when it is a copy of a teammate's. */
+        const owner = tab.replica
+          ? (collab.shares.find((one) => one.shareId === tab.shareId)?.ownerEmail ?? 'a teammate')
+          : null
         const swatch = tabSwatchStyle(tab.color, active, isDark)
         const tabW = index === workspaces.length - 1 ? perTabWidth + remainderPx : perTabWidth
         return (
@@ -240,7 +245,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
             data-tab-id={tab.id}
             data-active={active}
             data-tab-color={tab.color ?? undefined}
-            title={tab.name}
+            title={owner ? `${tab.name} · ${owner}'s tab, shared with you` : tab.name}
             style={{
               width: `${tabW}px`,
               backgroundColor: swatch.backgroundColor,
@@ -250,7 +255,8 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
             onPointerDown={(event) => onTabPointerDown(event, tab)}
             onPointerMove={(event) => onTabPointerMove(event, tab)}
             onPointerUp={(event) => onTabPointerUp(event, tab)}
-            onDoubleClick={() => startRename(tab)}
+            // A teammate's tab carries the name its owner gave it.
+            onDoubleClick={() => (tab.replica ? undefined : startRename(tab))}
             onContextMenu={(event) => onTabContextMenu(event, tab)}
             className="flex h-5 shrink-0 cursor-pointer items-center justify-center rounded-b-md border-x border-b px-2 font-sans text-[10px] leading-none font-normal transition-colors"
           >
@@ -279,12 +285,19 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
                 className="w-full min-w-0 border-b border-current bg-background/80 px-1 text-center font-sans text-[10px] leading-none font-normal outline-none"
               />
             ) : (
-              <span
-                id={active ? 'workspace-title' : undefined}
-                className="w-full truncate text-center font-sans text-[10px] leading-none font-normal"
-              >
-                {formatTabLabel(tab.name, charLimit)}
-              </span>
+              <>
+                {owner && (
+                  <span className="mr-1 shrink-0">
+                    <TeammateBadge email={owner} index={0} lit={active} size={12} />
+                  </span>
+                )}
+                <span
+                  id={active ? 'workspace-title' : undefined}
+                  className="min-w-0 flex-1 truncate text-center font-sans text-[10px] leading-none font-normal"
+                >
+                  {formatTabLabel(tab.name, charLimit)}
+                </span>
+              </>
             )}
           </div>
         )
@@ -408,89 +421,17 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
             }
             className="flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-muted"
           >
-            <span>Share</span>
+            <span>{menuSharing?.role === 'member' ? 'Shared with you' : menuSharing ? 'Shared' : 'Share'}</span>
             <span className="text-[10px] text-muted-foreground">{menu.showingShare ? '▴' : '▾'}</span>
           </button>
           {menu.showingShare && (
-            <div data-tab-share-panel className="space-y-1.5 border-y border-border px-3 py-2 text-[11px]">
-              {collab.teammates.length > 0 && (
-                <div className="space-y-1">
-                  {collab.teammates.map((tm) => {
-                    const activeMemberIds = (menuShare?.members ?? [])
-                      .map((m) => m.accountId)
-                      .filter((id) => id !== menuShare?.ownerAccountId)
-                    const inTab = activeMemberIds.includes(tm.accountId)
-                    return (
-                      <div key={tm.accountId} className="flex items-center justify-between gap-2">
-                        <span className="truncate">{tm.email}</span>
-                        <button
-                          type="button"
-                          data-tab-share-teammate={tm.accountId}
-                          aria-pressed={inTab}
-                          onClick={() => {
-                            const nextIds = inTab
-                              ? activeMemberIds.filter((id) => id !== tm.accountId)
-                              : [...activeMemberIds, tm.accountId]
-                            if (nextIds.length === 0 && menuShare) {
-                              run(() => dispatch({ type: 'tab.unshare', id: menuTab.id }))
-                            } else {
-                              run(() =>
-                                dispatch({
-                                  type: 'tab.share',
-                                  id: menuTab.id,
-                                  memberAccountIds: nextIds,
-                                }),
-                              )
-                            }
-                          }}
-                          className={`border px-1.5 py-0.5 ${
-                            inTab ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted'
-                          }`}
-                        >
-                          {inTab ? 'Added' : 'Add'}
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  const trimmed = shareEmailDraft.trim()
-                  if (!trimmed) return
-                  const activeMemberIds = (menuShare?.members ?? [])
-                    .map((m) => m.accountId)
-                    .filter((id) => id !== menuShare?.ownerAccountId)
-                  setShareEmailDraft('')
-                  run(() =>
-                    dispatch({
-                      type: 'tab.share',
-                      id: menuTab.id,
-                      memberAccountIds: [...new Set([...activeMemberIds, trimmed])],
-                    }),
-                  )
-                }}
-                className="flex gap-1"
-              >
-                <input
-                  type="email"
-                  data-tab-share-email
-                  aria-label="Share tab with email"
-                  placeholder="teammate@fund.com"
-                  value={shareEmailDraft}
-                  onChange={(e) => setShareEmailDraft(e.target.value)}
-                  className="min-w-0 flex-1 border border-border bg-background px-1.5 py-0.5 text-[11px] outline-none focus:border-foreground"
-                />
-                <button
-                  type="submit"
-                  data-tab-share-submit
-                  disabled={!shareEmailDraft.trim()}
-                  className="border border-border px-1.5 py-0.5 hover:bg-muted disabled:opacity-40"
-                >
-                  Share
-                </button>
-              </form>
+            <div data-tab-share-panel className="border-y border-border px-3 py-2 text-[11px]">
+              <SharePanel
+                what="tab"
+                sharing={menuSharing}
+                share={(members) => dispatch({ type: 'tab.share', id: menuTab.id, members })}
+                stop={() => dispatch({ type: 'tab.unshare', id: menuTab.id })}
+              />
             </div>
           )}
           <button

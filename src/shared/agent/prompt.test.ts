@@ -40,6 +40,7 @@ import { skill } from '../skills/skill-fixture.ts'
 import type { AppState, ConnectionInfo, PluginInfo, SkillInfo, SourceInfo, ViewInfo } from '../state.ts'
 import { EYE_OFF } from '../app/eye.ts'
 import { PRO_MODE_OFF } from '../app/pro-mode.ts'
+import { EMPTY_COLLAB } from '../collab/collab.ts'
 
 const WS = 'ws-1'
 /** 2026-09-14 09:12:00 UTC, so a time in the prompt reads the same wherever the tests run. */
@@ -155,6 +156,7 @@ function tree(
     proMode: PRO_MODE_OFF,
     eye: EYE_OFF,
     jaspers: { signedIn: false, email: null, reason: null },
+    collab: EMPTY_COLLAB,
   }
 }
 

@@ -5,6 +5,7 @@ import { viewErrorMessage } from '../../../shared/grid/grid'
 import { liveKeyOf } from '../../../shared/plugins/live'
 import { viewSandbox } from '../../../shared/plugins/plugins'
 import { hostBridgeFor, runSourceIn } from '../../lib/bridge'
+import { replicaShare } from '../../lib/replica'
 import { subscribeLive } from '../../lib/live'
 import { useAppState } from '../../lib/state'
 import { BUILT_IN_VIEWS } from '../../views'
@@ -49,7 +50,7 @@ export function ViewHost({
   onZoomGesture,
 }: Props): ReactElement | null {
   const panel = useMemo(() => ({ id: panelId, workspaceId }), [panelId, workspaceId])
-  const bridge = useMemo(() => hostBridgeFor(workspaceId), [workspaceId])
+  const bridge = useMemo(() => hostBridgeFor(workspaceId, panelId), [workspaceId, panelId])
   const views = useAppState((s) => s.views)
   const plugins = useAppState((s) => s.plugins)
   const plugin = views[view]?.plugin
@@ -130,7 +131,7 @@ function PluginView({
   onZoomGesture,
 }: FrameProps): ReactElement {
   const frame = useRef<HTMLIFrameElement>(null)
-  const bridge = useMemo(() => hostBridgeFor(workspaceId), [workspaceId])
+  const bridge = useMemo(() => hostBridgeFor(workspaceId, panelId), [workspaceId, panelId])
   const activeRef = useRef(active)
   activeRef.current = active
   const flushActiveRef = useRef<(() => void) | null>(null)
@@ -253,7 +254,12 @@ function PluginView({
       }
       try {
         const key = liveKeyOf(path)
-        subscriptions.set(subId, key !== null ? subscribeLive(plugin, key, deliver) : bridge.subscribe(path, deliver))
+        subscriptions.set(
+          subId,
+          key !== null
+            ? subscribeLive(plugin, key, deliver, replicaShare(workspaceId, panelId))
+            : bridge.subscribe(path, deliver),
+        )
       } catch (err) {
         post({ id, error: { message: err instanceof Error ? err.message : String(err) } })
         return
@@ -264,14 +270,17 @@ function PluginView({
       for (const value of held) post({ method: 'store.changed', params: { subId, value } })
     }
 
-    /** The rest of the bridge, one call each. The frame names its panel; the workspace is this one. */
+    /**
+     * The rest of the bridge, one call each. The panel and the workspace are this host's own, never
+     * ones the frame names: a frame may hold a teammate's code, and it speaks for its own tile only.
+     */
     async function run(method: string, params: Record<string, unknown>): Promise<unknown> {
-      const panel = { id: String(params['panelId']), workspaceId }
+      const panel = { id: panelId, workspaceId }
       switch (method) {
         case 'store.get': {
           const path = String(params['path'])
           const key = liveKeyOf(path)
-          return key !== null ? window.app.live.get(plugin, key) : bridge.get(path)
+          return key !== null ? window.app.live.get(plugin, key, replicaShare(workspaceId, panelId)) : bridge.get(path)
         }
         case 'panel.setState':
           return bridge.setState(panel, params['path'] as string[], params['value'])
@@ -297,7 +306,13 @@ function PluginView({
         }
         case 'source.run':
           // The frame's own workspace, never one the frame names: a plugin's code reads it as ctx.workspace.
-          return runSourceIn(workspaceId, String(params['source']), params['args'], { fresh: params['fresh'] === true })
+          return runSourceIn(
+            workspaceId,
+            String(params['source']),
+            params['args'],
+            { fresh: params['fresh'] === true },
+            panelId,
+          )
         case 'dataset.rows':
           return bridge.datasetRows(String(params['datasetId']))
         case 'link.open':

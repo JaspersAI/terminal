@@ -1,29 +1,25 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { clearSyncedBundles, getSyncedBundle, keepSyncedBundle } from './synced-bundles.ts'
+import { dropSyncedBundles, getSyncedBundle, keepSyncedBundle } from './synced-bundles.ts'
 
-test('keepSyncedBundle stores validated plugin view bundles for jaspers-plugin:// serving and rejects unsafe ids', () => {
-  clearSyncedBundles()
-  const kept = keepSyncedBundle({
-    plugin: 'research-custom',
-    bundleJs: 'export const View = () => null;',
-    bundleCss: '.view { display: flex; }',
-    frames: ['https://sec.gov'],
-    views: [
-      {
-        id: 'research-custom/filings',
-        plugin: 'research-custom',
-        title: 'Filings View',
-        renders: [],
-        stateSchema: {},
-      },
-    ],
-  })
-  assert.ok(kept)
-  assert.equal(getSyncedBundle('research-custom')?.bundleJs, 'export const View = () => null;')
-  assert.equal(getSyncedBundle('research-custom')?.bundleCss, '.view { display: flex; }')
-  assert.deepEqual(getSyncedBundle('research-custom')?.frames, ['https://sec.gov'])
+const bundle = (plugin: string, js: string) => ({ plugin, bundleJs: js, frames: [], views: [] })
 
-  assert.equal(keepSyncedBundle({ plugin: '../bad', bundleJs: 'x', frames: [], views: [] }), null)
-  assert.equal(getSyncedBundle('../bad'), null)
+test('a bundle is served for its plugin until the share that brought it goes', () => {
+  keepSyncedBundle('share-a', bundle('custom', 'a'))
+  keepSyncedBundle('share-b', bundle('other', 'b'))
+  assert.equal(getSyncedBundle('custom')?.bundleJs, 'a')
+
+  assert.deepEqual(dropSyncedBundles('share-a'), ['custom'])
+  assert.equal(getSyncedBundle('custom'), null)
+  assert.equal(getSyncedBundle('other')?.bundleJs, 'b')
+  assert.deepEqual(dropSyncedBundles('share-b'), ['other'])
+})
+
+test("a later share's bundle for the same plugin takes its place, and only its own share drops it", () => {
+  keepSyncedBundle('share-a', bundle('custom', 'a'))
+  keepSyncedBundle('share-b', bundle('custom', 'b'))
+  assert.equal(getSyncedBundle('custom')?.bundleJs, 'b')
+  assert.deepEqual(dropSyncedBundles('share-a'), [])
+  assert.equal(getSyncedBundle('custom')?.bundleJs, 'b')
+  assert.deepEqual(dropSyncedBundles('share-b'), ['custom'])
 })

@@ -1,4 +1,3 @@
-import type { SyncedLiveValue } from '../../shared/collab/collab.ts'
 import { AGENTS_PLUGIN, checkLiveKey, checkLiveValue, normalizeAgentsLiveSet } from '../../shared/plugins/live.ts'
 
 // Plugins' live values, held here and nowhere else: not in the tree, which is pushed whole on every
@@ -6,22 +5,32 @@ import { AGENTS_PLUGIN, checkLiveKey, checkLiveValue, normalizeAgentsLiveSet } f
 // again when its host starts. A window hears only the keys it asked for, one push per change.
 // Electron stays out of this file, which is what lets a test drive it.
 
+//
+// A teammate's shared room has live values too, its owner's plugins' (main/collab/). Those are kept
+// here beside this terminal's own, each share's under its id as a scope, and a view in a replica
+// reads its share's scope and never this terminal's: the same plugin may be installed here, with
+// values of its own that are not the room's.
+
 /** A window, as far as this file needs one: an id to file subscriptions under and a way to reach it. */
 export interface LiveSubscriber {
   id: number
-  send(plugin: string, key: string, value: unknown): void
+  send(plugin: string, key: string, value: unknown, scope: string): void
 }
 
-const values = new Map<string, Map<string, unknown>>()
-const syncedValues = new Map<string, Map<string, unknown>>()
-const changeListeners = new Set<(plugin: string, key: string) => void>()
-/** Plugin, then key, then subscriber id. */
-const subscribers = new Map<string, Map<string, Map<number, LiveSubscriber>>>()
+/** This terminal's own plugins' values. */
+export const OWN = ''
 
-function messageCount(value: unknown): number {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 0
-  const messages = (value as Record<string, unknown>)['messages']
-  return Array.isArray(messages) ? messages.length : 0
+/** Scope and plugin as one map key: a scope is a share's id and holds no newline. */
+const scoped = (scope: string, plugin: string): string => (scope === OWN ? plugin : `${scope}\n${plugin}`)
+
+const values = new Map<string, Map<string, unknown>>()
+/** Scoped plugin, then key, then subscriber id. */
+const subscribers = new Map<string, Map<string, Map<number, LiveSubscriber>>>()
+const changeListeners = new Set<(plugin: string, key: string) => void>()
+
+/** Hears every change to one of this terminal's own plugins' values. */
+export function onLiveChange(listener: (plugin: string, key: string) => void): void {
+  changeListeners.add(listener)
 }
 
 export function setLive(plugin: string, key: string, value: unknown, options: { readyLlm?: boolean } = {}): void {
@@ -29,28 +38,42 @@ export function setLive(plugin: string, key: string, value: unknown, options: { 
   checkLiveValue(value)
   let forPlugin = values.get(plugin)
   if (!forPlugin) values.set(plugin, (forPlugin = new Map()))
-  const syncedChat = key.startsWith('chat/') ? syncedValues.get(plugin)?.get(key) : undefined
-  const effectiveValue =
-    syncedChat !== undefined && messageCount(syncedChat) > 0 && messageCount(value) === 0 ? syncedChat : value
-  const normalized =
-    plugin === AGENTS_PLUGIN
-      ? normalizeAgentsLiveSet(key, effectiveValue, forPlugin, options)
-      : { value: effectiveValue }
+  const normalized = plugin === AGENTS_PLUGIN ? normalizeAgentsLiveSet(key, value, forPlugin, options) : { value }
   forPlugin.set(key, normalized.value)
-  push(plugin, key, normalized.value)
+  push(OWN, plugin, key, normalized.value)
   if (normalized.extra) {
     forPlugin.set(normalized.extra.key, normalized.extra.value)
-    push(plugin, normalized.extra.key, normalized.extra.value)
+    push(OWN, plugin, normalized.extra.key, normalized.extra.value)
   }
-  for (const listener of changeListeners) listener(plugin, key)
+}
+
+/** A value of a teammate's room, as its owner's terminal sent it, for the views of its replica here. */
+export function setReplicaLive(scope: string, plugin: string, key: string, value: unknown): void {
+  try {
+    checkLiveKey(key)
+    checkLiveValue(value)
+  } catch {
+    return
+  }
+  const id = scoped(scope, plugin)
+  let forPlugin = values.get(id)
+  if (!forPlugin) values.set(id, (forPlugin = new Map()))
+  forPlugin.set(key, value)
+  push(scope, plugin, key, value)
+}
+
+/** Everything kept of one share, gone, and its readers told. */
+export function dropReplicaLive(scope: string): void {
+  for (const [id, forPlugin] of [...values]) {
+    if (!id.startsWith(`${scope}\n`)) continue
+    values.delete(id)
+    for (const key of forPlugin.keys()) push(scope, id.slice(scope.length + 1), key, undefined)
+  }
 }
 
 export function deleteLive(plugin: string, key: string): void {
   checkLiveKey(key)
-  if (values.get(plugin)?.delete(key)) {
-    push(plugin, key, syncedValues.get(plugin)?.get(key))
-    for (const listener of changeListeners) listener(plugin, key)
-  }
+  if (values.get(plugin)?.delete(key)) push(OWN, plugin, key, undefined)
 }
 
 /** Drops every value a plugin published and tells whoever was reading them. */
@@ -58,8 +81,7 @@ export function clearLive(plugin: string): void {
   const forPlugin = values.get(plugin)
   if (!forPlugin) return
   values.delete(plugin)
-  const synced = syncedValues.get(plugin)
-  for (const key of forPlugin.keys()) push(plugin, key, synced?.get(key))
+  for (const key of forPlugin.keys()) push(OWN, plugin, key, undefined)
 }
 
 /** Whether a plugin has anything published, which stopping its host would drop. */
@@ -67,74 +89,30 @@ export function hasLive(plugin: string): boolean {
   return (values.get(plugin)?.size ?? 0) > 0
 }
 
-export function getLive(plugin: string, key: string): unknown {
-  const validKey = checkLiveKey(key)
-  return values.get(plugin)?.get(validKey) ?? syncedValues.get(plugin)?.get(validKey)
+export function getLive(plugin: string, key: string, scope = OWN): unknown {
+  return values.get(scoped(scope, plugin))?.get(checkLiveKey(key))
 }
 
 /** Starts sending one key's changes to a window, and answers the value there now. */
-export function subscribeLive(plugin: string, key: string, subscriber: LiveSubscriber): unknown {
+export function subscribeLive(plugin: string, key: string, subscriber: LiveSubscriber, scope = OWN): unknown {
   checkLiveKey(key)
-  let forPlugin = subscribers.get(plugin)
-  if (!forPlugin) subscribers.set(plugin, (forPlugin = new Map()))
+  const id = scoped(scope, plugin)
+  let forPlugin = subscribers.get(id)
+  if (!forPlugin) subscribers.set(id, (forPlugin = new Map()))
   let forKey = forPlugin.get(key)
   if (!forKey) forPlugin.set(key, (forKey = new Map()))
   forKey.set(subscriber.id, subscriber)
-  return values.get(plugin)?.get(key) ?? syncedValues.get(plugin)?.get(key)
+  return values.get(id)?.get(key)
 }
 
-export function onLiveChange(listener: (plugin: string, key: string) => void): () => void {
-  changeListeners.add(listener)
-  return () => changeListeners.delete(listener)
-}
-
-export function exportLiveValues(allowedPlugins?: ReadonlySet<string>): SyncedLiveValue[] {
-  const out: SyncedLiveValue[] = []
-  const plugins = new Set<string>([...values.keys(), ...syncedValues.keys()])
-  for (const plugin of plugins) {
-    if (allowedPlugins && !allowedPlugins.has(plugin)) continue
-    const merged = new Map<string, unknown>(syncedValues.get(plugin) ?? [])
-    for (const [k, v] of values.get(plugin) ?? []) merged.set(k, v)
-    for (const [key, value] of merged) {
-      out.push({ plugin, key, value })
-    }
-  }
-  return out
-}
-
-export function hydrateSyncedLive(entry: SyncedLiveValue): void {
-  if (!entry || typeof entry.plugin !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(entry.plugin)) return
-  try {
-    checkLiveKey(entry.key)
-    checkLiveValue(entry.value)
-  } catch {
-    return
-  }
-  let forPlugin = values.get(entry.plugin)
-  if (!forPlugin) values.set(entry.plugin, (forPlugin = new Map()))
-  let forSynced = syncedValues.get(entry.plugin)
-  if (!forSynced) syncedValues.set(entry.plugin, (forSynced = new Map()))
-  const normalized =
-    entry.plugin === AGENTS_PLUGIN
-      ? normalizeAgentsLiveSet(entry.key, entry.value, forPlugin, { readyLlm: true })
-      : { value: entry.value }
-  forSynced.set(entry.key, normalized.value)
-  forPlugin.set(entry.key, normalized.value)
-  push(entry.plugin, entry.key, normalized.value)
-  if (normalized.extra) {
-    forSynced.set(normalized.extra.key, normalized.extra.value)
-    forPlugin.set(normalized.extra.key, normalized.extra.value)
-    push(entry.plugin, normalized.extra.key, normalized.extra.value)
-  }
-}
-
-export function unsubscribeLive(plugin: string, key: string, subscriberId: number): void {
-  const forPlugin = subscribers.get(plugin)
+export function unsubscribeLive(plugin: string, key: string, subscriberId: number, scope = OWN): void {
+  const id = scoped(scope, plugin)
+  const forPlugin = subscribers.get(id)
   const forKey = forPlugin?.get(key)
   if (!forPlugin || !forKey) return
   forKey.delete(subscriberId)
   if (forKey.size === 0) forPlugin.delete(key)
-  if (forPlugin.size === 0) subscribers.delete(plugin)
+  if (forPlugin.size === 0) subscribers.delete(id)
 }
 
 /** A window closed: nothing more goes to it. */
@@ -148,6 +126,9 @@ export function dropSubscriber(subscriberId: number): void {
   }
 }
 
-function push(plugin: string, key: string, value: unknown): void {
-  for (const subscriber of subscribers.get(plugin)?.get(key)?.values() ?? []) subscriber.send(plugin, key, value)
+function push(scope: string, plugin: string, key: string, value: unknown): void {
+  for (const subscriber of subscribers.get(scoped(scope, plugin))?.get(key)?.values() ?? []) {
+    subscriber.send(plugin, key, value, scope)
+  }
+  if (scope === OWN) for (const listener of changeListeners) listener(plugin, key)
 }

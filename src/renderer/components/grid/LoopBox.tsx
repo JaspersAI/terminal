@@ -13,6 +13,7 @@ import {
 } from 'react'
 import { askedIn, type Place } from '../../../shared/agent/asking'
 import { withAttachments } from '../../../shared/agent/attachments'
+import { isForPeople, roomSharing } from '../../../shared/collab/collab'
 import { editedInstructionsPrompt, type Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
 import { errorMessage } from '../../lib/errors'
@@ -94,7 +95,14 @@ export function sendToRoom(place: Place, loopId: string, text: string): void {
   const trimmed = text.trim()
   if (!trimmed) return
   const ask = crypto.randomUUID()
-  updateTileBox(place, (b) => tileBoxSent(b, place, ask, trimmed))
+  const state = get()
+  const toPeople = isForPeople(
+    state.collab,
+    state.workspaces.find((one) => one.id === place.workspaceId),
+    state.loops[place.workspaceId]?.find((one) => one.id === loopId),
+    trimmed,
+  )
+  updateTileBox(place, (b) => tileBoxSent(b, place, ask, trimmed, toPeople))
   // A request that began is ended by its run's events. What comes back here settles one that never did.
   window.app.agent.run(trimmed, ask, loopId).then(
     (reply) => updateTileBox(place, (b) => tileBoxSettled(b, ask, reply, null)),
@@ -181,6 +189,15 @@ export function LoopBox({
   })
   const drop = useFileDrop(attachments.attach)
   const tileBox = useTileBox(place)
+  /** In a shared room the line also reaches its people: its hint says how. */
+  const shared = useAppState(
+    (s) =>
+      roomSharing(
+        s.collab,
+        s.workspaces.find((one) => one.id === workspaceId),
+        loop,
+      ) !== null,
+  )
   const { expanded: open, draft, live, earlier, more, scrollTop, split } = tileBox
   const onScrollTopChange = useCallback(
     (nextScrollTop: number | null) => {
@@ -474,9 +491,11 @@ export function LoopBox({
                 autoComplete="off"
                 value={draft}
                 placeholder={
-                  chat
-                    ? `Ask ${called} more (@teammate to hold agent)…`
-                    : `Tell ${called} what to do (@teammate to hold agent)…`
+                  shared
+                    ? `Ask ${called}, or @name to tell a teammate…`
+                    : chat
+                      ? `Ask ${called} more…`
+                      : `Tell ${called} what to do…`
                 }
                 onChange={(event) =>
                   updateTileBox(place, (b) =>
