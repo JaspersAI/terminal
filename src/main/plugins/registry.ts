@@ -111,7 +111,7 @@ export function unregisterPlugin(plugin: string): void {
  * installed, so `ViewHost` and `placeChecked` recognize the view and mount its sandboxed iframe.
  */
 export function registerSyncedViews(plugin: string, syncedViews: readonly ViewInfo[]): void {
-  if (getState().plugins[plugin]) return
+  if (getState().plugins[plugin]?.status === 'ready') return
   let changed = false
   for (const info of syncedViews) {
     if (!info.id.startsWith(`${plugin}/`) || views.has(info.id)) continue

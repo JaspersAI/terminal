@@ -540,7 +540,16 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     processPendingCommands,
 
     async refreshState(): Promise<void> {
-      const data = await deps.api.fetchState()
+      let data = await deps.api.fetchState()
+      if (data.incoming_invites.length > 0) {
+        for (const raw of data.incoming_invites) {
+          const inv = mapInvite(raw)
+          if (inv) {
+            await deps.api.acceptInvite(inv.token || inv.inviteId).catch(() => undefined)
+          }
+        }
+        data = await deps.api.fetchState()
+      }
       const current = deps.getState()
       const myAccountId = current.collab?.accountId ?? null
       const myEmail = current.jaspers.email

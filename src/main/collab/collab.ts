@@ -358,3 +358,7 @@ export function unshareWorkspace(workspaceId: string): Promise<void> {
 export function runSponsoredRefreshIfNeeded(workspaceId: string, panelId: string): Promise<boolean> {
   return engine.runSponsoredRefresh(workspaceId, panelId)
 }
+
+export function refreshCollabState(): void {
+  if (signedIn()) void engine.refreshState().catch(() => undefined)
+}
