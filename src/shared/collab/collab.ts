@@ -179,9 +179,13 @@ export function createRevisionGate() {
       return Number.isInteger(revision) && revision > current
     },
     withRemoteApply<T>(shareId: string, revision: number, fn: () => T): T {
-      const current = applied.get(shareId) ?? 0
-      if (Number.isInteger(revision) && revision > current) {
-        applied.set(shareId, revision)
+      if (revision === 0) {
+        applied.delete(shareId)
+      } else {
+        const current = applied.get(shareId) ?? 0
+        if (Number.isInteger(revision) && revision > current) {
+          applied.set(shareId, revision)
+        }
       }
       applyingDepth += 1
       try {
