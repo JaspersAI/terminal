@@ -129,6 +129,8 @@ test('two terminals collaborate live: teammate invite/accept, sharing a room wit
     },
     async deleteShare(shareId: string) {
       serverShares.delete(shareId)
+      aliceEngine.removeRemoteShare(shareId)
+      bobEngine.removeRemoteShare(shareId)
       return { deleted: true }
     },
     async enqueueCommand(shareId: string, input: { kind: string; payload: Record<string, unknown> }) {
@@ -258,9 +260,19 @@ test('two terminals collaborate live: teammate invite/accept, sharing a room wit
   const sourceRes = await bobEngine.runSponsoredSource('ws-1', 'custom-plugin/quotes', { symbol: 'NVDA' }, true)
   assert.deepEqual(sourceRes, { kind: 'text', resultId: 'r1', text: 'ok' })
 
-  // When Alice unshares and shares again (even by email, and even when server emits share.updated to Alice during upsertShare),
-  // Alice's workspace never duplicates the room and Bob receives the room immediately!
+  // When Alice clicks "Stop sharing" (unshareRoom), the server emits share.removed to both Alice and Bob:
+  // Alice's own room and grid elements MUST stay on Alice's grid (only shareId is cleared), while Bob's copy is removed!
   await aliceEngine.unshareRoom('ws-1', 'f1')
+  await aliceEngine.refreshState()
+  assert.equal(aliceNode.state.loops['ws-1']!.list.length, 1)
+  assert.equal(aliceNode.state.loops['ws-1']!.list[0]!.id, 'f1')
+  assert.equal(aliceNode.state.loops['ws-1']!.list[0]!.shareId, undefined)
+  assert.equal(aliceNode.state.grids['ws-1']![1]!.elements.length, 2)
+  assert.equal(bobNode.state.loops['ws-1']!.list.length, 0)
+  assert.equal(bobNode.state.grids['ws-1']![1]!.elements.length, 0)
+
+  // And when Alice shares again (even by email, and even when server emits share.updated to Alice during upsertShare),
+  // Alice's workspace never duplicates the room and Bob receives the room immediately!
   await aliceEngine.shareRoom('ws-1', 'f1', ['bob@fund.com'])
   await aliceEngine.applyRemoteShare(serverShares.get('share-1')!)
   assert.equal(aliceNode.state.loops['ws-1']!.list.length, 1)
