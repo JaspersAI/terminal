@@ -74,13 +74,14 @@ export function registerViewHost(): void {
     const id = url.hostname
     if (!PLUGIN_ID.test(id)) return notFound()
     const localPlugin = getState().plugins[id]
-    const synced = localPlugin ? null : getSyncedBundle(id)
+    const localReady = localPlugin?.status === 'ready'
+    const synced = localReady ? null : getSyncedBundle(id)
     if (url.pathname === '/index.html') {
-      const frames = localPlugin?.frames ?? synced?.frames ?? []
+      const frames = (localReady ? localPlugin?.frames : synced?.frames) ?? []
       return new Response(indexHtml(frames), { headers: headers(TYPES['.html']!) })
     }
     if (!PLUGIN_FILES.has(url.pathname)) return notFound()
-    if (!localPlugin && synced) {
+    if (!localReady && synced) {
       if (url.pathname === '/bundle.js') {
         return new Response(synced.bundleJs, { headers: headers(TYPES['.js']!) })
       }

@@ -121,6 +121,7 @@ import {
   declineTeammateInvite,
   deleteSharedRoom,
   inviteTeammate,
+  refreshCollabState,
   removeTeammate,
   runSponsoredRefreshIfNeeded,
   setCollabRefreshCallback,
@@ -781,6 +782,7 @@ export function acceptTerms(): void {
 export function completeOnboarding(): void {
   if (!getState().llm) throw new Error('Pick a language model provider first.')
   update((state) => ({ ...state, onboardingComplete: true }))
+  refreshCollabState()
 }
 
 // Tabs (Workspaces).
