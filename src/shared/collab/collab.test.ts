@@ -311,3 +311,27 @@ test('matchTeammateMentions and parseCentralShareCommand support @tagging teamma
     message: 'Central cannot be shared. You can add teammates to any room (like room_1) or share a workspace tab.',
   })
 })
+
+test('applyRoomSnapshot on the owner workspace never duplicates the room when transitioning from optimistic or previous shareId', () => {
+  const ownerMade = withLoopAsked(NO_LOOPS, { desc: 'AAPL DCF', brief: 'Model AAPL', plugins: [], skills: [] }, 1000)
+  const placed = placeFramed(EMPTY_GRID, {
+    content: { kind: 'view', view: 'core/note' },
+    state: { text: 'Owner note' },
+    loop: ownerMade.loop.id,
+  })
+  // Simulate optimistic shareId already on f1 when server share.updated arrives
+  const loopsWithOptimistic: typeof ownerMade.loops = {
+    ...ownerMade.loops,
+    list: ownerMade.loops.list.map((l) => ({ ...l, shareId: 'local-share-room-ws1-f1' })),
+  }
+  const snapshot = buildRoomSnapshot({ 1: placed.grid }, loopsWithOptimistic, 'f1', {
+    exchanges: [],
+    datasets: [],
+    bundles: [],
+  })!
+
+  const applied = applyRoomSnapshot({ 1: placed.grid }, loopsWithOptimistic, 'server-share-uuid-1', snapshot, 1, true)
+  assert.equal(applied.loops.list.length, 1)
+  assert.equal(applied.loops.list[0]!.id, 'f1')
+  assert.equal(applied.loops.list[0]!.shareId, 'server-share-uuid-1')
+})

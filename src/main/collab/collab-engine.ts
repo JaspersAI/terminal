@@ -200,11 +200,19 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     if (info.kind === 'room' && snapshot.kind === 'room') {
       const roomSnap = snapshot as unknown as SharedRoomSnapshot
       const state = deps.getState()
-      // Find existing tab holding this shared room, or use currentWorkspaceId
+      const ownerTabFromLocalId = info.isOwner ? info.localId.split('/')[0] : undefined
+      // Find existing tab holding this shared room, or owner's originating tab, or currentWorkspaceId
       const targetTabId =
         Object.keys(state.loops).find((tabId) =>
           (state.loops[tabId]?.list ?? []).some((l) => l.shareId === info.shareId),
-        ) ?? state.currentWorkspaceId
+        ) ??
+        (ownerTabFromLocalId && state.loops[ownerTabFromLocalId] ? ownerTabFromLocalId : undefined) ??
+        (info.isOwner
+          ? Object.keys(state.loops).find((tabId) =>
+              (state.loops[tabId]?.list ?? []).some((l) => l.id === roomSnap.loop.id),
+            )
+          : undefined) ??
+        state.currentWorkspaceId
 
       for (const ds of Array.isArray(roomSnap.datasets) ? roomSnap.datasets : []) {
         deps.hydrateDataset(ds, targetTabId)
@@ -213,7 +221,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const preLoops = state.loops[targetTabId] ?? NO_LOOPS
       const preExisting =
         preLoops.list.find((l) => l.shareId === info.shareId) ??
-        (info.isOwner ? preLoops.list.find((l) => l.id === roomSnap.loop.id && !l.shareId) : undefined)
+        (info.isOwner ? preLoops.list.find((l) => l.id === roomSnap.loop.id) : undefined)
       const predictedLoopId =
         preExisting?.id ??
         (preLoops.list.some((l) => l.id === roomSnap.loop.id)
@@ -238,8 +246,10 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           )
           const prevShares = s.collab?.shares ?? []
           const localInfo: CollabShareInfo = { ...info, localId: `${targetTabId}/${applied.loopId}` }
-          const nextShares = prevShares.some((sh) => sh.shareId === info.shareId)
-            ? prevShares.map((sh) => (sh.shareId === info.shareId ? localInfo : sh))
+          const matchesRoom = (sh: CollabShareInfo): boolean =>
+            sh.shareId === info.shareId || (sh.kind === 'room' && sh.localId === localInfo.localId)
+          const nextShares = prevShares.some(matchesRoom)
+            ? prevShares.map((sh) => (matchesRoom(sh) ? localInfo : sh))
             : [...prevShares, localInfo]
           return {
             ...s,
@@ -257,7 +267,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const state = deps.getState()
       const preExisting =
         state.workspaces.find((w) => w.shareId === info.shareId) ??
-        (info.isOwner ? state.workspaces.find((w) => w.id === wsSnap.workspace.id && !w.shareId) : undefined)
+        (info.isOwner ? state.workspaces.find((w) => w.id === wsSnap.workspace.id) : undefined)
       const predictedWorkspaceId = preExisting?.id ?? `shared-${info.shareId}`
 
       for (const ds of Array.isArray(wsSnap.datasets) ? wsSnap.datasets : []) {
@@ -577,6 +587,21 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     },
 
     async shareRoom(workspaceId: string, loopId: string, memberAccountIds: string[]): Promise<void> {
+      const uniqueIds = [...new Set(memberAccountIds.map((m) => m.trim()).filter(Boolean))]
+      // Refresh state first if any requested member is not yet in local teammates with a resolved accountId
+      const initialKnown = deps.getState().collab?.teammates ?? []
+      if (
+        uniqueIds.some(
+          (idOrEmail) =>
+            !initialKnown.some(
+              (t) =>
+                (t.accountId === idOrEmail || t.email.toLowerCase() === idOrEmail.toLowerCase()) &&
+                !t.accountId.includes('@'),
+            ),
+        )
+      ) {
+        await this.refreshState().catch(() => undefined)
+      }
       const state = deps.getState()
       const loop = state.loops[workspaceId]?.list.find((l) => l.id === loopId)
       if (!loop) return
@@ -586,7 +611,6 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const knownTeammates = state.collab?.teammates ?? []
       const newTeammates: Teammate[] = []
       const members: ShareMember[] = []
-      const uniqueIds = [...new Set(memberAccountIds.map((m) => m.trim()).filter(Boolean))]
       for (const idOrEmail of uniqueIds) {
         const tm =
           knownTeammates.find((t) => t.accountId === idOrEmail || t.email.toLowerCase() === idOrEmail.toLowerCase()) ??
@@ -599,7 +623,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         ) {
           newTeammates.push(tm)
           if (tm.email.includes('@')) {
-            void deps.api.inviteTeammate(tm.email).catch(() => undefined)
+            await deps.api.inviteTeammate(tm.email).catch(() => undefined)
           }
         }
         members.push({ accountId: tm.accountId, email: tm.email, addedAt: now })
@@ -640,8 +664,9 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           }
         })
       })
+      const resolvedMemberIds = members.map((m) => m.accountId)
       try {
-        await pushRoomShareSnapshot(workspaceId, loopId, uniqueIds)
+        await pushRoomShareSnapshot(workspaceId, loopId, resolvedMemberIds)
       } catch {
         // Keep optimistic room share when offline or while invited email is still pending acceptance.
       }
@@ -676,6 +701,20 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     },
 
     async shareWorkspace(workspaceId: string, memberAccountIds: string[]): Promise<void> {
+      const uniqueIds = [...new Set(memberAccountIds.map((m) => m.trim()).filter(Boolean))]
+      const initialKnown = deps.getState().collab?.teammates ?? []
+      if (
+        uniqueIds.some(
+          (idOrEmail) =>
+            !initialKnown.some(
+              (t) =>
+                (t.accountId === idOrEmail || t.email.toLowerCase() === idOrEmail.toLowerCase()) &&
+                !t.accountId.includes('@'),
+            ),
+        )
+      ) {
+        await this.refreshState().catch(() => undefined)
+      }
       const state = deps.getState()
       const workspace = state.workspaces.find((w) => w.id === workspaceId)
       if (!workspace) return
@@ -685,7 +724,6 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const knownTeammates = state.collab?.teammates ?? []
       const newTeammates: Teammate[] = []
       const members: ShareMember[] = []
-      const uniqueIds = [...new Set(memberAccountIds.map((m) => m.trim()).filter(Boolean))]
       for (const idOrEmail of uniqueIds) {
         const tm =
           knownTeammates.find((t) => t.accountId === idOrEmail || t.email.toLowerCase() === idOrEmail.toLowerCase()) ??
@@ -698,7 +736,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         ) {
           newTeammates.push(tm)
           if (tm.email.includes('@')) {
-            void deps.api.inviteTeammate(tm.email).catch(() => undefined)
+            await deps.api.inviteTeammate(tm.email).catch(() => undefined)
           }
         }
         members.push({ accountId: tm.accountId, email: tm.email, addedAt: now })
@@ -734,8 +772,9 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           }
         })
       })
+      const resolvedMemberIds = members.map((m) => m.accountId)
       try {
-        await pushWorkspaceShareSnapshot(workspaceId, uniqueIds)
+        await pushWorkspaceShareSnapshot(workspaceId, resolvedMemberIds)
       } catch {
         // Keep optimistic workspace share when offline or while invited email is still pending.
       }

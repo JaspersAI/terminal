@@ -560,7 +560,7 @@ export function applyRoomSnapshot(
 ): { grids: Record<number, Grid>; loops: Loops; loopId: string } {
   const existingLoop =
     loops.list.find((l) => l.shareId === shareId) ??
-    (isOwner ? loops.list.find((l) => l.id === snapshot.loop.id && !l.shareId) : undefined)
+    (isOwner ? loops.list.find((l) => l.id === snapshot.loop.id) : undefined)
   const localLoopId =
     existingLoop?.id ??
     (loops.list.some((l) => l.id === snapshot.loop.id) ? `f${Math.max(loops.seq, minLoopSeq) + 1}` : snapshot.loop.id)
@@ -703,7 +703,7 @@ export function applyWorkspaceSnapshot(
 } {
   const existing =
     state.workspaces.find((w) => w.shareId === shareId) ??
-    (isOwner ? state.workspaces.find((w) => w.id === snapshot.workspace.id && !w.shareId) : undefined)
+    (isOwner ? state.workspaces.find((w) => w.id === snapshot.workspace.id) : undefined)
   const workspaceId = existing?.id ?? `shared-${shareId}`
   const updatedWorkspace: Workspace = {
     ...(existing ?? { id: workspaceId, name: snapshot.workspace.name }),
