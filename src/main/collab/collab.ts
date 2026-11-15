@@ -207,9 +207,15 @@ async function connectStream(): Promise<void> {
           .trim()
         if (!dataLine) continue
         try {
-          const event = JSON.parse(dataLine) as { type?: string; share?: Record<string, unknown> }
+          const event = JSON.parse(dataLine) as {
+            type?: string
+            share?: Record<string, unknown>
+            share_id?: string
+          }
           if (event.type === 'share.updated' && event.share) {
             await engine.applyRemoteShare(event.share)
+          } else if (event.type === 'share.removed' && typeof event.share_id === 'string') {
+            engine.removeRemoteShare(event.share_id)
           } else if (event.type === 'command.created') {
             await engine.processPendingCommands()
           } else {
@@ -322,8 +328,23 @@ export function shareRoom(workspaceId: string, loopId: string, memberAccountIds:
   return engine.shareRoom(workspaceId, loopId, memberAccountIds)
 }
 
+function cancelRoomPush(workspaceId: string, loopId: string): void {
+  const key = `room:${workspaceId}/${loopId}`
+  const prev = pushTimers.get(key)
+  if (prev) {
+    clearTimeout(prev)
+    pushTimers.delete(key)
+  }
+}
+
 export function unshareRoom(workspaceId: string, loopId: string): Promise<void> {
+  cancelRoomPush(workspaceId, loopId)
   return engine.unshareRoom(workspaceId, loopId)
+}
+
+export function deleteSharedRoom(workspaceId: string, loopId: string, shareId?: string): Promise<void> {
+  cancelRoomPush(workspaceId, loopId)
+  return engine.deleteSharedRoom(workspaceId, loopId, shareId)
 }
 
 export function shareWorkspace(workspaceId: string, memberAccountIds: string[]): Promise<void> {

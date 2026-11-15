@@ -265,4 +265,17 @@ test('two terminals collaborate live: teammate invite/accept, sharing a room wit
   await aliceEngine.applyRemoteShare(serverShares.get('share-1')!)
   assert.equal(aliceNode.state.loops['ws-1']!.list.length, 1)
   assert.equal(aliceNode.state.loops['ws-1']!.list[0]!.id, 'f1')
+
+  // Make sure Bob has the re-shared room mounted
+  await bobEngine.refreshState()
+  assert.equal(bobNode.state.loops['ws-1']!.list.length, 1)
+
+  // Now Alice deletes the room: it must be removed from the server, removed from Bob's grid/loops, and never reappear on Alice's grid!
+  await aliceEngine.deleteSharedRoom('ws-1', 'f1')
+  await bobEngine.refreshState()
+  await aliceEngine.refreshState()
+  assert.equal(bobNode.state.loops['ws-1']!.list.length, 0)
+  assert.equal(bobNode.state.grids['ws-1']![1]!.elements.length, 0)
+  assert.equal(aliceNode.state.loops['ws-1']!.list.length, 0)
+  assert.equal(aliceNode.state.grids['ws-1']![1]!.elements.length, 0)
 })

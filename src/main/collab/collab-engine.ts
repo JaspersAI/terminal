@@ -10,6 +10,7 @@ import {
   findWorkspaceShare,
   isSponsoredRoom,
   isSponsoredWorkspace,
+  removeRoomFromWorkspace,
   validateSyncedPluginBundle,
   type CollabShareInfo,
   type CollabState,
@@ -152,6 +153,7 @@ function mapShareInfo(
 
 export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngineDeps<S>) {
   const gate = createRevisionGate()
+  const deletedShareIds = new Set<string>()
 
   const collectRoomPlugins = (grids: Record<number, Grid>, loops: Loops, loopId: string): Set<string> => {
     const set = new Set<string>()
@@ -186,7 +188,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
   const applyRemoteShare = async (rawShare: Record<string, unknown>): Promise<void> => {
     const current = deps.getState()
     const info = mapShareInfo(rawShare, current.collab?.accountId ?? null, current.jaspers.email)
-    if (!info) return
+    if (!info || deletedShareIds.has(info.shareId)) return
     if (!gate.shouldApplyRemote(info.shareId, info.revision)) return
     const snapshot = isRecord(rawShare.snapshot) ? rawShare.snapshot : null
     if (!snapshot) return
@@ -321,6 +323,8 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     if (!snapshot) return null
 
     const existing = findRoomShare(state.collab ?? EMPTY_COLLAB, workspaceId, loopId, shareId ?? loop.shareId)
+    if (existing?.shareId && deletedShareIds.has(existing.shareId)) return null
+    if (!deps.getState().loops[workspaceId]?.list.some((l) => l.id === loopId)) return null
     const remoteShareId = [existing?.shareId, shareId].find(
       (id): id is string => typeof id === 'string' && id.length > 0 && !id.startsWith('local-share-'),
     )
@@ -334,6 +338,12 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     })
     const info = mapShareInfo(res.share, state.collab?.accountId ?? null, state.jaspers.email)
     if (!info) return null
+    if (!deps.getState().loops[workspaceId]?.list.some((l) => l.id === loopId)) {
+      deletedShareIds.add(info.shareId)
+      await deps.api.deleteShare(info.shareId).catch(() => undefined)
+      return null
+    }
+    deletedShareIds.delete(info.shareId)
     const localInfo: CollabShareInfo = { ...info, localId: `${workspaceId}/${loopId}` }
 
     gate.withRemoteApply(info.shareId, info.revision, () => {
@@ -488,9 +498,43 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     }
   }
 
+  const removeRemoteShare = (shareId: string): void => {
+    if (!shareId) return
+    deletedShareIds.add(shareId)
+    gate.withRemoteApply(shareId, Number.MAX_SAFE_INTEGER, () => {
+      deps.update((s) => {
+        const nextGrids = { ...s.grids }
+        const nextLoops = { ...s.loops }
+        for (const [tabId, tabLoops] of Object.entries(s.loops)) {
+          const matchingLoops = tabLoops.list.filter((l) => l.shareId === shareId)
+          if (matchingLoops.length === 0) continue
+          let g = nextGrids[tabId] ?? {}
+          let l = tabLoops
+          for (const room of matchingLoops) {
+            const removed = removeRoomFromWorkspace(g, l, room.id)
+            g = removed.grids
+            l = removed.loops
+          }
+          nextGrids[tabId] = g
+          nextLoops[tabId] = l
+        }
+        return {
+          ...s,
+          grids: nextGrids,
+          loops: nextLoops,
+          collab: {
+            ...(s.collab ?? EMPTY_COLLAB),
+            shares: (s.collab?.shares ?? []).filter((sh) => sh.shareId !== shareId),
+          },
+        }
+      })
+    })
+  }
+
   return {
     gate,
     applyRemoteShare,
+    removeRemoteShare,
     pushRoomShareSnapshot,
     pushWorkspaceShareSnapshot,
     processPendingCommands,
@@ -502,7 +546,9 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const myEmail = current.jaspers.email
 
       const prevLocalIds = new Map((current.collab?.shares ?? []).map((s) => [s.shareId, s.localId]))
-      const prevOptimisticShares = (current.collab?.shares ?? []).filter((s) => s.shareId.startsWith('local-share-'))
+      const prevOptimisticShares = (current.collab?.shares ?? []).filter(
+        (s) => s.shareId.startsWith('local-share-') && !deletedShareIds.has(s.shareId),
+      )
       const teammates: Teammate[] = data.teammates.map((t) => ({
         accountId: t.account_id,
         email: t.email,
@@ -513,7 +559,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
 
       const serverShares = data.shares.flatMap((raw) => {
         const mapped = mapShareInfo(raw, myAccountId, myEmail)
-        if (!mapped) return []
+        if (!mapped || deletedShareIds.has(mapped.shareId)) return []
         const keptLocalId = prevLocalIds.get(mapped.shareId)
         return [keptLocalId ? { ...mapped, localId: keptLocalId } : mapped]
       })
@@ -524,36 +570,43 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       ]
       const activeShareIds = new Set(shares.map((s) => s.shareId))
 
-      deps.update((s) => {
-        const nextLoops: Record<string, Loops> = {}
-        for (const [tabId, tabLoops] of Object.entries(s.loops)) {
-          nextLoops[tabId] = {
-            ...tabLoops,
-            list: tabLoops.list.map((l) => {
-              if (!l.shareId || activeShareIds.has(l.shareId)) return l
-              const { shareId: _gone, ...rest } = l
+      gate.withRemoteApply('__refresh__', 1, () => {
+        deps.update((s) => {
+          const nextGrids: Record<string, Record<number, Grid>> = { ...s.grids }
+          const nextLoops: Record<string, Loops> = {}
+          for (const [tabId, tabLoops] of Object.entries(s.loops)) {
+            let tabGrids = nextGrids[tabId] ?? {}
+            let currentTabLoops = tabLoops
+            for (const loop of tabLoops.list) {
+              if (loop.shareId && !activeShareIds.has(loop.shareId)) {
+                const removed = removeRoomFromWorkspace(tabGrids, currentTabLoops, loop.id)
+                tabGrids = removed.grids
+                currentTabLoops = removed.loops
+              }
+            }
+            nextGrids[tabId] = tabGrids
+            nextLoops[tabId] = currentTabLoops
+          }
+          return {
+            ...s,
+            workspaces: s.workspaces.map((w) => {
+              if (!w.shareId || activeShareIds.has(w.shareId)) return w
+              const { shareId: _gone, ...rest } = w
               return rest
             }),
+            grids: nextGrids,
+            loops: nextLoops,
+            collab: {
+              ...(s.collab ?? EMPTY_COLLAB),
+              connected: true,
+              teammates,
+              outgoingInvites,
+              incomingInvites,
+              shares,
+              error: null,
+            },
           }
-        }
-        return {
-          ...s,
-          workspaces: s.workspaces.map((w) => {
-            if (!w.shareId || activeShareIds.has(w.shareId)) return w
-            const { shareId: _gone, ...rest } = w
-            return rest
-          }),
-          loops: nextLoops,
-          collab: {
-            ...(s.collab ?? EMPTY_COLLAB),
-            connected: true,
-            teammates,
-            outgoingInvites,
-            incomingInvites,
-            shares,
-            error: null,
-          },
-        }
+        })
       })
 
       for (const rawShare of data.shares) {
@@ -608,6 +661,8 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const now = Math.floor(Date.now() / 1000)
       const existing = findRoomShare(state.collab ?? EMPTY_COLLAB, workspaceId, loopId, loop.shareId)
       const shareId = existing?.shareId ?? `local-share-room-${workspaceId}-${loopId}`
+      deletedShareIds.delete(shareId)
+      if (loop.shareId) deletedShareIds.delete(loop.shareId)
       const knownTeammates = state.collab?.teammates ?? []
       const newTeammates: Teammate[] = []
       const members: ShareMember[] = []
@@ -676,28 +731,68 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       const state = deps.getState()
       const loop = state.loops[workspaceId]?.list.find((l) => l.id === loopId)
       const share = findRoomShare(state.collab ?? EMPTY_COLLAB, workspaceId, loopId, loop?.shareId)
-      if (share && !share.shareId.startsWith('local-share-')) {
-        await deps.api.deleteShare(share.shareId).catch(() => undefined)
-      }
-      deps.update((s) => {
-        const tabLoops = s.loops[workspaceId] ?? NO_LOOPS
-        const updatedList = tabLoops.list.map((l) => {
-          if (l.id !== loopId) return l
-          const { shareId: _removed, ...rest } = l
-          return rest
-        })
-        return {
-          ...s,
-          loops: { ...s.loops, [workspaceId]: { ...tabLoops, list: updatedList } },
-          collab: {
-            ...(s.collab ?? EMPTY_COLLAB),
-            shares: (s.collab?.shares ?? []).filter(
-              (sh) =>
-                sh.shareId !== share?.shareId && !(sh.kind === 'room' && sh.localId === `${workspaceId}/${loopId}`),
-            ),
-          },
+      const shareIdToRemove = share?.shareId ?? loop?.shareId
+      if (shareIdToRemove) {
+        deletedShareIds.add(shareIdToRemove)
+        if (!shareIdToRemove.startsWith('local-share-')) {
+          await deps.api.deleteShare(shareIdToRemove).catch(() => undefined)
         }
+      }
+      gate.withRemoteApply(shareIdToRemove ?? 'unshare', Number.MAX_SAFE_INTEGER, () => {
+        deps.update((s) => {
+          const tabLoops = s.loops[workspaceId] ?? NO_LOOPS
+          const updatedList = tabLoops.list.map((l) => {
+            if (l.id !== loopId) return l
+            const { shareId: _removed, ...rest } = l
+            return rest
+          })
+          return {
+            ...s,
+            loops: { ...s.loops, [workspaceId]: { ...tabLoops, list: updatedList } },
+            collab: {
+              ...(s.collab ?? EMPTY_COLLAB),
+              shares: (s.collab?.shares ?? []).filter(
+                (sh) =>
+                  sh.shareId !== shareIdToRemove && !(sh.kind === 'room' && sh.localId === `${workspaceId}/${loopId}`),
+              ),
+            },
+          }
+        })
       })
+    },
+
+    async deleteSharedRoom(workspaceId: string, loopId: string, explicitShareId?: string): Promise<void> {
+      const state = deps.getState()
+      const loop =
+        state.loops[workspaceId]?.list.find((l) => l.id === loopId) ??
+        state.loops[workspaceId]?.closed?.find((c) => c.loop.id === loopId)?.loop
+      const share = findRoomShare(state.collab ?? EMPTY_COLLAB, workspaceId, loopId, explicitShareId ?? loop?.shareId)
+      const shareIdToDelete = share?.shareId ?? explicitShareId ?? loop?.shareId
+      if (shareIdToDelete) {
+        deletedShareIds.add(shareIdToDelete)
+      }
+      gate.withRemoteApply(shareIdToDelete ?? 'delete', Number.MAX_SAFE_INTEGER, () => {
+        deps.update((s) => {
+          const tabGrids = s.grids[workspaceId] ?? {}
+          const tabLoops = s.loops[workspaceId] ?? NO_LOOPS
+          const removed = removeRoomFromWorkspace(tabGrids, tabLoops, loopId)
+          return {
+            ...s,
+            grids: { ...s.grids, [workspaceId]: removed.grids },
+            loops: { ...s.loops, [workspaceId]: removed.loops },
+            collab: {
+              ...(s.collab ?? EMPTY_COLLAB),
+              shares: (s.collab?.shares ?? []).filter(
+                (sh) =>
+                  sh.shareId !== shareIdToDelete && !(sh.kind === 'room' && sh.localId === `${workspaceId}/${loopId}`),
+              ),
+            },
+          }
+        })
+      })
+      if (shareIdToDelete && !shareIdToDelete.startsWith('local-share-')) {
+        await deps.api.deleteShare(shareIdToDelete).catch(() => undefined)
+      }
     },
 
     async shareWorkspace(workspaceId: string, memberAccountIds: string[]): Promise<void> {
