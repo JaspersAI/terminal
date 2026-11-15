@@ -59,15 +59,22 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
 
   if (!mine) {
     const owner = people.find((one) => one.role === 'owner')
+    // This account's own, held by another of its terminals: there is nobody to leave, only sharing to stop.
+    const own = sharing?.share?.ownerAccountId === collab.accountId
+    const whose = own
+      ? `Your ${what}, on another of your terminals: it lives there, and what you ask of it runs there.`
+      : `${owner ? `${owner.email}'s` : "A teammate's"} ${what}: it lives on their terminal, and what you ask of it runs there.`
+    const away = own
+      ? 'That terminal is offline, so it is read-only until it is back. If it is gone for good, stop sharing to take this copy away.'
+      : 'They are offline, so it is read-only until they are back.'
     return (
       <div data-share-panel data-share-role="member" className="space-y-1.5">
         <p className="text-muted-foreground">
-          {owner ? `${owner.email}'s ${what}` : `A teammate's ${what}`}: it lives on their terminal, and what you ask of
-          it runs there. {owner && !owner.online ? 'They are offline, so it is read-only until they are back.' : null}
+          {whose} {owner && !owner.online ? away : null}
         </p>
         <People people={people} />
         <button type="button" data-share-leave disabled={busy} onClick={() => act(stop)} className={SMALL}>
-          Leave this {what}
+          {own ? 'Stop sharing' : `Leave this ${what}`}
         </button>
         {error && <p className="text-destructive">{error}</p>}
       </div>

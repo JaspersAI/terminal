@@ -54,14 +54,17 @@ export function RoomPeople({ loop, sharing, lit }: Props): ReactElement | null {
     ) : null
   }
   const people = peopleIn(share, collab).filter((one) => !one.me)
-  const owner = share.role === 'member' ? share.ownerEmail : null
+  // A copy of a room that another of this account's own terminals holds reads as "your room", not as someone else's.
+  const mine = share.ownerAccountId === collab.accountId
+  const owner = share.role !== 'member' ? null : mine ? 'your other terminal' : share.ownerEmail
+  const away = mine ? 'It is offline' : 'They are offline'
   return (
     <div data-room-people data-room-role={share.role} className={STRIP}>
       {owner && (
         <span data-room-owner className="min-w-0 flex-1 truncate text-muted-foreground">
           {share.ownerOnline && collab.connected
             ? `${owner}'s room`
-            : `${owner}'s room. They are offline: read-only until they are back.`}
+            : `${owner}'s room. ${away}: read-only until it is back.`}
         </span>
       )}
       <div className="flex shrink-0 items-center gap-1">
