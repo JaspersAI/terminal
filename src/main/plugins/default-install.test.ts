@@ -231,3 +231,27 @@ test('one that arrived some other way while it was staged stays, and the staged 
     'installing null',
   ])
 })
+
+test('concurrent installDefaults calls coalesce so each default plugin is staged and committed only once', async () => {
+  const installedSet = new Set<string>()
+  const { deps, done } = fake({
+    installed: (id) => installedSet.has(id),
+    commit: async (one) => {
+      installedSet.add(one.manifest.id)
+      done.push(`commit ${one.manifest.id}`)
+    },
+  })
+  await Promise.all([installDefaults(deps), installDefaults(deps)])
+  assert.deepEqual(done, [
+    'installing screener-mcp',
+    'item jaspers/screener-mcp',
+    'stage jaspers/screener-mcp',
+    'commit screener-mcp',
+    'installing null',
+    'installing agents',
+    'item jaspers/agents',
+    'stage jaspers/agents',
+    'commit agents',
+    'installing null',
+  ])
+})

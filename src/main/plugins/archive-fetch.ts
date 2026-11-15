@@ -25,16 +25,33 @@ export class DownloadError extends Error {
   }
 }
 
-let busy = false
+let activeLock: Promise<void> | null = null
 
 /** Checks one install at a time: a second is refused while one is being checked. */
 export async function withInstallLock<T>(work: () => Promise<T>): Promise<T> {
-  if (busy) throw new Error('Another install is being checked. Wait for it to finish.')
-  busy = true
+  if (activeLock) throw new Error('Another install is being checked. Wait for it to finish.')
+  return runWithInstallLock(work)
+}
+
+/** Waits for any in-flight install check to finish, then checks this install under the lock. */
+export async function withQueuedInstallLock<T>(work: () => Promise<T>): Promise<T> {
+  while (activeLock) {
+    await activeLock
+  }
+  return runWithInstallLock(work)
+}
+
+async function runWithInstallLock<T>(work: () => Promise<T>): Promise<T> {
+  let release!: () => void
+  const lock = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  activeLock = lock
   try {
     return await work()
   } finally {
-    busy = false
+    if (activeLock === lock) activeLock = null
+    release()
   }
 }
 

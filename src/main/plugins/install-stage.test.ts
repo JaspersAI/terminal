@@ -35,7 +35,8 @@ const server = createServer((req, res) => {
 })
 await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 process.env['JASPERS_HUB_URL'] = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
-const { commitStaged, stageFromHub, stageSource } = await import('./install-stage.ts')
+const { commitStaged, discardStaged, stageFromHub, stageSource } = await import('./install-stage.ts')
+const { withInstallLock } = await import('./archive-fetch.ts')
 const { readInstallRecord } = await import('./install-record.ts')
 const { homePluginsRoot, installRoot } = await import('../home.ts')
 
@@ -182,5 +183,22 @@ test("a folder of the user's own is never replaced by an install of its id", asy
   fs.writeFileSync(path.join(homePluginsRoot(), 'demo', 'plugin.tsx'), 'mine')
   await assert.rejects(stageFromHub('acme', 'demo'), /A plugin folder of yours, .*, already uses the id demo/)
   assert.equal(fs.readFileSync(path.join(homePluginsRoot(), 'demo', 'plugin.tsx'), 'utf8'), 'mine')
+  assert.deepEqual(stages(), [])
+})
+
+test('stageFromHub waits for an in-flight install check to finish instead of failing with an install lock error', async () => {
+  let releaseFirst!: () => void
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+  const firstCheck = withInstallLock(async () => {
+    await firstGate
+  })
+  const secondStagePromise = stageFromHub('acme', 'demo')
+  releaseFirst()
+  await firstCheck
+  const staged = await secondStagePromise
+  assert.equal(staged.manifest.id, 'demo')
+  await discardStaged(staged)
   assert.deepEqual(stages(), [])
 })
