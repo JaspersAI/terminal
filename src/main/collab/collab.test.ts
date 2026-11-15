@@ -257,4 +257,12 @@ test('two terminals collaborate live: teammate invite/accept, sharing a room wit
   // When Bob runs a fresh source in the shared room, it delegates a 'source' command to Alice!
   const sourceRes = await bobEngine.runSponsoredSource('ws-1', 'custom-plugin/quotes', { symbol: 'NVDA' }, true)
   assert.deepEqual(sourceRes, { kind: 'text', resultId: 'r1', text: 'ok' })
+
+  // When Alice unshares and shares again (even by email, and even when server emits share.updated to Alice during upsertShare),
+  // Alice's workspace never duplicates the room and Bob receives the room immediately!
+  await aliceEngine.unshareRoom('ws-1', 'f1')
+  await aliceEngine.shareRoom('ws-1', 'f1', ['bob@fund.com'])
+  await aliceEngine.applyRemoteShare(serverShares.get('share-1')!)
+  assert.equal(aliceNode.state.loops['ws-1']!.list.length, 1)
+  assert.equal(aliceNode.state.loops['ws-1']!.list[0]!.id, 'f1')
 })

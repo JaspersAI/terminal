@@ -21,9 +21,11 @@ import { createCollabEngine, type CollabApi } from './collab-engine'
 
 const PUSH_DEBOUNCE_MS = 180
 const RECONNECT_MS = 5_000
+const POLL_MS = 4_000
 
 let sseController: AbortController | null = null
 let reconnectTimer: NodeJS.Timeout | null = null
+let pollTimer: NodeJS.Timeout | null = null
 const pushTimers = new Map<string, NodeJS.Timeout>()
 let refreshCallback: ((workspaceId: string, panelId: string) => void) | null = null
 
@@ -234,6 +236,10 @@ function stopStream(): void {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
   sseController?.abort()
   sseController = null
   update((s) => ({ ...s, collab: EMPTY_COLLAB }))
@@ -279,11 +285,21 @@ export function startCollab(): void {
     }
   })
 
+  const startSync = (): void => {
+    void connectStream()
+    if (!pollTimer) {
+      pollTimer = setInterval(() => {
+        if (signedIn()) void engine.refreshState().catch(() => undefined)
+      }, POLL_MS)
+      pollTimer.unref?.()
+    }
+  }
+
   onSignInChange((nowSignedIn) => {
-    if (nowSignedIn) void connectStream()
+    if (nowSignedIn) startSync()
     else stopStream()
   })
-  if (signedIn()) void connectStream()
+  if (signedIn()) startSync()
 }
 
 export function inviteTeammate(email: string): Promise<void> {
