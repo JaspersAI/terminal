@@ -9,16 +9,10 @@ import {
 } from 'react'
 import { askedIn } from '../../../shared/agent/asking'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
-import {
-  applyTeammateMention,
-  EMPTY_COLLAB,
-  matchTeammateMentions,
-  teammateCircleStyle,
-  teammateInitials,
-} from '../../../shared/collab/collab'
+import { applyTeammateMention, matchTeammateMentions } from '../../../shared/collab/collab'
 import { formatAsOf } from '../../../shared/tasks/tasks'
-import { useColorScheme } from '../../lib/color-scheme'
 import { currentWorkspace, useAppState } from '../../lib/state'
+import { TeammateBadge } from '../collab/TeammateBadge'
 import { useEarlier, useNoticeTimer } from './conversation'
 import { PHASE_TEXT } from './phase'
 import { QuestionField } from './QuestionField'
@@ -46,8 +40,7 @@ export function Composer(): ReactElement {
   const question = useAppState((s) => askedIn(s.questions))
   const notices = useAppState((s) => s.notices)
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
-  const collab = useAppState((s) => s.collab ?? EMPTY_COLLAB)
-  const isDark = useColorScheme() === 'dark'
+  const teammates = useAppState((s) => s.collab.teammates)
   const [expanded, setExpanded] = useState(false)
   const [mentionIndex, setMentionIndex] = useState(0)
   const request = useRequest()
@@ -74,13 +67,9 @@ export function Composer(): ReactElement {
   const more = useEarlier({ request, workspaceId, when: true, said: told, welcome })
   useNoticeTimer(notice?.id ?? null)
 
-  const taggableTeammates = [
-    ...collab.teammates,
-    ...collab.outgoingInvites
-      .filter((inv) => !collab.teammates.some((t) => t.email.toLowerCase() === inv.inviteeEmail.toLowerCase()))
-      .map((inv) => ({ accountId: inv.inviteeEmail, email: inv.inviteeEmail, since: inv.createdAt })),
-  ]
-  const mentionMatch = matchTeammateMentions(draft, taggableTeammates)
+  // An `@` and the start of a teammate's address offers the teammates it could be: Central is told
+  // who to share a room with by their address.
+  const mentionMatch = matchTeammateMentions(draft, teammates)
   const activeMention = mentionMatch?.matches[Math.min(mentionIndex, (mentionMatch?.matches.length ?? 1) - 1)] ?? null
 
   const latestLive = shown[shown.length - 1]
@@ -393,7 +382,6 @@ export function Composer(): ReactElement {
               className="absolute top-full left-0 z-50 mt-0.5 max-h-40 w-72 overflow-y-auto border border-border bg-background py-1 text-xs shadow-lg"
             >
               {mentionMatch.matches.map((tm, idx) => {
-                const circleStyle = teammateCircleStyle(tm.accountId, idx, true, isDark)
                 const selected = idx === Math.min(mentionIndex, mentionMatch.matches.length - 1)
                 return (
                   <button
@@ -412,16 +400,7 @@ export function Composer(): ReactElement {
                       selected ? 'bg-muted font-medium' : 'hover:bg-muted'
                     }`}
                   >
-                    <span
-                      style={{
-                        backgroundColor: circleStyle.backgroundColor,
-                        color: circleStyle.color,
-                        borderColor: circleStyle.borderColor,
-                      }}
-                      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[8px] leading-none font-semibold"
-                    >
-                      {teammateInitials(tm.email)}
-                    </span>
+                    <TeammateBadge email={tm.email} index={idx} lit={tm.online} size={16} />
                     <span className="truncate">@{tm.email}</span>
                   </button>
                 )

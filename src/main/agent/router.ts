@@ -1,5 +1,5 @@
 import { handedBy } from '../../shared/agent/typed'
-import { CENTRAL_SHARE_REFUSAL, EMPTY_COLLAB, findRoomShare, resolveTeammatesByQuery } from '../../shared/collab/collab'
+import { shareTargets } from '../../shared/collab/collab'
 import { layoutOf } from '../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../shared/grid/windows'
 import {
@@ -214,63 +214,57 @@ const detachTabTool: Tool = {
   },
 }
 
+const SHARE = 'Share'
+const DO_NOT_SHARE = 'No'
+
 const shareRoomTool: Tool = {
   name: 'share_room',
   description:
-    'Adds one or more teammates (by email, @mention, or name) as live editors to a room on the grid. Central itself cannot be shared; only rooms (like room_1) can be shared here.',
+    'Shares a room on the grid with teammates, named by email address: each sees the room live on their own terminal and may ask its agent, which runs here. A teammate is someone under Teammates in the state; an address that is not one yet is invited, and joins the room once they accept. The user is asked before anything is shared. Central itself is never shared, only rooms.',
   parameters: {
     type: 'object',
     properties: {
       room: ROOM,
-      loop: ROOM,
       teammates: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Teammate emails or @mentions to add to the room.',
-      },
-      teammate: {
-        type: 'string',
-        description: 'A single teammate email or @mention to add to the room.',
+        description: 'The email addresses to add to the room.',
       },
     },
+    required: ['room', 'teammates'],
   },
-  async run(input, { workspaceId }) {
-    const rawRoom = String(input.room ?? input.loop ?? '').trim()
-    if (/^@?central$/i.test(rawRoom)) {
-      throw new Error(CENTRAL_SHARE_REFUSAL)
+  async run(input, ran) {
+    if (ran.task !== undefined) throw new Error('A scheduled task cannot share a room.')
+    const state = getState()
+    const loop = findLoop(toPublic(state), ran.workspaceId, asRoomArg(input))
+    const tabId = findRoomTab(state, loop.id) ?? ran.workspaceId
+    if (loop.replica) throw new Error(`${loopName(loop.id)} is a teammate's room: only its owner shares it.`)
+    const named = Array.isArray(input.teammates)
+      ? input.teammates.filter((x): x is string => typeof x === 'string')
+      : []
+    const { members, unknown } = shareTargets(named, state.collab.teammates)
+    if (unknown.length > 0) {
+      throw new Error(`No teammate is called ${unknown.join(', ')}. Ask the user for their email address.`)
     }
-    const state = toPublic(getState())
-    const loop = findLoop(state, workspaceId, asRoomArg(input))
-    const ownerTabId = findRoomTab(getState(), loop.id) ?? workspaceId
-    const collab = state.collab ?? EMPTY_COLLAB
-    const allKnown = [
-      ...collab.teammates,
-      ...collab.outgoingInvites.map((inv) => ({
-        accountId: inv.inviteeEmail,
-        email: inv.inviteeEmail,
-        since: inv.createdAt,
-      })),
-    ]
-    const rawList = [
-      ...(Array.isArray(input.teammates) ? input.teammates.filter((x): x is string => typeof x === 'string') : []),
-      ...(typeof input.teammate === 'string' ? [input.teammate] : []),
-    ]
-    const matched = resolveTeammatesByQuery(rawList, allKnown)
-    const rawEmails = rawList
-      .map((s) => s.trim().replace(/^@+/, ''))
-      .filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s))
-    const idsToAdd = [...new Set([...matched.map((m) => m.accountId), ...rawEmails])]
-    if (idsToAdd.length === 0) {
-      throw new Error('Specify at least one teammate email or @teammate to add to the room.')
-    }
-    const existingShare = findRoomShare(collab, ownerTabId, loop.id, loop.shareId)
-    const existingIds = (existingShare?.members ?? [])
-      .map((m) => m.accountId)
-      .filter((id) => id !== existingShare?.ownerAccountId)
-    const nextIds = [...new Set([...existingIds, ...idsToAdd])]
-    await shareRoom(ownerTabId, loop.id, nextIds)
-    const labels = [...new Set([...matched.map((m) => m.email), ...rawEmails])]
-    return `Added ${labels.join(', ')} to ${loopName(loop.id)}.`
+    if (members.length === 0) throw new Error('Name at least one teammate by email address.')
+    const label = (member: string): string =>
+      state.collab.teammates.find((one) => one.accountId === member)?.email ?? member
+    const share = state.collab.shares.find((one) => one.shareId === loop.shareId)
+    const already = share ? [...share.members.map((one) => one.accountId), ...share.pendingEmails] : []
+    const adding = members.filter((member) => !already.includes(member))
+    if (adding.length === 0) return `${loopName(loop.id)} is already shared with ${members.map(label).join(', ')}.`
+    // Sharing shows a room's conversation and data to someone else: the user says so, each time.
+    const asked = await askUserFor(
+      `Share ${loopName(loop.id)} (${loop.desc}) with ${adding.map(label).join(', ')}?`,
+      [SHARE, DO_NOT_SHARE],
+      ran.signal,
+      undefined,
+      askedBy(ran.runId),
+    )
+    if (asked.answer !== SHARE)
+      throw new Error(`The user did not confirm sharing ${loopName(loop.id)}, so nothing was shared.`)
+    await shareRoom(tabId, loop.id, [...new Set([...already, ...adding])])
+    return `Shared ${loopName(loop.id)} with ${adding.map(label).join(', ')}.`
   },
 }
 

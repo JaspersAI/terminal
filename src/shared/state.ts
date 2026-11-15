@@ -15,7 +15,7 @@ import type { JaspersSignIn } from './app/jaspers'
 import type { ProMode } from './app/pro-mode'
 import type { UpdateInfo } from './app/updates'
 import type { CollabState } from './collab/collab'
-export type { CollabShareInfo, CollabState, ShareMember, Teammate, TeammateInvite } from './collab/collab'
+export type { CollabShare, CollabState, ShareMember, Teammate, TeammateInvite } from './collab/collab'
 
 export type ProviderKind = 'llm' | 'voice' | 'search'
 
@@ -37,8 +37,10 @@ export interface Workspace {
   color?: string | null
   /** Optional window number (> 1) when detached into a "Terminal (copy)" window. */
   window?: number
-  /** Collaboration share id when this workspace tab is shared live with teammates. */
+  /** The share this tab is in, when it is shared with teammates (shared/collab/collab.ts). */
   shareId?: string
+  /** Set on a copy of a teammate's shared tab: its rooms are replicas, laid out as the owner has them. */
+  replica?: true
 }
 
 /** Names are trimmed and capped. Main rejects anything else. */
@@ -287,7 +289,7 @@ export interface AppState {
   /** The sign-in with Jaspers: whether, and as whom. Its tokens stay in main. */
   jaspers: JaspersSignIn
   /** Teammates, invitations, and live shared rooms and workspace tabs. */
-  collab?: CollabState
+  collab: CollabState
 }
 
 /**
@@ -466,11 +468,20 @@ export type Action =
    * and those windows close. Refused, with what is in the way named, when something cannot be moved.
    */
   | { type: 'window.oneScreen' }
+  /** Invites an address to be a teammate. Nothing is shared with them until they accept. */
   | { type: 'collab.invite'; email: string }
+  /** Accepts an invitation, by its id: the two accounts are teammates from then. */
   | { type: 'collab.accept'; invite: string }
+  /** Declines an invitation received, or takes back one sent. */
   | { type: 'collab.decline'; invite: string }
   | { type: 'collab.removeTeammate'; accountId: string }
-  | { type: 'room.share'; workspaceId: string; room: string; memberAccountIds: string[] }
+  /**
+   * Shares a room of this terminal's own with exactly these people: teammates by account id, and
+   * email addresses, which are invited and join when they accept. With none, sharing stops.
+   */
+  | { type: 'room.share'; workspaceId: string; room: string; members: string[] }
+  /** Stops sharing a room of this terminal's own; on a teammate's room, leaves it. */
   | { type: 'room.unshare'; workspaceId: string; room: string }
-  | { type: 'tab.share'; id: string; memberAccountIds: string[] }
+  /** The same for a whole tab: every room on it, laid out for teammates as it is here. */
+  | { type: 'tab.share'; id: string; members: string[] }
   | { type: 'tab.unshare'; id: string }

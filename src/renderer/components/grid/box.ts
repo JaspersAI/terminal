@@ -10,7 +10,6 @@ import { THINKING, type AgentEvent, type AgentOrigin } from '../../../shared/age
 import type { Place } from '../../../shared/agent/asking'
 import { shownQuestion } from '../../../shared/agent/attachments.ts'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript.ts'
-import { isHumanRoomMessage } from '../../../shared/collab/collab.ts'
 import { loopNumber, loopTitle, parseLoopHeader, type Loop, type LoopStatus } from '../../../shared/loops/loops.ts'
 import { answered, failed, heard, over, sent, without, type LiveExchange } from '../composer/live.ts'
 
@@ -440,9 +439,12 @@ export function boxesKept(
   return next ?? boxes
 }
 
-export function tileBoxSent(box: TileBox, place: Place, ask: string, question: string): TileBox {
-  const expandForHuman = isHumanRoomMessage(question)
-  const expanded = box.expanded || expandForHuman
+/**
+ * A message sent from a tile's box. One said to the room's people (`toPeople`) opens the
+ * conversation: there is no run to watch, and what was said is in it.
+ */
+export function tileBoxSent(box: TileBox, place: Place, ask: string, question: string, toPeople = false): TileBox {
+  const expanded = box.expanded || toPeople
   const dropped = !expanded && over(box.live).size > 0
   const live = boxSent(boxFresh(box.live, expanded), ask, place.workspaceId, question)
   return { ...box, expanded, draft: '', live, scrollTop: null, ...(dropped ? { read: false } : {}) }

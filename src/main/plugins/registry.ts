@@ -107,11 +107,12 @@ export function unregisterPlugin(plugin: string): void {
 }
 
 /**
- * Registers view definitions from a synced collaboration bundle when the plugin is not locally
- * installed, so `ViewHost` and `placeChecked` recognize the view and mount its sandboxed iframe.
+ * A plugin this terminal does not have, known by the views a teammate's shared room sent for it, so a
+ * replica's tile can be placed and its frame mounted. A plugin installed here, in whatever state, is
+ * left to its own registration.
  */
 export function registerSyncedViews(plugin: string, syncedViews: readonly ViewInfo[]): void {
-  if (getState().plugins[plugin]?.status === 'ready') return
+  if (getState().plugins[plugin]) return
   let changed = false
   for (const info of syncedViews) {
     if (!info.id.startsWith(`${plugin}/`) || views.has(info.id)) continue
@@ -123,6 +124,18 @@ export function registerSyncedViews(plugin: string, syncedViews: readonly ViewIn
       output: z.record(z.string(), z.unknown()),
       renders: info.renders,
     })
+    changed = true
+  }
+  if (changed) project()
+}
+
+/** The views a teammate's room sent for a plugin, gone with the share that sent them. */
+export function unregisterSyncedViews(plugin: string): void {
+  if (getState().plugins[plugin]) return
+  let changed = false
+  for (const [id, def] of views) {
+    if (def.plugin !== plugin) continue
+    views.delete(id)
     changed = true
   }
   if (changed) project()

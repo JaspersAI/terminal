@@ -30,6 +30,12 @@ import {
 } from '../grid/grid.ts'
 import { defaultRoomSizeForScreen, type ScreenDimensions } from '../grid/screens.ts'
 
+/** What marks a room as a copy of a teammate's: see `Loop.replica`. */
+export interface ReplicaMark {
+  room: string
+  tiles: Record<string, string>
+}
+
 export interface Loop {
   /**
    * f1, f2, … from a counter kept across the terminal, never reused: the key its tiles, its thread,
@@ -55,8 +61,14 @@ export interface Loop {
   systemPrompt?: string
   /** Canonical chat key (`<originTabId>/<id>`) so a room moved or reopened across tabs keeps its thread. */
   chat?: string
-  /** Collaboration share id when this room is shared live with teammates. */
+  /** The share this room is in, when it is shared with teammates (shared/collab/collab.ts). */
   shareId?: string
+  /**
+   * Set on a copy of a teammate's room: the room itself lives on its owner's terminal, and this one
+   * is drawn from what that terminal sends. It holds the owner's id for the room and, for each tile
+   * here, the owner's id for that tile, which is what an edit made here is sent under.
+   */
+  replica?: ReplicaMark
   /** What happened to it since it was made, oldest first, for the room log. Absent until the first. */
   log?: LoopChange[]
 }
@@ -607,6 +619,17 @@ export function readLoops(list: unknown, seq: unknown, closed?: unknown): Loops 
 }
 
 /** One record off disk, or null when it is not one or its id is taken. A name a file from before names were numbered holds is left behind. */
+function readReplica(raw: unknown): ReplicaMark | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const { room, tiles } = raw as { room?: unknown; tiles?: unknown }
+  if (typeof room !== 'string' || !LOOP_ID.test(room)) return null
+  const kept: Record<string, string> = {}
+  for (const [local, owner] of Object.entries(typeof tiles === 'object' && tiles !== null ? tiles : {})) {
+    if (typeof owner === 'string') kept[local] = owner
+  }
+  return { room, tiles: kept }
+}
+
 function readRecord(raw: unknown, taken: readonly Loop[]): Loop | null {
   const strings = (value: unknown): string[] =>
     Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string') : []
@@ -631,6 +654,7 @@ function readRecord(raw: unknown, taken: readonly Loop[]): Loop | null {
       : {}),
     ...(typeof one.chat === 'string' && one.chat.trim() ? { chat: one.chat.trim() } : {}),
     ...(typeof one.shareId === 'string' && one.shareId.trim() ? { shareId: one.shareId.trim() } : {}),
+    ...(readReplica(one.replica) ? { replica: readReplica(one.replica)! } : {}),
     ...(log.length > 0 ? { log } : {}),
   }
 }

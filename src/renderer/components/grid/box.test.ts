@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { AgentEvent } from '../../../shared/agent/agent.ts'
+import { HUMAN_ROOM_ANSWER } from '../../../shared/collab/collab.ts'
 import {
   barLabel,
   BORN,
@@ -522,14 +523,22 @@ test('a tile box clamps its conversation split from 0% to 100%, keeps it across 
   assert.equal(tileBoxOf(boxes, HERE).split, null)
 })
 
-test('sending an @ human message in a room expands the conversation drawer and settles immediately without a working spinner', () => {
+test("a message to the room's people opens the conversation and settles with no run to watch", () => {
   let boxes: ReadonlyMap<string, TileBox> = new Map()
-  boxes = withTileBox(boxes, HERE, (box) => tileBoxSent(box, HERE, 'ask-human', '@jane check the margin assumptions'))
+  boxes = withTileBox(boxes, HERE, (box) =>
+    tileBoxSent(box, HERE, 'ask-human', '@jane check the margin assumptions', true),
+  )
   assert.equal(tileBoxOf(boxes, HERE).expanded, true)
   boxes = withTileBox(boxes, HERE, (box) =>
-    tileBoxSettled(box, 'ask-human', 'Sent to room — agent held.', null, 1_700_000_009_000),
+    tileBoxSettled(box, 'ask-human', HUMAN_ROOM_ANSWER, null, 1_700_000_009_000),
   )
   const settled = tileBoxOf(boxes, HERE)
   assert.equal(settled.live[0]?.working, false)
-  assert.equal(settled.live[0]?.answer, 'Sent to room — agent held.')
+  assert.equal(settled.live[0]?.answer, HUMAN_ROOM_ANSWER)
+})
+
+test("a message to the room's agent leaves a closed conversation closed", () => {
+  let boxes: ReadonlyMap<string, TileBox> = new Map()
+  boxes = withTileBox(boxes, HERE, (box) => tileBoxSent(box, HERE, 'ask-agent', '@jane check the margin assumptions'))
+  assert.equal(tileBoxOf(boxes, HERE).expanded, false)
 })

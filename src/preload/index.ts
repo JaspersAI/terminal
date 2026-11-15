@@ -102,7 +102,7 @@ const api = {
     run: (
       source: string,
       args: unknown,
-      options: { fresh?: boolean; workspaceId?: string } = {},
+      options: { fresh?: boolean; workspaceId?: string; panelId?: string } = {},
     ): Promise<RunResult & { text: string }> => ipcRenderer.invoke('source:run', source, args, options),
     rows: (datasetId: string): Promise<Record<string, unknown>[]> => ipcRenderer.invoke('dataset:rows', datasetId),
   },
@@ -114,14 +114,20 @@ const api = {
       ipcRenderer.invoke('voice:transcribe', audio, mimeType),
   },
   live: {
-    /** One value a plugin published for its views, or undefined. */
-    get: (plugin: string, key: string): Promise<unknown> => ipcRenderer.invoke('live:get', plugin, key),
+    /**
+     * One value a plugin published for its views, or undefined. `scope` is a share's id for a view in
+     * a teammate's room, whose values are that room's and not this terminal's own.
+     */
+    get: (plugin: string, key: string, scope = ''): Promise<unknown> =>
+      ipcRenderer.invoke('live:get', plugin, key, scope),
     /** Starts hearing one key and resolves with its value now; changes arrive through `onChange`. */
-    subscribe: (plugin: string, key: string): Promise<unknown> => ipcRenderer.invoke('live:subscribe', plugin, key),
-    unsubscribe: (plugin: string, key: string): Promise<void> => ipcRenderer.invoke('live:unsubscribe', plugin, key),
-    onChange: (listener: (plugin: string, key: string, value: unknown) => void): (() => void) => {
-      const handler = (_event: IpcRendererEvent, plugin: string, key: string, value: unknown): void =>
-        listener(plugin, key, value)
+    subscribe: (plugin: string, key: string, scope = ''): Promise<unknown> =>
+      ipcRenderer.invoke('live:subscribe', plugin, key, scope),
+    unsubscribe: (plugin: string, key: string, scope = ''): Promise<void> =>
+      ipcRenderer.invoke('live:unsubscribe', plugin, key, scope),
+    onChange: (listener: (plugin: string, key: string, value: unknown, scope: string) => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, plugin: string, key: string, value: unknown, scope: string): void =>
+        listener(plugin, key, value, scope ?? '')
       ipcRenderer.on('live:changed', handler)
       return () => ipcRenderer.removeListener('live:changed', handler)
     },
@@ -193,7 +199,9 @@ const api = {
   },
   /** The store: what is in the file every source run is filed to, and reclaiming its space. */
   store: {
-    query: (sql: string, limit?: number): Promise<QueryResult> => ipcRenderer.invoke('store:query', sql, limit),
+    /** `from` names the tile asking: one in a teammate's room is answered from the room's owner's store. */
+    query: (sql: string, limit?: number, from?: { workspaceId: string; panelId: string }): Promise<QueryResult> =>
+      ipcRenderer.invoke('store:query', sql, limit, from),
     onRecorded: (listener: (source: string) => void): (() => void) => on('store:recorded', listener),
     stats: (): Promise<StoreStats> => ipcRenderer.invoke('store:stats'),
     /** What each kind of run has spent today. */

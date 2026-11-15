@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { allScreensWithNotice, askForMissingSecret, dispatch, oneScreenOrNotice } from './actions'
 import { watchLoops } from './agent/loop'
-import { startCollab } from './collab/collab'
+import { replicaAt, replicaQuery, replicaSource, replicaWatch, startCollab } from './collab/collab'
 import { registerAgentIpc, runTask, runTaskCall, taskSaid } from './agent/orchestrator'
 import { registerWelcomeIpc } from './agent/welcome'
 import { closeAll, followSignIn, onMissingSecret, suspendRetries, wakeRetries } from './plugins/mcp'
@@ -11,7 +11,7 @@ import { registerInstallIpc } from './plugins/install'
 import { registerHubIpc } from './hub/hub-ipc'
 import { registerSkillEditorIpc } from './skills/skill-editor'
 import { registerSkillInstallIpc } from './skills/skill-install'
-import { registerLiveIpc } from './plugins/live-ipc'
+import { registerLiveIpc, setReplicaLiveReader } from './plugins/live-ipc'
 import { flush } from './persist'
 import { killAllHosts, quittingHosts, stopAllHosts, suspendHosts, wakeHosts } from './plugins/plugin-host'
 import { deferPluginStartup, startPlugins } from './plugins/plugins'
@@ -149,6 +149,7 @@ app.whenReady().then(async () => {
   // A loop that is gone stops what it was doing and is forgotten.
   watchLoops()
   startCollab()
+  setReplicaLiveReader(replicaWatch)
   registerWelcomeIpc()
   registerVoiceIpc()
   registerLiveIpc()
@@ -172,9 +173,10 @@ app.whenReady().then(async () => {
   // through its tools. Datasets stay in main: only the rows a view asked for cross.
   ipcMain.handle('source:run', (_event, source: unknown, args: unknown, options: unknown) => {
     if (typeof source !== 'string' || !source) throw new Error('A source id is required.')
-    const { fresh, workspaceId } = (typeof options === 'object' && options !== null ? options : {}) as {
+    const { fresh, workspaceId, panelId } = (typeof options === 'object' && options !== null ? options : {}) as {
       fresh?: unknown
       workspaceId?: unknown
+      panelId?: unknown
     }
     // A view names the workspace it is on, since a plugin's code reads that one; main checks it is real.
     if (
@@ -182,15 +184,26 @@ app.whenReady().then(async () => {
       (typeof workspaceId !== 'string' || !getState().workspaces.some((w) => w.id === workspaceId))
     )
       throw new Error('Unknown workspace.')
+    const tab = typeof workspaceId === 'string' ? workspaceId : getState().currentWorkspaceId
+    // A view in a teammate's room is answered by the room's owner, never here: what it asks for is
+    // the room's, and the view itself may be a teammate's code.
+    const replica = typeof panelId === 'string' ? replicaAt(tab, panelId) : null
+    if (replica) return replicaSource(tab, replica, source, args)
     // Fresh skips a dataset still good for the arguments: a view refreshing asks for it.
-    return runSource(source, args, {
-      fresh: fresh === true,
-      workspaceId: typeof workspaceId === 'string' ? workspaceId : getState().currentWorkspaceId,
-    })
+    return runSource(source, args, { fresh: fresh === true, workspaceId: tab })
   })
-  ipcMain.handle('store:query', (_event, sql: unknown, limit: unknown) => {
+  ipcMain.handle('store:query', (_event, sql: unknown, limit: unknown, from: unknown) => {
     if (typeof sql !== 'string') throw new Error('sql has to be a string.')
-    return query({ sql, limit: typeof limit === 'number' ? limit : undefined })
+    const take = typeof limit === 'number' ? limit : undefined
+    // The same for a statement over the store: a teammate's room reads its owner's.
+    const { workspaceId, panelId } = (typeof from === 'object' && from !== null ? from : {}) as {
+      workspaceId?: unknown
+      panelId?: unknown
+    }
+    const replica =
+      typeof workspaceId === 'string' && typeof panelId === 'string' ? replicaAt(workspaceId, panelId) : null
+    if (replica) return replicaQuery(replica, sql, take)
+    return query({ sql, limit: take })
   })
   ipcMain.handle('store:stats', () => stats())
   ipcMain.handle('store:usage', () => usageToday())

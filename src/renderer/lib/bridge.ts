@@ -9,7 +9,8 @@ import { dispatch, get, subscribe } from './state'
 // dispatches to main. Nothing here validates: main does, against the view's schema, wherever the
 // write came from. A plugin view in an iframe will reach this same object through a relay.
 
-export function hostBridgeFor(workspaceId?: string): Bridge {
+/** `panelId` names the tile a view is on, so main knows whose room asks: a teammate's is answered by its owner. */
+export function hostBridgeFor(workspaceId?: string, panelId?: string): Bridge {
   const resolveWorkspaceId = (): string => workspaceId ?? get().currentWorkspaceId
   return {
     peek(path) {
@@ -49,7 +50,7 @@ export function hostBridgeFor(workspaceId?: string): Bridge {
 
     // Scoped to the view's own workspace tab, even while that tab is mounted off screen.
     async runSource(source, args, options) {
-      return runSourceIn(resolveWorkspaceId(), source, args, options)
+      return runSourceIn(resolveWorkspaceId(), source, args, options, panelId)
     },
 
     async datasetRows(datasetId) {
@@ -58,7 +59,8 @@ export function hostBridgeFor(workspaceId?: string): Bridge {
 
     // Only here. The relay a plugin's iframe talks to does not carry this method.
     async query(sql, limit) {
-      return unwrap(window.app.store.query(sql, limit))
+      const from = panelId ? { workspaceId: resolveWorkspaceId(), panelId } : undefined
+      return unwrap(window.app.store.query(sql, limit, from))
     },
 
     async openLink(url) {
@@ -80,8 +82,15 @@ export async function runSourceIn(
   source: string,
   args: unknown,
   options?: RunOptions,
+  panelId?: string,
 ): Promise<RunResult> {
-  return unwrap(window.app.sources.run(source, args, { fresh: options?.fresh === true, workspaceId }))
+  return unwrap(
+    window.app.sources.run(source, args, {
+      fresh: options?.fresh === true,
+      workspaceId,
+      ...(panelId ? { panelId } : {}),
+    }),
+  )
 }
 
 /** Main's message, without the IPC wrapper around it, since a view shows it to the user. */

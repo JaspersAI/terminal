@@ -67,11 +67,8 @@ export function stateNow(workspaceId: string): string {
     state.workspaces.length > 0
       ? `Tabs: ${state.workspaces.map((w) => (w.id === workspaceId ? `${w.name} (active)` : w.name)).join(', ')}.`
       : ''
-  const teammateEmails = [
-    ...(state.collab?.teammates.map((t) => `@${t.email}`) ?? []),
-    ...(state.collab?.outgoingInvites.map((i) => `@${i.inviteeEmail}`) ?? []),
-  ]
-  const teammatesLine = teammateEmails.length > 0 ? `Teammates: ${[...new Set(teammateEmails)].join(', ')}.` : ''
+  const teammates = state.collab.teammates.map((one) => one.email)
+  const teammatesLine = teammates.length > 0 ? `Teammates: ${teammates.join(', ')}.` : ''
   return [
     ...(tabsLine ? [tabsLine] : []),
     ...(teammatesLine ? [teammatesLine] : []),

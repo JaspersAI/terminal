@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react'
 import { endedAs, type Exchange } from '../../../shared/agent/transcript'
-import { EMPTY_COLLAB, findRoomShare } from '../../../shared/collab/collab'
+import { roomSharing } from '../../../shared/collab/collab'
 import { editedInstructionsPrompt, loopTitle, type Loop } from '../../../shared/loops/loops'
 import { menuOf } from '../../../shared/loops/menu'
 import { formatAsOf } from '../../../shared/tasks/tasks'
-import { useAppState } from '../../lib/state'
+import { dispatch, useAppState } from '../../lib/state'
+import { SharePanel } from '../collab/SharePanel'
 import { PAGE } from '../composer/request'
 import { sendToRoom } from './LoopBox'
 import { send } from './send'
@@ -44,23 +45,14 @@ export function LoopMenu({
   const loops = useAppState((s) => s.loops[workspaceId])
   const plugins = useAppState((s) => s.plugins)
   const connections = useAppState((s) => s.connections)
-  const collab = useAppState((s) => s.collab ?? EMPTY_COLLAB)
-  const roomShare = useMemo(
-    () => findRoomShare(collab, workspaceId, loop.id, loop.shareId),
-    [collab, workspaceId, loop.id, loop.shareId],
-  )
-  const availableTeammates = useMemo(() => {
-    const byEmail = new Map(collab.teammates.map((t) => [t.email.toLowerCase(), t]))
-    for (const inv of collab.outgoingInvites) {
-      const key = inv.inviteeEmail.toLowerCase()
-      if (!byEmail.has(key)) {
-        byEmail.set(key, { accountId: inv.inviteeEmail, email: inv.inviteeEmail, since: inv.createdAt })
-      }
-    }
-    return [...byEmail.values()]
-  }, [collab.teammates, collab.outgoingInvites])
-  const [inviteEmail, setInviteEmail] = useState('')
-  const shareInputRef = useRef<HTMLInputElement>(null)
+  const collab = useAppState((s) => s.collab)
+  const workspace = useAppState((s) => s.workspaces.find((one) => one.id === workspaceId))
+  const sharing = useMemo(() => roomSharing(collab, workspace, loop), [collab, workspace, loop])
+  /** Shared with its whole tab and not on its own: who is in it is the tab's to say. */
+  const withTab = sharing !== null && !loop.shareId
+  const shareSection = useRef<HTMLElement>(null)
+  /** A teammate's room: named, instructed, closed, and deleted on its owner's terminal. Here it is left. */
+  const replica = sharing?.role === 'member'
   const menu = useMemo(
     () => menuOf({ loops: { [workspaceId]: loops ?? [] }, plugins, connections }, workspaceId, loop.id),
     [workspaceId, loop.id, loops, plugins, connections],
@@ -188,25 +180,38 @@ export function LoopMenu({
             Stop what it is doing
           </button>
         )}
-        {onRename && (
+        {onRename && !replica && (
           <button type="button" data-rename onClick={onRename} className={item}>
             Rename this room
           </button>
         )}
-        <button type="button" data-menu-share-button onClick={() => shareInputRef.current?.focus()} className={item}>
-          Share
-        </button>
         <button
           type="button"
-          data-close
-          onClick={() => send({ type: 'room.close', workspaceId, room: loop.id })}
+          data-menu-share-button
+          onClick={() => {
+            shareSection.current?.scrollIntoView({ block: 'nearest' })
+            shareSection.current?.querySelector('input')?.focus()
+          }}
           className={item}
         >
-          Close this room
+          {sharing?.role === 'member' ? 'Shared with you' : sharing ? 'Shared' : 'Share'}
         </button>
-        {confirming ? (
+        {!replica && (
+          <button
+            type="button"
+            data-close
+            onClick={() => send({ type: 'room.close', workspaceId, room: loop.id })}
+            className={item}
+          >
+            Close this room
+          </button>
+        )}
+        {replica ? null : confirming ? (
           <div data-confirm className="px-2 py-1">
-            <p>Permanently delete it, with its conversation? Closing keeps it saved in Rooms.</p>
+            <p>
+              Permanently delete it, with its conversation? Closing keeps it saved in Rooms.
+              {sharing ? ' The teammates it is shared with lose it too.' : ''}
+            </p>
             <div className="mt-1 flex gap-1">
               <button
                 type="button"
@@ -235,7 +240,7 @@ export function LoopMenu({
       <section data-menu-instructions className="border-b border-border p-2">
         <div className="mb-1 flex items-center justify-between gap-2">
           <h3 className="text-muted-foreground">Instructions</h3>
-          {!editingInstructions && (
+          {!editingInstructions && !replica && (
             <button
               type="button"
               data-menu-edit-instructions
@@ -314,98 +319,18 @@ export function LoopMenu({
           <p className="text-muted-foreground">No instructions set</p>
         )}
       </section>
-      <section data-menu-share className="border-b border-border p-2">
-        <div className="mb-1 flex items-center justify-between gap-2">
-          <h3 className="text-muted-foreground">Share</h3>
-          {roomShare && (
-            <button
-              type="button"
-              data-menu-unshare-room
-              onClick={() => send({ type: 'room.unshare', workspaceId, room: loop.id })}
-              className="text-muted-foreground underline hover:text-foreground"
-            >
-              {roomShare.isOwner ? 'Stop sharing' : 'Leave'}
-            </button>
-          )}
-        </div>
-        <div className="space-y-1.5">
-          {availableTeammates.length > 0 && (
-            <ul className="space-y-1">
-              {availableTeammates.map((tm) => {
-                const activeMemberIds = (roomShare?.members ?? [])
-                  .map((m) => m.accountId)
-                  .filter((id) => id !== roomShare?.ownerAccountId)
-                const inRoom =
-                  activeMemberIds.includes(tm.accountId) ||
-                  (roomShare?.members ?? []).some((m) => m.email.toLowerCase() === tm.email.toLowerCase())
-                return (
-                  <li key={tm.accountId} className="flex items-center justify-between gap-2">
-                    <span className="truncate">{tm.email}</span>
-                    <button
-                      type="button"
-                      data-share-teammate={tm.accountId}
-                      aria-pressed={inRoom}
-                      onClick={() => {
-                        const nextIds = inRoom
-                          ? activeMemberIds.filter(
-                              (id) => id !== tm.accountId && id.toLowerCase() !== tm.email.toLowerCase(),
-                            )
-                          : [...activeMemberIds, tm.accountId]
-                        if (nextIds.length === 0 && roomShare) {
-                          send({ type: 'room.unshare', workspaceId, room: loop.id })
-                        } else {
-                          send({ type: 'room.share', workspaceId, room: loop.id, memberAccountIds: nextIds })
-                        }
-                      }}
-                      className={`border px-1.5 py-0.5 ${
-                        inRoom ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted'
-                      }`}
-                    >
-                      {inRoom ? 'Added' : 'Add'}
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              const trimmed = inviteEmail.trim()
-              if (!trimmed) return
-              const activeMemberIds = (roomShare?.members ?? [])
-                .map((m) => m.accountId)
-                .filter((id) => id !== roomShare?.ownerAccountId)
-              send({
-                type: 'room.share',
-                workspaceId,
-                room: loop.id,
-                memberAccountIds: [...new Set([...activeMemberIds, trimmed])],
-              })
-              setInviteEmail('')
-            }}
-            className="flex gap-1 pt-0.5"
-          >
-            <input
-              ref={shareInputRef}
-              type="email"
-              data-menu-invite-email
-              aria-label="Share room with teammate email"
-              placeholder="teammate@fund.com"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              className="min-w-0 flex-1 border border-border bg-background px-1.5 py-0.5 text-xs outline-none focus:border-foreground"
-            />
-            <button
-              type="submit"
-              data-menu-invite-submit
-              disabled={!inviteEmail.trim()}
-              className="border border-border px-1.5 py-0.5 hover:bg-muted disabled:opacity-40"
-            >
-              Share
-            </button>
-          </form>
-        </div>
+      <section ref={shareSection} data-menu-share className="border-b border-border p-2">
+        <h3 className="mb-1 text-muted-foreground">Share</h3>
+        {withTab ? (
+          <p className="text-muted-foreground">Shared with its tab: right-click the tab to change who is in it.</p>
+        ) : (
+          <SharePanel
+            what="room"
+            sharing={sharing}
+            share={(members) => dispatch({ type: 'room.share', workspaceId, room: loop.id, members })}
+            stop={() => dispatch({ type: 'room.unshare', workspaceId, room: loop.id })}
+          />
+        )}
       </section>
       <section className="border-b border-border p-2">
         <h3 className="mb-1 text-muted-foreground">Told of</h3>

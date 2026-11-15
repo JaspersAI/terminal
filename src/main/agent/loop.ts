@@ -2,7 +2,7 @@ import type { Place } from '../../shared/agent/asking'
 import { shownQuestion } from '../../shared/agent/attachments'
 import type { Handed } from '../../shared/agent/typed'
 import { closedLoop } from '../../shared/loops/closed'
-import { EMPTY_COLLAB, isSponsoredRoom, parseRoomInput } from '../../shared/collab/collab'
+import { othersIn, parseRoomInput, roomSharing } from '../../shared/collab/collab'
 import { loopChat, frameOf, gone, LOOP_ID, shut } from '../../shared/loops/loops'
 import type { Exchange } from '../../shared/agent/transcript'
 import { findRoomTab, loopsOf, touchLoop } from '../loops/loops'
@@ -24,15 +24,22 @@ import { createTurns } from './utils/turns'
 
 const turns = createTurns()
 
-let sponsoredPromptHandler: ((workspaceId: string, loopId: string, input: string) => Promise<string>) | null = null
-let roomExchangeHooks: ((workspaceId: string, loopId: string) => void) | null = null
+/**
+ * What a shared room needs of main/collab/, handed over as that starts: it imports this file to
+ * run a teammate's request here, so this one cannot import it.
+ */
+interface CollabHooks {
+  /** Asks a teammate's room, on its owner's terminal, and answers what its agent said. */
+  prompt(shareId: string, room: string, input: string): Promise<string>
+  /** Says something to the people of a teammate's room: its owner's terminal files it. */
+  message(shareId: string, room: string, text: string): Promise<string>
+  /** Something was said in a room of this terminal's own: teammates are sent it. */
+  said(workspaceId: string, loopId: string): void
+}
+let collab: CollabHooks | null = null
 
-export function setCollabLoopHooks(hooks: {
-  runSponsoredPrompt: (workspaceId: string, loopId: string, input: string) => Promise<string>
-  onRoomExchange: (workspaceId: string, loopId: string) => void
-}): void {
-  sponsoredPromptHandler = hooks.runSponsoredPrompt
-  roomExchangeHooks = hooks.onRoomExchange
+export function setCollabLoopHooks(hooks: CollabHooks): void {
+  collab = hooks
 }
 
 /** The room a tile or room id belongs to, and which tab holds it. The docked chat has none. */
@@ -106,31 +113,30 @@ interface Sent {
 
 /** One request of a room's, shown in its frame: its own chat, prompt, and tools, in its turn. */
 function runOn(workspaceId: string, loop: string, on: string, { input, ask, written, task }: Sent): Promise<string> {
-  const stateNowSnapshot = getState()
+  const state = getState()
   const record = loopsOf(workspaceId).list.find((one) => one.id === loop)
   const chat = loopChat(workspaceId, record ?? loop)
+  const sharing = roomSharing(
+    state.collab,
+    state.workspaces.find((one) => one.id === workspaceId),
+    record,
+  )
 
-  // "People First -> Agent after": a message starting with `@` in a room addresses a person in the
-  // room, records directly in the room's conversation transcript, syncs to teammates, and makes the
-  // default room agent sit still and hold without running the LLM.
-  if (task === undefined && !written) {
-    const parsed = parseRoomInput(input, stateNowSnapshot.jaspers.email)
-    if (parsed.kind === 'human') {
+  if (sharing && collab) {
+    // In a shared room a message that opens with `@` and someone in it is for the people: it is
+    // filed in the room's conversation under the sender's name, and the room's agent is not run.
+    const people = sharing.share ? othersIn(sharing.share, state.collab.accountId) : []
+    const parsed = task === undefined && !written ? parseRoomInput(input, state.jaspers.email, people) : null
+    if (parsed?.kind === 'human') {
+      if (sharing.role === 'member') return collab.message(sharing.shareId, record!.replica!.room, input.trim())
       touchLoop(workspaceId, loop)
-      fileDirectExchange(chat, parsed.formattedQuestion, parsed.answer)
-      roomExchangeHooks?.(workspaceId, loop)
+      fileDirectExchange(chat, parsed.question, parsed.answer)
+      collab.said(workspaceId, loop)
       return Promise.resolve(parsed.answer)
     }
-    const ws = stateNowSnapshot.workspaces.find((w) => w.id === workspaceId)
-    const sponsored = isSponsoredRoom(
-      stateNowSnapshot.collab ?? EMPTY_COLLAB,
-      workspaceId,
-      loop,
-      record?.shareId,
-      ws?.shareId,
-    )
-    if (sponsored.sponsored && sponsoredPromptHandler) {
-      return sponsoredPromptHandler(workspaceId, loop, input)
+    // A teammate's room has no agent here: whatever is asked of it is asked of its owner's terminal.
+    if (sharing.role === 'member') {
+      return collab.prompt(sharing.shareId, record!.replica!.room, written ? `${input}\n\n${written}`.trim() : input)
     }
   }
 
@@ -159,7 +165,7 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
       // nothing: what the user sends then waits, and runs as theirs.
       added: task === undefined ? () => turns.takeWaiting<Added>(chat) : undefined,
     }).finally(() => {
-      roomExchangeHooks?.(workspaceId, loop)
+      collab?.said(workspaceId, loop)
     })
   }
   // /new does not wait: it starts the conversation over under whatever is still working, as it does
