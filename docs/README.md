@@ -23,6 +23,7 @@ Jaspers Terminal is an Electron desktop application and spreadsheet grid for pub
 | [Skills](skills.md) | Writing, installing, and using Agent Skills (`SKILL.md`), NYSE market-calendar tasks, SQLite delta watches, and skills in a plugin |
 | [Connections and data](connections-and-data.md) | Adding an MCP server, the built-in Table/Chart/Metric views, MCP Apps, citations, and `~/Jaspers/data/jaspers.db` |
 | [Publishing a plugin](publishing-a-plugin.md) | Publishing plugins and skills to [Jaspers Hub](https://hub.jsprai.com) from Settings, or as an archive on a GitHub release |
+| [Working with teammates](working-with-teammates.md) | Inviting teammates, sharing a room or a tab, what a teammate can do in it, and what stays on the owner's terminal |
 | [Pro mode](pro-mode.md) | Letting the assistant run local shell, Python, R, and CLI scripts in `~/Jaspers/shell`, approval tiers, and `sandbox-exec` confinement |
 | [Eye](eye.md) | Live feedback sharing, how the app is used: what is captured, what never is (including Pro mode and key prompts), and where it goes |
 | [Development](development.md) | Process boundaries, invariants, testing, and packaging |
