@@ -1382,3 +1382,64 @@ test('orchestrator and room rules triage public-company SEC research vs web-base
   }
   assert.match(loopRules(false), /web-based startup or company profile.*full Markdown answer or profile in your reply/i)
 })
+
+test('describeLoops, describeLoop, and ROUTER_RULES identify shared teammate rooms and route prompts to them via update_room', () => {
+  assert.match(ROUTER_RULES, /including a shared room owned by a teammate.*update_room/i)
+  assert.match(ROUTER_RULES, /injects the prompt in message into their room agent over collaboration/i)
+
+  const frame = placeView(EMPTY_GRID, { content: { kind: 'frame' }, loop: 'f5' })
+  const sharedLoop = {
+    ...NOTE_LOOP,
+    id: 'f5',
+    desc: 'Shared research memo',
+    shareId: 'share-5',
+    replica: { room: 'f1', tiles: {} },
+  }
+  const onlineState = {
+    ...tree(frame.grid),
+    loops: { [WS]: [sharedLoop] },
+    collab: {
+      connected: true,
+      accountId: 'acct-bob',
+      firstName: '',
+      lastName: '',
+      teammates: [],
+      outgoingInvites: [],
+      incomingInvites: [],
+      shares: [
+        {
+          shareId: 'share-5',
+          kind: 'room' as const,
+          role: 'member' as const,
+          ownerAccountId: 'acct-alice',
+          ownerEmail: 'alice@fund.com',
+          ownerOnline: true,
+          title: 'Room 1',
+          members: [],
+          pendingEmails: [],
+        },
+      ],
+      error: null,
+    },
+  }
+  assert.match(
+    describeLoops(onlineState, WS, () => 'idle'),
+    /- room_5, idle, owned by alice@fund\.com: "Shared research memo"\. Tile: e1\./,
+  )
+  assert.match(
+    describeLoop(onlineState, WS, sharedLoop, 'idle', [], () => undefined),
+    /\nshared: owned by alice@fund\.com\n/,
+  )
+
+  const offlineState = {
+    ...onlineState,
+    collab: {
+      ...onlineState.collab,
+      shares: [{ ...onlineState.collab.shares[0]!, ownerOnline: false }],
+    },
+  }
+  assert.match(
+    describeLoops(offlineState, WS, () => 'idle'),
+    /- room_5, idle, owned by alice@fund\.com \(offline\): "Shared research memo"\. Tile: e1\./,
+  )
+})

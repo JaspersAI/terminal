@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test, type TestContext } from 'node:test'
 import type { Exchange } from '../../shared/agent/transcript.ts'
-import { EMPTY_COLLAB, HUMAN_ROOM_ANSWER } from '../../shared/collab/collab.ts'
+import { EMPTY_COLLAB, HUMAN_ROOM_ANSWER, replicaPromptInput } from '../../shared/collab/collab.ts'
 import type { SyncedBundle, SyncedDataset } from '../../shared/collab/parts.ts'
 import {
   DEFAULT_SIZE,
@@ -13,7 +13,7 @@ import {
   type Grid,
   type Panel,
 } from '../../shared/grid/grid.ts'
-import { frameOf, NO_LOOPS, withLoopAsked, type Loop } from '../../shared/loops/loops.ts'
+import { frameOf, NO_LOOPS, prepareRoomUpdate, withLoopAsked, type Loop } from '../../shared/loops/loops.ts'
 import { createCollabEngine, type CollabEngine, type CollabEngineState } from './collab-engine.ts'
 import { CollabError, readCommand, readEvent, readManifest, readState, type CollabApi } from './wire.ts'
 
@@ -971,4 +971,46 @@ test('setting first and last name propagates via profile.updated, addresses shar
   await bob.engine.message(replica.shareId!, replica.replica!.room, '@Alice Jones looks good')
   await settle()
   assert.equal(alice.chats.get(`ws/${room}`)?.at(-1)?.question, '[Bob Smith] @Alice Jones looks good')
+})
+
+test('an update_room handoff from Central or Orb injects the prompt into a shared replica room and syncs the new exchange back immediately', async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+
+  const replica = roomOf(bob)!.loop
+  const prepared = prepareRoomUpdate(
+    replica,
+    {
+      message: 'Update the note with Q4 revenue highlights.',
+      desc: 'NVDA Q4 note',
+      brief: 'Keep Q4 highlights up to date.',
+      systemPrompt: 'Concise bullet points.',
+    },
+    (shareId) => bob.engine.writable(shareId),
+  )
+  assert.equal(prepared.patch, null, 'replica metadata is never mutated locally')
+  const injected = replicaPromptInput('tell the shared room to add Q4 revenue highlights', prepared.written)
+  assert.equal(injected, 'Update the note with Q4 revenue highlights.')
+
+  // Simulate the owner's room agent filing the exchange during runPrompt, as userRequest does in production.
+  const shareId = bob.state.collab.shares[0]!.shareId
+  alice.chats.set(`ws/${room}`, [
+    {
+      at: 99,
+      question: `[bob@fund.com] ${injected}`,
+      answer: 'Added Q4 revenue highlights.',
+    },
+  ])
+  const reply = bob.engine.prompt(shareId, replica.replica!.room, injected)
+  await settle()
+  assert.equal(await reply, `answer to: [bob@fund.com] ${injected}`)
+  assert.deepEqual(alice.prompts, [`[bob@fund.com] ${injected}`])
+  assert.deepEqual(bob.filed.get(`ws/${replica.id}`), [
+    {
+      at: 99,
+      question: `[bob@fund.com] ${injected}`,
+      answer: 'Added Q4 revenue highlights.',
+    },
+  ])
 })

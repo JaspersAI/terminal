@@ -27,7 +27,7 @@ To stop, use **Stop sharing** in the same place. Your room is untouched; it goes
 
 A room shared with you appears on your grid (a shared tab appears as a tab of its own), marked with its owner. In it you can:
 
-- **Ask its agent.** Your question runs on the owner's terminal, under your name, and the answer lands in the room's conversation for everyone.
+- **Ask its agent**, in the room's command line or through Central and Orb. Your question runs on the owner's terminal, under your name, and the answer lands in the room's conversation for everyone.
 - **Message the people in it.** Start a message with `@` and someone's name or address (`@Sam Carter`, `@sam`, `@sam@fund.com`, or `@all`). It is filed in the room's conversation and the agent is not asked. Any other message goes to the agent.
 - **Use its views.** What you change in a tile (a filter, a note's text) is applied on the owner's terminal and shows for everyone. Data and refreshes come from the owner's terminal.
 - **Place its frame** where you like on your own grid, and minimize it.

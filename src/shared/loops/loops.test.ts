@@ -29,6 +29,7 @@ import {
   notOwn,
   notPlaced,
   notStarted,
+  prepareRoomUpdate,
   readLoops,
   elementTarget,
   refreshTarget,
@@ -1213,5 +1214,61 @@ test('default new room size on a new screen is top-left quarter for screens 15 i
       asked: 'spinout another room for MSFT',
     }),
     { size: { w: 4, h: 6 } },
+  )
+})
+
+test('prepareRoomUpdate patches own rooms locally and forwards prompts to replica shared rooms without patching local room metadata', () => {
+  const own = { shareId: 'share-1' }
+  assert.deepEqual(
+    prepareRoomUpdate(own, {
+      message: 'Refresh Q4 numbers.',
+      desc: 'NVDA Q4',
+      brief: 'Track NVDA quarterly metrics.',
+      systemPrompt: 'Cite SEC filings.',
+    }),
+    {
+      patch: {
+        desc: 'NVDA Q4',
+        brief: 'Track NVDA quarterly metrics.',
+        systemPrompt: 'Cite SEC filings.',
+      },
+      written: 'Refresh Q4 numbers.',
+    },
+  )
+
+  const replica = { shareId: 'share-1', replica: { room: 'f7', tiles: {} } }
+  assert.deepEqual(
+    prepareRoomUpdate(
+      replica,
+      {
+        message: 'Update the markdown document with Q4 highlights.',
+        desc: 'Updated desc',
+        brief: 'Updated brief',
+        systemPrompt: 'Updated system prompt',
+      },
+      () => null,
+    ),
+    {
+      patch: null,
+      written: 'Update the markdown document with Q4 highlights.',
+    },
+  )
+
+  assert.deepEqual(
+    prepareRoomUpdate(replica, { brief: 'Fallback brief instruction when message is omitted.' }, () => null),
+    {
+      patch: null,
+      written: 'Fallback brief instruction when message is omitted.',
+    },
+  )
+
+  assert.throws(
+    () =>
+      prepareRoomUpdate(
+        replica,
+        { message: 'Update the markdown document.' },
+        () => 'alice@fund.com is offline. This room lives on their terminal and is read-only until they are back.',
+      ),
+    /alice@fund\.com is offline/,
   )
 })

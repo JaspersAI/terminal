@@ -10,6 +10,7 @@ import { addressed, LOOP_ID, loopName } from '../../shared/loops/loops'
 import type { Turn } from '../../shared/llm/llm'
 import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { answerQuestion, withoutSecretPrompts } from '../actions'
+import { readOnly } from '../collab/collab'
 import { recordRun } from '../data/store'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { getState } from '../state'
@@ -88,6 +89,10 @@ function run(input: string, ask?: string): Promise<string> {
     input,
   )
   if (to) {
+    if (to.loop.replica) {
+      const blocked = readOnly(to.loop.shareId ?? '')
+      if (blocked) throw new Error(blocked)
+    }
     const ownerTab = allOpen.find((one) => one.loop.id === to.loop.id)?.tabId ?? workspaceId
     handOver(ownerTab, to.loop.id, { typed: to.message })
     const reply = `Sent to ${loopName(to.loop.id)}.`
