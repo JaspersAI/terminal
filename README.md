@@ -30,7 +30,7 @@ To enable local, open-weight, and cloud models to run multi-step financial workf
 <p align="center">
   <picture>
     <source type="image/webp" srcset="docs/assets/jaspers-terminal-public-markets-workspace.webp">
-    <img src="docs/assets/jaspers-terminal-public-markets-workspace.png" alt="Jaspers Terminal desktop application showing a public-market research workspace on a spreadsheet grid with an equity candlestick chart, SEC 10-K and 10-Q cited filing analysis, a semiconductor fundamentals table, a 10-year Treasury chart, live DCF formulas, and the command bar" width="100%">
+    <img src="docs/assets/jaspers-terminal-public-markets-workspace.png" alt="Jaspers Terminal desktop application showing parallel financial research agents, a 7,142-company qualitative SEC filing screen with verified sec.gov quotes, multi-series cohort alpha and hyperscaler CapEx charts, the built-in plugin coding agent, NYSE scheduled delta watches, and the docked Central orchestrator" width="100%">
   </picture>
 </p>
 
