@@ -15,7 +15,7 @@ Removing a teammate also takes each of you out of the other's shared rooms and t
 
 ## Sharing a room or a tab
 
-- **A room:** open the room's menu and use **Share**. Add a teammate by name or `@name`, or type an email address to invite someone new.
+- **A room:** open the room's menu and use **Share**. Add a teammate by name or `@name`, or type an email address to invite someone new. Or drag a teammate's circle onto the room; dragging a member's circle out of a room you own removes them from it.
 - **A tab:** right-click the tab and use **Share**. Every room on the tab is shared, laid out for your teammates as it is for you, and rooms you add later join it.
 - **By asking:** tell Central who to share an existing or new room, or a tab, with, by name, `@name`, or email address. It asks you to confirm in its command bar before anything is shared.
 
@@ -38,7 +38,7 @@ What you cannot do there: rename it, change its instructions, rearrange or close
 
 A shared room lives on its owner's terminal. While that terminal is closed or offline, the room stays on your grid as it was last sent and is read-only: you can read it, and anything you ask of it is refused with a line saying its owner is offline. It is live again when they are back.
 
-The badges along the foot of a shared room show who is in it. A badge is in color while that person is connected.
+The circles along the foot of a shared room show who is in it; double-clicking or right-clicking any user circle opens **Settings, Team**. A circle is in color while that person is connected.
 
 ## What is sent, and what is not
 

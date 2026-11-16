@@ -10,8 +10,11 @@ import {
 import { ADDED } from '../../../shared/agent/agent'
 import type { Citation } from '../../../shared/agent/citations'
 import type { Exchange } from '../../../shared/agent/transcript'
+import { isHumanExchange, parseRoomQuestion, teammateColorIndex, type SharePerson } from '../../../shared/collab/collab'
 import { formatAsOf } from '../../../shared/tasks/tasks'
 import { useAppState } from '../../lib/state'
+import { AgentAvatar } from '../collab/AgentAvatar'
+import { TeammateBadge } from '../collab/TeammateBadge'
 import { ErrorText } from './ErrorText'
 import { trailOf, type LiveExchange } from './live'
 import { MarkdownText } from './MarkdownText'
@@ -41,6 +44,11 @@ interface Props {
    * does: an id names one thing, and a tile's box draws this too.
    */
   named?: boolean
+  /**
+   * The people of a shared room, the reader among them, when this is its conversation: each question
+   * then wears its asker's circle and each agent reply the Jaspers orb.
+   */
+  sharedRoom?: readonly SharePerson[]
   /** Saved scroll offset when the reader scrolled up from the end, or null while following the bottom. */
   scrollTop?: number | null
   /** Reports when the reader scrolls up to a position or returns to following the bottom (`null`). */
@@ -82,6 +90,7 @@ export function Transcript({
   label,
   text,
   named = true,
+  sharedRoom,
   scrollTop: savedScrollTop = null,
   onScrollTopChange,
   className,
@@ -187,10 +196,16 @@ export function Transcript({
     >
       {earlier.map((exchange, index) => (
         // Its place in the log, which holds as pages join above; one not filed yet has only its place here.
-        <EarlierExchange key={exchange.id ?? `unfiled-${index}`} exchange={exchange} />
+        <EarlierExchange key={exchange.id ?? `unfiled-${index}`} exchange={exchange} sharedRoom={sharedRoom} />
       ))}
       {live.map((exchange, index) => (
-        <LiveRow key={exchange.ask} exchange={exchange} last={named && index === live.length - 1} onStop={onStop} />
+        <LiveRow
+          key={exchange.ask}
+          exchange={exchange}
+          last={named && index === live.length - 1}
+          onStop={onStop}
+          sharedRoom={sharedRoom}
+        />
       ))}
       {label !== undefined && <p className="mb-1 text-xs text-muted-foreground">{label}</p>}
       {text !== undefined && (
@@ -213,28 +228,42 @@ const LiveRow = memo(function LiveRow({
   exchange,
   last,
   onStop,
+  sharedRoom,
 }: {
   exchange: LiveExchange
   last: boolean
   onStop?: (ask: string) => void
+  sharedRoom?: readonly SharePerson[]
 }): ReactElement {
   const { ask, question, answer, citations, steps, thinking, working, at, error } = exchange
   const stop = onStop ? () => onStop(ask) : undefined
   const asOf = !working && at !== null ? formatAsOf(at) : ''
+  const humanOnly = sharedRoom !== undefined && answer !== null && isHumanExchange(answer)
   return (
     <div data-live={working ? 'working' : 'over'} className="mb-5 last:mb-0">
-      <Bubble id={last ? 'agent-question' : undefined} text={question} />
-      {answer === null ? (
-        <>
+      <Bubble
+        id={last ? 'agent-question' : undefined}
+        text={question}
+        sharedRoom={sharedRoom}
+        // A request on screen as it was sent is the reader's own; a teammate's arrives marked with their name.
+        unmarked={sharedRoom?.find((one) => one.me) ?? ownerOf(sharedRoom)}
+      />
+      {humanOnly ? (
+        <p data-human-note className="text-right text-xs text-muted-foreground">
+          {answer}
+          {asOf ? ` · ${asOf}` : ''}
+        </p>
+      ) : answer === null ? (
+        <AgentTurn shared={sharedRoom !== undefined}>
           <Trail steps={steps} thinking={thinking} error={error} working={working} last={last} onStop={stop} />
           {asOf && (
             <p data-reply-timestamp className="mt-1 text-xs text-muted-foreground">
               {asOf}
             </p>
           )}
-        </>
+        </AgentTurn>
       ) : (
-        <>
+        <AgentTurn shared={sharedRoom !== undefined}>
           {/* Until the run is over the trail works and Stop stays, whatever has been written under it. */}
           {(steps.length > 0 || working) && (
             <Trail steps={steps} thinking={thinking} error={null} working={working} last={last} onStop={stop} />
@@ -248,7 +277,7 @@ const LiveRow = memo(function LiveRow({
               {asOf}
             </p>
           )}
-        </>
+        </AgentTurn>
       )}
     </div>
   )
@@ -260,44 +289,85 @@ const LiveRow = memo(function LiveRow({
  * log kept a run's steps has only its words. Drawn once and kept: a reply arriving a piece at a time
  * under a long conversation redraws itself, not every exchange above it.
  */
-const EarlierExchange = memo(function EarlierExchange({ exchange }: { exchange: Exchange }): ReactElement {
+const EarlierExchange = memo(function EarlierExchange({
+  exchange,
+  sharedRoom,
+}: {
+  exchange: Exchange
+  sharedRoom?: readonly SharePerson[]
+}): ReactElement {
   const asOf = exchange.at !== undefined ? formatAsOf(exchange.at) : ''
+  const humanOnly = sharedRoom !== undefined && isHumanExchange(exchange.answer)
   return (
     <div data-earlier className="mb-5 last:mb-0">
       {exchange.task !== undefined ? (
-        <TaskReply task={exchange.task} text={exchange.answer} citations={exchange.citations} asOf={asOf} />
+        <AgentTurn shared={sharedRoom !== undefined}>
+          <TaskReply task={exchange.task} text={exchange.answer} citations={exchange.citations} asOf={asOf} />
+        </AgentTurn>
       ) : exchange.welcome ? (
         // The assistant speaking unasked, with nothing over it.
-        <div data-welcome className="font-prose text-prose">
-          <MarkdownText source={exchange.answer} citations={exchange.citations} />
-          {asOf && (
-            <p data-reply-timestamp className="mt-1 font-sans text-xs text-muted-foreground">
-              {asOf}
-            </p>
-          )}
-        </div>
+        <AgentTurn shared={sharedRoom !== undefined}>
+          <div data-welcome className="font-prose text-prose">
+            <MarkdownText source={exchange.answer} citations={exchange.citations} />
+            {asOf && (
+              <p data-reply-timestamp className="mt-1 font-sans text-xs text-muted-foreground">
+                {asOf}
+              </p>
+            )}
+          </div>
+        </AgentTurn>
       ) : (
         <>
-          <Bubble text={exchange.question} />
-          {exchange.steps && exchange.steps.length > 0 && (
-            <Trail steps={exchange.steps} error={null} working={false} last={false} />
-          )}
-          {exchange.answer !== '' && (
-            <div className="font-prose text-prose">
-              <MarkdownText source={exchange.answer} citations={exchange.citations} />
-            </div>
-          )}
-          {exchange.error && <ErrorText text={exchange.error} className="mt-1" />}
-          {asOf && (
-            <p data-reply-timestamp className="mt-1 text-xs text-muted-foreground">
-              {asOf}
+          {/* The room's log is its owner's: what they asked is kept bare, and anyone else's is marked. */}
+          <Bubble text={exchange.question} sharedRoom={sharedRoom} unmarked={ownerOf(sharedRoom)} />
+          {humanOnly ? (
+            <p data-human-note className="text-right text-xs text-muted-foreground">
+              {exchange.answer}
+              {asOf ? ` · ${asOf}` : ''}
             </p>
+          ) : (
+            <AgentTurn shared={sharedRoom !== undefined}>
+              {exchange.steps && exchange.steps.length > 0 && (
+                <Trail steps={exchange.steps} error={null} working={false} last={false} />
+              )}
+              {exchange.answer !== '' && (
+                <div className="font-prose text-prose">
+                  <MarkdownText source={exchange.answer} citations={exchange.citations} />
+                </div>
+              )}
+              {exchange.error && <ErrorText text={exchange.error} className="mt-1" />}
+              {asOf && (
+                <p data-reply-timestamp className="mt-1 text-xs text-muted-foreground">
+                  {asOf}
+                </p>
+              )}
+            </AgentTurn>
           )}
         </>
       )}
     </div>
   )
 })
+
+function ownerOf(people: readonly SharePerson[] | undefined): SharePerson | null {
+  return people?.find((one) => one.role === 'owner') ?? null
+}
+
+function AgentTurn({
+  shared,
+  children,
+}: {
+  shared: boolean
+  children: ReactElement | (ReactElement | false | '' | null | undefined)[]
+}): ReactElement {
+  if (!shared) return <>{children}</>
+  return (
+    <div data-agent-turn className="flex items-start gap-2">
+      <AgentAvatar size={20} className="mt-0.5" />
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  )
+}
 
 /**
  * What a scheduled task's run said, where it was said: no question over it, and a rule down its side
@@ -334,13 +404,45 @@ function TaskReply({
   )
 }
 
-/** What the user asked, on the right. */
-function Bubble({ id, text }: { id?: string; text: string }): ReactElement {
+/** What the user asked, on the right. In a shared room, marked with the sender's circular avatar. */
+function Bubble({
+  id,
+  text,
+  sharedRoom,
+  unmarked = null,
+}: {
+  id?: string
+  text: string
+  sharedRoom?: readonly SharePerson[]
+  /** Who asked a question that is not marked with a name. */
+  unmarked?: SharePerson | null
+}): ReactElement {
+  if (!sharedRoom) {
+    return (
+      <div className="mb-3 flex justify-end">
+        <p id={id} className="max-w-[85%] bg-muted px-3 py-1.5 text-sm whitespace-pre-wrap">
+          {text}
+        </p>
+      </div>
+    )
+  }
+  const { sender, text: cleanText } = parseRoomQuestion(text, sharedRoom, unmarked)
   return (
-    <div className="mb-3 flex justify-end">
+    <div className="mb-3 flex items-start justify-end gap-2">
       <p id={id} className="max-w-[85%] bg-muted px-3 py-1.5 text-sm whitespace-pre-wrap">
-        {text}
+        {cleanText}
       </p>
+      {sender && (
+        <TeammateBadge
+          email={sender.email}
+          firstName={sender.firstName}
+          lastName={sender.lastName}
+          index={teammateColorIndex(sender.email, sharedRoom)}
+          lit
+          size={20}
+          className="mt-1.5"
+        />
+      )}
     </div>
   )
 }

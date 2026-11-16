@@ -9,6 +9,7 @@ import {
   personDetail,
   personName,
   resolveTeammate,
+  teammateColorIndex,
   type RoomSharing,
 } from '../../../shared/collab/collab'
 import { errorMessage } from '../../lib/errors'
@@ -174,7 +175,7 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
       )}
       {inIt.length > 0 && (
         <ul data-share-members className="space-y-1">
-          {inIt.map((person, index) => {
+          {inIt.map((person) => {
             const named = fullName(person)
             return (
               <li key={person.id} title={personDetail(person)} className="flex items-center justify-between gap-2">
@@ -183,7 +184,7 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
                     email={person.email}
                     firstName={person.firstName}
                     lastName={person.lastName}
-                    index={index}
+                    index={teammateColorIndex(person.email, people)}
                     lit={person.online}
                     size={16}
                   />
@@ -331,7 +332,7 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
 function People({ people }: { people: ReturnType<typeof peopleIn> }): ReactElement {
   return (
     <ul data-share-members className="space-y-1">
-      {people.map((person, index) => {
+      {people.map((person) => {
         const named = fullName(person)
         return (
           <li key={person.id} title={personDetail(person)} className="flex items-center gap-1.5">
@@ -339,7 +340,7 @@ function People({ people }: { people: ReturnType<typeof peopleIn> }): ReactEleme
               email={person.email}
               firstName={person.firstName}
               lastName={person.lastName}
-              index={index}
+              index={teammateColorIndex(person.email, people)}
               lit={person.online}
               size={16}
             />

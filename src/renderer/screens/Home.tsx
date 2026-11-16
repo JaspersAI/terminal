@@ -8,6 +8,7 @@ import { EyePrompt } from '../components/workspace/EyePrompt'
 import { SignInPrompt } from '../components/workspace/SignInPrompt'
 import { Workspace } from '../components/workspace/Workspace'
 import { errorMessage } from '../lib/errors'
+import { onOpenSettingsPane } from '../lib/settings-nav'
 import { useAppState } from '../lib/state'
 
 interface Props {
@@ -31,6 +32,15 @@ export function Home({ welcome }: Props): ReactElement {
       window.app.onOpenSettings((pane) => {
         setLoops(false)
         setSettings(isSettingsPane(pane) ? { pane } : {})
+      }),
+    [],
+  )
+  // Asked for from this window's own page: a person's circle opens Settings on Team.
+  useEffect(
+    () =>
+      onOpenSettingsPane((pane) => {
+        setLoops(false)
+        setSettings({ pane })
       }),
     [],
   )

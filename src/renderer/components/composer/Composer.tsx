@@ -9,11 +9,9 @@ import {
 } from 'react'
 import { askedIn } from '../../../shared/agent/asking'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
-import { applyTeammateMention, fullName, matchTeammateMentions, personName } from '../../../shared/collab/collab'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
 import { formatAsOf } from '../../../shared/tasks/tasks'
 import { currentWorkspace, useAppState } from '../../lib/state'
-import { TeammateBadge } from '../collab/TeammateBadge'
 import { useEarlier, useNoticeTimer } from './conversation'
 import { useDockedChat } from './dock'
 import { PHASE_TEXT } from './phase'
@@ -43,9 +41,7 @@ export function Composer(): ReactElement {
   const question = useAppState((s) => askedIn(s.questions))
   const notices = useAppState((s) => s.notices)
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
-  const teammates = useAppState((s) => s.collab.teammates)
   const [expanded, setExpanded] = useState(false)
-  const [mentionIndex, setMentionIndex] = useState(0)
   const request = useRequest()
   const {
     draft,
@@ -69,11 +65,6 @@ export function Composer(): ReactElement {
   const told = notices.find((one) => one.chat === CENTRAL_CHAT || one.chat === workspaceId)?.id ?? null
   const more = useEarlier({ request, workspaceId, when: true, said: told, welcome })
   useNoticeTimer(notice?.id ?? null)
-
-  // An `@` and the start of a teammate's address offers the teammates it could be: Central is told
-  // who to share a room with by their address.
-  const mentionMatch = matchTeammateMentions(draft, teammates)
-  const activeMention = mentionMatch?.matches[Math.min(mentionIndex, (mentionMatch?.matches.length ?? 1) - 1)] ?? null
 
   const latestLive = shown[shown.length - 1]
   const voiceStatus = phase !== 'idle' && phase !== 'thinking' ? PHASE_TEXT[phase] : null
@@ -122,24 +113,6 @@ export function Composer(): ReactElement {
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
-    if (mentionMatch && mentionMatch.matches.length > 0) {
-      if (event.key === 'ArrowDown') {
-        event.preventDefault()
-        setMentionIndex((i) => (i + 1) % mentionMatch.matches.length)
-        return
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        setMentionIndex((i) => (i - 1 + mentionMatch.matches.length) % mentionMatch.matches.length)
-        return
-      }
-      if (event.key === 'Tab' && activeMention) {
-        event.preventDefault()
-        setDraft(applyTeammateMention(draft, activeMention))
-        setMentionIndex(0)
-        return
-      }
-    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       submit()
@@ -383,48 +356,6 @@ export function Composer(): ReactElement {
               {expanded ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
             </svg>
           </button>
-          {mentionMatch && (
-            <div
-              data-central-mention-menu
-              role="listbox"
-              aria-label="Teammates"
-              className="absolute top-full left-0 z-50 mt-0.5 max-h-40 w-72 overflow-y-auto border border-border bg-background py-1 text-xs shadow-lg"
-            >
-              {mentionMatch.matches.map((tm, idx) => {
-                const selected = idx === Math.min(mentionIndex, mentionMatch.matches.length - 1)
-                const named = fullName(tm)
-                return (
-                  <button
-                    key={tm.accountId}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    data-central-mention-option={tm.email}
-                    onMouseDown={(event) => {
-                      event.preventDefault()
-                      setDraft(applyTeammateMention(draft, tm))
-                      setMentionIndex(0)
-                      inputRef.current?.focus()
-                    }}
-                    className={`flex w-full items-center gap-2 px-2.5 py-1 text-left ${
-                      selected ? 'bg-muted font-medium' : 'hover:bg-muted'
-                    }`}
-                  >
-                    <TeammateBadge
-                      email={tm.email}
-                      firstName={tm.firstName}
-                      lastName={tm.lastName}
-                      index={idx}
-                      lit={tm.online}
-                      size={16}
-                    />
-                    <span className="truncate">@{personName(tm)}</span>
-                    {named && <span className="ml-auto truncate text-muted-foreground">{tm.email}</span>}
-                  </button>
-                )
-              })}
-            </div>
-          )}
         </form>
       )}
     </div>
