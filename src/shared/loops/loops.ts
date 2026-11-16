@@ -1003,6 +1003,7 @@ export const LOOP_EXCLUDED_TOOLS: readonly string[] = [
   'read_cells',
   'clear_cells',
   'change_setting',
+  'open_settings',
   'read_room',
   'search_rooms',
 ]
@@ -1047,6 +1048,7 @@ export const ORCHESTRATOR_TOOLS: readonly string[] = [
   'cancel_task',
   'write_skill',
   'change_setting',
+  'open_settings',
   'read_room',
   'search_rooms',
   'run_shell',

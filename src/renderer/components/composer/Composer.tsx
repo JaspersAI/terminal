@@ -10,10 +10,12 @@ import {
 import { askedIn } from '../../../shared/agent/asking'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
 import { applyTeammateMention, fullName, matchTeammateMentions, personName } from '../../../shared/collab/collab'
+import { MAIN_WINDOW } from '../../../shared/grid/windows'
 import { formatAsOf } from '../../../shared/tasks/tasks'
 import { currentWorkspace, useAppState } from '../../lib/state'
 import { TeammateBadge } from '../collab/TeammateBadge'
 import { useEarlier, useNoticeTimer } from './conversation'
+import { useDockedChat } from './dock'
 import { PHASE_TEXT } from './phase'
 import { QuestionField } from './QuestionField'
 import { firstLineOf, useRequest } from './request'
@@ -35,6 +37,7 @@ import { SecretField } from './SecretField'
  */
 export function Composer(): ReactElement {
   const workspaceId = useAppState((s) => currentWorkspace(s).id)
+  const docked = useDockedChat(workspaceId, MAIN_WINDOW)
   const hasVoice = useAppState((s) => s.voice !== null)
   const secretRequest = useAppState((s) => askedIn(s.secretRequests))
   const question = useAppState((s) => askedIn(s.questions))
@@ -172,12 +175,18 @@ export function Composer(): ReactElement {
     <div id="composer" className="flex min-w-0 flex-1 items-start">
       {secretRequest !== null ? (
         <div data-command-line-column className="flex w-full min-w-0 flex-1 items-center gap-1">
-          <SecretField compact key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} />
+          <SecretField
+            compact
+            key={`${secretRequest.plugin}/${secretRequest.key}`}
+            request={secretRequest}
+            autoFocus={!docked}
+            listenEscape={!docked}
+          />
           <span className="h-6 w-5 shrink-0" aria-hidden />
         </div>
       ) : question !== null ? (
         <div data-command-line-column className="flex w-full min-w-0 flex-1 items-center gap-1">
-          <QuestionField compact key={question.id} question={question} />
+          <QuestionField compact key={question.id} question={question} autoFocus={!docked} listenEscape={!docked} />
           <span className="h-6 w-5 shrink-0" aria-hidden />
         </div>
       ) : (

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { ProviderSetting } from '../state'
 import { findProvider } from '../llm/providers.ts'
-import { settingChange, type SettingsNow } from './settings.ts'
+import { isSettingsPane, resolveSettingsPane, settingChange, type SettingsNow } from './settings.ts'
 
 const ANTHROPIC: ProviderSetting = {
   providerId: 'anthropic',
@@ -131,4 +131,15 @@ test('setting profile updates first and last name directly and refuses missing p
     () => settingChange({ setting: 'profile', first_name: 'Seth', last_name: '  ' }, NOW),
     /first_name and last_name are both required/,
   )
+})
+
+test('resolveSettingsPane accepts exact pane ids, common synonyms, and defaults to llm when omitted', () => {
+  assert.equal(resolveSettingsPane(undefined), 'llm')
+  assert.equal(resolveSettingsPane(''), 'llm')
+  assert.equal(resolveSettingsPane('team'), 'team')
+  assert.equal(resolveSettingsPane('Teammates'), 'team')
+  assert.equal(resolveSettingsPane('pro-mode'), 'pro')
+  assert.equal(isSettingsPane('team'), true)
+  assert.equal(isSettingsPane('nope'), false)
+  assert.throws(() => resolveSettingsPane('nope'), /pane is one of llm, team/)
 })

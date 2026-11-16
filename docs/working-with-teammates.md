@@ -8,8 +8,8 @@ Sharing needs a Jaspers sign-in on both sides.
 
 A teammate is someone who accepted your invitation, or whose invitation you accepted. Nobody becomes your teammate, or sees anything of yours, without that.
 
-1. Open **Settings, Team**, set your first and last name, and invite teammates by email (with optional first and last name). They get an email, and the invitation shows in their own Settings, Team.
-2. They accept or decline there. Until they accept, nothing is shared with them.
+1. Open **Settings, Team**, set your first and last name, and invite teammates by email (with optional first and last name), or ask Central to invite someone by email. They get an email, and the invitation shows in their own Settings, Team.
+2. They accept or decline there, or by asking Central. Until they accept, nothing is shared with them.
 
 Removing a teammate also takes each of you out of the other's shared rooms and tabs.
 
@@ -17,7 +17,7 @@ Removing a teammate also takes each of you out of the other's shared rooms and t
 
 - **A room:** open the room's menu and use **Share**. Add a teammate by name or `@name`, or type an email address to invite someone new.
 - **A tab:** right-click the tab and use **Share**. Every room on the tab is shared, laid out for your teammates as it is for you, and rooms you add later join it.
-- **By asking:** tell Central who to share an existing or new room with, by name, `@name`, or email address. It asks you to confirm before anything is shared.
+- **By asking:** tell Central who to share an existing or new room, or a tab, with, by name, `@name`, or email address. It asks you to confirm in its command bar before anything is shared.
 
 If the address is not a teammate yet, they are invited, and they join the room the moment they accept. Until then they are listed as invited.
 

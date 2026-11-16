@@ -15,7 +15,7 @@ import {
   tilePrimer,
 } from '../../../shared/agent/prompt'
 import { standingText } from '../../../shared/agent/standing'
-import { fullName, personDetail } from '../../../shared/collab/collab'
+import { describeCollabState, fullName } from '../../../shared/collab/collab'
 import { sourcesSeen } from '../../data/store'
 import { loopsOf } from '../../loops/loops'
 import { loopName, showsChat } from '../../../shared/loops/loops'
@@ -70,12 +70,11 @@ export function stateNow(workspaceId: string): string {
       : ''
   const myFullName = fullName(state.collab)
   const userLine = myFullName ? `User: ${myFullName}${state.jaspers.email ? ` (${state.jaspers.email})` : ''}.` : ''
-  const teammates = state.collab.teammates.map((one) => personDetail(one))
-  const teammatesLine = teammates.length > 0 ? `Teammates: ${teammates.join(', ')}.` : ''
+  const collabLines = describeCollabState(state.collab)
   return [
     ...(userLine ? [userLine] : []),
     ...(tabsLine ? [tabsLine] : []),
-    ...(teammatesLine ? [teammatesLine] : []),
+    ...collabLines,
     describeGrid(workspaceId, windowSize, focusedWindow()),
     describeLoops(state, workspaceId, (loop, tabId = workspaceId) => statusNow(state, tabId, loop.id)),
     // What the focused element shows, without its view's instructions: those are for whoever drives it.

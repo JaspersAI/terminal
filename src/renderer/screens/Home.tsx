@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
+import { isSettingsPane, type SettingsPane } from '../../shared/agent/settings'
 import { needsJaspersSignIn } from '../../shared/app/jaspers'
 import { MAIN_WINDOW } from '../../shared/grid/windows'
 import { LoopsDialog } from '../components/settings/LoopsDialog'
@@ -20,13 +21,15 @@ interface Props {
  */
 export function Home({ welcome }: Props): ReactElement {
   const [settings, setSettings] = useState(false)
+  const [settingsPane, setSettingsPane] = useState<SettingsPane | undefined>(undefined)
   const [loops, setLoops] = useState(false)
   const [openedSettingsFromPrompt, setOpenedSettingsFromPrompt] = useState(false)
   const [dismissedSignIn, setDismissedSignIn] = useState(false)
   useEffect(
     () =>
-      window.app.onOpenSettings(() => {
+      window.app.onOpenSettings((pane) => {
         setLoops(false)
+        setSettingsPane(isSettingsPane(pane) ? pane : undefined)
         setSettings(true)
       }),
     [],
@@ -62,9 +65,14 @@ export function Home({ welcome }: Props): ReactElement {
       </div>
       {settings && (
         <Settings
-          onClose={() => setSettings(false)}
+          initialPane={settingsPane}
+          onClose={() => {
+            setSettings(false)
+            setSettingsPane(undefined)
+          }}
           onViewLoops={() => {
             setSettings(false)
+            setSettingsPane(undefined)
             setLoops(true)
           }}
         />

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, screen, shell, type Rectangle, type WebContents } from 'electron'
 import path from 'node:path'
+import type { SettingsPane } from '../../shared/agent/settings'
 import type { DragMove, DragOver } from '../../shared/grid/drag'
 import {
   anyWindowInFront,
@@ -244,6 +245,15 @@ export function showAll(): void {
     }
   }
   windowOf(MAIN_WINDOW)?.focus()
+}
+
+/** Shows the windows and asks the focused (or main) window to open Settings on `pane`. */
+export function openSettingsWindow(pane?: SettingsPane): void {
+  showAll()
+  const win = BrowserWindow.getFocusedWindow() ?? windowOf(focused) ?? windowOf(MAIN_WINDOW)
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send('menu:settings', pane)
+  }
 }
 
 /** Whether any window is visible and focused, where a notice is seen in the app itself. */

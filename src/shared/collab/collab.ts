@@ -7,7 +7,9 @@
 // it). Two accounts are teammates only once the invited one has accepted, and a room is shared only
 // with teammates: that acceptance is the consent everything else here rests on.
 
+import type { Asking } from '../agent/asking.ts'
 import { splitAttachments } from '../agent/attachments.ts'
+import { typedWords } from '../agent/typed.ts'
 import type { Loop } from '../loops/loops.ts'
 import type { Workspace } from '../state.ts'
 import { tabSwatchStyle } from '../tabs/tabs.ts'
@@ -596,4 +598,104 @@ export function shareMemberDetail(entry: string, teammates: readonly Teammate[])
   const contact = parseInviteContact(entry)
   if (contact) return personDetail(contact)
   return entry
+}
+
+/**
+ * Resolves a pending teammate invitation by its exact invite id, or by the inviter's or invitee's
+ * email address, name, or unique handle, as a teammate is resolved.
+ */
+export function resolveInvite(
+  query: string,
+  invites: readonly TeammateInvite[],
+  side: 'inviter' | 'invitee',
+): TeammateInvite | null {
+  const trimmed = query.trim()
+  if (!trimmed) return null
+  const byId = invites.find((one) => one.inviteId === trimmed)
+  if (byId) return byId
+  const decorated = invites.map((invite) =>
+    side === 'inviter'
+      ? {
+          invite,
+          email: invite.inviterEmail,
+          firstName: invite.inviterFirstName,
+          lastName: invite.inviterLastName,
+        }
+      : {
+          invite,
+          email: invite.inviteeEmail,
+          firstName: invite.inviteeFirstName,
+          lastName: invite.inviteeLastName,
+        },
+  )
+  return resolveTeammate(trimmed, decorated)?.invite ?? null
+}
+
+/**
+ * Whether the user's own typed words in `asked` explicitly name `rawEmail` as a whole email address
+ * (ignoring case, a leading `@`, and trailing sentence punctuation). Text handed over by an agent or
+ * skill never counts.
+ */
+export function asksToInviteEmail(asked: string | undefined, rawEmail: string): boolean {
+  const target = asEmail(rawEmail)
+  if (!target || !asked) return false
+  const text = typedWords(asked)
+  if (!text) return false
+  for (const match of text.matchAll(/(?:^|[\s,;:()<>[\]"'`])(@?[^\s,;:()<>[\]"'`]+)/g)) {
+    const candidate = (match[1] ?? '').replace(/[.!?,;:]+$/, '')
+    if (asEmail(candidate) === target) return true
+  }
+  return false
+}
+
+/**
+ * Formats a room or tab share confirmation prompt with the target and recipients first so neither is
+ * truncated in Central's 1-line command bar.
+ */
+export function shareQuestion(target: string, recipients: readonly string[], desc?: string): string {
+  const cleanDesc = desc?.trim()
+  const detail = cleanDesc ? ` (${cleanDesc})` : ''
+  return `Share ${target} with ${recipients.join(', ')}${detail}?`
+}
+
+/**
+ * Why a collaboration confirmation did not proceed, in words for Central's model, or null when the
+ * user clicked `confirmChoice`.
+ */
+export function notConfirmed(
+  actionLabel: string,
+  confirmChoice: string,
+  declineChoice: string,
+  asked: Asking,
+): string | null {
+  if (asked.answer === confirmChoice) return null
+  if (asked.answer === null) {
+    if (asked.ended === 'timeout') {
+      return `Nobody answered the prompt to ${actionLabel} within ten minutes, so nothing changed. The user did not close or refuse it; they may be away. Say it is waiting on their confirmation and that they can ask again.`
+    }
+    return `The user closed the confirmation prompt in Central without answering, so ${actionLabel} did not happen. Leave it unless they ask again.`
+  }
+  if (asked.answer === declineChoice) {
+    return `The user chose ${declineChoice}, so ${actionLabel} did not happen.`
+  }
+  return `Nothing changed yet. Instead of clicking ${confirmChoice} in Central's command bar, the user wrote ${JSON.stringify(asked.answer)}: follow what they wrote, and call the tool again only if they still want to ${actionLabel}.`
+}
+
+/** Summary lines describing teammates and pending invitations for Central's round state. */
+export function describeCollabState(collab: CollabState): string[] {
+  const lines: string[] = []
+  if (collab.teammates.length > 0) {
+    lines.push(`Teammates: ${collab.teammates.map((one) => personDetail(one)).join(', ')}.`)
+  }
+  if (collab.outgoingInvites.length > 0) {
+    lines.push(
+      `Outgoing team invites (pending acceptance): ${collab.outgoingInvites.map((one) => one.inviteeEmail).join(', ')}.`,
+    )
+  }
+  if (collab.incomingInvites.length > 0) {
+    lines.push(
+      `Incoming team invites: ${collab.incomingInvites.map((one) => `${one.inviterEmail} (id: ${one.inviteId})`).join(', ')}.`,
+    )
+  }
+  return lines
 }

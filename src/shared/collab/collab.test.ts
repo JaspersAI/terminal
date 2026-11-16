@@ -3,24 +3,31 @@ import { test } from 'node:test'
 import {
   accountLabel,
   applyTeammateMention,
+  asksToInviteEmail,
   cleanPersonName,
+  describeCollabState,
   EMPTY_COLLAB,
   HUMAN_ROOM_ANSWER,
   isForPeople,
   matchTeammateMentions,
   NAME_MAX,
+  notConfirmed,
   ownName,
   parseRoomInput,
   peopleIn,
   replicaPromptInput,
+  resolveInvite,
   resolveTeammate,
   roomSharing,
+  shareQuestion,
   shareTargets,
   teammateInitials,
   type CollabShare,
   type CollabState,
   type Teammate,
+  type TeammateInvite,
 } from './collab.ts'
+import { handedTurn } from '../agent/typed.ts'
 
 const bob: Teammate = { accountId: 'acct-bob', email: 'bob@fund.com', since: 1, online: true }
 const carol: Teammate = { accountId: 'acct-carol', email: 'carol.diaz@fund.com', since: 2, online: false }
@@ -261,5 +268,112 @@ test('replicaPromptInput injects refined Central instructions when handed over w
   assert.equal(
     replicaPromptInput(`tell room 4 to incorporate this\n\n${attached}`, 'Incorporate the attached margin notes.'),
     `Incorporate the attached margin notes.\n\n${attached}`,
+  )
+})
+
+test('asksToInviteEmail matches an exact address typed by the user, ignoring case, @, and trailing punctuation, and ignores handed text', () => {
+  assert.equal(asksToInviteEmail('Add sam@fund.com to my team.', 'sam@fund.com'), true)
+  assert.equal(asksToInviteEmail('invite @SAM@FUND.COM!', 'sam@fund.com'), true)
+  assert.equal(asksToInviteEmail('invite other-sam@fund.com', 'sam@fund.com'), false)
+  assert.equal(asksToInviteEmail('invite Sam to my team', 'sam@fund.com'), false)
+  assert.equal(asksToInviteEmail(handedTurn('invite Sam', 'invite sam@fund.com'), 'sam@fund.com'), false)
+})
+
+test('resolveInvite matches by invite id, email address, or unique handle on the requested side', () => {
+  const incoming: TeammateInvite[] = [
+    {
+      inviteId: 'inv-1',
+      inviterAccountId: 'acct-dave',
+      inviterEmail: 'dave@other.com',
+      inviteeEmail: 'alice@fund.com',
+      createdAt: 10,
+    },
+  ]
+  const outgoing: TeammateInvite[] = [
+    {
+      inviteId: 'inv-2',
+      inviterAccountId: 'acct-alice',
+      inviterEmail: 'alice@fund.com',
+      inviteeEmail: 'sam@other.com',
+      createdAt: 20,
+    },
+  ]
+  assert.equal(resolveInvite('inv-1', incoming, 'inviter')?.inviteId, 'inv-1')
+  assert.equal(resolveInvite('dave@other.com', incoming, 'inviter')?.inviteId, 'inv-1')
+  assert.equal(resolveInvite('@dave', incoming, 'inviter')?.inviteId, 'inv-1')
+  assert.equal(resolveInvite('alice', incoming, 'inviter'), null)
+  assert.equal(resolveInvite('sam@other.com', outgoing, 'invitee')?.inviteId, 'inv-2')
+  assert.equal(resolveInvite('sam', outgoing, 'invitee')?.inviteId, 'inv-2')
+  // By the name its account gave, on the side asked for and no other.
+  const named: TeammateInvite[] = [{ ...incoming[0]!, inviterFirstName: 'Dave', inviterLastName: 'Jones' }]
+  assert.equal(resolveInvite('Dave Jones', named, 'inviter')?.inviteId, 'inv-1')
+  assert.equal(resolveInvite('Dave Jones', named, 'invitee'), null)
+})
+
+test('shareQuestion puts target and recipients first, and notConfirmed distinguishes close, timeout, decline, and typed instructions', () => {
+  assert.equal(
+    shareQuestion('room_3', ['sam@fund.com'], 'Rates monitor'),
+    'Share room_3 with sam@fund.com (Rates monitor)?',
+  )
+  assert.equal(shareQuestion('tab Main', ['bob@fund.com']), 'Share tab Main with bob@fund.com?')
+
+  assert.equal(notConfirmed('share room_3', 'Share', 'No', { answer: 'Share' }), null)
+  assert.match(
+    notConfirmed('share room_3', 'Share', 'No', { answer: null, ended: 'closed' }) ?? '',
+    /closed the confirmation prompt in Central without answering/,
+  )
+  assert.match(
+    notConfirmed('share room_3', 'Share', 'No', { answer: null, ended: 'timeout' }) ?? '',
+    /Nobody answered the prompt to share room_3 within ten minutes/,
+  )
+  assert.equal(
+    notConfirmed('share room_3', 'Share', 'No', { answer: 'No' }),
+    'The user chose No, so share room_3 did not happen.',
+  )
+  assert.match(
+    notConfirmed('share room_3', 'Share', 'No', { answer: 'only send a team invite' }) ?? '',
+    /user wrote "only send a team invite"/,
+  )
+})
+
+test('describeCollabState reports teammates and pending incoming and outgoing team invites', () => {
+  assert.deepEqual(describeCollabState(EMPTY_COLLAB), [])
+  assert.deepEqual(
+    describeCollabState({
+      ...collab,
+      outgoingInvites: [
+        {
+          inviteId: 'inv-out',
+          inviterAccountId: 'acct-alice',
+          inviterEmail: 'alice@fund.com',
+          inviteeEmail: 'sam@fund.com',
+          createdAt: 1,
+        },
+      ],
+      incomingInvites: [
+        {
+          inviteId: 'inv-in',
+          inviterAccountId: 'acct-dave',
+          inviterEmail: 'dave@other.com',
+          inviteeEmail: 'alice@fund.com',
+          createdAt: 2,
+        },
+      ],
+    }),
+    [
+      'Teammates: bob@fund.com, carol.diaz@fund.com.',
+      'Outgoing team invites (pending acceptance): sam@fund.com.',
+      'Incoming team invites: dave@other.com (id: inv-in).',
+    ],
+  )
+  // A teammate with a name is given by it, with the address, which is what Central is told to address them by.
+  assert.deepEqual(
+    describeCollabState({
+      ...EMPTY_COLLAB,
+      teammates: [
+        { accountId: 'acct-bob', email: 'bob@fund.com', firstName: 'Bob', lastName: 'Smith', since: 1, online: true },
+      ],
+    }),
+    ['Teammates: Bob Smith (bob@fund.com).'],
   )
 })

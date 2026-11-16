@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, shell } from 'electron'
+import { app, clipboard, ipcMain, shell } from 'electron'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { allScreensWithNotice, askForMissingSecret, dispatch, oneScreenOrNotice } from './actions'
@@ -42,7 +42,15 @@ import { registerSchemes, registerViewHost } from './plugins/viewhost'
 import { suspendLlm, wakeLlm } from './llm/http'
 import { registerVoiceIpc } from './llm/voice'
 import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
-import { anyInFront, isHttps, openAllStored, registerDragIpc, showAll, watchDisplays } from './grid/windows'
+import {
+  anyInFront,
+  isHttps,
+  openAllStored,
+  openSettingsWindow,
+  registerDragIpc,
+  showAll,
+  watchDisplays,
+} from './grid/windows'
 import { installMenu } from './app/menu'
 import { isAccountPageUrl } from '../shared/app/jaspers'
 import {
@@ -257,11 +265,7 @@ app.whenReady().then(async () => {
   // Settings lives where a Mac user looks for it. Main does not own that screen, so the menu shows
   // the windows and the front one opens it.
   installMenu({
-    openSettings: () => {
-      showAll()
-      const win = BrowserWindow.getFocusedWindow()
-      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('menu:settings')
-    },
+    openSettings: () => openSettingsWindow(),
     // With more windows open than screens, the ones left over stay open and a notice says which.
     useAllScreens: () => allScreensWithNotice(),
     // Going back refuses when a window holds something that cannot be moved into the main window's
