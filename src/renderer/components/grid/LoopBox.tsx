@@ -18,9 +18,11 @@ import {
   fullName,
   isForPeople,
   matchTeammateMentions,
-  othersIn,
+  peopleIn,
   personName,
   roomSharing,
+  teammateColorIndex,
+  type SharePerson,
 } from '../../../shared/collab/collab'
 import { editedInstructionsPrompt, type Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
@@ -60,6 +62,8 @@ let boxes: ReadonlyMap<string, TileBox> = new Map()
 const listeners = new Set<() => void>()
 /** The runs heard to end since this window began listening, which an older answer to "what is running" must not bring back. */
 const ended = new Set<string>()
+/** A shared room this terminal has not been told the people of yet. */
+const NOBODY: readonly SharePerson[] = []
 let hearing = false
 
 function putBoxes(next: ReadonlyMap<string, TileBox>): void {
@@ -203,14 +207,28 @@ export function LoopBox({
   const workspace = useAppState((s) => s.workspaces.find((one) => one.id === workspaceId))
   const sharing = roomSharing(collab, workspace, loop)
   const shared = sharing !== null
+  const share = sharing?.share ?? null
+  /** Everyone in a shared room, the reader among them, for its conversation; undefined in a room that is not shared. */
+  const roomPeople = useMemo(
+    () => (shared ? (share ? peopleIn(share, collab) : NOBODY) : undefined),
+    [shared, share, collab],
+  )
   const { expanded: open, draft, live, earlier, more, scrollTop, split } = tileBox
   const [mentionIndex, setMentionIndex] = useState(0)
-  const roomInputRef = useRef<HTMLInputElement>(null)
-  const roomPeople = sharing?.share ? othersIn(sharing.share, collab.accountId) : []
-  const roomMention = draft.trimStart().startsWith('@') ? matchTeammateMentions(draft, roomPeople) : null
-  const roomMentionOptions = roomMention ? roomMention.matches : []
-  const activeRoomMention =
-    roomMentionOptions[Math.min(mentionIndex, Math.max(0, roomMentionOptions.length - 1))] ?? null
+  /** The draft the list was dismissed over: it stays away until the draft changes. */
+  const [mentionClosedOn, setMentionClosedOn] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Only a message that opens with `@` is for the room's people, so only then is anyone offered:
+  // those a message can reach, which leaves out the reader and anyone invited who has not joined.
+  const mentionOptions =
+    roomPeople && draft.trimStart().startsWith('@') && mentionClosedOn !== draft
+      ? (matchTeammateMentions(
+          draft,
+          roomPeople.filter((one) => one.role !== 'invited' && one.id !== collab.accountId),
+        )?.matches ?? [])
+      : []
+  const activeMentionIndex = Math.min(mentionIndex, Math.max(0, mentionOptions.length - 1))
+  const activeMention = mentionOptions[activeMentionIndex] ?? null
   const onScrollTopChange = useCallback(
     (nextScrollTop: number | null) => {
       updateTileBox(place, (b) => tileBoxScrolled(b, nextScrollTop))
@@ -338,6 +356,34 @@ export function LoopBox({
     return newest !== undefined
   }
 
+  function pickMention(person: SharePerson): void {
+    const nextDraft = applyTeammateMention(draft, person)
+    updateTileBox(place, (b) => (b.draft === nextDraft ? b : { ...b, draft: nextDraft }))
+    setMentionIndex(0)
+    setMentionClosedOn(null)
+    inputRef.current?.focus()
+  }
+
+  function inputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>): void {
+    if (!activeMention) return
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const step = event.key === 'ArrowDown' ? 1 : mentionOptions.length - 1
+      setMentionIndex((activeMentionIndex + step) % mentionOptions.length)
+      return
+    }
+    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+      event.preventDefault()
+      pickMention(activeMention)
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      setMentionClosedOn(draft)
+    }
+  }
+
   function keyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
     // A question or a key field a run put up here hears its own Escape.
     if (event.key !== 'Escape' || question !== null || secret !== null) return
@@ -455,7 +501,7 @@ export function LoopBox({
         fills && open ? 'min-h-0 flex-1' : splitHeight !== undefined ? 'min-h-0 shrink-0' : 'max-h-1/2 shrink-0'
       } ${drop.dropping ? 'outline-2 -outline-offset-2 outline-foreground outline-dashed' : ''}`}
     >
-      <div ref={bar} className="shrink-0">
+      <div ref={bar} className="relative z-30 shrink-0">
         {secret !== null ? (
           <div className="border border-border">
             <SecretField key={`${secret.plugin}/${secret.key}`} request={secret} active={active} />
@@ -497,7 +543,7 @@ export function LoopBox({
                 </span>
               ))}
               <input
-                ref={roomInputRef}
+                ref={inputRef}
                 id={active ? `loop-input-${elementId}` : undefined}
                 name="loop-prompt"
                 aria-label={`Message ${label}`}
@@ -510,26 +556,13 @@ export function LoopBox({
                       ? `Ask ${called} more…`
                       : `Tell ${called} what to do…`
                 }
-                onKeyDown={(event) => {
-                  if (roomMentionOptions.length === 0) return
-                  if (event.key === 'ArrowDown') {
-                    event.preventDefault()
-                    setMentionIndex((i) => (i + 1) % roomMentionOptions.length)
-                  } else if (event.key === 'ArrowUp') {
-                    event.preventDefault()
-                    setMentionIndex((i) => (i - 1 + roomMentionOptions.length) % roomMentionOptions.length)
-                  } else if (event.key === 'Tab' && activeRoomMention) {
-                    event.preventDefault()
-                    const nextDraft = applyTeammateMention(draft, activeRoomMention)
-                    updateTileBox(place, (b) => (b.draft === nextDraft ? b : { ...b, draft: nextDraft }))
-                    setMentionIndex(0)
-                  }
+                onKeyDown={inputKeyDown}
+                onChange={(event) => {
+                  const nextVal = event.target.value
+                  setMentionIndex(0)
+                  if (mentionClosedOn !== null && mentionClosedOn !== nextVal) setMentionClosedOn(null)
+                  updateTileBox(place, (b) => (b.draft === nextVal ? b : { ...b, draft: nextVal }))
                 }}
-                onChange={(event) =>
-                  updateTileBox(place, (b) =>
-                    b.draft === event.target.value ? b : { ...b, draft: event.target.value },
-                  )
-                }
                 onPaste={(event) => pasteLinks(event, attachments.attach)}
                 className="h-full min-w-0 flex-1 bg-transparent px-1 text-xs leading-none outline-none"
               />
@@ -566,29 +599,27 @@ export function LoopBox({
                 {drawerOpen ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
               </svg>
             </button>
-            {roomMentionOptions.length > 0 && (
+            {mentionOptions.length > 0 && (
               <div
                 data-room-mention-menu
                 role="listbox"
                 aria-label="People in this room"
-                className="absolute top-full left-0 z-50 mt-0.5 max-h-40 w-64 overflow-y-auto border border-border bg-background py-1 text-xs shadow-lg"
+                className="absolute top-full left-0 z-40 mt-0.5 max-h-40 w-72 max-w-full overflow-y-auto border border-border bg-background py-1 text-xs shadow-lg"
               >
-                {roomMentionOptions.map((person, idx) => {
-                  const selected = idx === Math.min(mentionIndex, roomMentionOptions.length - 1)
+                {mentionOptions.map((person, idx) => {
+                  const selected = idx === activeMentionIndex
                   const named = fullName(person)
                   return (
                     <button
-                      key={person.accountId}
+                      key={person.id}
                       type="button"
                       role="option"
                       aria-selected={selected}
                       data-room-mention-option={person.email}
                       onMouseDown={(event) => {
+                        if (event.button !== 0) return
                         event.preventDefault()
-                        const nextDraft = applyTeammateMention(draft, person)
-                        updateTileBox(place, (b) => (b.draft === nextDraft ? b : { ...b, draft: nextDraft }))
-                        setMentionIndex(0)
-                        roomInputRef.current?.focus()
+                        pickMention(person)
                       }}
                       className={`flex w-full items-center gap-2 px-2.5 py-1 text-left ${
                         selected ? 'bg-muted font-medium' : 'hover:bg-muted'
@@ -598,8 +629,8 @@ export function LoopBox({
                         email={person.email}
                         firstName={person.firstName}
                         lastName={person.lastName}
-                        index={idx}
-                        lit={true}
+                        index={teammateColorIndex(person.email, roomPeople)}
+                        lit={person.online}
                         size={16}
                       />
                       <span className="truncate">@{personName(person)}</span>
@@ -714,6 +745,7 @@ export function LoopBox({
           {live.length > 0 || earlier.length > 0 ? (
             <Transcript
               named={false}
+              sharedRoom={roomPeople}
               earlier={earlier}
               onEarlier={older}
               live={live}

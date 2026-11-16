@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { membersWithoutPerson, roomSharing, type DraggedPerson } from '../../../shared/collab/collab'
 import { chatElement, EMPTY_GRID } from '../../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
 import {
@@ -10,6 +11,7 @@ import {
 } from '../../../shared/tabs/tabs'
 import { errorMessage } from '../../lib/errors'
 import { currentWorkspace, dispatch, useAppState, windowWorkspaces } from '../../lib/state'
+import { clearTeammateDrag, useTeammateDrag, WorkspaceTeammates } from '../collab/RoomPeople'
 import { Composer } from '../composer/Composer'
 import { dockChat, useDockedChat } from '../composer/dock'
 import { FloatingOrb } from '../composer/Orb'
@@ -55,9 +57,26 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
   }, [current.id, mountedIds.length])
   const docked = useDockedChat(current.id, MAIN_WINDOW)
   const orbOpen = useOrbOpen()
+  const dragged = useTeammateDrag()
   const totalRooms =
     Object.values(app.loops).reduce((n, list) => n + list.length, 0) +
     Object.values(app.closedLoops).reduce((n, list) => n + list.length, 0)
+
+  function removeDraggedFromRoom(person: DraggedPerson): void {
+    const origin = person.from
+    if (!origin) return
+    const targetLoop = app.loops[origin.workspaceId]?.find((one) => one.id === origin.room)
+    const targetWorkspace = app.workspaces.find((one) => one.id === origin.workspaceId)
+    const sharing = targetLoop ? roomSharing(app.collab, targetWorkspace, targetLoop) : null
+    const nextMembers = membersWithoutPerson(sharing?.share, person)
+    if (nextMembers === null) return
+    dispatch({
+      type: 'room.share',
+      workspaceId: origin.workspaceId,
+      room: origin.room,
+      members: nextMembers,
+    }).catch((err: unknown) => console.error('[collab]', errorMessage(err)))
+  }
 
   function toggleDock(): void {
     const grid = app.grids[current.id]?.[MAIN_WINDOW] ?? EMPTY_GRID
@@ -72,10 +91,32 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
   }
 
   return (
-    <main id="workspace" className="flex h-screen flex-col">
+    <main
+      id="workspace"
+      onDragOver={
+        dragged?.from
+          ? (event) => {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'move'
+            }
+          : undefined
+      }
+      onDrop={
+        dragged?.from
+          ? (event) => {
+              event.preventDefault()
+              const currentDrag = dragged
+              clearTeammateDrag()
+              removeDraggedFromRoom(currentDrag)
+            }
+          : undefined
+      }
+      className="flex h-screen flex-col"
+    >
       <header className="flex min-h-8 shrink-0 items-start gap-2 border-b border-border bg-background px-4 py-1">
         <Composer />
         <div className="flex h-6 shrink-0 items-center gap-1.5 self-start">
+          <WorkspaceTeammates />
           <button
             type="button"
             id="central-dock-toggle"

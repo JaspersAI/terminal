@@ -8,7 +8,7 @@ import {
   type ReactElement,
 } from 'react'
 import { WORKSPACE_NAME_MAX, type Workspace } from '../../../shared/state'
-import { personName, tabSharing } from '../../../shared/collab/collab'
+import { personName, tabSharing, teammateColorIndex } from '../../../shared/collab/collab'
 import {
   formatTabLabel,
   newTabButtonStyle,
@@ -299,7 +299,7 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
                       email={ownerShare?.ownerEmail ?? owner}
                       firstName={ownerShare?.ownerFirstName}
                       lastName={ownerShare?.ownerLastName}
-                      index={0}
+                      index={teammateColorIndex(ownerShare?.ownerEmail ?? owner, collab.teammates)}
                       lit={active}
                       size={12}
                     />

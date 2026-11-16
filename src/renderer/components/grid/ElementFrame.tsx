@@ -26,10 +26,16 @@ import {
   type Rect,
 } from '../../../shared/grid/grid'
 import { waitingViews } from '../../../shared/plugins/needs'
-import { roomSharing } from '../../../shared/collab/collab'
+import { canDropPersonOnRoom, membersWithPerson, roomSharing } from '../../../shared/collab/collab'
 import { noteZoom } from '../../lib/eye'
 import { useAppState } from '../../lib/state'
-import { RoomPeople, TeammateDrop, useTeammateDrag } from '../collab/RoomPeople'
+import {
+  RoomPeople,
+  TeammateDrop,
+  TeammateOriginShield,
+  TeammatePassThrough,
+  useTeammateDrag,
+} from '../collab/RoomPeople'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
 import { loopHeaderTitle, loopTitle, ROOM_TITLE_MAX, showsChat } from '../../../shared/loops/loops'
@@ -236,8 +242,12 @@ export function ElementFrame({
   /** A teammate's room: its views are answered by its owner's terminal, so nothing is asked for here. */
   const replica = sharing?.role === 'member'
   const dragged = useTeammateDrag()
-  /** A teammate dragged from another room may be dropped on a room of this terminal's own. */
-  const takesDrop = dragged !== null && frame && loop !== undefined && !replica && dragged.from !== loop.id
+  /** A person dragged from the workspace bar or another room may be dropped on an owned room that lacks them. */
+  const minimized = element.mode === 'minimized'
+  const takesDrop = !minimized && dragged !== null && frame && canDropPersonOnRoom(dragged, workspace, loop, sharing)
+  const dragOrigin =
+    !minimized && dragged !== null && dragged.from?.workspaceId === workspaceId && dragged.from.room === loop?.id
+  const passThroughDrop = !minimized && dragged !== null && dragged.from !== null && !takesDrop && !dragOrigin
   // The asks the user set aside in this tile, by name: their views are drawn as they are.
   const [setAside, setSetAside] = useState<ReadonlySet<string>>(() => new Set())
   // The views inside that have nothing to show until their plugin is given what it needs.
@@ -266,7 +276,6 @@ export function ElementFrame({
   const roomAsOf = useMemo(() => (roomStamp ? formatAsOf(roomStamp) : ''), [roomStamp])
   const empty = frame && !grid.elements.some((e) => e.parent === element.id && !undrawn.has(e.id))
   const label = frame ? headerTitle : title
-  const minimized = element.mode === 'minimized'
   const zoom = elementZoom(element)
   const prevZoom = useRef(zoom)
   useEffect(() => {
@@ -762,17 +771,21 @@ export function ElementFrame({
         {frame && loop && sharing && (
           <RoomPeople workspaceId={workspaceId} loop={loop} sharing={sharing} lit={Boolean(focused && active)} />
         )}
-        {takesDrop && loop && (
+        {takesDrop && loop && dragged && (
           <TeammateDrop
-            email={dragged.email}
             name={dragged.name}
             onDrop={() => {
-              const share = sharing?.share
-              const already = share ? [...share.members.map((one) => one.accountId), ...share.pendingEmails] : []
-              send({ type: 'room.share', workspaceId, room: loop.id, members: [...new Set([...already, dragged.id])] })
+              send({
+                type: 'room.share',
+                workspaceId,
+                room: loop.id,
+                members: membersWithPerson(sharing?.share, collab.teammates, dragged),
+              })
             }}
           />
         )}
+        {dragOrigin && <TeammateOriginShield />}
+        {passThroughDrop && <TeammatePassThrough />}
       </div>
       {frameEdges(element.mode).map((handle) => (
         <div

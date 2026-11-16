@@ -4,16 +4,21 @@ import {
   accountLabel,
   applyTeammateMention,
   asksToInviteEmail,
+  canDropPersonOnRoom,
   cleanPersonName,
   describeCollabState,
   EMPTY_COLLAB,
   HUMAN_ROOM_ANSWER,
   isForPeople,
+  isPersonInShare,
   matchTeammateMentions,
+  membersWithoutPerson,
+  membersWithPerson,
   NAME_MAX,
   notConfirmed,
   ownName,
   parseRoomInput,
+  parseRoomQuestion,
   peopleIn,
   replicaPromptInput,
   resolveInvite,
@@ -21,6 +26,7 @@ import {
   roomSharing,
   shareQuestion,
   shareTargets,
+  teammateColorIndex,
   teammateInitials,
   type CollabShare,
   type CollabState,
@@ -118,8 +124,10 @@ test('the people of a share are its owner, its members, and those invited, with 
   )
 })
 
-test('the mention list is offered from the start of an address or initials, and fills the address in', () => {
+test('the mention list is offered from the start of an address, handle segment, or initials, and fills the address in', () => {
   assert.deepEqual(matchTeammateMentions('share room 1 with @ca', [bob, carol])?.matches, [carol])
+  assert.deepEqual(matchTeammateMentions('ask @diaz', [bob, carol])?.matches, [carol])
+  assert.deepEqual(matchTeammateMentions('@cd', [bob, carol])?.matches, [carol])
   assert.deepEqual(matchTeammateMentions('share with @', [bob, carol])?.matches, [bob, carol])
   assert.equal(matchTeammateMentions('no mention here', [bob, carol]), null)
   assert.equal(matchTeammateMentions('@zz', [bob, carol]), null)
@@ -376,4 +384,83 @@ test('describeCollabState reports teammates and pending incoming and outgoing te
     }),
     ['Teammates: Bob Smith (bob@fund.com).'],
   )
+})
+
+test('a badge has a stable color slot across the room', () => {
+  const people = peopleIn(share, collab)
+  assert.equal(teammateColorIndex('alice@fund.com', people), 0)
+  assert.equal(teammateColorIndex('BOB@fund.com', people), 1)
+  assert.equal(teammateColorIndex('dave@other.com', people), 2)
+  assert.equal(teammateColorIndex('former@fund.com', people), teammateColorIndex('FORMER@fund.com'))
+})
+
+test("a room question is its asker's when it is marked with a name of someone in the room, and its owner's when it is bare", () => {
+  const people = peopleIn(
+    {
+      ...share,
+      ownerFirstName: 'Alice',
+      ownerLastName: 'Ng',
+      members: [{ ...share.members[0]!, firstName: 'Bob', lastName: 'Ray' }],
+    },
+    collab,
+  )
+  const [alice, bobInRoom] = people
+  assert.deepEqual(parseRoomQuestion('[Bob Ray] check the Q3 margin', people, alice!), {
+    sender: bobInRoom,
+    text: 'check the Q3 margin',
+  })
+  // By address too: a room's older questions, and a sender with no name, are marked with one.
+  assert.deepEqual(parseRoomQuestion('[bob@fund.com] check the Q3 margin', people, alice!), {
+    sender: bobInRoom,
+    text: 'check the Q3 margin',
+  })
+  assert.deepEqual(parseRoomQuestion('pull the 10-K', people, alice!), { sender: alice, text: 'pull the 10-K' })
+  assert.deepEqual(parseRoomQuestion('[Attached: report@2026.pdf]', people, alice!), {
+    sender: alice,
+    text: '[Attached: report@2026.pdf]',
+  })
+  // Brackets that name nobody here are left as written, and nobody is said to have asked.
+  for (const question of ['[Erin Oduya] is this still live?', '[NVDA] what moved the margin?']) {
+    assert.deepEqual(parseRoomQuestion(question, people, alice!), { sender: null, text: question })
+  }
+})
+
+test('dragging a person includes them in an owned room lacking them and removes them when dragged out', () => {
+  const sharing = roomSharing(collab, { shareId: undefined }, { shareId: 'share-1' })
+  assert.equal(isPersonInShare(share, { id: 'acct-bob', email: 'bob@fund.com' }), true)
+  assert.equal(isPersonInShare(share, { id: 'dave@other.com', email: 'dave@other.com' }), true)
+  assert.equal(isPersonInShare(share, { id: 'acct-carol', email: 'carol.diaz@fund.com' }), false)
+
+  const draggedCarol = { id: 'acct-carol', email: 'carol.diaz@fund.com', name: 'carol.diaz@fund.com', from: null }
+  const draggedBob = {
+    id: 'acct-bob',
+    email: 'bob@fund.com',
+    name: 'bob@fund.com',
+    from: { workspaceId: 'ws', room: 'f1' },
+  }
+
+  // Carol can be dropped onto owned f1; Bob is already in f1 and cannot be dropped onto f1 or a replica.
+  assert.equal(canDropPersonOnRoom(draggedCarol, { id: 'ws' }, { id: 'f1', shareId: 'share-1' }, sharing), true)
+  assert.equal(canDropPersonOnRoom(draggedBob, { id: 'ws' }, { id: 'f1', shareId: 'share-1' }, sharing), false)
+  assert.equal(
+    canDropPersonOnRoom(
+      draggedCarol,
+      { id: 'ws' },
+      { id: 'f2', shareId: 'share-9', replica: { room: 'f1', tiles: {} } },
+      null,
+    ),
+    false,
+  )
+  // Bob dragged from f1 can be dropped onto another owned unshared room f2.
+  assert.equal(canDropPersonOnRoom(draggedBob, { id: 'ws' }, { id: 'f2' }, null), true)
+
+  // Adding a teammate uses their accountId; adding a stranger from a teammate's room invites by email.
+  assert.deepEqual(membersWithPerson(share, [bob, carol], draggedCarol), ['acct-bob', 'dave@other.com', 'acct-carol'])
+  assert.deepEqual(membersWithPerson(null, [bob, carol], { id: 'acct-ext', email: 'ext@other.com' }), ['ext@other.com'])
+
+  // Dragging out removes the member (or invited address), and removing the last one yields [] to stop sharing.
+  assert.deepEqual(membersWithoutPerson(share, { id: 'acct-bob', email: 'bob@fund.com' }), ['dave@other.com'])
+  assert.deepEqual(membersWithoutPerson({ ...share, pendingEmails: [] }, { id: 'acct-bob', email: 'bob@fund.com' }), [])
+  assert.equal(membersWithoutPerson({ ...share, role: 'member' }, { id: 'acct-bob', email: 'bob@fund.com' }), null)
+  assert.equal(membersWithoutPerson(share, { id: 'acct-carol', email: 'carol.diaz@fund.com' }), null)
 })

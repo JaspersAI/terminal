@@ -1,30 +1,55 @@
 import type { ReactElement } from 'react'
-import { personDetail, teammateBadgeStyle, teammateInitials } from '../../../shared/collab/collab'
+import { personDetail, teammateBadgeStyle, teammateColorIndex, teammateInitials } from '../../../shared/collab/collab'
 import { useColorScheme } from '../../lib/color-scheme'
+import { openSettings } from '../../lib/settings-nav'
 
 interface Props {
   email: string
   firstName?: string | null
   lastName?: string | null
   /** Where they stand among the people shown beside them: it picks the color. */
-  index: number
-  /** In color when their room is in use and they are connected; grey otherwise. */
+  index?: number
+  /** In color when their room is in use, they are connected, or their message is shown; grey otherwise. */
   lit: boolean
-  /** The side of the square, in pixels. */
+  /** Diameter of the circle, in pixels. */
   size?: number
   title?: string
+  className?: string
 }
 
-/** A teammate, as two letters in a square of their own color. Square, as everything here is. */
-export function TeammateBadge({ email, firstName, lastName, index, lit, size = 20, title }: Props): ReactElement {
+/**
+ * A person, as two letters in a circle of their own color: round, like the orb, so a person never
+ * reads as a control. Double-clicking or right-clicking any user circle opens Settings > Team.
+ */
+export function TeammateBadge({
+  email,
+  firstName,
+  lastName,
+  index,
+  lit,
+  size = 20,
+  title,
+  className = '',
+}: Props): ReactElement {
   const dark = useColorScheme() === 'dark'
-  const colors = teammateBadgeStyle(index, lit, dark)
+  const slot = index ?? teammateColorIndex(email)
+  const colors = teammateBadgeStyle(slot, lit, dark)
   const label = personDetail({ email, firstName, lastName })
   return (
     <span
       data-teammate-badge={email}
       data-lit={lit}
       title={title ?? label}
+      onDoubleClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        openSettings('team')
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        openSettings('team')
+      }}
       style={{
         width: size,
         height: size,
@@ -33,7 +58,7 @@ export function TeammateBadge({ email, firstName, lastName, index, lit, size = 2
         color: colors.color,
         borderColor: colors.borderColor,
       }}
-      className="flex shrink-0 items-center justify-center border leading-none font-semibold tracking-tight select-none"
+      className={`flex shrink-0 cursor-pointer items-center justify-center rounded-full border leading-none font-semibold tracking-tight select-none ${className}`}
     >
       {teammateInitials({ email, firstName, lastName })}
     </span>

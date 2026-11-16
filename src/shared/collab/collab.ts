@@ -393,6 +393,24 @@ export function replicaPromptInput(input: string, written?: string): string {
   return [refined, ...attachments].join('\n\n')
 }
 
+/**
+ * Who asked a room's question, and the words themselves, so a shared room's conversation shows the
+ * asker's circle in place of raw brackets. A question someone else may have asked is kept as
+ * `[name] words` (`attributed`): when that name is one person among `people`, they asked it and the
+ * brackets go. A question kept bare is `unmarked`'s. One whose brackets name nobody here (someone
+ * since removed, or brackets its asker typed) is left as written, and nobody is said to have asked it.
+ */
+export function parseRoomQuestion<T extends { email: string; firstName?: string | null; lastName?: string | null }>(
+  question: string,
+  people: readonly T[],
+  unmarked: T | null,
+): { sender: T | null; text: string } {
+  const marked = /^\[([^[\]\n]+)\]\s+([\s\S]*)$/.exec(question)
+  if (!marked) return { sender: unmarked, text: question }
+  const sender = resolveTeammate(marked[1]!, people)
+  return sender ? { sender, text: marked[2]! } : { sender: null, text: question }
+}
+
 /** Whether an exchange in a room's conversation was between people, the agent left out. */
 export function isHumanExchange(answer: string): boolean {
   return answer === HUMAN_ROOM_ANSWER
@@ -444,6 +462,21 @@ export function teammateInitials(
 }
 
 /**
+ * Consistent palette slot for a person: their position among `people` when they are in that list,
+ * and a stable hash of their address otherwise.
+ */
+export function teammateColorIndex(email: string, people?: readonly { email: string }[]): number {
+  const lower = email.trim().toLowerCase()
+  if (people && people.length > 0) {
+    const found = people.findIndex((one) => one.email.trim().toLowerCase() === lower)
+    if (found >= 0) return found
+  }
+  let hash = 0
+  for (let i = 0; i < lower.length; i++) hash = (hash * 31 + lower.charCodeAt(i)) | 0
+  return Math.abs(hash) % TEAMMATE_PALETTE.length
+}
+
+/**
  * A teammate badge's colors: its own from the palette while it is lit (its room in use, the
  * teammate connected), and the grey an unselected tab has otherwise.
  */
@@ -458,9 +491,10 @@ export function teammateBadgeStyle(
 
 /**
  * The teammates a draft's last `@…` may be naming, for the list offered under it: matched from the
- * start of their full name, first name, last name, email address, handle, or initials. Also keeps
- * matching across a space (`@Seth J`) while the query prefixes a teammate's full name, and closes as
- * soon as `@Seth Johnson ` is completed.
+ * start of their full name, first name, last name, email address, handle, a part of the handle
+ * (`diaz` in `carol.diaz@`), or initials. Also keeps matching across a space (`@Seth J`) while the
+ * query prefixes a teammate's full name, and closes as soon as `@Seth Johnson ` is completed. The
+ * user picks from the list, so this may be generous where `resolveTeammate` may not.
  */
 export function matchTeammateMentions<T extends { email: string; firstName?: string | null; lastName?: string | null }>(
   draft: string,
@@ -484,12 +518,14 @@ export function matchTeammateMentions<T extends { email: string; firstName?: str
     const first = cleanPersonName(one.firstName).toLowerCase()
     const last = cleanPersonName(one.lastName).toLowerCase()
     const full = fullName(one).toLowerCase()
+    const handle = handleOf(one.email)
     return (
       full.startsWith(query) ||
       first.startsWith(query) ||
       last.startsWith(query) ||
       one.email.toLowerCase().startsWith(query) ||
-      handleOf(one.email).startsWith(query) ||
+      handle.startsWith(query) ||
+      handle.split(/[._+-]+/).some((part) => part.startsWith(query)) ||
       teammateInitials(one).toLowerCase().startsWith(query)
     )
   })
@@ -698,4 +734,68 @@ export function describeCollabState(collab: CollabState): string[] {
     )
   }
   return lines
+}
+
+/** Someone being dragged across the workspace: who they are, what they are called, and the owned room they left when removable. */
+export interface DraggedPerson {
+  id: string
+  email: string
+  name: string
+  from: { workspaceId: string; room: string } | null
+}
+
+/** Whether `person` is already part of `share` (as owner, joined member, or invited address). */
+export function isPersonInShare(share: CollabShare | null | undefined, person: { id: string; email: string }): boolean {
+  if (!share) return false
+  const lower = person.email.trim().toLowerCase()
+  return (
+    share.ownerAccountId === person.id ||
+    share.ownerEmail.trim().toLowerCase() === lower ||
+    share.members.some((one) => one.accountId === person.id || one.email.trim().toLowerCase() === lower) ||
+    share.pendingEmails.some((one) => one.trim().toLowerCase() === lower)
+  )
+}
+
+/** Whether `dragged` can be dropped onto `loop` to add them to that room. */
+export function canDropPersonOnRoom(
+  dragged: DraggedPerson,
+  workspace: Pick<Workspace, 'id' | 'shareId' | 'replica'> | undefined,
+  loop: Pick<Loop, 'id' | 'shareId' | 'replica'> | undefined,
+  sharing: RoomSharing | null,
+): boolean {
+  if (!workspace || !loop || workspace.replica || loop.replica) return false
+  if (dragged.from?.workspaceId === workspace.id && dragged.from.room === loop.id) return false
+  if (isPersonInShare(sharing?.share, dragged)) return false
+  return true
+}
+
+/** The `members` list to send to `room.share` to include `person` alongside whoever is already in `share`. */
+export function membersWithPerson(
+  share: CollabShare | null | undefined,
+  teammates: readonly Teammate[],
+  person: { id: string; email: string },
+): string[] {
+  const existing = share ? [...share.members.map((one) => one.accountId), ...share.pendingEmails] : []
+  const byId = teammates.find((one) => one.accountId === person.id)
+  const byEmail = resolveTeammate(person.email, teammates)
+  const token = byId?.accountId ?? byEmail?.accountId ?? asEmail(person.email) ?? person.id
+  return [...new Set([...existing, token])]
+}
+
+/**
+ * The `members` list to send to `room.share` to remove `person` from an owned room's share, or
+ * `null` when `share` is not owned or `person` is not removable from it.
+ */
+export function membersWithoutPerson(
+  share: CollabShare | null | undefined,
+  person: { id: string; email: string },
+): string[] | null {
+  if (!share || share.role !== 'owner') return null
+  const lower = person.email.trim().toLowerCase()
+  const keptMembers = share.members
+    .filter((one) => one.accountId !== person.id && one.email.trim().toLowerCase() !== lower)
+    .map((one) => one.accountId)
+  const keptPending = share.pendingEmails.filter((one) => one.trim().toLowerCase() !== lower)
+  if (keptMembers.length === share.members.length && keptPending.length === share.pendingEmails.length) return null
+  return [...keptMembers, ...keptPending]
 }
