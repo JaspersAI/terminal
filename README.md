@@ -27,11 +27,12 @@ To enable local, open-weight, and cloud models to run multi-step financial workf
 - **Local-model loop recovery:** Automatic context-window mending (`mend` / `shorten`), mid-call output-limit and turn-timeout restatement into smaller steps at low effort (`cutShort` / `resolveRoundFailure`), duplicate and runaway `place_view` tool-call trimming (`trimToolCalls`), and shortened-argument restoration (`restoreInput`) keep smaller or quantized models from failing on multi-round tool loops.
 - **Built-in coding agent (`build_plugin`):** When no installed plugin provides a requested data source or view, a builder loop writes a TypeScript plugin from starter templates, checks its types and esbuild bundles, and runs source calls before placing the view on the grid.
 
-<!-- Screenshot: replace with a capture of a workspace once one is ready.
 <p align="center">
-  <img src="docs/assets/screenshot.png" alt="A Jaspers Terminal workspace" width="800">
+  <picture>
+    <source type="image/webp" srcset="docs/assets/jaspers-terminal-public-markets-workspace.webp">
+    <img src="docs/assets/jaspers-terminal-public-markets-workspace.png" alt="Jaspers Terminal desktop application showing a public-market research workspace on a spreadsheet grid with an equity candlestick chart, SEC 10-K and 10-Q cited filing analysis, a semiconductor fundamentals table, a 10-year Treasury chart, live DCF formulas, and the command bar" width="100%">
+  </picture>
 </p>
--->
 
 ## Core Features
 
