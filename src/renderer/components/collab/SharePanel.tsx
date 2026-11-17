@@ -6,6 +6,7 @@ import {
   matchTeammateMentions,
   parseInviteContact,
   peopleIn,
+  personDetail,
   personName,
   resolveTeammate,
   type RoomSharing,
@@ -190,7 +191,7 @@ export function SharePanel({ what, sharing, share, stop }: SharePanelProps): Rea
           {inIt.map((person, index) => {
             const named = fullName(person)
             return (
-              <li key={person.id} className="flex items-center justify-between gap-2">
+              <li key={person.id} title={personDetail(person)} className="flex items-center justify-between gap-2">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <TeammateBadge
                     email={person.email}
@@ -201,7 +202,6 @@ export function SharePanel({ what, sharing, share, stop }: SharePanelProps): Rea
                     size={16}
                   />
                   <span className="truncate">{named || person.email}</span>
-                  {named && <span className="truncate text-muted-foreground">{person.email}</span>}
                   {person.role === 'invited' && <span className="shrink-0 text-muted-foreground">invited</span>}
                 </span>
                 <button
@@ -223,7 +223,11 @@ export function SharePanel({ what, sharing, share, stop }: SharePanelProps): Rea
           {addable.map((teammate, index) => {
             const named = fullName(teammate)
             return (
-              <li key={teammate.accountId} className="flex items-center justify-between gap-2">
+              <li
+                key={teammate.accountId}
+                title={personDetail(teammate)}
+                className="flex items-center justify-between gap-2"
+              >
                 <span className="flex min-w-0 items-center gap-1.5">
                   <TeammateBadge
                     email={teammate.email}
@@ -234,7 +238,6 @@ export function SharePanel({ what, sharing, share, stop }: SharePanelProps): Rea
                     size={16}
                   />
                   <span className="truncate">{named || teammate.email}</span>
-                  {named && <span className="truncate text-muted-foreground">{teammate.email}</span>}
                 </span>
                 <button
                   type="button"
@@ -345,7 +348,7 @@ function People({ people }: { people: ReturnType<typeof peopleIn> }): ReactEleme
       {people.map((person, index) => {
         const named = fullName(person)
         return (
-          <li key={person.id} className="flex items-center gap-1.5">
+          <li key={person.id} title={personDetail(person)} className="flex items-center gap-1.5">
             <TeammateBadge
               email={person.email}
               firstName={person.firstName}
@@ -355,7 +358,6 @@ function People({ people }: { people: ReturnType<typeof peopleIn> }): ReactEleme
               size={16}
             />
             <span className="truncate">{named || person.email}</span>
-            {named && <span className="truncate text-muted-foreground">{person.email}</span>}
             <span className="shrink-0 text-muted-foreground">
               {person.me ? 'you' : person.role === 'owner' ? 'owner' : person.role === 'invited' ? 'invited' : ''}
             </span>
