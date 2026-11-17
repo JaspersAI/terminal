@@ -6,6 +6,7 @@
 import { findProvider, PROVIDERS, signsIn, takesModel } from '../llm/providers.ts'
 import type { Action, ProviderKind, ProviderSetting } from '../state'
 import { THEMES } from '../app/theme.ts'
+import { cleanPersonName } from '../collab/collab.ts'
 
 export const SETTINGS_TOOL = 'change_setting'
 export const APPLY = 'Apply'
@@ -20,6 +21,7 @@ export const SETTINGS = [
   'remove_plugin',
   'reconnect',
   'provider',
+  'profile',
 ] as const
 export type Setting = (typeof SETTINGS)[number]
 
@@ -99,6 +101,12 @@ export function settingChange(input: Record<string, unknown>, now: SettingsNow):
     }
     case 'provider':
       return providerChange(input, now)
+    case 'profile': {
+      const firstName = cleanPersonName(input.first_name)
+      const lastName = cleanPersonName(input.last_name)
+      if (!firstName || !lastName) throw new Error('first_name and last_name are both required.')
+      return at({ type: 'collab.setProfile', firstName, lastName }, `Your name is now ${firstName} ${lastName}.`)
+    }
   }
 }
 

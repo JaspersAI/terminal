@@ -765,6 +765,7 @@ export function ElementFrame({
         {takesDrop && loop && (
           <TeammateDrop
             email={dragged.email}
+            name={dragged.name}
             onDrop={() => {
               const share = sharing?.share
               const already = share ? [...share.members.map((one) => one.accountId), ...share.pendingEmails] : []

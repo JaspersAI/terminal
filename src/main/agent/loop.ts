@@ -2,7 +2,7 @@ import type { Place } from '../../shared/agent/asking'
 import { shownQuestion } from '../../shared/agent/attachments'
 import type { Handed } from '../../shared/agent/typed'
 import { closedLoop } from '../../shared/loops/closed'
-import { othersIn, parseRoomInput, roomSharing } from '../../shared/collab/collab'
+import { fullName, othersIn, parseRoomInput, roomSharing } from '../../shared/collab/collab'
 import { loopChat, frameOf, gone, LOOP_ID, shut } from '../../shared/loops/loops'
 import type { Exchange } from '../../shared/agent/transcript'
 import { findRoomTab, loopsOf, touchLoop } from '../loops/loops'
@@ -126,7 +126,12 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
     // In a shared room a message that opens with `@` and someone in it is for the people: it is
     // filed in the room's conversation under the sender's name, and the room's agent is not run.
     const people = sharing.share ? othersIn(sharing.share, state.collab.accountId) : []
-    const parsed = task === undefined && !written ? parseRoomInput(input, state.jaspers.email, people) : null
+    const sender =
+      fullName({
+        firstName: state.collab.firstName || state.jaspers.firstName,
+        lastName: state.collab.lastName || state.jaspers.lastName,
+      }) || state.jaspers.email
+    const parsed = task === undefined && !written ? parseRoomInput(input, sender, people) : null
     if (parsed?.kind === 'human') {
       if (sharing.role === 'member') return collab.message(sharing.shareId, record!.replica!.room, input.trim())
       touchLoop(workspaceId, loop)

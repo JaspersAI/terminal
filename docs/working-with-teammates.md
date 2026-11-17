@@ -8,16 +8,16 @@ Sharing needs a Jaspers sign-in on both sides.
 
 A teammate is someone who accepted your invitation, or whose invitation you accepted. Nobody becomes your teammate, or sees anything of yours, without that.
 
-1. Open **Settings, Team** and invite them by email. They get an email, and the invitation shows in their own Settings, Team.
+1. Open **Settings, Team**, set your first and last name, and invite teammates by email (with optional first and last name). They get an email, and the invitation shows in their own Settings, Team.
 2. They accept or decline there. Until they accept, nothing is shared with them.
 
 Removing a teammate also takes each of you out of the other's shared rooms and tabs.
 
 ## Sharing a room or a tab
 
-- **A room:** open the room's menu and use **Share**. Add a teammate, or type an email address.
+- **A room:** open the room's menu and use **Share**. Add a teammate by name or `@name`, or type an email address to invite someone new.
 - **A tab:** right-click the tab and use **Share**. Every room on the tab is shared, laid out for your teammates as it is for you, and rooms you add later join it.
-- **By asking:** tell Central who to share a room with, by email address. It asks you to confirm before anything is shared.
+- **By asking:** tell Central who to share an existing or new room with, by name, `@name`, or email address. It asks you to confirm before anything is shared.
 
 If the address is not a teammate yet, they are invited, and they join the room the moment they accept. Until then they are listed as invited.
 
@@ -28,7 +28,7 @@ To stop, use **Stop sharing** in the same place. Your room is untouched; it goes
 A room shared with you appears on your grid (a shared tab appears as a tab of its own), marked with its owner. In it you can:
 
 - **Ask its agent.** Your question runs on the owner's terminal, under your name, and the answer lands in the room's conversation for everyone.
-- **Message the people in it.** Start a message with `@` and someone's name or address (`@sam`, `@sam@fund.com`, or `@all`). It is filed in the room's conversation and the agent is not asked. Any other message goes to the agent.
+- **Message the people in it.** Start a message with `@` and someone's name or address (`@Sam Carter`, `@sam`, `@sam@fund.com`, or `@all`). It is filed in the room's conversation and the agent is not asked. Any other message goes to the agent.
 - **Use its views.** What you change in a tile (a filter, a note's text) is applied on the owner's terminal and shows for everyone. Data and refreshes come from the owner's terminal.
 - **Place its frame** where you like on your own grid, and minimize it.
 

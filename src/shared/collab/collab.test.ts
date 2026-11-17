@@ -118,4 +118,54 @@ test('a badge is two letters of the address', () => {
   assert.equal(teammateInitials('gleb.biserov@jsprai.com'), 'GB')
   assert.equal(teammateInitials('seth@jsprai.com'), 'SE')
   assert.equal(teammateInitials('a@fund.com'), 'AF')
+  assert.equal(teammateInitials({ email: 'sj+testuser@jsprai.com', firstName: 'Seth', lastName: 'Johnson' }), 'SJ')
+})
+
+test('named teammates are taggable and resolvable by first name, last name, full name, @First Last, and invited with names', () => {
+  const seth: Teammate = {
+    accountId: 'acct-seth',
+    email: 'sj+testuser@jsprai.com',
+    firstName: 'Seth',
+    lastName: 'Johnson',
+    since: 1,
+    online: true,
+  }
+  const seth2: Teammate = {
+    accountId: 'acct-seth2',
+    email: 'sm@fund.com',
+    firstName: 'Seth',
+    lastName: 'Meyers',
+    since: 2,
+    online: false,
+  }
+  // Unique first, last, and full names resolve; shared first name requires full name, last name, or email.
+  assert.equal(resolveTeammate('@Seth', [seth, carol]), seth)
+  assert.equal(resolveTeammate('@Johnson', [seth, seth2]), seth)
+  assert.equal(resolveTeammate('@Seth', [seth, seth2]), null)
+  assert.equal(resolveTeammate('@Seth Johnson', [seth, seth2]), seth)
+  assert.equal(resolveTeammate('seth.johnson', [seth, seth2]), seth)
+
+  // Multi-word @First Last in a shared room routes to people, not the agent.
+  assert.deepEqual(parseRoomInput('@Seth Johnson check the margin', 'Gleb Biserov', [seth, seth2]), {
+    kind: 'human',
+    target: 'Seth Johnson',
+    question: '[Gleb Biserov] @Seth Johnson check the margin',
+    answer: HUMAN_ROOM_ANSWER,
+  })
+  assert.equal(parseRoomInput('@Seth check the margin', 'Gleb Biserov', [seth]).kind, 'human')
+  assert.equal(parseRoomInput('@Seth check the margin', 'Gleb Biserov', [seth, seth2]).kind, 'agent')
+
+  // Autocomplete matches across space while typing @Seth J, completes @Seth Johnson , and closes after.
+  assert.deepEqual(matchTeammateMentions('invite @se', [seth, carol])?.matches, [seth])
+  assert.deepEqual(matchTeammateMentions('invite @sj', [seth, carol])?.matches, [seth])
+  assert.deepEqual(matchTeammateMentions('invite @Seth J', [seth, seth2])?.matches, [seth])
+  const completed = applyTeammateMention('invite @Seth J', seth)
+  assert.equal(completed, 'invite @Seth Johnson ')
+  assert.equal(matchTeammateMentions(completed, [seth, seth2]), null)
+
+  // shareTargets resolves named teammates and preserves "First Last <email>" for new room invitees.
+  assert.deepEqual(shareTargets(['@Seth Johnson', 'Jane Doe <Jane@Fund.com>'], [seth, seth2]), {
+    members: ['acct-seth', 'Jane Doe <jane@fund.com>'],
+    unknown: [],
+  })
 })

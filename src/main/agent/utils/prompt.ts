@@ -15,6 +15,7 @@ import {
   tilePrimer,
 } from '../../../shared/agent/prompt'
 import { standingText } from '../../../shared/agent/standing'
+import { fullName, personDetail } from '../../../shared/collab/collab'
 import { sourcesSeen } from '../../data/store'
 import { loopsOf } from '../../loops/loops'
 import { loopName, showsChat } from '../../../shared/loops/loops'
@@ -67,9 +68,15 @@ export function stateNow(workspaceId: string): string {
     state.workspaces.length > 0
       ? `Tabs: ${state.workspaces.map((w) => (w.id === workspaceId ? `${w.name} (active)` : w.name)).join(', ')}.`
       : ''
-  const teammates = state.collab.teammates.map((one) => one.email)
+  const myFullName = fullName({
+    firstName: state.collab.firstName || state.jaspers.firstName,
+    lastName: state.collab.lastName || state.jaspers.lastName,
+  })
+  const userLine = myFullName ? `User: ${myFullName}${state.jaspers.email ? ` (${state.jaspers.email})` : ''}.` : ''
+  const teammates = state.collab.teammates.map((one) => personDetail(one))
   const teammatesLine = teammates.length > 0 ? `Teammates: ${teammates.join(', ')}.` : ''
   return [
+    ...(userLine ? [userLine] : []),
     ...(tabsLine ? [tabsLine] : []),
     ...(teammatesLine ? [teammatesLine] : []),
     describeGrid(workspaceId, windowSize, focusedWindow()),
@@ -132,7 +139,13 @@ export function loopPrompt(workspaceId: string, loopId: string, preface: string[
 export function loopStateNow(workspaceId: string, loopId: string): string {
   const state = toPublic(getState())
   const loop = loopsOf(workspaceId).list.find((one) => one.id === loopId)
+  const myFullName = fullName({
+    firstName: state.collab.firstName || state.jaspers.firstName,
+    lastName: state.collab.lastName || state.jaspers.lastName,
+  })
+  const userLine = myFullName ? `User: ${myFullName}.` : ''
   return [
+    ...(userLine ? [userLine] : []),
     ...(loop ? [describeTiles(state, workspaceId, loop, (id) => getView(id)?.instructions)] : []),
     describeNow(defaultClock()),
     describeFiled(sourcesSeen(), state.sources),

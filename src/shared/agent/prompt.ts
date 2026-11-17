@@ -18,6 +18,7 @@ import { unsetRequiredSecret } from '../plugins/plugins.ts'
 import type { Exchange } from './transcript.ts'
 import { stateShape } from './view-state.ts'
 import { parameterNames } from '../data/tool-parameters.ts'
+import { personDetail, roomSharing } from '../collab/collab.ts'
 
 /** The value of `state` and `output` is cut here: the whole prompt is rebuilt every round. */
 const STATE_MAX = 2048
@@ -61,7 +62,7 @@ const ROUTER_REPLY =
   'Your text reply appears in Central (in the top command line, which expands up to 5 lines and fades after a few seconds when undocked, and in the docked Central room when Dock mode is on; if the user wants an extended text conversation experience, remind and support them that they can press Dock in the top bar to open Central as a room on the tab), so keep it clear and direct, at whatever length the answer needs without padding, and stamp agent responses, summaries, and work product with a timestamp in the user\'s system time like "as of 2026-11-10 10am PT" from the Now line in workspace_state. When you only start or send work, that is the whole of your part, and the user is told what the tool answered.'
 // The app is the orchestrator's: keys, tasks, and plugins it handles itself, in words and calls of its own.
 const APP_RUN =
-  "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. When the user asks to run a quick, single command or script on this computer (< 3 to 6 seconds), call run_shell yourself when it is in your tools — it asks the user to approve before running — rather than starting a room or scheduling a task for it; when the request is an extensive or multi-step task (such as scraping web pages, audio, or files, downloading or assembling files into the folder, or running a multi-step shell or Python workflow), spin out a worker in a room with create_room to execute it instead of cluttering Central; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
+  "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting (including their own first and last name via setting: 'profile'), change_setting does it; it asks them itself before a change that is hard to take back. When the user asks to share an existing room with teammates or invite people to it, call share_room (naming teammates by their name, @tag, or email address, or new people by email or 'First Last <email>'); when the user asks to start a new room and invite or share it with teammates, pass teammates directly on create_room so the room is created and shared together. Address the user and their teammates by name whenever their name is shown in workspace_state. When the user asks to run a quick, single command or script on this computer (< 3 to 6 seconds), call run_shell yourself when it is in your tools — it asks the user to approve before running — rather than starting a room or scheduling a task for it; when the request is an extensive or multi-step task (such as scraping web pages, audio, or files, downloading or assembling files into the folder, or running a multi-step shell or Python workflow), spin out a worker in a room with create_room to execute it instead of cluttering Central; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
 
 /** What the orchestrator goes by: it routes, where its reply shows, how much of the conversation it is sent, and the app it runs. */
 export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, APP_RUN].join(' ')
@@ -215,6 +216,22 @@ function loopLabel(loop: Pick<Loop, 'id' | 'title'>): string {
   return custom ? `${loopName(loop.id)} (${JSON.stringify(custom)})` : loopName(loop.id)
 }
 
+function loopShareNote(state: AppState, workspaceId: string, loop: Loop): string {
+  const workspace = state.workspaces.find((w) => w.id === workspaceId)
+  const sharing = roomSharing(state.collab, workspace, loop)
+  if (!sharing?.share) return ''
+  if (sharing.role === 'member') {
+    const owner = personDetail({
+      firstName: sharing.share.ownerFirstName,
+      lastName: sharing.share.ownerLastName,
+      email: sharing.share.ownerEmail,
+    })
+    return `, owned by ${owner}`
+  }
+  const members = sharing.share.members.map((m) => personDetail(m))
+  return members.length > 0 ? `, shared with ${members.join(', ')}` : ''
+}
+
 export function describeLoops(
   state: AppState,
   workspaceId: string,
@@ -227,7 +244,7 @@ export function describeLoops(
     .flatMap(([tabId, list]) =>
       list.map(
         (one) =>
-          `${loopLabel(one)} (in ${tabNameOf.get(tabId)!}, ${statusOf(one, tabId)}): ${JSON.stringify(one.desc)}`,
+          `${loopLabel(one)} (in ${tabNameOf.get(tabId)!}, ${statusOf(one, tabId)}${loopShareNote(state, tabId, one)}): ${JSON.stringify(one.desc)}`,
       ),
     )
   const closed = Object.values(state.closedLoops).flat()
@@ -244,7 +261,7 @@ export function describeLoops(
     'Work on this workspace, each piece with a tile and an agent of its own:',
     ...loops.map((one) => {
       const tile = frameOf(grids, one.id)?.element.id ?? 'none'
-      return `- ${loopLabel(one)}, ${statusOf(one, workspaceId)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
+      return `- ${loopLabel(one)}, ${statusOf(one, workspaceId)}${loopShareNote(state, workspaceId, one)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
     }),
     ...otherLine,
     ...shut,

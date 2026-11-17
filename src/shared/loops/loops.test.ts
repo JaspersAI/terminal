@@ -795,6 +795,10 @@ test('a room is started only when the user says Start to what it is and which pl
     startQuestion('Screen of US small caps', ['screener-mcp'], 'gemini-4-argon'),
     'Start a new room for this: Screen of US small caps, with screener-mcp (model: gemini-4-argon)?',
   )
+  assert.equal(
+    startQuestion('Screen of US small caps', ['screener-mcp'], null, ['Seth Johnson (sj+testuser@jsprai.com)']),
+    'Start a new room for this: Screen of US small caps, with screener-mcp, shared with Seth Johnson (sj+testuser@jsprai.com)?',
+  )
   assert.equal(startQuestion('Screen of US small caps', []), 'Start a new room for this: Screen of US small caps?')
   // The desc is shown as the room will carry it.
   assert.equal(startQuestion('x'.repeat(DESC_MAX + 5), []), `Start a new room for this: ${'x'.repeat(DESC_MAX)}?`)

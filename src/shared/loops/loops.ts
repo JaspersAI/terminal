@@ -1039,11 +1039,17 @@ export const NO = 'No'
  * What the user is asked before the orchestrator starts a room, since none is started without their
  * say: what the work is, as the room will carry it, which plugins do it, and the model if chosen.
  */
-export function startQuestion(desc: string, plugins: readonly string[], model?: string | null): string {
+export function startQuestion(
+  desc: string,
+  plugins: readonly string[],
+  model?: string | null,
+  sharedWith?: readonly string[],
+): string {
   const what = desc.slice(0, DESC_MAX)
   const withPlugins = plugins.length > 0 ? `, with ${plugins.join(', ')}` : ''
   const withModel = model ? ` (model: ${model})` : ''
-  return `Start a new room for this: ${what}${withPlugins}${withModel}?`
+  const withPeople = sharedWith && sharedWith.length > 0 ? `, shared with ${sharedWith.join(', ')}` : ''
+  return `Start a new room for this: ${what}${withPlugins}${withModel}${withPeople}?`
 }
 
 /**

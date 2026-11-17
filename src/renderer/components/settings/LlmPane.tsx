@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactElement } from 'react'
+import { jaspersAccountLabel } from '../../../shared/app/jaspers'
 import { JASPERS, PROVIDERS, findProvider, signsIn, takesModel } from '../../../shared/llm/providers'
 import type { ProviderKind } from '../../../shared/state'
 import { errorMessage } from '../../lib/errors'
@@ -56,6 +57,7 @@ function ProviderSection({ kind, title, blurb, onSaved }: SectionProps): ReactEl
   const { provider } = form
   const keyUrl = provider?.keyUrl
   const jaspers = useAppState((s) => s.jaspers)
+  const collab = useAppState((s) => s.collab)
   const viaJaspers = provider !== undefined && signsIn(provider)
   const needsSignIn = viaJaspers && !jaspers.signedIn
   const [error, setError] = useState<string | null>(null)
@@ -224,7 +226,9 @@ function ProviderSection({ kind, title, blurb, onSaved }: SectionProps): ReactEl
           <Row label="Account" hint={jaspers.reason ?? 'The sign-in is the credential: nothing to paste.'}>
             <div className="flex flex-wrap items-center justify-end gap-3">
               <span className="text-right text-sm">
-                {jaspers.signedIn ? `Signed in as ${jaspers.email ?? 'a Jaspers account'}` : 'Not signed in'}
+                {jaspers.signedIn
+                  ? `Signed in as ${jaspersAccountLabel(jaspers, collab) ?? 'a Jaspers account'}`
+                  : 'Not signed in'}
               </span>
               {jaspers.signedIn && (
                 <button type="button" onClick={() => void dispatch({ type: 'jaspers.signOut' })} className={BUTTON}>

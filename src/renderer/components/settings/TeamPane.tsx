@@ -1,20 +1,34 @@
 import { useState, type FormEvent, type ReactElement } from 'react'
+import { jaspersAccountLabel } from '../../../shared/app/jaspers'
+import { fullName, personDetail, personName } from '../../../shared/collab/collab'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
 import { TeammateBadge } from '../collab/TeammateBadge'
 import { BUTTON } from './Row'
 
 /**
- * Settings, Team: who the user works with. Teammates are made by invitation and acceptance, here
- * and nowhere else; sharing a room or a tab with one is done from the room's or the tab's menu.
+ * Settings, Team: who the user is to their teammates, and who they work with. Teammates are made
+ * by invitation and acceptance; sharing a room or a tab with one is done from the room's or the
+ * tab's menu, by dragging a teammate badge, or by asking Central.
  */
 export function TeamPane(): ReactElement {
-  const signedIn = useAppState((s) => s.jaspers.signedIn)
-  const myEmail = useAppState((s) => s.jaspers.email)
+  const jaspers = useAppState((s) => s.jaspers)
+  const signedIn = jaspers.signedIn
   const collab = useAppState((s) => s.collab)
+  const storedFirst = (collab.firstName || jaspers.firstName || '').trim()
+  const storedLast = (collab.lastName || jaspers.lastName || '').trim()
+  const [firstDraft, setFirstDraft] = useState<string | null>(null)
+  const [lastDraft, setLastDraft] = useState<string | null>(null)
+  const [profileSaved, setProfileSaved] = useState(false)
   const [emailDraft, setEmailDraft] = useState('')
+  const [inviteFirstDraft, setInviteFirstDraft] = useState('')
+  const [inviteLastDraft, setInviteLastDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const firstValue = firstDraft ?? storedFirst
+  const lastValue = lastDraft ?? storedLast
+  const nameChanged = firstValue.trim() !== storedFirst || lastValue.trim() !== storedLast
 
   function act(work: () => Promise<void>): void {
     setError(null)
@@ -24,13 +38,36 @@ export function TeamPane(): ReactElement {
       .finally(() => setBusy(false))
   }
 
+  function submitProfile(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault()
+    const first = firstValue.trim()
+    const last = lastValue.trim()
+    if (!first || !last || busy) return
+    setProfileSaved(false)
+    act(async () => {
+      await dispatch({ type: 'collab.setProfile', firstName: first, lastName: last })
+      setFirstDraft(null)
+      setLastDraft(null)
+      setProfileSaved(true)
+    })
+  }
+
   function submitInvite(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
     const trimmed = emailDraft.trim()
     if (!trimmed || busy) return
+    const firstName = inviteFirstDraft.trim() || undefined
+    const lastName = inviteLastDraft.trim() || undefined
     act(async () => {
-      await dispatch({ type: 'collab.invite', email: trimmed })
+      await dispatch({
+        type: 'collab.invite',
+        email: trimmed,
+        ...(firstName ? { firstName } : {}),
+        ...(lastName ? { lastName } : {}),
+      })
       setEmailDraft('')
+      setInviteFirstDraft('')
+      setInviteLastDraft('')
     })
   }
 
@@ -59,77 +96,157 @@ export function TeamPane(): ReactElement {
 
   const shared = collab.shares.filter((one) => one.role === 'owner')
   const joined = collab.shares.filter((one) => one.role === 'member')
+  const signedInAs = jaspersAccountLabel(jaspers, collab)
 
   return (
     <div data-team-pane className="max-w-2xl space-y-6 text-sm">
       <div>
         <h3 className="text-base font-medium">Team</h3>
         <p className="mt-1 text-muted-foreground">
-          Invite a teammate by email. Once they accept, share a room from its menu or a tab by right-clicking it. A
-          shared room stays on its owner&rsquo;s terminal: teammates see it live and can ask its agent, which runs
-          there. In a shared room, a message that starts with <code>@name</code> is for the people in it, and the agent
-          is not asked.
+          Set your name and invite teammates. Once they accept, share a room from its menu, right-click a tab, or tell
+          Central by name or <code>@name</code>. A shared room stays on its owner&rsquo;s terminal: teammates see it
+          live and can ask its agent, which runs there. In a shared room, a message that starts with <code>@name</code>{' '}
+          is for the people in it, and the agent is not asked.
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {myEmail ? `Signed in as ${myEmail}. ` : ''}
+          {signedInAs ? `Signed in as ${signedInAs}. ` : ''}
           {collab.connected ? 'Connected.' : 'Not connected: nothing shared moves until it is.'}
         </p>
       </div>
+
+      <section data-team-profile className="space-y-2 border-t border-border pt-4">
+        <h4 className="text-xs font-medium text-muted-foreground">Your name</h4>
+        <p className="text-xs text-muted-foreground">
+          {storedFirst && storedLast
+            ? 'Teammates see and @tag you by your name across shared rooms, tabs, and invitations.'
+            : 'Provide your first and last name so teammates can address and @tag you.'}
+        </p>
+        <form data-team-profile-form onSubmit={submitProfile} className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            data-team-first-name
+            aria-label="First name"
+            placeholder="First name"
+            maxLength={80}
+            value={firstValue}
+            onChange={(e) => {
+              setProfileSaved(false)
+              setFirstDraft(e.target.value)
+            }}
+            required
+            className="min-w-0 flex-1 border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
+          />
+          <input
+            type="text"
+            data-team-last-name
+            aria-label="Last name"
+            placeholder="Last name"
+            maxLength={80}
+            value={lastValue}
+            onChange={(e) => {
+              setProfileSaved(false)
+              setLastDraft(e.target.value)
+            }}
+            required
+            className="min-w-0 flex-1 border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
+          />
+          <button
+            type="submit"
+            data-team-profile-save
+            disabled={busy || !collab.connected || !firstValue.trim() || !lastValue.trim() || !nameChanged}
+            className={BUTTON}
+          >
+            Save
+          </button>
+          {profileSaved && !nameChanged && <span className="text-xs text-muted-foreground">Saved</span>}
+        </form>
+      </section>
 
       {collab.incomingInvites.length > 0 && (
         <section data-team-incoming className="space-y-2 border-t border-border pt-4">
           <h4 className="text-xs font-medium text-muted-foreground">Invitations to you</h4>
           <ul className="divide-y divide-border border border-border">
-            {collab.incomingInvites.map((invite) => (
-              <li key={invite.inviteId} className="flex items-center justify-between gap-3 px-3 py-2">
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{invite.inviterEmail}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Wants to be teammates. Accepting lets them share rooms with you, and you with them.
-                  </p>
-                </div>
-                <div className="flex shrink-0 gap-1.5">
-                  <button
-                    type="button"
-                    data-team-accept={invite.inviteId}
-                    disabled={busy}
-                    onClick={() => act(() => dispatch({ type: 'collab.accept', invite: invite.inviteId }))}
-                    className="border border-primary bg-primary px-2.5 py-1 text-xs text-primary-foreground disabled:opacity-50"
-                  >
-                    Accept
-                  </button>
-                  <button
-                    type="button"
-                    data-team-decline={invite.inviteId}
-                    disabled={busy}
-                    onClick={() => act(() => dispatch({ type: 'collab.decline', invite: invite.inviteId }))}
-                    className={BUTTON}
-                  >
-                    Decline
-                  </button>
-                </div>
-              </li>
-            ))}
+            {collab.incomingInvites.map((invite) => {
+              const inviterLabel = personDetail({
+                firstName: invite.inviterFirstName,
+                lastName: invite.inviterLastName,
+                email: invite.inviterEmail,
+              })
+              return (
+                <li key={invite.inviteId} className="flex items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{inviterLabel}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Wants to be teammates. Accepting lets them share rooms with you, and you with them.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <button
+                      type="button"
+                      data-team-accept={invite.inviteId}
+                      disabled={busy}
+                      onClick={() => act(() => dispatch({ type: 'collab.accept', invite: invite.inviteId }))}
+                      className="border border-primary bg-primary px-2.5 py-1 text-xs text-primary-foreground disabled:opacity-50"
+                    >
+                      Accept
+                    </button>
+                    <button
+                      type="button"
+                      data-team-decline={invite.inviteId}
+                      disabled={busy}
+                      onClick={() => act(() => dispatch({ type: 'collab.decline', invite: invite.inviteId }))}
+                      className={BUTTON}
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         </section>
       )}
 
       <section className="space-y-2 border-t border-border pt-4">
         <h4 className="text-xs font-medium text-muted-foreground">Invite a teammate</h4>
-        <form onSubmit={submitInvite} className="flex gap-2">
-          <input
-            type="email"
-            data-team-invite-input
-            aria-label="Teammate email"
-            placeholder="teammate@fund.com"
-            value={emailDraft}
-            onChange={(e) => setEmailDraft(e.target.value)}
-            required
-            className="min-w-0 flex-1 border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
-          />
-          <button type="submit" data-team-invite-submit disabled={busy || !emailDraft.trim()} className={BUTTON}>
-            Send invite
-          </button>
+        <form onSubmit={submitInvite} className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <input
+              type="text"
+              data-team-invite-first-name
+              aria-label="Teammate first name (optional)"
+              placeholder="First name (optional)"
+              maxLength={80}
+              value={inviteFirstDraft}
+              onChange={(e) => setInviteFirstDraft(e.target.value)}
+              className="min-w-0 flex-1 border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
+            />
+            <input
+              type="text"
+              data-team-invite-last-name
+              aria-label="Teammate last name (optional)"
+              placeholder="Last name (optional)"
+              maxLength={80}
+              value={inviteLastDraft}
+              onChange={(e) => setInviteLastDraft(e.target.value)}
+              className="min-w-0 flex-1 border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
+            />
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              data-team-invite-input
+              aria-label="Teammate email"
+              placeholder="teammate@fund.com"
+              value={emailDraft}
+              onChange={(e) => setEmailDraft(e.target.value)}
+              required
+              className="min-w-0 flex-1 border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
+            />
+            <button type="submit" data-team-invite-submit disabled={busy || !emailDraft.trim()} className={BUTTON}>
+              Send invite
+            </button>
+          </div>
         </form>
         {error && <p className="text-xs text-destructive">{error}</p>}
       </section>
@@ -140,30 +257,42 @@ export function TeamPane(): ReactElement {
           <p className="text-xs text-muted-foreground">No teammates yet.</p>
         ) : (
           <ul className="divide-y divide-border border border-border">
-            {collab.teammates.map((teammate, index) => (
-              <li
-                key={teammate.accountId}
-                data-teammate={teammate.email}
-                className="flex items-center justify-between gap-3 px-3 py-2"
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <TeammateBadge email={teammate.email} index={index} lit={teammate.online} />
-                  <span className="truncate font-medium">{teammate.email}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {teammate.online ? 'here now' : 'away'}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  data-team-remove={teammate.accountId}
-                  disabled={busy}
-                  onClick={() => act(() => dispatch({ type: 'collab.removeTeammate', accountId: teammate.accountId }))}
-                  className="text-xs text-destructive hover:underline"
+            {collab.teammates.map((teammate, index) => {
+              const named = fullName(teammate)
+              return (
+                <li
+                  key={teammate.accountId}
+                  data-teammate={teammate.email}
+                  className="flex items-center justify-between gap-3 px-3 py-2"
                 >
-                  Remove
-                </button>
-              </li>
-            ))}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <TeammateBadge
+                      email={teammate.email}
+                      firstName={teammate.firstName}
+                      lastName={teammate.lastName}
+                      index={index}
+                      lit={teammate.online}
+                    />
+                    <span className="truncate font-medium">{named || teammate.email}</span>
+                    {named && <span className="truncate text-xs text-muted-foreground">{teammate.email}</span>}
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {teammate.online ? 'here now' : 'away'}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    data-team-remove={teammate.accountId}
+                    disabled={busy}
+                    onClick={() =>
+                      act(() => dispatch({ type: 'collab.removeTeammate', accountId: teammate.accountId }))
+                    }
+                    className="text-xs text-destructive hover:underline"
+                  >
+                    Remove
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         )}
         {collab.teammates.length > 0 && (
@@ -177,22 +306,29 @@ export function TeamPane(): ReactElement {
         <section data-team-outgoing className="space-y-2 border-t border-border pt-4">
           <h4 className="text-xs font-medium text-muted-foreground">Invitations sent</h4>
           <ul className="divide-y divide-border border border-border">
-            {collab.outgoingInvites.map((invite) => (
-              <li key={invite.inviteId} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
-                <span className="truncate">
-                  {invite.inviteeEmail} <span className="text-muted-foreground">· waiting for them to accept</span>
-                </span>
-                <button
-                  type="button"
-                  data-team-cancel={invite.inviteId}
-                  disabled={busy}
-                  onClick={() => act(() => dispatch({ type: 'collab.decline', invite: invite.inviteId }))}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  Cancel
-                </button>
-              </li>
-            ))}
+            {collab.outgoingInvites.map((invite) => {
+              const inviteeLabel = personDetail({
+                firstName: invite.inviteeFirstName,
+                lastName: invite.inviteeLastName,
+                email: invite.inviteeEmail,
+              })
+              return (
+                <li key={invite.inviteId} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                  <span className="truncate">
+                    {inviteeLabel} <span className="text-muted-foreground">· waiting for them to accept</span>
+                  </span>
+                  <button
+                    type="button"
+                    data-team-cancel={invite.inviteId}
+                    disabled={busy}
+                    onClick={() => act(() => dispatch({ type: 'collab.decline', invite: invite.inviteId }))}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    Cancel
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         </section>
       )}
@@ -209,8 +345,18 @@ export function TeamPane(): ReactElement {
                 </p>
                 <p className="truncate text-muted-foreground">
                   {[
-                    ...share.members.map((one) => one.email),
-                    ...share.pendingEmails.map((one) => `${one} (invited)`),
+                    ...share.members.map((one) => personName(one)),
+                    ...share.pendingEmails.map((email) => {
+                      const inv = collab.outgoingInvites.find(
+                        (one) => one.inviteeEmail.toLowerCase() === email.toLowerCase(),
+                      )
+                      const label = personName({
+                        firstName: inv?.inviteeFirstName,
+                        lastName: inv?.inviteeLastName,
+                        email,
+                      })
+                      return `${label} (invited)`
+                    }),
                   ].join(', ') || 'Nobody yet'}
                 </p>
               </li>
@@ -230,7 +376,11 @@ export function TeamPane(): ReactElement {
                   <span className="font-normal text-muted-foreground">· {share.kind === 'room' ? 'room' : 'tab'}</span>
                 </p>
                 <p className="truncate text-muted-foreground">
-                  {share.ownerEmail}
+                  {personName({
+                    firstName: share.ownerFirstName,
+                    lastName: share.ownerLastName,
+                    email: share.ownerEmail,
+                  })}
                   {share.ownerOnline ? ' · here now' : ' · away, so it is read-only'}
                 </p>
               </li>

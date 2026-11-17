@@ -280,7 +280,10 @@ export function startCollab(): void {
 
 // People.
 
-export const inviteTeammate = (email: string): Promise<void> => engine.invite(email)
+export const setCollabProfile = (firstName: string, lastName: string): Promise<void> =>
+  engine.setProfile(firstName, lastName)
+export const inviteTeammate = (email: string, names?: { firstName?: string; lastName?: string }): Promise<void> =>
+  engine.invite(email, names)
 export const acceptTeammateInvite = (invite: string): Promise<void> => engine.accept(invite)
 export const declineTeammateInvite = (invite: string): Promise<void> => engine.decline(invite)
 export const removeTeammate = (accountId: string): Promise<void> => engine.removeTeammate(accountId)
@@ -291,7 +294,7 @@ export const removeTeammate = (accountId: string): Promise<void> => engine.remov
 function membersOf(named: readonly string[]): string[] {
   const { members, unknown } = shareTargets(named, getState().collab.teammates)
   if (unknown.length > 0) {
-    throw new Error(`No teammate is called ${unknown.join(', ')}. Name them by their email address.`)
+    throw new Error(`No teammate is called ${unknown.join(', ')}. Name a teammate, or enter their email address.`)
   }
   return members
 }

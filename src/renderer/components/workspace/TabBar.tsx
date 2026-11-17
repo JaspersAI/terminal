@@ -8,7 +8,7 @@ import {
   type ReactElement,
 } from 'react'
 import { WORKSPACE_NAME_MAX, type Workspace } from '../../../shared/state'
-import { tabSharing } from '../../../shared/collab/collab'
+import { personName, tabSharing } from '../../../shared/collab/collab'
 import {
   formatTabLabel,
   newTabButtonStyle,
@@ -232,8 +232,15 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
         const active = tab.id === currentId
         const isRenaming = renamingId === tab.id
         /** Whose tab this is, when it is a copy of a teammate's. */
+        const ownerShare = tab.replica ? collab.shares.find((one) => one.shareId === tab.shareId) : undefined
         const owner = tab.replica
-          ? (collab.shares.find((one) => one.shareId === tab.shareId)?.ownerEmail ?? 'a teammate')
+          ? ownerShare
+            ? personName({
+                firstName: ownerShare.ownerFirstName,
+                lastName: ownerShare.ownerLastName,
+                email: ownerShare.ownerEmail,
+              })
+            : 'a teammate'
           : null
         const swatch = tabSwatchStyle(tab.color, active, isDark)
         const tabW = index === workspaces.length - 1 ? perTabWidth + remainderPx : perTabWidth
@@ -288,7 +295,14 @@ export function TabBar({ workspaces, currentId }: Props): ReactElement {
               <>
                 {owner && (
                   <span className="mr-1 shrink-0">
-                    <TeammateBadge email={owner} index={0} lit={active} size={12} />
+                    <TeammateBadge
+                      email={ownerShare?.ownerEmail ?? owner}
+                      firstName={ownerShare?.ownerFirstName}
+                      lastName={ownerShare?.ownerLastName}
+                      index={0}
+                      lit={active}
+                      size={12}
+                    />
                   </span>
                 )}
                 <span

@@ -11,9 +11,48 @@ import type { Loop } from '../loops/loops.ts'
 import type { Workspace } from '../state.ts'
 import { tabSwatchStyle } from '../tabs/tabs.ts'
 
+export const NAME_MAX = 80
+
+/** One part of a person's name (first or last): control and format characters gone, spaces collapsed, cut to NAME_MAX. */
+export function cleanPersonName(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  return raw
+    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, NAME_MAX)
+}
+
+/** A person's full name (`First Last`), or `''` when neither part is set. */
+export function fullName(person: { firstName?: string | null; lastName?: string | null }): string {
+  return [cleanPersonName(person.firstName), cleanPersonName(person.lastName)].filter(Boolean).join(' ')
+}
+
+/** How a person is addressed in rooms, tabs, notices, and messages: their full name when set, else their email. */
+export function personName(person: { firstName?: string | null; lastName?: string | null; email: string }): string {
+  return fullName(person) || person.email
+}
+
+/** A person's name with their email in parentheses when named, else their email alone. */
+export function personDetail(person: { firstName?: string | null; lastName?: string | null; email: string }): string {
+  const named = fullName(person)
+  return named ? `${named} (${person.email})` : person.email
+}
+
+/** What completing an `@` mention inserts after `@`: the person's full name when set, else their email. */
+export function teammateMentionText(person: {
+  firstName?: string | null
+  lastName?: string | null
+  email: string
+}): string {
+  return fullName(person) || person.email
+}
+
 export interface Teammate {
   accountId: string
   email: string
+  firstName?: string
+  lastName?: string
   since: number
   /** Whether any terminal of theirs is connected now. */
   online: boolean
@@ -23,13 +62,19 @@ export interface TeammateInvite {
   inviteId: string
   inviterAccountId: string
   inviterEmail: string
+  inviterFirstName?: string
+  inviterLastName?: string
   inviteeEmail: string
+  inviteeFirstName?: string
+  inviteeLastName?: string
   createdAt: number
 }
 
 export interface ShareMember {
   accountId: string
   email: string
+  firstName?: string
+  lastName?: string
   addedAt: number
 }
 
@@ -41,6 +86,8 @@ export interface CollabShare {
   role: 'owner' | 'member'
   ownerAccountId: string
   ownerEmail: string
+  ownerFirstName?: string
+  ownerLastName?: string
   /** Whether the terminal that holds the room is connected: what a member asks of the room is answered there. */
   ownerOnline: boolean
   title: string
@@ -54,6 +101,8 @@ export interface CollabState {
   /** Whether the event stream is open: nothing shared moves while it is not. */
   connected: boolean
   accountId: string | null
+  firstName: string
+  lastName: string
   teammates: Teammate[]
   outgoingInvites: TeammateInvite[]
   incomingInvites: TeammateInvite[]
@@ -64,6 +113,8 @@ export interface CollabState {
 export const EMPTY_COLLAB: CollabState = {
   connected: false,
   accountId: null,
+  firstName: '',
+  lastName: '',
   teammates: [],
   outgoingInvites: [],
   incomingInvites: [],
@@ -109,8 +160,19 @@ export function tabSharing(collab: CollabState, workspace: Pick<Workspace, 'shar
 }
 
 /** Everyone in a share but the one reading: the owner first, then the members. */
-export function othersIn(share: CollabShare, me: string | null): { accountId: string; email: string }[] {
-  const everyone = [{ accountId: share.ownerAccountId, email: share.ownerEmail }, ...share.members]
+export function othersIn(
+  share: CollabShare,
+  me: string | null,
+): { accountId: string; email: string; firstName?: string; lastName?: string }[] {
+  const everyone = [
+    {
+      accountId: share.ownerAccountId,
+      email: share.ownerEmail,
+      ...(share.ownerFirstName ? { firstName: share.ownerFirstName } : {}),
+      ...(share.ownerLastName ? { lastName: share.ownerLastName } : {}),
+    },
+    ...share.members,
+  ]
   return everyone.filter((one) => one.accountId !== me)
 }
 
@@ -119,6 +181,8 @@ export interface SharePerson {
   /** An account's id, or an invited address that has no account in this share yet. */
   id: string
   email: string
+  firstName?: string
+  lastName?: string
   role: 'owner' | 'member' | 'invited'
   /** Connected now, as far as this account is told: it hears only of its own teammates. */
   online: boolean
@@ -133,6 +197,8 @@ export function peopleIn(share: CollabShare, collab: CollabState): SharePerson[]
     {
       id: share.ownerAccountId,
       email: share.ownerEmail,
+      ...(share.ownerFirstName ? { firstName: share.ownerFirstName } : {}),
+      ...(share.ownerLastName ? { lastName: share.ownerLastName } : {}),
       role: 'owner',
       online: share.ownerOnline,
       me: share.role === 'owner',
@@ -140,21 +206,28 @@ export function peopleIn(share: CollabShare, collab: CollabState): SharePerson[]
     ...share.members.map((member): SharePerson => ({
       id: member.accountId,
       email: member.email,
+      ...(member.firstName ? { firstName: member.firstName } : {}),
+      ...(member.lastName ? { lastName: member.lastName } : {}),
       role: 'member',
       online: online(member.accountId),
       me: member.accountId === collab.accountId && share.role !== 'owner',
     })),
-    ...share.pendingEmails.map((email): SharePerson => ({
-      id: email,
-      email,
-      role: 'invited',
-      online: false,
-      me: false,
-    })),
+    ...share.pendingEmails.map((email): SharePerson => {
+      const invite = collab.outgoingInvites.find((one) => one.inviteeEmail.toLowerCase() === email.toLowerCase())
+      return {
+        id: email,
+        email,
+        ...(invite?.inviteeFirstName ? { firstName: invite.inviteeFirstName } : {}),
+        ...(invite?.inviteeLastName ? { lastName: invite.inviteeLastName } : {}),
+        role: 'invited',
+        online: false,
+        me: false,
+      }
+    }),
   ]
 }
 
-/** The part of an address before the @, lower case: what a teammate is called by in a message. */
+/** The part of an address before the @, lower case: what an unnamed teammate may be called by in a message. */
 export function handleOf(email: string): string {
   return (email.split('@')[0] ?? '').toLowerCase()
 }
@@ -162,15 +235,45 @@ export function handleOf(email: string): string {
 /** Everyone in a shared room at once, in a message. */
 export const EVERYONE = ['all', 'team', 'everyone', 'here']
 
+function fullNameForms(person: { firstName?: string | null; lastName?: string | null }): string[] {
+  const first = cleanPersonName(person.firstName).toLowerCase()
+  const last = cleanPersonName(person.lastName).toLowerCase()
+  if (first && last) {
+    const compactFirst = first.replace(/\s+/g, '')
+    const compactLast = last.replace(/\s+/g, '')
+    return [
+      `${first} ${last}`,
+      `${compactFirst}.${compactLast}`,
+      `${compactFirst}_${compactLast}`,
+      `${compactFirst}-${compactLast}`,
+      `${compactFirst}${compactLast}`,
+    ]
+  }
+  return first ? [first] : last ? [last] : []
+}
+
 /**
- * The person a name means, among these: by whole address, or by the part before the @ when exactly
- * one of them has it. Never by a fragment: a letter that happens to be in an address names nobody.
+ * The person a name means, among these: by whole address, by full name, or by first name, last name,
+ * or the part before the @ when exactly one of them has it. Never by a fragment: a letter that happens
+ * to be in an address or a name names nobody.
  */
-export function resolveTeammate<T extends { email: string }>(query: string, people: readonly T[]): T | null {
-  const q = query.trim().replace(/^@+/, '').toLowerCase()
+export function resolveTeammate<T extends { email: string; firstName?: string | null; lastName?: string | null }>(
+  query: string,
+  people: readonly T[],
+): T | null {
+  const raw = query.trim().replace(/^@+/, '').replace(/\s+/g, ' ').trim()
+  if (!raw) return null
+  const bracketEmail = /^[^<>]*<([^<>]+)>$/.exec(raw)?.[1]?.trim().toLowerCase()
+  const q = (bracketEmail ?? raw).toLowerCase()
   if (!q) return null
   const exact = people.find((one) => one.email.toLowerCase() === q)
   if (exact) return exact
+  const byFull = people.filter((one) => fullNameForms(one).includes(q))
+  if (byFull.length === 1) return byFull[0]!
+  const byFirst = people.filter((one) => cleanPersonName(one.firstName).toLowerCase() === q)
+  if (byFirst.length === 1) return byFirst[0]!
+  const byLast = people.filter((one) => cleanPersonName(one.lastName).toLowerCase() === q)
+  if (byLast.length === 1) return byLast[0]!
   const byHandle = people.filter((one) => handleOf(one.email) === q)
   return byHandle.length === 1 ? byHandle[0]! : null
 }
@@ -181,22 +284,47 @@ export const HUMAN_ROOM_ANSWER = 'Sent to the room. Its agent was not asked.'
 export type ParsedRoomInput =
   { kind: 'human'; target: string; question: string; answer: string } | { kind: 'agent'; input: string }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /**
- * What a message typed in a room's box is. In a shared room, one that opens with `@` and the name of
- * someone in it (or `@all`) is for the people: it is filed in the room's conversation under the
- * sender's name and its agent is not run. Everything else, and every message in a room that is not
- * shared, is the agent's.
+ * What a message typed in a room's box is. In a shared room, one that opens with `@` and the name or
+ * address of someone in it (including `@First Last`, `@First`, `@Last`, `@handle`, `@email`, or `@all`)
+ * is for the people: it is filed in the room's conversation under the sender's name and its agent is
+ * not run. Everything else, and every message in a room that is not shared, is the agent's.
  */
 export function parseRoomInput(
   input: string,
   sender: string | null,
-  people: readonly { email: string }[],
+  people: readonly { email: string; firstName?: string | null; lastName?: string | null }[],
 ): ParsedRoomInput {
   const trimmed = input.trim()
-  const target = /^@([^\s@]+(?:@[^\s@]+)?)/.exec(trimmed)?.[1]
+  if (!trimmed.startsWith('@') || people.length === 0) return { kind: 'agent', input: trimmed }
+
+  // Check multi-word `@First Last` full-name mentions first (longest first) so `@Seth Johnson hi`
+  // resolves unambiguously even when two teammates share a first name.
+  const fullNames = [
+    ...new Set(
+      people
+        .map((one) => fullName(one))
+        .filter((name) => name.includes(' '))
+        .sort((a, b) => b.length - a.length),
+    ),
+  ]
+  for (const name of fullNames) {
+    const pattern = new RegExp(`^@(${escapeRegex(name)})(?=$|\\s|[.,!?:;])`, 'i')
+    const hit = pattern.exec(trimmed)
+    if (hit && resolveTeammate(hit[1]!, people) !== null) {
+      return { kind: 'human', target: hit[1]!, question: attributed(sender, trimmed), answer: HUMAN_ROOM_ANSWER }
+    }
+  }
+
+  const rawTarget = /^@([^\s@]+(?:@[^\s@]+)?)/.exec(trimmed)?.[1]
+  const target = rawTarget?.replace(/[.,!?:;]+$/, '')
   const named =
     target !== undefined &&
-    people.length > 0 &&
+    target.length > 0 &&
     (EVERYONE.includes(target.toLowerCase()) || resolveTeammate(target, people) !== null)
   if (!named) return { kind: 'agent', input: trimmed }
   return { kind: 'human', target: target!, question: attributed(sender, trimmed), answer: HUMAN_ROOM_ANSWER }
@@ -239,9 +367,23 @@ export const TEAMMATE_PALETTE: readonly string[] = [
   '#047857',
 ]
 
-/** Two letters for a teammate's badge: `gleb.biserov@jsprai.com` is GB, `seth@jsprai.com` SE, `a@fund.com` AF. */
-export function teammateInitials(emailOrName: string): string {
-  const clean = emailOrName.trim()
+/** Two letters for a teammate's badge: from their first and last name when set, else `gleb.biserov@jsprai.com` is GB, `seth@jsprai.com` SE, `a@fund.com` AF. */
+export function teammateInitials(
+  emailOrPerson: string | { email: string; firstName?: string | null; lastName?: string | null },
+): string {
+  if (typeof emailOrPerson !== 'string') {
+    const first = cleanPersonName(emailOrPerson.firstName)
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .trim()
+    const last = cleanPersonName(emailOrPerson.lastName)
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .trim()
+    if (first && last) return `${first[0]!}${last[0]!}`.toUpperCase()
+    if (first) return teammateInitials(first)
+    if (last) return teammateInitials(last)
+    return teammateInitials(emailOrPerson.email)
+  }
+  const clean = emailOrPerson.trim()
   if (!clean) return '??'
   const [localPart = '', domainPart = ''] = clean.split('@')
   const words = localPart
@@ -272,32 +414,58 @@ export function teammateBadgeStyle(
 }
 
 /**
- * The teammates a draft's last word may be naming, for the list offered under it: an `@` and what
- * was typed after it, matched from the start of an address or its initials. The user picks from the
- * list, so this may be generous where `resolveTeammate` may not.
+ * The teammates a draft's last `@…` may be naming, for the list offered under it: matched from the
+ * start of their full name, first name, last name, email address, handle, or initials. Also keeps
+ * matching across a space (`@Seth J`) while the query prefixes a teammate's full name, and closes as
+ * soon as `@Seth Johnson ` is completed.
  */
-export function matchTeammateMentions<T extends { email: string }>(
+export function matchTeammateMentions<T extends { email: string; firstName?: string | null; lastName?: string | null }>(
   draft: string,
   people: readonly T[],
 ): { query: string; matches: T[] } | null {
   if (people.length === 0) return null
+  const twoWord = /(^|\s)@([^\s@]+\s+[^\s@]*)$/.exec(draft)
+  if (twoWord) {
+    const rawQuery = (twoWord[2] ?? '').toLowerCase().replace(/\s+/g, ' ')
+    const matches = people.filter((one) => {
+      const full = fullName(one).toLowerCase()
+      return full.length > 0 && full.startsWith(rawQuery)
+    })
+    if (matches.length > 0) return { query: rawQuery, matches }
+  }
   const match = /(^|\s)@([^\s@]*)$/.exec(draft)
   if (!match) return null
   const query = (match[2] ?? '').toLowerCase()
-  const matches = people.filter(
-    (one) =>
-      !query ||
+  const matches = people.filter((one) => {
+    if (!query) return true
+    const first = cleanPersonName(one.firstName).toLowerCase()
+    const last = cleanPersonName(one.lastName).toLowerCase()
+    const full = fullName(one).toLowerCase()
+    return (
+      full.startsWith(query) ||
+      first.startsWith(query) ||
+      last.startsWith(query) ||
       one.email.toLowerCase().startsWith(query) ||
-      teammateInitials(one.email).toLowerCase().startsWith(query),
-  )
+      handleOf(one.email).startsWith(query) ||
+      teammateInitials(one).toLowerCase().startsWith(query)
+    )
+  })
   return matches.length > 0 ? { query, matches } : null
 }
 
-/** The draft with its last `@word` finished as this address. */
-export function applyTeammateMention(draft: string, email: string): string {
+/** The draft with its trailing `@…` finished as this person's name (when set) or email address. */
+export function applyTeammateMention(
+  draft: string,
+  target: string | { email: string; firstName?: string | null; lastName?: string | null },
+): string {
+  const inserted = typeof target === 'string' ? target : teammateMentionText(target)
+  const twoWord = /(^|\s)@([^\s@]+\s+[^\s@]*)$/.exec(draft)
+  if (twoWord) {
+    return `${draft.slice(0, draft.length - (twoWord[2]?.length ?? 0) - 1)}@${inserted} `
+  }
   const match = /(^|\s)@([^\s@]*)$/.exec(draft)
-  if (!match) return `${draft} @${email} `
-  return `${draft.slice(0, draft.length - (match[2]?.length ?? 0) - 1)}@${email} `
+  if (!match) return `${draft} @${inserted} `
+  return `${draft.slice(0, draft.length - (match[2]?.length ?? 0) - 1)}@${inserted} `
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -308,23 +476,82 @@ export function asEmail(raw: string): string | null {
   return email.length <= 254 && EMAIL.test(email) ? email : null
 }
 
+/** Parses `"First Last <email@fund.com>"` or a plain email address for inviting someone new. */
+export function parseInviteContact(raw: string): { email: string; firstName: string; lastName: string } | null {
+  const trimmed = raw.trim()
+  const bracket = /^([^<>]+)<([^<>]+)>$/.exec(trimmed)
+  if (bracket) {
+    const email = asEmail(bracket[2]!)
+    if (!email) return null
+    const cleaned = cleanPersonName(bracket[1])
+    if (!cleaned) return { email, firstName: '', lastName: '' }
+    const space = cleaned.indexOf(' ')
+    return space === -1
+      ? { email, firstName: cleaned, lastName: '' }
+      : {
+          email,
+          firstName: cleanPersonName(cleaned.slice(0, space)),
+          lastName: cleanPersonName(cleaned.slice(space + 1)),
+        }
+  }
+  const email = asEmail(trimmed)
+  return email ? { email, firstName: '', lastName: '' } : null
+}
+
+/** Formats an invite contact as `"First Last <email>"` when named, else `email`. */
+export function formatInviteContact(contact: {
+  email: string
+  firstName?: string | null
+  lastName?: string | null
+}): string {
+  const email = asEmail(contact.email) ?? contact.email.trim().toLowerCase()
+  const named = fullName(contact)
+  return named ? `${named} <${email}>` : email
+}
+
 /**
- * Who a share is to be with, from what was named: teammates by account, and addresses that are not
- * teammates yet, who are invited and join when they accept. A name that is neither is refused, so a
- * room is never shared with someone the user did not mean.
+ * Who a share is to be with, from what was named: teammates by account id, name, `@tag`, or email,
+ * and addresses (optionally `"First Last <email>"`) that are not teammates yet, who are invited and
+ * join when they accept. A name that is neither is refused, so a room is never shared with someone
+ * the user did not mean.
  */
 export function shareTargets(
   named: readonly string[],
   teammates: readonly Teammate[],
 ): { members: string[]; unknown: string[] } {
-  const members = new Set<string>()
+  const members = new Map<string, string>()
   const unknown: string[] = []
   for (const raw of named) {
     const byId = teammates.find((one) => one.accountId === raw.trim())
     const teammate = byId ?? resolveTeammate(raw, teammates)
-    if (teammate) members.add(teammate.accountId)
-    else if (asEmail(raw)) members.add(asEmail(raw)!)
-    else if (raw.trim()) unknown.push(raw.trim())
+    if (teammate) {
+      members.set(teammate.accountId, teammate.accountId)
+      continue
+    }
+    const contact = parseInviteContact(raw)
+    if (contact) {
+      members.set(contact.email, formatInviteContact(contact))
+      continue
+    }
+    if (raw.trim()) unknown.push(raw.trim())
   }
-  return { members: [...members], unknown }
+  return { members: [...members.values()], unknown }
+}
+
+/** Human-readable name for a `shareTargets` member entry (account id, `"Name <email>"`, or email). */
+export function shareMemberName(entry: string, teammates: readonly Teammate[]): string {
+  const mate = teammates.find((one) => one.accountId === entry)
+  if (mate) return personName(mate)
+  const contact = parseInviteContact(entry)
+  if (contact) return personName(contact)
+  return entry
+}
+
+/** Detailed label (`Name (email)`) for a `shareTargets` member entry, shown in confirmation prompts. */
+export function shareMemberDetail(entry: string, teammates: readonly Teammate[]): string {
+  const mate = teammates.find((one) => one.accountId === entry)
+  if (mate) return personDetail(mate)
+  const contact = parseInviteContact(entry)
+  if (contact) return personDetail(contact)
+  return entry
 }

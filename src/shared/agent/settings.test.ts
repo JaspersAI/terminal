@@ -120,3 +120,15 @@ test('a switch to Jaspers, which has a fast model of its own, says the global bo
     'Switch the language model to Jaspers? Rooms go on with it from their next request, and the global box with its fast model.',
   )
 })
+
+test('setting profile updates first and last name directly and refuses missing parts', () => {
+  assert.deepEqual(settingChange({ setting: 'profile', first_name: ' Seth ', last_name: ' Johnson ' }, NOW), {
+    action: { type: 'collab.setProfile', firstName: 'Seth', lastName: 'Johnson' },
+    confirm: null,
+    done: 'Your name is now Seth Johnson.',
+  })
+  assert.throws(
+    () => settingChange({ setting: 'profile', first_name: 'Seth', last_name: '  ' }, NOW),
+    /first_name and last_name are both required/,
+  )
+})

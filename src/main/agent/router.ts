@@ -1,5 +1,5 @@
 import { handedBy } from '../../shared/agent/typed'
-import { shareTargets } from '../../shared/collab/collab'
+import { parseInviteContact, shareMemberDetail, shareMemberName, shareTargets } from '../../shared/collab/collab'
 import { layoutOf } from '../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../shared/grid/windows'
 import {
@@ -220,7 +220,7 @@ const DO_NOT_SHARE = 'No'
 const shareRoomTool: Tool = {
   name: 'share_room',
   description:
-    'Shares a room on the grid with teammates, named by email address: each sees the room live on their own terminal and may ask its agent, which runs here. A teammate is someone under Teammates in the state; an address that is not one yet is invited, and joins the room once they accept. The user is asked before anything is shared. Central itself is never shared, only rooms.',
+    'Shares a room on the grid with teammates, named by first name, last name, full name, @tag, or email address: each sees the room live on their own terminal and may ask its agent, which runs here. A teammate is someone under Teammates in the state; an address that is not one yet (or "First Last <email@domain.com>") is invited, and joins the room once they accept. The user is asked before anything is shared. Central itself is never shared, only rooms.',
   parameters: {
     type: 'object',
     properties: {
@@ -228,7 +228,8 @@ const shareRoomTool: Tool = {
       teammates: {
         type: 'array',
         items: { type: 'string' },
-        description: 'The email addresses to add to the room.',
+        description:
+          'Teammates to add to the room (by name, @tag, or email address), or new people to invite by email address or "First Last <email@domain.com>".',
       },
     },
     required: ['room', 'teammates'],
@@ -246,16 +247,21 @@ const shareRoomTool: Tool = {
     if (unknown.length > 0) {
       throw new Error(`No teammate is called ${unknown.join(', ')}. Ask the user for their email address.`)
     }
-    if (members.length === 0) throw new Error('Name at least one teammate by email address.')
-    const label = (member: string): string =>
-      state.collab.teammates.find((one) => one.accountId === member)?.email ?? member
+    if (members.length === 0) throw new Error('Name at least one teammate or email address.')
+    const label = (member: string): string => shareMemberName(member, state.collab.teammates)
+    const detail = (member: string): string => shareMemberDetail(member, state.collab.teammates)
     const share = state.collab.shares.find((one) => one.shareId === loop.shareId)
     const already = share ? [...share.members.map((one) => one.accountId), ...share.pendingEmails] : []
-    const adding = members.filter((member) => !already.includes(member))
+    const alreadyKeys = new Set(already.map((entry) => entry.toLowerCase()))
+    const adding = members.filter((member) => {
+      const contact = parseInviteContact(member)
+      const key = (contact ? contact.email : member).toLowerCase()
+      return !alreadyKeys.has(key)
+    })
     if (adding.length === 0) return `${loopName(loop.id)} is already shared with ${members.map(label).join(', ')}.`
     // Sharing shows a room's conversation and data to someone else: the user says so, each time.
     const asked = await askUserFor(
-      `Share ${loopName(loop.id)} (${loop.desc}) with ${adding.map(label).join(', ')}?`,
+      `Share ${loopName(loop.id)} (${loop.desc}) with ${adding.map(detail).join(', ')}?`,
       [SHARE, DO_NOT_SHARE],
       ran.signal,
       undefined,
@@ -304,6 +310,12 @@ function createRoomTool(context: ToolContext): Tool {
           items: { type: 'string' },
           description: 'Optional list of skill ids to equip the room with.',
         },
+        teammates: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Optional teammates or invitees to share the new room with (teammates by first name, last name, full name, @tag, or email address; new people by email address or "First Last <email@domain.com>").',
+        },
         message: MESSAGE,
         // Defaults to top-left quarter on screens 15 inches and larger, and left half on screens under 15 inches.
         ...placementProperties(gridSizeOf(context.workspaceId), defaultRoomSize(MAIN_WINDOW)),
@@ -331,14 +343,31 @@ function createRoomTool(context: ToolContext): Tool {
       )
       // Sandbox pre-flight: validate that the room frame fits on the tab before setting up or asking the user.
       roomForLoop(workspaceId, window, placement)
+      const namedTeammates = Array.isArray(input.teammates)
+        ? input.teammates.filter((x): x is string => typeof x === 'string')
+        : []
+      let initialMembers: string[] = []
+      let shareDetailLabels: string[] = []
+      let shareShortLabels: string[] = []
+      if (namedTeammates.length > 0) {
+        if (ran.task !== undefined) throw new Error('A scheduled task cannot share a room.')
+        const currentTeammates = getState().collab.teammates
+        const resolved = shareTargets(namedTeammates, currentTeammates)
+        if (resolved.unknown.length > 0) {
+          throw new Error(`No teammate is called ${resolved.unknown.join(', ')}. Ask the user for their email address.`)
+        }
+        initialMembers = resolved.members
+        shareDetailLabels = initialMembers.map((m) => shareMemberDetail(m, currentTeammates))
+        shareShortLabels = initialMembers.map((m) => shareMemberName(m, currentTeammates))
+      }
       const message = optional(input.message, (value) => asWords(value, 'message'))
       const { plugins, skills } = await setUpLoop(desc, systemPrompt ? `${brief}\n${systemPrompt}` : brief, ran, {
         plugins: Array.isArray(input.plugins) ? input.plugins : undefined,
         skills: Array.isArray(input.skills) ? input.skills : undefined,
       })
-      if (ran.task === undefined && !asksForLoop(ran.asked, answeredIn(ran.runId))) {
+      if (ran.task === undefined && (initialMembers.length > 0 || !asksForLoop(ran.asked, answeredIn(ran.runId)))) {
         const asked = await askUserFor(
-          startQuestion(desc, plugins, model),
+          startQuestion(desc, plugins, model, shareDetailLabels),
           [START, NO],
           ran.signal,
           startInstructions(brief, systemPrompt, message),
@@ -354,8 +383,22 @@ function createRoomTool(context: ToolContext): Tool {
         { desc, brief, plugins, skills, ...(model ? { model } : {}), ...(systemPrompt ? { systemPrompt } : {}) },
         placement,
       )
+      if (initialMembers.length > 0) {
+        await shareRoom(workspaceId, loop.id, initialMembers)
+      }
       const written = handoffWritten({ message, brief, systemPrompt })
-      return hand(ran, loop, written, handoffSummary('Started', loop.id, written))
+      const started =
+        shareShortLabels.length > 0
+          ? `Started ${loopName(loop.id)} (shared with ${shareShortLabels.join(', ')})`
+          : `Started ${loopName(loop.id)}`
+      return hand(
+        ran,
+        loop,
+        written,
+        shareShortLabels.length > 0
+          ? handoffSummary('Started', loop.id, written).replace(`Started ${loopName(loop.id)}`, started)
+          : handoffSummary('Started', loop.id, written),
+      )
     },
   }
 }

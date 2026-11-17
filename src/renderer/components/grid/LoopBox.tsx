@@ -13,11 +13,20 @@ import {
 } from 'react'
 import { askedIn, type Place } from '../../../shared/agent/asking'
 import { withAttachments } from '../../../shared/agent/attachments'
-import { isForPeople, roomSharing } from '../../../shared/collab/collab'
+import {
+  applyTeammateMention,
+  fullName,
+  isForPeople,
+  matchTeammateMentions,
+  othersIn,
+  roomSharing,
+  teammateMentionText,
+} from '../../../shared/collab/collab'
 import { editedInstructionsPrompt, type Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
 import { errorMessage } from '../../lib/errors'
 import { get, subscribe as subscribeState, useAppState } from '../../lib/state'
+import { TeammateBadge } from '../collab/TeammateBadge'
 import { AttachButton, useAttachments, useFileDrop } from '../composer/Attachments'
 import { over, type LiveExchange } from '../composer/live'
 import { pasteLinks } from '../composer/paste'
@@ -189,16 +198,24 @@ export function LoopBox({
   })
   const drop = useFileDrop(attachments.attach)
   const tileBox = useTileBox(place)
-  /** In a shared room the line also reaches its people: its hint says how. */
-  const shared = useAppState(
-    (s) =>
-      roomSharing(
-        s.collab,
-        s.workspaces.find((one) => one.id === workspaceId),
-        loop,
-      ) !== null,
+  /** In a shared room the line also reaches its people: its hint says how, and `@` offers them. */
+  const sharing = useAppState((s) =>
+    roomSharing(
+      s.collab,
+      s.workspaces.find((one) => one.id === workspaceId),
+      loop,
+    ),
   )
+  const accountId = useAppState((s) => s.collab.accountId)
+  const shared = sharing !== null
   const { expanded: open, draft, live, earlier, more, scrollTop, split } = tileBox
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const roomInputRef = useRef<HTMLInputElement>(null)
+  const roomPeople = sharing?.share ? othersIn(sharing.share, accountId) : []
+  const roomMention = draft.trimStart().startsWith('@') ? matchTeammateMentions(draft, roomPeople) : null
+  const roomMentionOptions = roomMention ? roomMention.matches : []
+  const activeRoomMention =
+    roomMentionOptions[Math.min(mentionIndex, Math.max(0, roomMentionOptions.length - 1))] ?? null
   const onScrollTopChange = useCallback(
     (nextScrollTop: number | null) => {
       updateTileBox(place, (b) => tileBoxScrolled(b, nextScrollTop))
@@ -460,7 +477,7 @@ export function LoopBox({
           <form
             id={active ? `loop-form-${elementId}` : undefined}
             onSubmit={submit}
-            className="flex shrink-0 items-center gap-1"
+            className="relative flex shrink-0 items-center gap-1"
           >
             <div
               style={zoom !== 1 ? { height: `${1.5 * zoom}rem` } : undefined}
@@ -485,6 +502,7 @@ export function LoopBox({
                 </span>
               ))}
               <input
+                ref={roomInputRef}
                 id={active ? `loop-input-${elementId}` : undefined}
                 name="loop-prompt"
                 aria-label={`Message ${label}`}
@@ -497,6 +515,21 @@ export function LoopBox({
                       ? `Ask ${called} more…`
                       : `Tell ${called} what to do…`
                 }
+                onKeyDown={(event) => {
+                  if (roomMentionOptions.length === 0) return
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault()
+                    setMentionIndex((i) => (i + 1) % roomMentionOptions.length)
+                  } else if (event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    setMentionIndex((i) => (i - 1 + roomMentionOptions.length) % roomMentionOptions.length)
+                  } else if (event.key === 'Tab' && activeRoomMention) {
+                    event.preventDefault()
+                    const nextDraft = applyTeammateMention(draft, activeRoomMention)
+                    updateTileBox(place, (b) => (b.draft === nextDraft ? b : { ...b, draft: nextDraft }))
+                    setMentionIndex(0)
+                  }
+                }}
                 onChange={(event) =>
                   updateTileBox(place, (b) =>
                     b.draft === event.target.value ? b : { ...b, draft: event.target.value },
@@ -538,6 +571,49 @@ export function LoopBox({
                 {drawerOpen ? <path d="M2 6.5 5 3.5 8 6.5" /> : <path d="M2 3.5 5 6.5 8 3.5" />}
               </svg>
             </button>
+            {roomMentionOptions.length > 0 && (
+              <div
+                data-room-mention-menu
+                role="listbox"
+                aria-label="People in this room"
+                className="absolute top-full left-0 z-50 mt-0.5 max-h-40 w-64 overflow-y-auto border border-border bg-background py-1 text-xs shadow-lg"
+              >
+                {roomMentionOptions.map((person, idx) => {
+                  const selected = idx === Math.min(mentionIndex, roomMentionOptions.length - 1)
+                  const named = fullName(person)
+                  return (
+                    <button
+                      key={person.accountId}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      data-room-mention-option={person.email}
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        const nextDraft = applyTeammateMention(draft, person)
+                        updateTileBox(place, (b) => (b.draft === nextDraft ? b : { ...b, draft: nextDraft }))
+                        setMentionIndex(0)
+                        roomInputRef.current?.focus()
+                      }}
+                      className={`flex w-full items-center gap-2 px-2.5 py-1 text-left ${
+                        selected ? 'bg-muted font-medium' : 'hover:bg-muted'
+                      }`}
+                    >
+                      <TeammateBadge
+                        email={person.email}
+                        firstName={person.firstName}
+                        lastName={person.lastName}
+                        index={idx}
+                        lit={true}
+                        size={16}
+                      />
+                      <span className="truncate">@{teammateMentionText(person)}</span>
+                      {named && <span className="ml-auto truncate text-muted-foreground">{person.email}</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </form>
         )}
       </div>
