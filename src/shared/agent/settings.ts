@@ -9,8 +9,73 @@ import { THEMES } from '../app/theme.ts'
 import { cleanPersonName } from '../collab/collab.ts'
 
 export const SETTINGS_TOOL = 'change_setting'
+export const OPEN_SETTINGS_TOOL = 'open_settings'
 export const APPLY = 'Apply'
 export const CANCEL = 'Cancel'
+
+export const SETTINGS_PANES = [
+  'llm',
+  'team',
+  'plugins',
+  'connections',
+  'skills',
+  'memory',
+  'tasks',
+  'data',
+  'appearance',
+  'pro',
+  'eye',
+  'about',
+] as const
+export type SettingsPane = (typeof SETTINGS_PANES)[number]
+
+export const SETTINGS_PANE_LABELS: Record<SettingsPane, string> = {
+  llm: 'LLM',
+  team: 'Team',
+  plugins: 'Plugins',
+  connections: 'Connections',
+  skills: 'Skills',
+  memory: 'Memory',
+  tasks: 'Tasks',
+  data: 'Data',
+  appearance: 'Appearance',
+  pro: 'Pro mode',
+  eye: 'Eye',
+  about: 'About',
+}
+
+const PANE_ALIASES: Record<string, SettingsPane> = {
+  teammate: 'team',
+  teammates: 'team',
+  collab: 'team',
+  collaboration: 'team',
+  pro_mode: 'pro',
+  promode: 'pro',
+  shell: 'pro',
+  model: 'llm',
+  models: 'llm',
+  provider: 'llm',
+  providers: 'llm',
+  theme: 'appearance',
+  budget: 'data',
+}
+
+export function isSettingsPane(value: unknown): value is SettingsPane {
+  return typeof value === 'string' && (SETTINGS_PANES as readonly string[]).includes(value)
+}
+
+/** Resolves a requested Settings pane id (or common synonym), defaulting to `'llm'` when omitted. */
+export function resolveSettingsPane(raw: unknown): SettingsPane {
+  if (raw === undefined || raw === null) return 'llm'
+  if (typeof raw !== 'string') throw new Error(`pane is one of ${SETTINGS_PANES.join(', ')}.`)
+  const trimmed = raw.trim()
+  if (!trimmed) return 'llm'
+  const normalized = trimmed.toLowerCase().replace(/[\s-]+/g, '_')
+  if (isSettingsPane(normalized)) return normalized
+  const alias = PANE_ALIASES[normalized]
+  if (alias) return alias
+  throw new Error(`pane is one of ${SETTINGS_PANES.join(', ')}.`)
+}
 
 export const SETTINGS = [
   'theme',

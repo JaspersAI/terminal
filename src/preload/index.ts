@@ -268,8 +268,9 @@ const api = {
     note: (note: Note): void => ipcRenderer.send('eye:note', note),
   },
   copyText: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
-  /** The menu bar's Settings…, which the window answers by opening Settings. */
-  onOpenSettings: (listener: () => void): (() => void) => on('menu:settings', listener),
+  /** The menu bar's Settings… or Central's open_settings, which the window answers by opening Settings on the named pane. */
+  onOpenSettings: (listener: (pane?: string) => void): (() => void) =>
+    on('menu:settings', (raw: unknown) => listener(typeof raw === 'string' ? raw : undefined)),
   /** The page's first screen is up. A window opened to be seen shows itself now, and not before. */
   rendered: (): void => ipcRenderer.send('window:rendered'),
 }

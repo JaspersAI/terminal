@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
+import type { SettingsPane } from '../../../shared/agent/settings'
 import { dispatch, useAppState } from '../../lib/state'
 import { requestLeave } from './leave-guard'
 import { AboutPane } from './AboutPane'
@@ -14,19 +15,7 @@ import { SkillsPane } from './SkillsPane'
 import { TasksPane } from './TasksPane'
 import { TeamPane } from './TeamPane'
 
-type Pane =
-  | 'llm'
-  | 'team'
-  | 'plugins'
-  | 'connections'
-  | 'skills'
-  | 'memory'
-  | 'tasks'
-  | 'data'
-  | 'appearance'
-  | 'pro'
-  | 'eye'
-  | 'about'
+type Pane = SettingsPane
 
 const PANES: { id: Pane; label: string; icon: () => ReactElement }[] = [
   { id: 'llm', label: 'LLM', icon: ChipIcon },
@@ -44,6 +33,8 @@ const PANES: { id: Pane; label: string; icon: () => ReactElement }[] = [
 ]
 
 interface Props {
+  /** What opening Settings asked for: the pane to show, when the request named one. A new object each time it is asked for. */
+  asked: { pane?: Pane }
   onClose: () => void
   /** Leaves Settings for View loops, the loops of the workspace on screen. */
   onViewLoops: () => void
@@ -58,12 +49,20 @@ interface Props {
  * Settings for the list of the workspace's loops, open and closed (`LoopsDialog`). Escape, the
  * cross, or a press on the backdrop closes it.
  */
-export function Settings({ onClose, onViewLoops }: Props): ReactElement {
-  const [pane, setPane] = useState<Pane>('llm')
+export function Settings({ asked, onClose, onViewLoops }: Props): ReactElement {
+  const [pane, setPane] = useState<Pane>(asked.pane ?? 'llm')
   const signedIn = useAppState((s) => s.jaspers.signedIn)
   const dialog = useRef<HTMLDivElement>(null)
   const close = useRef(onClose)
   close.current = onClose
+
+  // Asked for again while open, it goes to the pane the request names. It follows the request and
+  // not the pane's name, since the user may have left that pane since it was last asked for, and it
+  // leaves the pane on show as a press on another one does, so unsaved edits ask first.
+  useEffect(() => {
+    const wanted = asked.pane
+    if (wanted) requestLeave(() => setPane(wanted))
+  }, [asked])
 
   // Focus starts inside, so keys land here and not on the workspace underneath.
   useEffect(() => dialog.current?.focus(), [])

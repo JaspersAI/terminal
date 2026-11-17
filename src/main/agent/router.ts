@@ -1,5 +1,5 @@
 import { handedBy } from '../../shared/agent/typed'
-import { parseInviteContact, shareMemberDetail, shareMemberName, shareTargets } from '../../shared/collab/collab'
+import { shareMemberDetail, shareMemberName, shareTargets } from '../../shared/collab/collab'
 import { layoutOf } from '../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../shared/grid/windows'
 import {
@@ -30,13 +30,24 @@ import {
   settlePanel,
   updateLoop,
 } from '../actions'
-import { readOnly, shareRoom } from '../collab/collab'
+import {
+  acceptTeammateInvite,
+  declineTeammateInvite,
+  inviteTeammate,
+  leaveShare,
+  readOnly,
+  removeTeammate,
+  shareRoom,
+  shareTab,
+  stopSharing,
+} from '../collab/collab'
 import { getGrid, gridSizeOf } from '../grid/grid'
 import { defaultRoomSize, windowScreenDimensions } from '../grid/windows'
 import { findRoomTab } from '../loops/loops'
 import { getState, toPublic } from '../state'
 import { handOver, sendToLoop } from './loop'
 import { setUpLoop } from './setup'
+import { createCollabTools } from './tools/collab-tools'
 import { findAnyRoom, findLoop } from './tools/loops'
 import { asAnchor, asRect, asSize, placementProperties } from './tools/grid'
 import { optional, WINDOW } from './tools/input'
@@ -44,8 +55,22 @@ import type { Tool, ToolContext } from './tools/types'
 import { answeredIn, noteAnswered } from './utils/questions'
 import { askedBy } from './utils/runs'
 
-// The orchestrator's tools that hold rooms: one is started, handed a request, closed, reopened, or
-// permanently deleted.
+// The orchestrator's tools that hold rooms and collaboration: a room is started, handed a request,
+// closed, reopened, permanently deleted, or shared; teammates and tabs are invited or shared.
+
+const collabTools = createCollabTools({
+  getState: () => toPublic(getState()),
+  findRoomTab: (loopId) => findRoomTab(getState(), loopId),
+  askUserFor: (text, choices, signal, runId) => askUserFor(text, choices, signal, undefined, askedBy(runId)),
+  inviteTeammate,
+  acceptTeammateInvite,
+  declineTeammateInvite,
+  removeTeammate,
+  shareRoom,
+  shareTab,
+  stopSharing,
+  leaveShare,
+})
 
 export function routerTools(context: ToolContext): Tool[] {
   return [
@@ -55,7 +80,7 @@ export function routerTools(context: ToolContext): Tool[] {
     reopenRoomTool,
     deleteRoomTool,
     detachTabTool,
-    shareRoomTool,
+    ...collabTools,
   ]
 }
 
@@ -206,66 +231,6 @@ const detachTabTool: Tool = {
     }
     detachTab(target.id)
     return `Detached ${target.name} into Terminal (copy).`
-  },
-}
-
-const SHARE = 'Share'
-const DO_NOT_SHARE = 'No'
-
-const shareRoomTool: Tool = {
-  name: 'share_room',
-  description:
-    'Shares a room on the grid with teammates, named by name or email address: each sees the room live on their own terminal and may ask its agent, which runs here. A teammate is someone under Teammates in the state; an address that is not one yet is invited, and joins the room once they accept. The user is asked before anything is shared. Central itself is never shared, only rooms.',
-  parameters: {
-    type: 'object',
-    properties: {
-      room: ROOM,
-      teammates: {
-        type: 'array',
-        items: { type: 'string' },
-        description:
-          'Who to add: a teammate by name or email address, or someone new by email address or "First Last <email>".',
-      },
-    },
-    required: ['room', 'teammates'],
-  },
-  async run(input, ran) {
-    if (ran.task !== undefined) throw new Error('A scheduled task cannot share a room.')
-    const state = getState()
-    const loop = findLoop(toPublic(state), ran.workspaceId, asRoomArg(input))
-    const tabId = findRoomTab(state, loop.id) ?? ran.workspaceId
-    if (loop.replica) throw new Error(`${loopName(loop.id)} is a teammate's room: only its owner shares it.`)
-    const named = Array.isArray(input.teammates)
-      ? input.teammates.filter((x): x is string => typeof x === 'string')
-      : []
-    const { members, unknown } = shareTargets(named, state.collab.teammates)
-    if (unknown.length > 0) {
-      throw new Error(`No teammate is called ${unknown.join(', ')}. Ask the user for their email address.`)
-    }
-    if (members.length === 0) throw new Error('Name at least one teammate or email address.')
-    const label = (member: string): string => shareMemberName(member, state.collab.teammates)
-    const detail = (member: string): string => shareMemberDetail(member, state.collab.teammates)
-    const share = state.collab.shares.find((one) => one.shareId === loop.shareId)
-    const already = share ? [...share.members.map((one) => one.accountId), ...share.pendingEmails] : []
-    const alreadyKeys = new Set(already.map((entry) => entry.toLowerCase()))
-    const adding = members.filter((member) => {
-      const contact = parseInviteContact(member)
-      const key = (contact ? contact.email : member).toLowerCase()
-      return !alreadyKeys.has(key)
-    })
-    if (adding.length === 0) return `${loopName(loop.id)} is already shared with ${members.map(label).join(', ')}.`
-    // Sharing shows a room's conversation and data to someone else: the user says so, each time.
-    const asked = await askUserFor(
-      `Share ${loopName(loop.id)} (${loop.desc}) with ${adding.map(detail).join(', ')}?`,
-      [SHARE, DO_NOT_SHARE],
-      ran.signal,
-      undefined,
-      askedBy(ran.runId),
-    )
-    if (asked.answer !== SHARE)
-      throw new Error(`The user did not confirm sharing ${loopName(loop.id)}, so nothing was shared.`)
-    await shareRoom(tabId, loop.id, [...new Set([...already, ...adding])])
-    return `Shared ${loopName(loop.id)} with ${adding.map(label).join(', ')}.`
   },
 }
 

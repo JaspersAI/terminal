@@ -589,6 +589,7 @@ test('what a room’s agent is not offered is the window’s, and extension wind
     'change_setting',
     'clear_cells',
     'focus',
+    'open_settings',
     'read_cells',
     'read_room',
     'search_rooms',

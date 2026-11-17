@@ -113,91 +113,95 @@ export function Chat({ panel }: ViewProps): ReactElement {
         </div>
       )}
       {secretRequest !== null ? (
-        <SecretField key={`${secretRequest.plugin}/${secretRequest.key}`} request={secretRequest} active={tabActive} />
+        <SecretField
+          key={`${secretRequest.plugin}/${secretRequest.key}`}
+          request={secretRequest}
+          idSuffix="docked"
+          active={tabActive}
+        />
+      ) : question !== null ? (
+        <QuestionField key={question.id} question={question} idSuffix="docked" shown={tabActive} active={tabActive} />
       ) : (
-        question !== null && (
-          <QuestionField key={question.id} question={question} shown={tabActive} active={tabActive} />
-        )
-      )}
-      <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
-        {tabActive && menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
-        <div className="flex h-6 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground">
-          <AttachButton compact onFiles={attachments.attach} disabled={busy} />
-          {attachments.files.map((file) => (
-            <span
-              key={file.name}
-              data-attachment={file.name}
-              className="inline-flex h-4 max-w-28 shrink-0 items-center gap-1 border border-border bg-muted px-1 text-[10px] leading-none"
-            >
-              <span className="truncate">{file.name}</span>
+        <form onSubmit={submit} className="relative shrink-0 border-t border-border p-2">
+          {tabActive && menuOpen && <SlashMenu skills={matches} active={active} onPick={pickSkill} />}
+          <div className="flex h-6 items-center gap-1 border border-border bg-background px-1 focus-within:border-foreground">
+            <AttachButton compact onFiles={attachments.attach} disabled={busy} />
+            {attachments.files.map((file) => (
+              <span
+                key={file.name}
+                data-attachment={file.name}
+                className="inline-flex h-4 max-w-28 shrink-0 items-center gap-1 border border-border bg-muted px-1 text-[10px] leading-none"
+              >
+                <span className="truncate">{file.name}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${file.name}`}
+                  onClick={() => attachments.remove(file.name)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <input
+              ref={input}
+              name="prompt"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={busy}
+              value={draft}
+              placeholder="command the terminal from here"
+              role="combobox"
+              aria-expanded={tabActive && menuOpen}
+              aria-controls={tabActive && menuOpen ? 'slash-menu' : undefined}
+              aria-activedescendant={tabActive && menuOpen ? `slash-option-${active}` : undefined}
+              aria-autocomplete="list"
+              onKeyDown={menuKey}
+              onPaste={(event) => pasteLinks(event, attachments.attach)}
+              onChange={(event) => {
+                setDraft(event.target.value)
+                setMenuIndex(0)
+              }}
+              className="h-full min-w-0 flex-1 bg-transparent px-1 text-xs leading-none outline-none disabled:opacity-50"
+            />
+            {working && (
               <button
                 type="button"
-                aria-label={`Remove ${file.name}`}
-                onClick={() => attachments.remove(file.name)}
-                className="text-muted-foreground hover:text-foreground"
+                aria-label="Stop"
+                title="Working — click to stop"
+                onClick={() => stop()}
+                className="progress-square flex h-4 w-4 shrink-0 items-center justify-center p-[2px]"
               >
-                ×
+                <span aria-hidden className="relative z-10 h-2.5 w-2.5 bg-background" />
               </button>
-            </span>
-          ))}
-          <input
-            ref={input}
-            name="prompt"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={busy}
-            value={draft}
-            placeholder="command the terminal from here"
-            role="combobox"
-            aria-expanded={tabActive && menuOpen}
-            aria-controls={tabActive && menuOpen ? 'slash-menu' : undefined}
-            aria-activedescendant={tabActive && menuOpen ? `slash-option-${active}` : undefined}
-            aria-autocomplete="list"
-            onKeyDown={menuKey}
-            onPaste={(event) => pasteLinks(event, attachments.attach)}
-            onChange={(event) => {
-              setDraft(event.target.value)
-              setMenuIndex(0)
-            }}
-            className="h-full min-w-0 flex-1 bg-transparent px-1 text-xs leading-none outline-none disabled:opacity-50"
-          />
-          {working && (
+            )}
             <button
               type="button"
-              aria-label="Stop"
-              title="Working — click to stop"
-              onClick={() => stop()}
-              className="progress-square flex h-4 w-4 shrink-0 items-center justify-center p-[2px]"
+              id={tabActive ? 'docked-chat-voice' : undefined}
+              aria-label={phase === 'recording' ? 'Stop listening' : 'Voice input'}
+              title={
+                !hasVoice
+                  ? 'Add a voice provider in Settings to talk'
+                  : phase === 'recording'
+                    ? 'Listening — press again to transcribe into command line'
+                    : 'Press to talk (press Enter to send)'
+              }
+              disabled={!hasVoice || phase === 'transcribing'}
+              onClick={() => toggleVoice('command')}
+              className={`flex h-4 w-4 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${
+                phase === 'recording'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
             >
-              <span aria-hidden className="relative z-10 h-2.5 w-2.5 bg-background" />
+              <svg viewBox="0 0 14 14" fill="none" aria-hidden className="h-3 w-3 stroke-current stroke-[1.4]">
+                <rect x="5" y="1.5" width="4" height="6.5" rx="2" />
+                <path d="M3 6.5a4 4 0 0 0 8 0M7 10.5v2M5 12.5h4" />
+              </svg>
             </button>
-          )}
-          <button
-            type="button"
-            id={tabActive ? 'docked-chat-voice' : undefined}
-            aria-label={phase === 'recording' ? 'Stop listening' : 'Voice input'}
-            title={
-              !hasVoice
-                ? 'Add a voice provider in Settings to talk'
-                : phase === 'recording'
-                  ? 'Listening — press again to transcribe into command line'
-                  : 'Press to talk (press Enter to send)'
-            }
-            disabled={!hasVoice || phase === 'transcribing'}
-            onClick={() => toggleVoice('command')}
-            className={`flex h-4 w-4 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${
-              phase === 'recording'
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <svg viewBox="0 0 14 14" fill="none" aria-hidden className="h-3 w-3 stroke-current stroke-[1.4]">
-              <rect x="5" y="1.5" width="4" height="6.5" rx="2" />
-              <path d="M3 6.5a4 4 0 0 0 8 0M7 10.5v2M5 12.5h4" />
-            </svg>
-          </button>
-        </div>
-      </form>
+          </div>
+        </form>
+      )}
       {(earlier.length > 0 || shown.length > 0) && (
         <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
           <button

@@ -26,6 +26,12 @@ interface Props {
   compact?: boolean
   /** Whether the workspace tab holding this field is the active tab in this window. */
   active?: boolean
+  /** Optional suffix for DOM element ids when a second Central surface (Docked Central) is mounted simultaneously. */
+  idSuffix?: string
+  /** Whether mounting this field focuses its input automatically. */
+  autoFocus?: boolean
+  /** Whether this instance listens for Escape on window. */
+  listenEscape?: boolean
 }
 
 /** Over the composer, riding its spring; in the docked chat, a plain row above the command line; in a tile's box, in its line's place. */
@@ -50,7 +56,16 @@ const TILE = 'relative shrink-0 bg-background'
  * up at once. Its ids carry the tile, since an id names one thing. It takes the keyboard only from its
  * own tile's line, which the box sees to, and hears Escape only when it is pressed in its own box.
  */
-export function QuestionField({ question, box, shown = true, compact = false, active = true }: Props): ReactElement {
+export function QuestionField({
+  question,
+  box,
+  shown = true,
+  compact = false,
+  active = true,
+  idSuffix,
+  autoFocus = true,
+  listenEscape = true,
+}: Props): ReactElement {
   const [value, setValue] = useState('')
   const [activeChoice, setActiveChoice] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -58,15 +73,16 @@ export function QuestionField({ question, box, shown = true, compact = false, ac
   const input = useRef<HTMLInputElement>(null)
   // The tile it is asked in, by its element's id: a box draws only its own workspace's tiles.
   const on = question.place?.on
-  const id = (name: string): string | undefined => (active ? (on ? `${name}-${on}` : name) : undefined)
+  const suffix = on ?? idSuffix
+  const id = (name: string): string | undefined => (active ? (suffix ? `${name}-${suffix}` : name) : undefined)
   const hasTyped = value.trim() !== ''
   const selectedChoice =
     question.choices.length > 0 && !hasTyped ? Math.min(Math.max(0, activeChoice), question.choices.length - 1) : -1
 
   useEffect(() => {
     setActiveChoice(0)
-    if (active && !on) input.current?.focus()
-  }, [question.id, on, active])
+    if (active && autoFocus && !on) input.current?.focus()
+  }, [question.id, on, active, autoFocus])
 
   // A tile's question reports once its tile has drawn it, which only a window can say: main
   // cannot tell a tile on a workspace off screen, in a closed window, or under a maximized element.
@@ -76,7 +92,7 @@ export function QuestionField({ question, box, shown = true, compact = false, ac
 
   // Escape closes it, and the run carries on without an answer, as the cross does.
   useEffect(() => {
-    if (!active) return
+    if (!active || !listenEscape) return
     const down = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape' || !hears(on, event.target)) return
       if (event.target instanceof HTMLElement && event.target.closest('#workspace-title')) return
@@ -129,7 +145,7 @@ export function QuestionField({ question, box, shown = true, compact = false, ac
           <label
             htmlFor={id('question-input')}
             title={oneLineText}
-            className="max-w-[55%] min-w-0 shrink truncate font-medium text-foreground"
+            className="max-w-[70%] min-w-0 shrink truncate font-medium text-foreground"
           >
             {oneLineText}
           </label>

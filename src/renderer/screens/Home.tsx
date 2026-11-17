@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
+import { isSettingsPane, type SettingsPane } from '../../shared/agent/settings'
 import { needsJaspersSignIn } from '../../shared/app/jaspers'
 import { MAIN_WINDOW } from '../../shared/grid/windows'
 import { LoopsDialog } from '../components/settings/LoopsDialog'
@@ -19,15 +20,17 @@ interface Props {
  * the TabBar at the bottom, and Settings or Rooms over it when opened.
  */
 export function Home({ welcome }: Props): ReactElement {
-  const [settings, setSettings] = useState(false)
+  // Settings as it was last asked for, null while it is closed: the pane is part of the request, so
+  // there is no pane without Settings open.
+  const [settings, setSettings] = useState<{ pane?: SettingsPane } | null>(null)
   const [loops, setLoops] = useState(false)
   const [openedSettingsFromPrompt, setOpenedSettingsFromPrompt] = useState(false)
   const [dismissedSignIn, setDismissedSignIn] = useState(false)
   useEffect(
     () =>
-      window.app.onOpenSettings(() => {
+      window.app.onOpenSettings((pane) => {
         setLoops(false)
-        setSettings(true)
+        setSettings(isSettingsPane(pane) ? { pane } : {})
       }),
     [],
   )
@@ -57,14 +60,15 @@ export function Home({ welcome }: Props): ReactElement {
   }, [welcome, termsAccepted, askSignIn, askEye])
   return (
     <>
-      <div inert={!termsAccepted || settings || loops || askSignIn || askEye} className="contents">
+      <div inert={!termsAccepted || settings !== null || loops || askSignIn || askEye} className="contents">
         <Workspace onOpenRooms={() => setLoops(true)} />
       </div>
       {settings && (
         <Settings
-          onClose={() => setSettings(false)}
+          asked={settings}
+          onClose={() => setSettings(null)}
           onViewLoops={() => {
-            setSettings(false)
+            setSettings(null)
             setLoops(true)
           }}
         />
@@ -76,7 +80,7 @@ export function Home({ welcome }: Props): ReactElement {
           onOpenSettings={() => {
             setOpenedSettingsFromPrompt(true)
             setLoops(false)
-            setSettings(true)
+            setSettings({})
           }}
         />
       )}

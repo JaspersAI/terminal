@@ -717,6 +717,14 @@ test('the orchestrator is told create_room asks the user first, and to ask which
   }
 })
 
+test('the orchestrator is told to use invite_teammate for team invites, open_settings for Settings panes, and inline Central prompts rather than centered modals', () => {
+  assert.match(ROUTER_RULES, /call invite_teammate directly \(never share_room on an unrequested room\)/)
+  assert.match(ROUTER_RULES, /call open_settings with the relevant pane/)
+  assert.match(ROUTER_RULES, /there is no Settings button in the top bar/)
+  assert.match(ROUTER_RULES, /Confirmation prompts from tools appear inline in Central's top command bar/)
+  assert.match(ROUTER_RULES, /never as a centered modal dialog/)
+})
+
 test('the orchestrator is told of the plugins and how their connections stand, and of no view or source', () => {
   const needing: ConnectionInfo = {
     ...READY,

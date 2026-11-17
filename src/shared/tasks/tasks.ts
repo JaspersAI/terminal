@@ -51,6 +51,14 @@ export const TASK_EXCLUDED_TOOLS: readonly string[] = [
   'write_skill',
   'publish_plugin',
   'publish_skill',
+  // Settings dialog and teammate/share changes belong to the user's own session, not background tasks.
+  'open_settings',
+  'invite_teammate',
+  'respond_team_invite',
+  'remove_teammate',
+  'share_room',
+  'share_tab',
+  'stop_sharing',
 ]
 
 /**

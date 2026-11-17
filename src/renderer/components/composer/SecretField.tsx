@@ -15,6 +15,12 @@ interface Props {
   compact?: boolean
   /** Whether the workspace tab holding this field is the active tab in this window. */
   active?: boolean
+  /** Optional suffix for DOM element ids when Docked Central is mounted alongside the top command line. */
+  idSuffix?: string
+  /** Whether mounting this field focuses its input automatically. */
+  autoFocus?: boolean
+  /** Whether this instance listens for Escape on window. */
+  listenEscape?: boolean
 }
 
 /** Over the composer, riding its spring; in the docked chat, a plain row above the command line; in a tile's box, in its line's place. */
@@ -33,22 +39,31 @@ const TILE = 'relative shrink-0 bg-background'
  * are: its ids carry the tile, it takes the keyboard only from its own tile's line, and it hears
  * Escape only when it is pressed in its own box.
  */
-export function SecretField({ request, box, compact = false, active = true }: Props): ReactElement {
+export function SecretField({
+  request,
+  box,
+  compact = false,
+  active = true,
+  idSuffix,
+  autoFocus = true,
+  listenEscape = true,
+}: Props): ReactElement {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const input = useRef<HTMLInputElement>(null)
   // The tile it is asked in, by its element's id: a box draws only its own workspace's tiles.
   const on = request.place?.on
-  const id = (name: string): string | undefined => (active ? (on ? `${name}-${on}` : name) : undefined)
+  const suffix = on ?? idSuffix
+  const id = (name: string): string | undefined => (active ? (suffix ? `${name}-${suffix}` : name) : undefined)
 
   useEffect(() => {
-    if (active && !on) input.current?.focus()
-  }, [on, active])
+    if (active && autoFocus && !on) input.current?.focus()
+  }, [on, active, autoFocus])
 
   // Escape cancels, except where something else on screen owns the key, as for the answer.
   useEffect(() => {
-    if (!active) return
+    if (!active || !listenEscape) return
     const down = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape' || !hears(on, event.target)) return
       if (event.target instanceof HTMLElement && event.target.closest('#workspace-title')) return
@@ -57,7 +72,7 @@ export function SecretField({ request, box, compact = false, active = true }: Pr
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [active, on])
+  }, [active, listenEscape, on])
 
   function cancel(): void {
     void dispatch({ type: 'secret.dismiss', ...(request.place ? { place: request.place } : {}) })
