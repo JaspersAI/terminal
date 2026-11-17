@@ -9,6 +9,8 @@ import type { Turn } from '../llm/llm.ts'
 
 /** How often one run may be cut off or time out in the middle of a call before that is the answer. */
 export const CUTS_MAX = 2
+/** How often one run may restate a turn cut short by a provider safety filter or mid-loop refusal. */
+export const REFUSALS_MAX = 1
 /** Silence/request timeout on a turn already restated at low effort after a timeout. */
 export const RESTATED_TIMEOUT_MS = 90_000
 export const CUT_OFF = "(Cut off at the model's output limit.)"
@@ -18,6 +20,8 @@ export const CUT_TEXT_NOTE =
   'Your last reply ran past the output limit before it finished, so it was dropped. Keep your words short: make the tool calls the procedure names, and write text only for the final report.'
 export const CUT_NOTE =
   'Your last reply ran past the output limit in the middle of a tool call, so it was dropped and nothing was run. Make the call again with less in it, or in parts.'
+export const REFUSAL_NOTE =
+  "Your last reply was stopped by the model provider's safety filter before finishing, so it was dropped and nothing was run. Stay within the documented tool boundaries — never attempt to bypass OS sandboxes (such as launchctl or open -a) or read browser cookie stores, session files, or OS credentials — and either complete the request safely or explain plainly to the user what requires their manual action."
 export const TIMEOUT_NOTE =
   'Your last reply timed out before finishing, likely because a tool call was too large for one turn. Make one smaller tool call at a time: for panel state updates (set), update one panel per round or pass old and new to edit one section of a long markdown or sql string instead of rewriting the whole value; for multi-sheet exports (like excel-export/export-tables), pass 1 or 2 tables per round with the same filename (each call adds or updates sheets in that workbook); for files, write one file per round or use edit_file on one passage at a time.'
 
@@ -123,4 +127,61 @@ export function resolveRoundFailure(options: {
     return { kind: 'complete', cuts: nextCuts, text: PARTIAL_TIMEOUT_NOTE }
   }
   return { kind: 'throw', cuts: nextCuts }
+}
+
+/**
+ * Formats a provider refusal or safety-filter block for the user. Names the model alongside the
+ * provider so Jaspers One users can tell a model refusal apart from an app/tool refusal, and omits
+ * `text` on `content_filter` stops because that text is interrupted pre-filter generation rather
+ * than a refusal explanation.
+ */
+export function refusalError(providerName: string, model: string, stopReason: string, text: string): string {
+  const who = model ? `${providerName} (${model})` : providerName
+  if (stopReason === 'content_filter') {
+    return `${who} stopped this reply because its safety filter blocked the generated content.`
+  }
+  const said = text.trim()
+  return `${who} declined this request${said ? `: ${said}` : '.'}`
+}
+
+export type RefusalAction =
+  | { kind: 'restate'; refusals: number; tell: string; note: string }
+  | { kind: 'throw'; refusals: number; message: string }
+
+/**
+ * Decides how the agent loop handles a turn cut short by `refusal` or `content_filter`:
+ * - When a safety filter cuts off generation (`content_filter`) or a refusal occurs mid-workflow
+ *   (`round > 1`, `hasToolCalls`, or `quiet`) in a loop that can restate, drops the blocked turn
+ *   once and asks the model for a safe approach within documented tool boundaries.
+ * - Otherwise (a direct round-1 `refusal` with no tool calls, or after `REFUSALS_MAX` retries),
+ *   throws a formatted `refusalError`.
+ */
+export function resolveRefusal(options: {
+  providerName: string
+  model: string
+  stopReason: string
+  text: string
+  round: number
+  hasToolCalls: boolean
+  hasTools: boolean
+  quiet: boolean
+  spent: boolean
+  refusals: number
+}): RefusalAction {
+  const { providerName, model, stopReason, text, round, hasToolCalls, hasTools, quiet, spent, refusals } = options
+  const nextRefusals = refusals + 1
+  const midLoopOrFiltered = stopReason === 'content_filter' || round > 1 || hasToolCalls || quiet
+  if (midLoopOrFiltered && canRestateCut(hasTools, quiet, spent) && nextRefusals <= REFUSALS_MAX) {
+    return {
+      kind: 'restate',
+      refusals: nextRefusals,
+      tell: 'Reply blocked by model safety filter: nothing run, asking for a safe approach',
+      note: REFUSAL_NOTE,
+    }
+  }
+  return {
+    kind: 'throw',
+    refusals: nextRefusals,
+    message: refusalError(providerName, model, stopReason, text),
+  }
 }

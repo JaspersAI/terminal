@@ -8,6 +8,10 @@ import {
   CUTS_MAX,
   cutShort,
   PARTIAL_TIMEOUT_NOTE,
+  REFUSAL_NOTE,
+  REFUSALS_MAX,
+  refusalError,
+  resolveRefusal,
   resolveRoundFailure,
   RESTATED_TIMEOUT_MS,
   restate,
@@ -174,4 +178,88 @@ test('a non-quiet multi-step run that already completed tool calls can finish pa
     kind: 'throw',
     cuts: CUTS_MAX + 1,
   })
+})
+
+test('a mid-loop safety filter or refusal restates once for a safe approach and never echoes interrupted pre-filter text as a refusal reason', () => {
+  assert.equal(REFUSALS_MAX, 1)
+  assert.match(REFUSAL_NOTE, /never attempt to bypass OS sandboxes/i)
+  assert.match(REFUSAL_NOTE, /browser cookie stores/i)
+
+  // A content_filter cut-off in a tool loop restates once instead of crashing the run.
+  const firstFilter = resolveRefusal({
+    providerName: 'Jaspers',
+    model: 'gemini-4-argon',
+    stopReason: 'content_filter',
+    text: 'I will run a script in ~/Jaspers/shell to inspect the file.',
+    round: 3,
+    hasToolCalls: false,
+    hasTools: true,
+    quiet: false,
+    spent: false,
+    refusals: 0,
+  })
+  assert.deepEqual(firstFilter, {
+    kind: 'restate',
+    refusals: 1,
+    tell: 'Reply blocked by model safety filter: nothing run, asking for a safe approach',
+    note: REFUSAL_NOTE,
+  })
+
+  // If the restated turn still trips content_filter, it throws naming provider + model without echoing pre-filter text.
+  const secondFilter = resolveRefusal({
+    providerName: 'Jaspers',
+    model: 'gemini-4-argon',
+    stopReason: 'content_filter',
+    text: 'I will run a script in ~/Jaspers/shell to inspect the file.',
+    round: 3,
+    hasToolCalls: false,
+    hasTools: true,
+    quiet: false,
+    spent: false,
+    refusals: 1,
+  })
+  assert.deepEqual(secondFilter, {
+    kind: 'throw',
+    refusals: 2,
+    message: 'Jaspers (gemini-4-argon) stopped this reply because its safety filter blocked the generated content.',
+  })
+
+  // A direct round-1 refusal without tool calls throws immediately with the provider's explanation and model name.
+  const directRefusal = resolveRefusal({
+    providerName: 'Anthropic',
+    model: 'claude-sonnet-4-6',
+    stopReason: 'refusal',
+    text: 'I cannot help with that.',
+    round: 1,
+    hasToolCalls: false,
+    hasTools: true,
+    quiet: false,
+    spent: false,
+    refusals: 0,
+  })
+  assert.deepEqual(directRefusal, {
+    kind: 'throw',
+    refusals: 1,
+    message: 'Anthropic (claude-sonnet-4-6) declined this request: I cannot help with that.',
+  })
+
+  // A refusal on a later tool round restates once so an ongoing multi-step run can recover.
+  const laterRoundRefusal = resolveRefusal({
+    providerName: 'Anthropic',
+    model: 'claude-sonnet-4-6',
+    stopReason: 'refusal',
+    text: '',
+    round: 4,
+    hasToolCalls: false,
+    hasTools: true,
+    quiet: false,
+    spent: false,
+    refusals: 0,
+  })
+  assert.equal(laterRoundRefusal.kind, 'restate')
+
+  assert.equal(
+    refusalError('Jaspers', 'gemini-4-argon', 'refusal', '  '),
+    'Jaspers (gemini-4-argon) declined this request.',
+  )
 })

@@ -137,9 +137,18 @@ export function answered(list: LiveExchange[], ask: string, reply: string, at = 
   return ended(list, ask, (one) => ({ ...one, answer: reply, thinking: null, working: false, at, hidden: false }))
 }
 
-/** The list once a request's run has failed: the message sits under its question, with the trail above it. */
+/** The list once a request's run has failed: the message sits under its question, with the trail above it and any partial streamed reply cleared. */
 export function failed(list: LiveExchange[], ask: string, message: string, at = Date.now()): LiveExchange[] {
-  return ended(list, ask, (one) => ({ ...one, thinking: null, working: false, at, error: message, hidden: false }))
+  return ended(list, ask, (one) => ({
+    ...one,
+    answer: null,
+    citations: [],
+    thinking: null,
+    working: false,
+    at,
+    error: message,
+    hidden: false,
+  }))
 }
 
 /**

@@ -186,14 +186,19 @@ test('a request that ends stays where it is with nothing over under it, and noth
   )
 })
 
-test('a stopped run goes, and a failed one stays with why', () => {
+test('a stopped run goes, and a failed one stays with why and clears any partial streamed reply', () => {
   let list = two()
   list = answered(list, 'a', '')
   assert.deepEqual(
     list.map((one) => one.ask),
     ['b'],
   )
+  list = heard(list, { kind: 'text', runId: 'run2', delta: 'Partial pre-tool announcement before failure.' })
+  list = heard(list, { kind: 'citations', runId: 'run2', citations: [{ id: 's1', title: 'Source' }] })
+  assert.equal(list[0]?.answer, 'Partial pre-tool announcement before failure.')
   list = failed(list, 'b', 'No key.')
+  assert.equal(list[0]?.answer, null)
+  assert.deepEqual(list[0]?.citations, [])
   assert.equal(list[0]?.error, 'No key.')
   assert.equal(list[0]?.working, false)
   assert.equal(workingOn(list, 'w1'), false)
