@@ -599,6 +599,8 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           needRoom(),
           attributed(commandSenderName(command), input),
         )
+        said(target.workspaceId, needRoom())
+        await push(command.shareId)
         return { reply: reply.slice(0, REPLY_MAX) }
       }
       case 'message': {

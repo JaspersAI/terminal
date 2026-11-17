@@ -7,6 +7,7 @@
 // it). Two accounts are teammates only once the invited one has accepted, and a room is shared only
 // with teammates: that acceptance is the consent everything else here rests on.
 
+import { splitAttachments } from '../agent/attachments.ts'
 import type { Loop } from '../loops/loops.ts'
 import type { Workspace } from '../state.ts'
 import { tabSwatchStyle } from '../tabs/tabs.ts'
@@ -375,6 +376,19 @@ export function isForPeople(
 /** A message as a room's conversation keeps it when someone other than the reader may have said it. */
 export function attributed(sender: string | null, text: string): string {
   return sender ? `[${sender}] ${text}` : text
+}
+
+/**
+ * The prompt text sent to a teammate's room agent on its owner's terminal (`collab.prompt`).
+ * When Central hands a request over with refined self-contained instructions (`written`), injects
+ * those instructions (preserving any attached files from the user's input) rather than prepending
+ * the user's meta-framing ("tell room 3 to…"); otherwise sends the direct input as typed.
+ */
+export function replicaPromptInput(input: string, written?: string): string {
+  const refined = written?.trim()
+  if (!refined) return input.trim()
+  const { attachments } = splitAttachments(input)
+  return [refined, ...attachments].join('\n\n')
 }
 
 /** Whether an exchange in a room's conversation was between people, the agent left out. */

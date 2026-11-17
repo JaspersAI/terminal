@@ -10,6 +10,7 @@ import {
   named,
   NO,
   notStarted,
+  prepareRoomUpdate,
   resolveNewRoomPlacement,
   START,
   startInstructions,
@@ -29,7 +30,7 @@ import {
   settlePanel,
   updateLoop,
 } from '../actions'
-import { shareRoom } from '../collab/collab'
+import { readOnly, shareRoom } from '../collab/collab'
 import { getGrid, gridSizeOf } from '../grid/grid'
 import { defaultRoomSize, windowScreenDimensions } from '../grid/windows'
 import { findRoomTab } from '../loops/loops'
@@ -87,7 +88,7 @@ const updateRoom: Tool = {
   name: 'update_room',
   handoff: true,
   description:
-    "Hands the request to a room that already exists when the work in its tile needs to change, run something new, or have its instructions corrected: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view to place or close, or a follow-up for its agent to run. Always refine and expand rough, terse, or cross-room prompts into explicit, self-contained instructions in message (and optionally update brief, systemPrompt, or desc when the room's standing instructions change), unpacking any context from other rooms or panels first. Its agent takes it up in its own tile, at once when it is free and with what it is doing now when it is at work, on the user's request as they typed it, with your refined instructions shown to the user and passed under it. Do not use this to summarize, explain, compare, or answer a question about what a room or its views already show or have found: read the room with read_room and its view text with get (panels/<id>/text) or query, and answer the user yourself. Never start a second room for what one is already doing.",
+    "Hands the request to a room that already exists (including a shared room owned by a teammate, injecting the prompt into its owner's room agent over collaboration) when the work in its tile needs to change, run something new, or have its instructions corrected: more data to fetch, a new question to post to a research room, a change to what one of its views shows, a view to place or close, or a follow-up for its agent to run. Always refine and expand rough, terse, or cross-room prompts into explicit, self-contained instructions in message (and optionally update brief, systemPrompt, or desc on a room of this terminal's own when its standing instructions change), unpacking any context from other rooms or panels first. Its agent takes it up in its own tile, at once when it is free and with what it is doing now when it is at work, on the user's request as they typed it, with your refined instructions shown to the user and passed under it. Do not use this to summarize, explain, compare, or answer a question about what a room or its views already show or have found: read the room with read_room and its view text with get (panels/<id>/text) or query, and answer the user yourself. Never start a second room for what one is already doing.",
   parameters: {
     type: 'object',
     properties: {
@@ -107,15 +108,9 @@ const updateRoom: Tool = {
     const desc = optional(input.desc, (value) => asWords(value, 'desc'))
     const brief = optional(input.brief, (value) => (typeof value === 'string' ? value.trim() : ''))
     const systemPrompt = optional(input.systemPrompt, (value) => (typeof value === 'string' ? value.trim() : ''))
-    if (desc !== undefined || brief !== undefined || systemPrompt !== undefined) {
-      updateLoop(context.workspaceId, loop.id, {
-        ...(desc !== undefined ? { desc } : {}),
-        ...(brief !== undefined ? { brief } : {}),
-        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
-      })
-    }
     const message = optional(input.message, (value) => asWords(value, 'message'))
-    const written = handoffWritten({ message, brief, systemPrompt })
+    const { patch, written } = prepareRoomUpdate(loop, { message, desc, brief, systemPrompt }, readOnly)
+    if (patch) updateLoop(context.workspaceId, loop.id, patch)
     return hand(context, loop, written, handoffSummary('Sent to', loop.id, written))
   },
 }

@@ -1,8 +1,9 @@
+import { untilAborted } from '../../shared/abort'
 import type { Place } from '../../shared/agent/asking'
 import { shownQuestion } from '../../shared/agent/attachments'
 import type { Handed } from '../../shared/agent/typed'
 import { closedLoop } from '../../shared/loops/closed'
-import { fullName, othersIn, parseRoomInput, roomSharing } from '../../shared/collab/collab'
+import { fullName, othersIn, parseRoomInput, replicaPromptInput, roomSharing } from '../../shared/collab/collab'
 import { loopChat, frameOf, gone, LOOP_ID, shut } from '../../shared/loops/loops'
 import type { Exchange } from '../../shared/agent/transcript'
 import { findRoomTab, loopsOf, touchLoop } from '../loops/loops'
@@ -12,7 +13,7 @@ import { getState, subscribe } from '../state'
 import { NEW_THREAD, turnText, userRequest, type Added } from './request'
 import { loopTools } from './tools'
 import { loopPrompt, loopStateNow, taskPreface } from './utils/prompt'
-import { stopChat } from './utils/runs'
+import { begin, ended, stopChat } from './utils/runs'
 import { exchanges, fileDirectExchange, forget } from './utils/thread'
 import { createTurns } from './utils/turns'
 
@@ -122,22 +123,42 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
     record,
   )
 
-  if (sharing && collab) {
+  if (record?.replica) {
+    if (!sharing || !collab) throw new Error('Not connected to Jaspers: this room is read-only until it is.')
     // In a shared room a message that opens with `@` and someone in it is for the people: it is
     // filed in the room's conversation under the sender's name, and the room's agent is not run.
     const people = sharing.share ? othersIn(sharing.share, state.collab.accountId) : []
     const sender = fullName(state.collab) || state.jaspers.email
     const parsed = task === undefined && !written ? parseRoomInput(input, sender, people) : null
+    if (parsed?.kind === 'human') return collab.message(sharing.shareId, record.replica.room, input.trim())
+    // A teammate's room has no agent here: whatever is asked of it is asked of its owner's terminal,
+    // while tracked as a live tile run so handoffs from Central/Orb and direct box prompts show live.
+    const promptText = replicaPromptInput(input, written)
+    const shown = shownQuestion(written ?? input)
+    const place: Place = { workspaceId, on: frameOf(getGrids(workspaceId), loop)?.element.id ?? on }
+    const entry = begin(
+      task === undefined ? 'user' : 'task',
+      workspaceId,
+      task === undefined ? '' : `task ${task}`,
+      shown,
+      ask,
+      { chat, loop, place },
+    )
+    return ended(
+      entry,
+      untilAborted(collab.prompt(sharing.shareId, record.replica.room, promptText), entry.controller.signal),
+    )
+  }
+
+  if (sharing && collab) {
+    const people = sharing.share ? othersIn(sharing.share, state.collab.accountId) : []
+    const sender = fullName(state.collab) || state.jaspers.email
+    const parsed = task === undefined && !written ? parseRoomInput(input, sender, people) : null
     if (parsed?.kind === 'human') {
-      if (sharing.role === 'member') return collab.message(sharing.shareId, record!.replica!.room, input.trim())
       touchLoop(workspaceId, loop)
       fileDirectExchange(chat, parsed.question, parsed.answer)
       collab.said(workspaceId, loop)
       return Promise.resolve(parsed.answer)
-    }
-    // A teammate's room has no agent here: whatever is asked of it is asked of its owner's terminal.
-    if (sharing.role === 'member') {
-      return collab.prompt(sharing.shareId, record!.replica!.room, written ? `${input}\n\n${written}`.trim() : input)
     }
   }
 

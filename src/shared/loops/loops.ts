@@ -188,6 +188,44 @@ export function handoffSummary(
 }
 
 /**
+ * Resolves what `update_room` changes locally (`patch`) and what instructions (`written`) it
+ * hands to the room's agent. On a replica of a teammate's shared room, standing record fields
+ * (`desc`, `brief`, `systemPrompt`) belong to the owner's terminal and are never patched locally;
+ * instead, `handoffWritten` extracts the prompt to inject over collaboration, failing up front
+ * when the share is currently read-only (owner offline or disconnected).
+ */
+export function prepareRoomUpdate(
+  loop: Pick<Loop, 'replica' | 'shareId'>,
+  spec: {
+    message?: string
+    desc?: string
+    brief?: string
+    systemPrompt?: string
+  },
+  readOnlyReason?: (shareId: string) => string | null,
+): { patch: LoopPatch | null; written: string | undefined } {
+  const written = handoffWritten({ message: spec.message, brief: spec.brief, systemPrompt: spec.systemPrompt })
+  if (loop.replica) {
+    if (readOnlyReason) {
+      const blocked = readOnlyReason(loop.shareId ?? '')
+      if (blocked) throw new Error(blocked)
+    }
+    return { patch: null, written }
+  }
+  const hasPatch = spec.desc !== undefined || spec.brief !== undefined || spec.systemPrompt !== undefined
+  return {
+    patch: hasPatch
+      ? {
+          ...(spec.desc !== undefined ? { desc: spec.desc } : {}),
+          ...(spec.brief !== undefined ? { brief: spec.brief } : {}),
+          ...(spec.systemPrompt !== undefined ? { systemPrompt: spec.systemPrompt } : {}),
+        }
+      : null,
+    written,
+  }
+}
+
+/**
  * Builds the follow-up message sent to a room's agent when the user edits and applies the room's
  * instructions (`brief` and `systemPrompt`) in the UI.
  */

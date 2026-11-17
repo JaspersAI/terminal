@@ -12,6 +12,7 @@ import {
   ownName,
   parseRoomInput,
   peopleIn,
+  replicaPromptInput,
   resolveTeammate,
   roomSharing,
   shareTargets,
@@ -245,4 +246,20 @@ test("a word that is one person's first name and another's last name or handle n
     members: ['Jane Doe <jane@fund.com>'],
     unknown: [],
   })
+})
+
+test('replicaPromptInput injects refined Central instructions when handed over while preserving attachments, and uses direct input otherwise', () => {
+  assert.equal(replicaPromptInput('  add Q4 guidance column  '), 'add Q4 guidance column')
+  assert.equal(
+    replicaPromptInput(
+      'tell room 4 to add Q4 guidance column',
+      'Add a Q4 revenue guidance column to the comparison table.',
+    ),
+    'Add a Q4 revenue guidance column to the comparison table.',
+  )
+  const attached = '<attached_file name="notes.md">Margin notes</attached_file>'
+  assert.equal(
+    replicaPromptInput(`tell room 4 to incorporate this\n\n${attached}`, 'Incorporate the attached margin notes.'),
+    `Incorporate the attached margin notes.\n\n${attached}`,
+  )
 })
