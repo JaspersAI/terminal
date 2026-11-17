@@ -38,6 +38,7 @@ import {
   recordSessionExchange,
   startTerminalSession,
   threadFile,
+  waitForThreads,
 } from '../thread-file'
 import { createThreads, threadKey, type ThreadModel } from '../threads'
 import type { Tool, ToolContext } from '../tools/types'
@@ -240,6 +241,7 @@ export function fileDirectExchange(chat: string, question: string, answer: strin
 
 /** Returns all saved Terminal Sessions from start to finish (newest first). */
 export async function terminalSessions(): Promise<TerminalSession[]> {
+  await waitForThreads()
   const activeExchanges = await exchanges(CENTRAL_CHAT, 100)
   return getTerminalSessions(activeExchanges)
 }
@@ -251,6 +253,7 @@ export async function terminalSessions(): Promise<TerminalSession[]> {
  * thread the next request continues, which holds the last few.
  */
 export async function exchanges(chat: string, limit: number, before?: number): Promise<Exchange[]> {
+  if (chat === CENTRAL_CHAT) await waitForThreads()
   const secrets = knownSecrets()
   const config = before === undefined ? modelFor(chat) : null
   const snapshot = config ? threadFor(chat, config).slice() : null

@@ -1,141 +1,177 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import {
+  appendSessionExchange,
+  beginNewSession,
   CENTRAL_CHAT,
   compressSession,
-  isNewSession,
+  reconcileTerminalSessions,
   SESSIONS_STORAGE_KEY,
+  visibleTerminalSessions,
   type TerminalSession,
 } from '../../shared/agent/history'
-import type { Exchange } from '../../shared/agent/transcript'
+import { transcript, type Exchange } from '../../shared/agent/transcript'
+import { EXCHANGES_MAX } from '../../shared/data/store'
 import type { Turn } from '../../shared/llm/llm'
 import { settle } from '../../shared/agent/thread-store'
-import { allThreads, saveThread } from '../data/store'
+import { allThreads, clearCentralExchanges, readCentralExchanges, saveThread } from '../data/store'
+import { jaspersHome } from '../home'
 import { getState } from '../state'
 import type { ThreadStore } from './threads'
+import { knownSecrets } from './utils/settings'
 
 // The assistant's threads, kept between sessions, each under its chat's key. Read once at startup,
 // since a thread is asked for inside a run and cannot wait on the store there; written whole as each
 // turn joins a run and again as the run ends, so the app carries on where it was: the next request
 // reads the conversation it would have read had the app never quit, a run it quit under included.
 
-const MAX_SESSIONS = 100
 const kept = new Map<string, { model: string; turns: Turn[] }>()
 let storedSessions: TerminalSession[] = []
 let activeSessionId: string | null = null
+let diskPersistEnabled = false
+let threadsReady: Promise<void> = Promise.resolve()
 
-function nextSessionId(): string {
-  let max = 0
-  for (const s of storedSessions) {
-    const m = /^session_(\d+)$/.exec(s.id)
-    if (m) max = Math.max(max, Number(m[1]))
-  }
-  return `session_${max + 1}`
+function sessionsFile(): string {
+  return path.join(jaspersHome(), 'data', 'sessions.json')
 }
 
-function persistSessions(): void {
-  saveThread(SESSIONS_STORAGE_KEY, Date.now(), 'sessions', JSON.stringify(storedSessions))
+function readDiskSessions(): TerminalSession[] {
+  try {
+    const raw = fs.readFileSync(sessionsFile(), 'utf8')
+    const parsed = JSON.parse(raw) as TerminalSession[]
+    if (Array.isArray(parsed)) {
+      return parsed.filter((s) => s && typeof s.id === 'string' && Array.isArray(s.exchanges))
+    }
+  } catch {
+    // Missing or unreadable sessions.json falls back to SQLite.
+  }
+  return []
+}
+
+function writeDiskSessions(sessions: TerminalSession[]): void {
+  if (!diskPersistEnabled) return
+  try {
+    const file = sessionsFile()
+    const dir = path.dirname(file)
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const tmp = `${file}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(sessions), { encoding: 'utf8', mode: 0o600 })
+    fs.renameSync(tmp, file)
+  } catch {
+    // Best-effort disk mirror alongside SQLite persistence.
+  }
+}
+
+function persistSessions(): Promise<void> {
+  writeDiskSessions(storedSessions)
+  return saveThread(SESSIONS_STORAGE_KEY, Date.now(), 'sessions', JSON.stringify(storedSessions))
+}
+
+/** Resolves once startup thread and session reconciliation has finished. */
+export function waitForThreads(): Promise<void> {
+  return threadsReady
 }
 
 /** Starts a new Terminal Session from this point forward, keeping all prior sessions intact. */
 export function startTerminalSession(now = Date.now()): string {
-  storedSessions = storedSessions.map((s) => (s.active ? { ...s, active: false } : s))
-  const currentEmpty = storedSessions.find((s) => s.exchanges.length === 0)
-  if (currentEmpty) {
-    currentEmpty.startedAt = now
-    currentEmpty.updatedAt = now
-    currentEmpty.active = true
-    activeSessionId = currentEmpty.id
-    return currentEmpty.id
-  }
-  const id = nextSessionId()
-  const session: TerminalSession = {
-    id,
-    title: 'Terminal session',
-    startedAt: now,
-    updatedAt: now,
-    active: true,
-    exchanges: [],
-  }
-  storedSessions = [...storedSessions.slice(-(MAX_SESSIONS - 1)), session]
-  activeSessionId = id
-  persistSessions()
-  return id
+  const begun = beginNewSession(storedSessions, now)
+  storedSessions = begun.sessions
+  activeSessionId = begun.activeId
+  void persistSessions()
+  return begun.activeId
 }
 
 /** Appends one exchange to the active Terminal Session so the full session conversation is saved from start to finish. */
 export function recordSessionExchange(exchange: Exchange, at = Date.now()): void {
-  if (!activeSessionId || !storedSessions.some((s) => s.id === activeSessionId)) {
-    startTerminalSession(at)
-  }
-  const idx = storedSessions.findIndex((s) => s.id === activeSessionId)
-  if (idx < 0) return
-  const current = storedSessions[idx]!
-  const nextExchanges = [
-    ...current.exchanges,
-    { ...exchange, id: exchange.id ?? current.exchanges.length + 1, at: exchange.at ?? at },
-  ]
-  const firstQuestion = nextExchanges.find((e) => e.question.trim() && !e.welcome)?.question.trim()
-  const title = firstQuestion ? firstQuestion.replace(/\s+/g, ' ').slice(0, 80) : current.title || 'Terminal session'
-  storedSessions = storedSessions.map((s, i) =>
-    i === idx
-      ? {
-          ...s,
-          title,
-          updatedAt: at,
-          active: true,
-          exchanges: nextExchanges,
-        }
-      : { ...s, active: false },
-  )
-  persistSessions()
+  const updated = appendSessionExchange(storedSessions, activeSessionId, exchange, at)
+  storedSessions = updated.sessions
+  activeSessionId = updated.activeId
+  void persistSessions()
 }
 
 /** Returns all Terminal Sessions (newest first) that have at least one exchange, seeding from fallback exchanges if needed. */
 export function getTerminalSessions(fallbackActiveExchanges: Exchange[] = []): TerminalSession[] {
-  const nonEmpty = storedSessions.filter((s) => s.exchanges.length > 0)
-  if (nonEmpty.length === 0 && fallbackActiveExchanges.length > 0) {
-    const firstQ = fallbackActiveExchanges.find((e) => e.question.trim() && !e.welcome)?.question.trim()
-    const now = Date.now()
-    const seeded: TerminalSession = {
-      id: activeSessionId ?? 'session_1',
-      title: firstQ ? firstQ.replace(/\s+/g, ' ').slice(0, 80) : 'Terminal session',
-      startedAt: now,
-      updatedAt: now,
-      active: true,
-      exchanges: fallbackActiveExchanges,
-    }
-    storedSessions = [seeded]
-    activeSessionId = seeded.id
-    persistSessions()
-    return [seeded]
+  const result = visibleTerminalSessions(storedSessions, fallbackActiveExchanges)
+  if (result.seeded) {
+    storedSessions = result.sessions
+    activeSessionId = result.sessions[result.sessions.length - 1]?.id ?? activeSessionId
+    void persistSessions()
   }
-  return [...nonEmpty].sort((a, b) => b.updatedAt - a.updatedAt)
+  return result.visible
 }
 
-/** Reads what was kept. Compresses Central's thread at a cold-launch session boundary (>15m since last turn). */
-export async function startThreads(): Promise<void> {
-  const stored = await allThreads()
+/**
+ * Reads what was kept, reconciles and archives all prior Central sessions, clears Central's active
+ * conversation log for the new session, and compresses Central's model context to `<prior_session_summary>`.
+ */
+export function startThreads(): Promise<void> {
+  threadsReady = loadAndStartThreads().catch(() => undefined)
+  return threadsReady
+}
+
+async function loadAndStartThreads(): Promise<void> {
+  diskPersistEnabled = true
+  const diskSessions = readDiskSessions()
+  const [stored, dbExchanges] = await Promise.all([allThreads(), readCentralExchanges()])
   const now = Date.now()
+  let sqlSessions: TerminalSession[] = []
   const rawSessions = stored[SESSIONS_STORAGE_KEY]
   if (rawSessions) {
     try {
       const parsed = JSON.parse(rawSessions.turns) as TerminalSession[]
       if (Array.isArray(parsed)) {
-        storedSessions = parsed.filter((s) => s && typeof s.id === 'string' && Array.isArray(s.exchanges))
+        sqlSessions = parsed.filter((s) => s && typeof s.id === 'string' && Array.isArray(s.exchanges))
       }
     } catch {
       // ignore malformed session log
     }
   }
-  // Each new terminal launch starts a new terminal session from start to finish.
-  startTerminalSession(now)
+
+  let secrets: string[] = []
+  try {
+    secrets = knownSecrets()
+  } catch {
+    secrets = []
+  }
+
+  const unfiledExchanges: Exchange[] = []
+  for (const [chat, one] of Object.entries(stored)) {
+    if (chat === SESSIONS_STORAGE_KEY || chat.includes('/') || chat.startsWith('build/')) continue
+    try {
+      const turns = JSON.parse(one.turns) as Turn[]
+      if (Array.isArray(turns) && turns.length > 0) {
+        unfiledExchanges.push(...transcript(turns, EXCHANGES_MAX, secrets))
+      }
+    } catch {
+      // ignore malformed thread
+    }
+  }
+
+  storedSessions = reconcileTerminalSessions({
+    diskSessions,
+    sqlSessions,
+    dbExchanges: dbExchanges ?? [],
+    unfiledExchanges,
+    now,
+  })
+
+  // Each new terminal launch archives prior sessions and starts a fresh session.
+  const begun = beginNewSession(storedSessions, now)
+  storedSessions = begun.sessions
+  activeSessionId = begun.activeId
+  await persistSessions()
+  if (dbExchanges !== null) {
+    await clearCentralExchanges()
+  }
 
   for (const [chat, one] of Object.entries(stored)) {
     if (chat === SESSIONS_STORAGE_KEY) continue
     try {
       let turns = JSON.parse(one.turns) as Turn[]
       if (Array.isArray(turns) && turns.length > 0) {
-        if (chat === CENTRAL_CHAT && isNewSession(one.at, now, 'launch')) {
-          turns = compressSession(turns)
+        if (chat === CENTRAL_CHAT) {
+          turns = compressSession(turns, 0)
+          void saveThread(CENTRAL_CHAT, now, one.model, JSON.stringify(turns))
         }
         kept.set(chat, { model: one.model, turns })
       }
@@ -148,7 +184,11 @@ export async function startThreads(): Promise<void> {
     try {
       const legacyId = getState().currentWorkspaceId
       const legacy = kept.get(legacyId)
-      if (legacy) kept.set(CENTRAL_CHAT, legacy)
+      if (legacy) {
+        const compressed = compressSession(legacy.turns, 0)
+        kept.set(CENTRAL_CHAT, { model: legacy.model, turns: compressed })
+        kept.delete(legacyId)
+      }
     } catch {
       // State not initialized in isolated tests.
     }

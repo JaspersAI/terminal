@@ -749,3 +749,33 @@ test('correlated symbol and date lookups over run_rows use expression indexes in
   assert.ok(indexes.includes('run_rows_date'))
   db.close()
 })
+
+test('centralExchanges reads central and legacy workspace exchanges in chronological order, and clearCentralExchanges clears them while preserving room exchanges and sessions:log', () => {
+  const { store: db } = store()
+  db.fileExchange('ws-legacy-1', 1000, { question: 'legacy q1', answer: 'legacy a1' })
+  db.fileExchange('ws-legacy-1/f1', 1500, { question: 'room q1', answer: 'room a1' })
+  db.fileExchange('central', 2000, { question: 'central q2', answer: 'central a2', steps: ['Thinking'] })
+  db.saveThread('sessions:log', { at: 2000, model: 'sessions', turns: '[{"id":"session_1"}]' })
+  db.saveThread('central', { at: 2000, model: 'm', turns: '[{"role":"user","text":"hi"}]' })
+  db.saveThread('ws-legacy-1', { at: 1000, model: 'm', turns: '[{"role":"user","text":"old"}]' })
+  db.saveThread('ws-legacy-1/f1', { at: 1500, model: 'm', turns: '[{"role":"user","text":"room"}]' })
+
+  const allCentral = db.centralExchanges()
+  assert.deepEqual(
+    allCentral.map(({ id: _id, ...rest }) => rest),
+    [
+      { at: 1000, question: 'legacy q1', answer: 'legacy a1' },
+      { at: 2000, question: 'central q2', answer: 'central a2', steps: ['Thinking'] },
+    ],
+  )
+
+  db.clearCentralExchanges()
+  assert.deepEqual(db.centralExchanges(), [])
+  assert.deepEqual(db.exchanges('central', 10), [])
+  assert.deepEqual(db.exchanges('ws-legacy-1', 10), [])
+  assert.equal(db.exchanges('ws-legacy-1/f1', 10).length, 1)
+  assert.equal(db.loadThread('ws-legacy-1'), null)
+  assert.notEqual(db.loadThread('sessions:log'), null)
+  assert.notEqual(db.loadThread('ws-legacy-1/f1'), null)
+  db.close()
+})

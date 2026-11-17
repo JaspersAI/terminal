@@ -250,6 +250,10 @@ export interface Store {
    * last ones filed ahead of that id.
    */
   exchanges(chat: string, limit: number, before?: number): Exchange[]
+  /** Every Central exchange (including legacy workspace-level Central chats), oldest first. */
+  centralExchanges(): Exchange[]
+  /** Clears active Central exchanges and legacy workspace-level Central threads after they are archived in Sessions. */
+  clearCentralExchanges(): void
   /** Writes one down, and answers how many are unread now. */
   notify(at: number, source: string, text: string): { unread: number }
   /** The newest first, for the inbox. */
@@ -330,6 +334,35 @@ export function openStore(file: string): Store {
   const readExchanges = db.prepare(
     'select id, at, question, answer, task, welcome, citations, steps, error from exchanges where chat = ? and id < ? order by id desc limit ?',
   )
+  const readCentralExchanges = db.prepare(
+    "select id, at, question, answer, task, welcome, citations, steps, error from exchanges where chat = 'central' or chat not like '%/%' order by at asc, id asc",
+  )
+  const deleteCentralExchanges = db.prepare("delete from exchanges where chat = 'central' or chat not like '%/%'")
+  const deleteLegacyCentralThreads = db.prepare(
+    "delete from threads where chat != 'central' and chat != 'sessions:log' and chat not like '%/%'",
+  )
+  interface ExchangeRow {
+    id: number
+    at: number
+    question: string
+    answer: string
+    task: string | null
+    welcome: number
+    citations: string | null
+    steps: string | null
+    error: string | null
+  }
+  const toExchange = (row: ExchangeRow): Exchange => ({
+    id: row.id,
+    at: row.at,
+    question: row.question,
+    answer: row.answer,
+    ...(row.task === null ? {} : { task: row.task }),
+    ...(row.welcome === 1 ? { welcome: true as const } : {}),
+    ...(row.citations === null ? {} : { citations: JSON.parse(row.citations) as Exchange['citations'] }),
+    ...(row.steps === null ? {} : { steps: JSON.parse(row.steps) as string[] }),
+    ...(row.error === null ? {} : { error: row.error }),
+  })
   const insertNotification = db.prepare('insert into notifications (at, source, text) values (?, ?, ?)')
   const readNotifications = db.prepare(
     'select id, at, source, text, read from notifications order by at desc, id desc limit ?',
@@ -421,30 +454,20 @@ export function openStore(file: string): Store {
 
     exchanges(chat, limit, before) {
       const take = Math.max(1, Math.min(limit, EXCHANGES_MAX))
-      const rows = readExchanges.all(chat, before ?? Number.MAX_SAFE_INTEGER, take) as unknown as {
-        id: number
-        at: number
-        question: string
-        answer: string
-        task: string | null
-        welcome: number
-        citations: string | null
-        steps: string | null
-        error: string | null
-      }[]
+      const rows = readExchanges.all(chat, before ?? Number.MAX_SAFE_INTEGER, take) as unknown as ExchangeRow[]
       // Read newest first, since the limit is of the end; handed back in the order they were said. A
       // mark an exchange does not have is left out, as it is on one read off a thread.
-      return rows.reverse().map((row) => ({
-        id: row.id,
-        at: row.at,
-        question: row.question,
-        answer: row.answer,
-        ...(row.task === null ? {} : { task: row.task }),
-        ...(row.welcome === 1 ? { welcome: true as const } : {}),
-        ...(row.citations === null ? {} : { citations: JSON.parse(row.citations) as Exchange['citations'] }),
-        ...(row.steps === null ? {} : { steps: JSON.parse(row.steps) as string[] }),
-        ...(row.error === null ? {} : { error: row.error }),
-      }))
+      return rows.reverse().map(toExchange)
+    },
+
+    centralExchanges() {
+      const rows = readCentralExchanges.all() as unknown as ExchangeRow[]
+      return rows.map(toExchange)
+    },
+
+    clearCentralExchanges() {
+      deleteCentralExchanges.run()
+      deleteLegacyCentralThreads.run()
     },
 
     notify(at, source, text) {

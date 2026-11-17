@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  appendSessionExchange,
+  beginNewSession,
   BUILDER_OUTPUT_MAX,
   capOutput,
   CENTRAL_CHAT,
@@ -11,12 +13,15 @@ import {
   OUTPUT_MAX,
   portable,
   recent,
+  reconcileTerminalSessions,
   SESSION_IDLE_GAP_MS,
+  sessionTitle,
   sourceOutput,
+  visibleTerminalSessions,
   withoutThinking,
 } from './history.ts'
 import type { Turn } from '../llm/llm.ts'
-import { taskNote } from './transcript.ts'
+import { taskNote, transcript } from './transcript.ts'
 
 const tool = (output: string): Turn => ({ role: 'tool', results: [{ callId: 'c', output, isError: false }] })
 const big = (n: number): string => 'x'.repeat(n)
@@ -268,4 +273,226 @@ test('Option 1 session boundaries trigger on >=4h idle gap or >15m cold launch, 
   assert.equal(trimmed[0]!.role, 'user')
   assert.match((trimmed[0] as { text: string }).text, /^<prior_session_summary>/)
   assert.equal((trimmed[2] as { text: string }).text, 'Compare that to AMD')
+})
+
+test('compressSession with keepExchanges=0 summarizes all exchanges and leaves transcript empty for a cleared Central restart', () => {
+  const turns: Turn[] = [asked('Check NVDA options IV'), replied('NVDA 30d IV is 48%.')]
+  const compressed = compressSession(turns, 0)
+  assert.equal(compressed.length, 2)
+  assert.equal(compressed[0]!.role, 'user')
+  assert.match((compressed[0] as { text: string }).text, /^<prior_session_summary>\n/)
+  assert.match((compressed[0] as { text: string }).text, /NVDA options IV/)
+  assert.deepEqual(transcript(compressed, 100), [])
+  // Running compressSession(..., 0) again on a summary-only thread is a no-op.
+  assert.equal(compressSession(compressed, 0), compressed)
+})
+
+test('reconcileTerminalSessions splits seeded multi-day sessions, recovers legacy SQLite exchanges, and marks prior sessions inactive', () => {
+  const day1 = Date.parse('2026-11-11T15:00:00Z')
+  const day2 = Date.parse('2026-11-12T16:00:00Z')
+  const day3 = Date.parse('2026-11-13T18:00:00Z')
+  const day4Morning = Date.parse('2026-11-14T16:00:00Z')
+  const day4Restart = Date.parse('2026-11-14T18:31:50Z')
+
+  // Simulate what the old seeding produced: day2 and day3 exchanges squashed into session_1 stamped at day3,
+  // while day1 legacy workspace exchanges were only in SQLite dbExchanges.
+  const sqlSessions = [
+    {
+      id: 'session_1',
+      title: 'Seeded session',
+      startedAt: day3 + 3600_000,
+      updatedAt: day3 + 3600_000,
+      active: false,
+      exchanges: [
+        { id: 1, question: 'Build retail portfolio', answer: 'Created portfolio.' },
+        { id: 2, at: day3, question: 'Analyze FLWS 10-K', answer: 'Revenue was $192M.' },
+      ],
+    },
+    {
+      id: 'session_2',
+      title: 'Morning check',
+      startedAt: day4Morning,
+      updatedAt: day4Morning + 60_000,
+      active: true,
+      exchanges: [
+        {
+          id: 1,
+          at: day4Morning + 60_000,
+          question: '',
+          answer: '### Bloomberg.com Front-Page News Update\nTop stories...',
+          task: 't27',
+        },
+      ],
+    },
+  ]
+
+  const dbExchanges = [
+    { id: 10, at: day1, question: 'Screen semiconductor stocks', answer: 'Found 14 names.' },
+    { id: 11, at: day1 + 120_000, question: 'Sort by gross margin', answer: 'NVDA leads at 75%.' },
+    { id: 12, at: day2, question: 'Build retail portfolio', answer: 'Created portfolio.' },
+    { id: 13, at: day3, question: 'Analyze FLWS 10-K', answer: 'Revenue was $192M.' },
+    {
+      id: 14,
+      at: day4Morning + 60_000,
+      question: '',
+      answer: '### Bloomberg.com Front-Page News Update\nTop stories...',
+      task: 't27',
+    },
+  ]
+
+  const reconciled = reconcileTerminalSessions({
+    sqlSessions,
+    dbExchanges,
+    now: day4Restart,
+  })
+
+  assert.equal(reconciled.length, 4)
+  assert.deepEqual(
+    reconciled.map((s) => ({
+      id: s.id,
+      title: s.title,
+      startedAt: s.startedAt,
+      updatedAt: s.updatedAt,
+      active: s.active,
+      count: s.exchanges.length,
+    })),
+    [
+      {
+        id: 'session_1',
+        title: 'Screen semiconductor stocks',
+        startedAt: day1,
+        updatedAt: day1 + 120_000,
+        active: false,
+        count: 2,
+      },
+      {
+        id: 'session_2',
+        title: 'Build retail portfolio',
+        startedAt: day2,
+        updatedAt: day2,
+        active: false,
+        count: 1,
+      },
+      {
+        id: 'session_3',
+        title: 'Analyze FLWS 10-K',
+        startedAt: day3,
+        updatedAt: day3,
+        active: false,
+        count: 1,
+      },
+      {
+        id: 'session_4',
+        title: 'Bloomberg.com Front-Page News Update',
+        startedAt: day4Morning,
+        updatedAt: day4Morning + 60_000,
+        active: false,
+        count: 1,
+      },
+    ],
+  )
+  assert.equal(
+    sessionTitle([{ question: '', answer: '### Bloomberg.com Front-Page News Update\nBody', task: 't27' }]),
+    'Bloomberg.com Front-Page News Update',
+  )
+})
+
+test('reconcileTerminalSessions assigns unfiled exchanges after a quick restart to the new active session rather than merging them into the prior session', () => {
+  const t1 = Date.parse('2026-11-14T18:00:00Z')
+  const t2Restart = t1 + 5 * 60_000 // 5 minutes later (< 15m COLD_LAUNCH_GAP_MS)
+  const t2Exchange = t2Restart + 30_000
+
+  const sqlSessions = [
+    {
+      id: 'session_1',
+      title: 'First session',
+      startedAt: t1,
+      updatedAt: t1 + 60_000,
+      active: false,
+      exchanges: [{ id: 1, at: t1 + 60_000, question: 'First question', answer: 'First answer' }],
+    },
+    {
+      id: 'session_2',
+      title: 'Terminal session',
+      startedAt: t2Restart,
+      updatedAt: t2Restart,
+      active: true,
+      exchanges: [],
+    },
+  ]
+
+  const dbExchanges = [
+    { id: 1, at: t1 + 60_000, question: 'First question', answer: 'First answer' },
+    { id: 2, at: t2Exchange, question: 'Second session question', answer: 'Second session answer' },
+  ]
+
+  const reconciled = reconcileTerminalSessions({
+    sqlSessions,
+    dbExchanges,
+    now: t2Exchange + 60_000,
+  })
+
+  assert.equal(reconciled.length, 2)
+  assert.equal(reconciled[0]!.id, 'session_1')
+  assert.equal(reconciled[0]!.exchanges.length, 1)
+  assert.equal(reconciled[0]!.exchanges[0]!.question, 'First question')
+  assert.equal(reconciled[1]!.id, 'session_2')
+  assert.equal(reconciled[1]!.startedAt, t2Restart)
+  assert.equal(reconciled[1]!.updatedAt, t2Exchange)
+  assert.equal(reconciled[1]!.exchanges.length, 1)
+  assert.equal(reconciled[1]!.exchanges[0]!.question, 'Second session question')
+})
+
+test('beginNewSession, appendSessionExchange, and visibleTerminalSessions preserve every session across multiple restarts', () => {
+  const t1 = Date.parse('2026-11-12T14:00:00Z')
+  const t2 = Date.parse('2026-11-13T15:00:00Z')
+  const t3 = Date.parse('2026-11-14T16:00:00Z')
+  const t4 = Date.parse('2026-11-14T18:31:50Z')
+
+  // Launch 1
+  let state = beginNewSession([], t1)
+  assert.equal(state.activeId, 'session_1')
+  state = appendSessionExchange(
+    state.sessions,
+    state.activeId,
+    { question: 'Session 1 prompt', answer: 'Session 1 reply' },
+    t1 + 10_000,
+  )
+
+  // Restart -> Launch 2
+  const reconciled1 = reconcileTerminalSessions({ sqlSessions: state.sessions, now: t2 })
+  state = beginNewSession(reconciled1, t2)
+  assert.equal(state.activeId, 'session_2')
+  state = appendSessionExchange(
+    state.sessions,
+    state.activeId,
+    { question: 'Session 2 prompt', answer: 'Session 2 reply' },
+    t2 + 10_000,
+  )
+
+  // Restart -> Launch 3
+  const reconciled2 = reconcileTerminalSessions({ sqlSessions: state.sessions, now: t3 })
+  state = beginNewSession(reconciled2, t3)
+  assert.equal(state.activeId, 'session_3')
+  state = appendSessionExchange(
+    state.sessions,
+    state.activeId,
+    { question: 'Session 3 prompt', answer: 'Session 3 reply' },
+    t3 + 10_000,
+  )
+
+  // Restart -> Launch 4 (no exchanges yet in Launch 4; previous 3 sessions must all be visible as Saved sessions)
+  const reconciled3 = reconcileTerminalSessions({ sqlSessions: state.sessions, now: t4 })
+  state = beginNewSession(reconciled3, t4)
+  assert.equal(state.activeId, 'session_4')
+
+  const { visible } = visibleTerminalSessions(state.sessions, [], t4)
+  assert.deepEqual(
+    visible.map((s) => ({ id: s.id, title: s.title, active: s.active, count: s.exchanges.length })),
+    [
+      { id: 'session_3', title: 'Session 3 prompt', active: false, count: 1 },
+      { id: 'session_2', title: 'Session 2 prompt', active: false, count: 1 },
+      { id: 'session_1', title: 'Session 1 prompt', active: false, count: 1 },
+    ],
+  )
 })

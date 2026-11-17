@@ -197,23 +197,31 @@ export async function notify(at: number, source: string, text: string): Promise<
 }
 
 /** Keeps the end of one chat's conversation. Best effort: losing it costs continuity, not work. */
-export function saveThread(chat: string, at: number, model: string, turns: string): void {
-  const current = live
-  if (!current) return
-  const sig = timeout(RECORD_TIMEOUT_MS)
-  void current.queue
-    .foreground(() => current.rpc.request('saveThread', { chat, at, model, turns }, sig), sig)
-    .catch((error: unknown) => console.warn(`[store] thread ${chat}: ${message(error)}`))
+export function saveThread(chat: string, at: number, model: string, turns: string): Promise<void> {
+  try {
+    const current = running()
+    const sig = timeout(RECORD_TIMEOUT_MS)
+    return current.queue
+      .foreground(() => current.rpc.request('saveThread', { chat, at, model, turns }, sig), sig)
+      .then(() => undefined)
+      .catch((error: unknown) => console.warn(`[store] thread ${chat}: ${message(error)}`))
+  } catch {
+    return Promise.resolve()
+  }
 }
 
 /** Forgets a chat for good: its kept thread and its log. Best effort, as keeping them is. */
-export function forgetChat(chat: string): void {
-  const current = live
-  if (!current) return
-  const sig = timeout(RECORD_TIMEOUT_MS)
-  void current.queue
-    .foreground(() => current.rpc.request('chat.forget', { chat }, sig), sig)
-    .catch((error: unknown) => console.warn(`[store] forget ${chat}: ${message(error)}`))
+export function forgetChat(chat: string): Promise<void> {
+  try {
+    const current = running()
+    const sig = timeout(RECORD_TIMEOUT_MS)
+    return current.queue
+      .foreground(() => current.rpc.request('chat.forget', { chat }, sig), sig)
+      .then(() => undefined)
+      .catch((error: unknown) => console.warn(`[store] forget ${chat}: ${message(error)}`))
+  } catch {
+    return Promise.resolve()
+  }
 }
 
 /** What was kept for a chat, or null when there is nothing or the store is not up. */
@@ -235,13 +243,38 @@ export async function loadThread(chat: string): Promise<{ at: number; model: str
 export async function allThreads(): Promise<Record<string, { at: number; model: string; turns: string }>> {
   try {
     const current = running()
-    const sig = timeout(RECORD_TIMEOUT_MS)
+    const sig = timeout(QUERY_TIMEOUT_MS)
     return (await current.queue.foreground(() => current.rpc.request('allThreads', undefined, sig), sig)) as Record<
       string,
       { at: number; model: string; turns: string }
     >
   } catch {
     return {}
+  }
+}
+
+/** Reads every Central exchange (including legacy workspace-level Central chats) from the store, or null if the store is not up. */
+export async function readCentralExchanges(): Promise<Exchange[] | null> {
+  try {
+    const current = running()
+    const sig = timeout(QUERY_TIMEOUT_MS)
+    return (await current.queue.foreground(
+      () => current.rpc.request('exchange.central', undefined, sig),
+      sig,
+    )) as Exchange[]
+  } catch {
+    return null
+  }
+}
+
+/** Clears active Central exchanges and legacy workspace-level Central threads after they have been archived into Sessions. */
+export async function clearCentralExchanges(): Promise<void> {
+  try {
+    const current = running()
+    const sig = timeout(RECORD_TIMEOUT_MS)
+    await current.queue.foreground(() => current.rpc.request('exchange.clearCentral', undefined, sig), sig)
+  } catch (error) {
+    console.warn(`[store] clearCentralExchanges: ${message(error)}`)
   }
 }
 

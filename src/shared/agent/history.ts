@@ -47,6 +47,9 @@ export const CENTRAL_CHAT = 'central'
 /** Storage key for persisted Terminal Sessions from start to finish. */
 export const SESSIONS_STORAGE_KEY = 'sessions:log'
 
+/** Maximum number of saved Terminal Sessions kept in persistent storage. */
+export const MAX_TERMINAL_SESSIONS = 500
+
 /** A full Terminal session from start to finish, accessible in the Rooms / Sessions log dialog. */
 export interface TerminalSession {
   id: string
@@ -55,6 +58,372 @@ export interface TerminalSession {
   updatedAt: number
   active: boolean
   exchanges: Exchange[]
+}
+
+/** Derives a human-readable title for a Terminal Session from its exchanges. */
+export function sessionTitle(exchanges: Exchange[], fallback = 'Terminal session'): string {
+  const firstQuestion = exchanges.find((e) => e.question.trim() && !e.welcome)?.question.trim()
+  if (firstQuestion) return firstQuestion.replace(/\s+/g, ' ').slice(0, 80)
+  const firstAnswer = exchanges.find((e) => (e.answer.trim() || (e.error ?? '').trim()) && !e.welcome)
+  if (firstAnswer) {
+    const raw = (firstAnswer.answer.trim() || (firstAnswer.error ?? '').trim()).split(/\r?\n/)[0] ?? ''
+    const clean = raw.replace(/^[#>*\-\s]+/, '').trim()
+    if (clean) return clean.replace(/\s+/g, ' ').slice(0, 80)
+  }
+  return fallback || 'Terminal session'
+}
+
+export interface ReconcileSessionsInput {
+  diskSessions?: TerminalSession[]
+  sqlSessions?: TerminalSession[]
+  dbExchanges?: Exchange[]
+  unfiledExchanges?: Exchange[]
+  now?: number
+}
+
+function sameExchange(a: Exchange, b: Exchange): boolean {
+  if ((a.question ?? '').trim() !== (b.question ?? '').trim()) return false
+  if ((a.answer ?? '').trim() !== (b.answer ?? '').trim()) return false
+  if ((a.task ?? '') !== (b.task ?? '')) return false
+  if ((a.error ?? '') !== (b.error ?? '')) return false
+  if (
+    typeof a.at === 'number' &&
+    Number.isFinite(a.at) &&
+    typeof b.at === 'number' &&
+    Number.isFinite(b.at) &&
+    Math.abs(a.at - b.at) > 60_000
+  ) {
+    return false
+  }
+  return true
+}
+
+function enrichExchange(target: Exchange, source: Exchange): Exchange {
+  return {
+    ...target,
+    ...(target.at === undefined && typeof source.at === 'number' && Number.isFinite(source.at)
+      ? { at: source.at }
+      : {}),
+    ...(target.steps === undefined && source.steps?.length ? { steps: source.steps } : {}),
+    ...(target.citations === undefined && source.citations?.length ? { citations: source.citations } : {}),
+    ...(target.error === undefined && source.error ? { error: source.error } : {}),
+  }
+}
+
+/**
+ * Reconciles saved Terminal Sessions from disk and SQLite with all Central exchanges in the store,
+ * splitting any seeded or multi-sitting sessions at launch/idle gaps and marking all prior sessions inactive.
+ */
+export function reconcileTerminalSessions({
+  diskSessions = [],
+  sqlSessions = [],
+  dbExchanges = [],
+  unfiledExchanges = [],
+  now = Date.now(),
+}: ReconcileSessionsInput): TerminalSession[] {
+  const byId = new Map<string, TerminalSession>()
+  for (const s of [...sqlSessions, ...diskSessions]) {
+    if (!s || typeof s.id !== 'string' || !Array.isArray(s.exchanges)) continue
+    const prev = byId.get(s.id)
+    if (!prev || s.exchanges.length >= prev.exchanges.length) {
+      byId.set(s.id, {
+        ...s,
+        exchanges: s.exchanges.map((e) => ({ ...e })),
+      })
+    }
+  }
+  const baseSessions = [...byId.values()]
+
+  const candidates: Exchange[] = []
+  for (const ex of [...dbExchanges, ...unfiledExchanges]) {
+    if (!ex || (!ex.question?.trim() && !ex.answer?.trim() && !ex.error?.trim())) continue
+    if (!candidates.some((c) => sameExchange(c, ex))) {
+      candidates.push({ ...ex })
+    }
+  }
+
+  const claimed = new Set<number>()
+  for (const session of baseSessions) {
+    session.exchanges = session.exchanges.map((ex) => {
+      const idx = candidates.findIndex((c, i) => !claimed.has(i) && sameExchange(ex, c))
+      if (idx >= 0) {
+        claimed.add(idx)
+        return enrichExchange(ex, candidates[idx]!)
+      }
+      return ex
+    })
+  }
+
+  const splitSessions: TerminalSession[] = []
+  const seenInSessions: Exchange[] = []
+  for (const session of baseSessions) {
+    const valid = session.exchanges.filter((e) => {
+      if (!e.question?.trim() && !e.answer?.trim() && !e.error?.trim()) return false
+      if (seenInSessions.some((prev) => sameExchange(prev, e))) return false
+      seenInSessions.push(e)
+      return true
+    })
+    if (valid.length === 0) {
+      splitSessions.push({
+        id: session.id,
+        title: session.title || 'Terminal session',
+        startedAt: session.startedAt || now,
+        updatedAt: Math.max(session.startedAt || now, session.updatedAt || now),
+        active: false,
+        exchanges: [],
+      })
+      continue
+    }
+    const finiteAts = valid.map((e) => e.at).filter((at): at is number => typeof at === 'number' && Number.isFinite(at))
+    const firstAt = finiteAts[0]
+    const lastAt = finiteAts[finiteAts.length - 1]
+    const isSeededOrSquashed =
+      (firstAt !== undefined && session.startedAt - firstAt > COLD_LAUNCH_GAP_MS) ||
+      (firstAt !== undefined &&
+        lastAt !== undefined &&
+        lastAt - firstAt > COLD_LAUNCH_GAP_MS &&
+        session.startedAt === session.updatedAt)
+    const gapThreshold = isSeededOrSquashed ? COLD_LAUNCH_GAP_MS : SESSION_IDLE_GAP_MS
+
+    const chunks: Exchange[][] = []
+    let currentChunk: Exchange[] = []
+    let prevAt: number | undefined
+    for (const ex of valid) {
+      const at = typeof ex.at === 'number' && Number.isFinite(ex.at) ? ex.at : undefined
+      if (currentChunk.length > 0 && prevAt !== undefined && at !== undefined && at - prevAt > gapThreshold) {
+        chunks.push(currentChunk)
+        currentChunk = [ex]
+      } else {
+        currentChunk.push(ex)
+      }
+      if (at !== undefined) prevAt = at
+    }
+    if (currentChunk.length > 0) chunks.push(currentChunk)
+
+    const wasSplit = chunks.length > 1 || isSeededOrSquashed
+    for (const chunk of chunks) {
+      const chunkAts = chunk
+        .map((e) => e.at)
+        .filter((at): at is number => typeof at === 'number' && Number.isFinite(at))
+      const cFirst = chunkAts[0]
+      const cLast = chunkAts[chunkAts.length - 1]
+      const startedAt =
+        cFirst !== undefined && (wasSplit || cFirst < session.startedAt || session.startedAt > (cLast ?? now))
+          ? cFirst
+          : session.startedAt || now
+      const updatedAt =
+        cLast !== undefined && (wasSplit || session.updatedAt > cLast + COLD_LAUNCH_GAP_MS || cLast > session.updatedAt)
+          ? cLast
+          : Math.max(startedAt, session.updatedAt || startedAt)
+      splitSessions.push({
+        id: session.id,
+        title: sessionTitle(chunk, session.title),
+        startedAt,
+        updatedAt,
+        active: false,
+        exchanges: chunk,
+      })
+    }
+  }
+
+  const unclaimedWithAt: Exchange[] = []
+  const unclaimedWithoutAt: Exchange[] = []
+  for (const [i, ex] of candidates.entries()) {
+    if (claimed.has(i)) continue
+    if (typeof ex.at === 'number' && Number.isFinite(ex.at)) {
+      const at = ex.at
+      const matching = splitSessions
+        .filter(
+          (s) =>
+            at >= s.startedAt - COLD_LAUNCH_GAP_MS && at <= Math.max(s.startedAt, s.updatedAt) + COLD_LAUNCH_GAP_MS,
+        )
+        .sort((a, b) => {
+          const aBefore = a.startedAt <= at ? 1 : 0
+          const bBefore = b.startedAt <= at ? 1 : 0
+          if (aBefore !== bBefore) return bBefore - aBefore
+          return b.startedAt - a.startedAt
+        })
+      const target = matching[0]
+      if (target) {
+        target.exchanges.push(ex)
+        target.startedAt = Math.min(target.startedAt, at)
+        target.updatedAt = Math.max(target.updatedAt, at)
+      } else {
+        unclaimedWithAt.push(ex)
+      }
+    } else {
+      unclaimedWithoutAt.push(ex)
+    }
+  }
+
+  if (unclaimedWithAt.length > 0) {
+    unclaimedWithAt.sort((a, b) => (a.at ?? 0) - (b.at ?? 0))
+    let chunk: Exchange[] = []
+    let prevAt = 0
+    const flushChunk = (): void => {
+      if (chunk.length === 0) return
+      const cFirst = chunk[0]!.at ?? now
+      const cLast = chunk[chunk.length - 1]!.at ?? cFirst
+      splitSessions.push({
+        id: '',
+        title: sessionTitle(chunk),
+        startedAt: cFirst,
+        updatedAt: cLast,
+        active: false,
+        exchanges: chunk,
+      })
+      chunk = []
+    }
+    for (const ex of unclaimedWithAt) {
+      const at = ex.at ?? now
+      if (chunk.length > 0 && at - prevAt > COLD_LAUNCH_GAP_MS) {
+        flushChunk()
+      }
+      chunk.push(ex)
+      prevAt = at
+    }
+    flushChunk()
+  }
+
+  if (unclaimedWithoutAt.length > 0) {
+    if (splitSessions.length > 0) {
+      const latest = splitSessions.reduce((a, b) => (b.updatedAt >= a.updatedAt ? b : a))
+      latest.exchanges.push(...unclaimedWithoutAt)
+    } else {
+      splitSessions.push({
+        id: '',
+        title: sessionTitle(unclaimedWithoutAt),
+        startedAt: now,
+        updatedAt: now,
+        active: false,
+        exchanges: unclaimedWithoutAt,
+      })
+    }
+  }
+
+  const finalized = splitSessions
+    .filter((s) => s.exchanges.length > 0)
+    .sort((a, b) => a.startedAt - b.startedAt || a.updatedAt - b.updatedAt)
+    .slice(-MAX_TERMINAL_SESSIONS)
+    .map((s, idx) => {
+      const ordered = [...s.exchanges].sort((a, b) => {
+        if (typeof a.at === 'number' && typeof b.at === 'number') return a.at - b.at
+        return 0
+      })
+      const numbered = ordered.map((ex, eIdx) => ({ ...ex, id: eIdx + 1 }))
+      return {
+        id: `session_${idx + 1}`,
+        title: sessionTitle(numbered, s.title),
+        startedAt: s.startedAt,
+        updatedAt: Math.max(s.startedAt, s.updatedAt),
+        active: false,
+        exchanges: numbered,
+      }
+    })
+
+  return finalized
+}
+
+function nextSessionId(sessions: TerminalSession[]): string {
+  let max = 0
+  for (const s of sessions) {
+    const m = /^session_(\d+)$/.exec(s.id)
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  return `session_${max + 1}`
+}
+
+/** Starts a new Terminal Session from this point forward, keeping all prior non-empty sessions intact and inactive. */
+export function beginNewSession(
+  sessions: TerminalSession[],
+  now = Date.now(),
+): { sessions: TerminalSession[]; activeId: string } {
+  const deactivated = sessions.map((s) => (s.active ? { ...s, active: false } : s))
+  const last = deactivated[deactivated.length - 1]
+  if (last && last.exchanges.length === 0) {
+    const updated: TerminalSession = {
+      ...last,
+      startedAt: now,
+      updatedAt: now,
+      active: true,
+    }
+    return {
+      sessions: [...deactivated.slice(0, -1), updated],
+      activeId: updated.id,
+    }
+  }
+  const id = nextSessionId(deactivated)
+  const session: TerminalSession = {
+    id,
+    title: 'Terminal session',
+    startedAt: now,
+    updatedAt: now,
+    active: true,
+    exchanges: [],
+  }
+  return {
+    sessions: [...deactivated.slice(-(MAX_TERMINAL_SESSIONS - 1)), session],
+    activeId: id,
+  }
+}
+
+/** Appends one exchange to the active Terminal Session, creating one if needed. */
+export function appendSessionExchange(
+  sessions: TerminalSession[],
+  activeId: string | null,
+  exchange: Exchange,
+  at = Date.now(),
+): { sessions: TerminalSession[]; activeId: string } {
+  let list = sessions
+  let currentId = activeId
+  if (!currentId || !list.some((s) => s.id === currentId)) {
+    const begun = beginNewSession(list, at)
+    list = begun.sessions
+    currentId = begun.activeId
+  }
+  const idx = list.findIndex((s) => s.id === currentId)
+  if (idx < 0) return { sessions: list, activeId: currentId }
+  const current = list[idx]!
+  const nextExchanges = [
+    ...current.exchanges,
+    { ...exchange, id: exchange.id ?? current.exchanges.length + 1, at: exchange.at ?? at },
+  ]
+  const title = sessionTitle(nextExchanges, current.title)
+  const nextSessions = list.map((s, i) =>
+    i === idx
+      ? {
+          ...s,
+          title,
+          updatedAt: at,
+          active: true,
+          exchanges: nextExchanges,
+        }
+      : { ...s, active: false },
+  )
+  return { sessions: nextSessions, activeId: currentId }
+}
+
+/** Returns all non-empty Terminal Sessions (newest first), reconciling fallback exchanges if none are stored yet. */
+export function visibleTerminalSessions(
+  sessions: TerminalSession[],
+  fallbackActiveExchanges: Exchange[] = [],
+  now = Date.now(),
+): { sessions: TerminalSession[]; visible: TerminalSession[]; seeded: boolean } {
+  const nonEmpty = sessions.filter((s) => s.exchanges.length > 0)
+  if (nonEmpty.length === 0 && fallbackActiveExchanges.length > 0) {
+    const seededList = reconcileTerminalSessions({
+      sqlSessions: sessions,
+      dbExchanges: fallbackActiveExchanges,
+      now,
+    })
+    if (seededList.length > 0) {
+      const withActive = seededList.map((s, i) => (i === seededList.length - 1 ? { ...s, active: true } : s))
+      const visible = [...withActive].sort((a, b) => b.updatedAt - a.updatedAt || b.startedAt - a.startedAt)
+      return { sessions: withActive, visible, seeded: true }
+    }
+  }
+  const visible = [...nonEmpty].sort((a, b) => b.updatedAt - a.updatedAt || b.startedAt - a.startedAt)
+  return { sessions, visible, seeded: false }
 }
 
 /** Option 1 session boundaries: 15m cold launch gap, or 4h inactivity gap during a sitting. */
@@ -110,7 +479,7 @@ export function compressSession(turns: Turn[], keepExchanges = 2): Turn[] {
     if (turns[i]!.role === 'user') starts.push(i)
   }
   if (starts.length <= keepExchanges) return turns
-  const cutoff = starts[starts.length - keepExchanges]!
+  const cutoff = keepExchanges <= 0 ? turns.length : starts[starts.length - keepExchanges]!
   const older = turns.slice(bodyStart, cutoff)
   const kept = withoutThinking(turns.slice(cutoff))
   const lines: string[] = existingSummary ? [existingSummary] : []

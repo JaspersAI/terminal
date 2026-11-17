@@ -37,6 +37,7 @@ import {
   threadFor,
   threadReads,
 } from './utils/thread'
+import { waitForThreads } from './thread-file'
 import { createTurns } from './utils/turns'
 
 // The orchestrator's requests: who asks the agent loop (agent.ts), on which thread, and when. The user's
@@ -89,7 +90,9 @@ function run(input: string, ask?: string): Promise<string> {
   if (to) {
     const ownerTab = allOpen.find((one) => one.loop.id === to.loop.id)?.tabId ?? workspaceId
     handOver(ownerTab, to.loop.id, { typed: to.message })
-    return Promise.resolve(`Sent to ${loopName(to.loop.id)}.`)
+    const reply = `Sent to ${loopName(to.loop.id)}.`
+    fileDirectExchange(CENTRAL_CHAT, input, reply)
+    return Promise.resolve(reply)
   }
   const request = (): Promise<string> =>
     userRequest({
@@ -261,6 +264,7 @@ export function runWelcome(workspaceId: string, ask: string, signal: AbortSignal
  * written under one. Resolves false when there is no conversation to put it in.
  */
 export async function said(workspaceId: string, note: string, text: string): Promise<boolean> {
+  await waitForThreads()
   const config = modelFor(CENTRAL_CHAT)
   if (!config) return false
   const history = threadFor(CENTRAL_CHAT, config)

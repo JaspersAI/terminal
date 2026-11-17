@@ -52,6 +52,11 @@ rpc.handle('exchange.read', (params) => {
   const { chat, limit, before } = params as { chat: string; limit: number; before?: number }
   return open().exchanges(chat, limit, before)
 })
+rpc.handle('exchange.central', () => open().centralExchanges())
+rpc.handle('exchange.clearCentral', () => {
+  open().clearCentralExchanges()
+  return null
+})
 rpc.handle('chat.forget', (params) => {
   open().forgetChat((params as { chat: string }).chat)
   return null
