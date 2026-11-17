@@ -329,3 +329,34 @@ test('keepRawCalls filters dropped tool call items from raw provider payloads wh
     ],
   )
 })
+
+test('use_browser preserves multi-step interactions in a round while dropping consecutive duplicate navigations and hiding typed values in callLine', () => {
+  assert.equal(
+    callLine('use_browser', { elementId: 'e15', action: 'type', text: 'Search', value: 'secret-text' }),
+    'use browser: e15 (type)',
+  )
+  assert.deepEqual(
+    trimToolCalls([
+      {
+        id: 'b1',
+        name: 'use_browser',
+        input: { elementId: 'e15', action: 'navigate', url: 'https://example.com/follow?account=alpha' },
+      },
+      {
+        id: 'b1-dup',
+        name: 'use_browser',
+        input: { elementId: 'e15', action: 'navigate', url: 'https://example.com/follow?account=alpha' },
+      },
+      { id: 'b2', name: 'use_browser', input: { elementId: 'e15', action: 'click', text: 'Follow' } },
+      {
+        id: 'b3',
+        name: 'use_browser',
+        input: { elementId: 'e15', action: 'navigate', url: 'https://example.com/follow?account=beta' },
+      },
+      { id: 'b4', name: 'use_browser', input: { elementId: 'e15', action: 'click', text: 'Follow' } },
+      { id: 'b5', name: 'use_browser', input: { elementId: 'e15', action: 'scroll', direction: 'down' } },
+      { id: 'b6', name: 'use_browser', input: { elementId: 'e15', action: 'scroll', direction: 'down' } },
+    ]).map((c) => c.id),
+    ['b1', 'b2', 'b3', 'b4', 'b5', 'b6'],
+  )
+})

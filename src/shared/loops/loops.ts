@@ -1055,7 +1055,7 @@ export const ORCHESTRATOR_TOOLS: readonly string[] = [
 ]
 
 /** What drives a view or builds a plugin: a loop's agent's alone, never the orchestrator's. */
-export const VIEW_TOOLS: readonly string[] = ['place_view', 'set', 'remove_element', 'build_plugin']
+export const VIEW_TOOLS: readonly string[] = ['place_view', 'set', 'use_browser', 'remove_element', 'build_plugin']
 
 /** The built-in note: a text area on the grid. */
 export const NOTE_VIEW = 'core/note'
