@@ -21,7 +21,6 @@ import {
   peopleIn,
   personName,
   roomSharing,
-  teammateColorIndex,
   type SharePerson,
 } from '../../../shared/collab/collab'
 import { editedInstructionsPrompt, type Loop } from '../../../shared/loops/loops'
@@ -629,7 +628,6 @@ export function LoopBox({
                         email={person.email}
                         firstName={person.firstName}
                         lastName={person.lastName}
-                        index={teammateColorIndex(person.email, roomPeople)}
                         lit={person.online}
                         size={16}
                       />

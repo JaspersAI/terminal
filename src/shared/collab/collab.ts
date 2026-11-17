@@ -462,31 +462,20 @@ export function teammateInitials(
 }
 
 /**
- * Consistent palette slot for a person: their position among `people` when they are in that list,
- * and a stable hash of their address otherwise.
- */
-export function teammateColorIndex(email: string, people?: readonly { email: string }[]): number {
-  const lower = email.trim().toLowerCase()
-  if (people && people.length > 0) {
-    const found = people.findIndex((one) => one.email.trim().toLowerCase() === lower)
-    if (found >= 0) return found
-  }
-  let hash = 0
-  for (let i = 0; i < lower.length; i++) hash = (hash * 31 + lower.charCodeAt(i)) | 0
-  return Math.abs(hash) % TEAMMATE_PALETTE.length
-}
-
-/**
- * A teammate badge's colors: its own from the palette while it is lit (its room in use, the
- * teammate connected), and the grey an unselected tab has otherwise.
+ * A person's badge colors: their own from the palette while lit (their room in use, the person
+ * connected), and the grey an unselected tab has otherwise. The color is picked by their address
+ * alone, so a person wears the same one wherever their circle is drawn and on every terminal. Two
+ * people may wear the same one; their letters tell them apart.
  */
 export function teammateBadgeStyle(
-  index: number,
+  email: string,
   lit: boolean,
   dark: boolean,
 ): { backgroundColor: string; color: string; borderColor: string } {
   if (!lit) return tabSwatchStyle(null, false, dark)
-  return tabSwatchStyle(TEAMMATE_PALETTE[Math.abs(Math.trunc(index)) % TEAMMATE_PALETTE.length]!, true, dark)
+  let hash = 0
+  for (const char of email.trim().toLowerCase()) hash = (hash * 31 + char.codePointAt(0)!) | 0
+  return tabSwatchStyle(TEAMMATE_PALETTE[Math.abs(hash) % TEAMMATE_PALETTE.length]!, true, dark)
 }
 
 /**

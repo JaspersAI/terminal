@@ -26,7 +26,7 @@ import {
   roomSharing,
   shareQuestion,
   shareTargets,
-  teammateColorIndex,
+  teammateBadgeStyle,
   teammateInitials,
   type CollabShare,
   type CollabState,
@@ -386,12 +386,13 @@ test('describeCollabState reports teammates and pending incoming and outgoing te
   )
 })
 
-test('a badge has a stable color slot across the room', () => {
-  const people = peopleIn(share, collab)
-  assert.equal(teammateColorIndex('alice@fund.com', people), 0)
-  assert.equal(teammateColorIndex('BOB@fund.com', people), 1)
-  assert.equal(teammateColorIndex('dave@other.com', people), 2)
-  assert.equal(teammateColorIndex('former@fund.com', people), teammateColorIndex('FORMER@fund.com'))
+test("a badge's color is its person's own: the same for their address however it is written, and grey while unlit", () => {
+  const lit = teammateBadgeStyle('bob@fund.com', true, false)
+  assert.deepEqual(teammateBadgeStyle(' BOB@Fund.com ', true, false), lit)
+  assert.notDeepEqual(teammateBadgeStyle('carol.diaz@fund.com', true, false), lit)
+  const unlit = teammateBadgeStyle('bob@fund.com', false, false)
+  assert.notDeepEqual(unlit, lit)
+  assert.deepEqual(teammateBadgeStyle('carol.diaz@fund.com', false, false), unlit)
 })
 
 test("a room question is its asker's when it is marked with a name of someone in the room, and its owner's when it is bare", () => {
