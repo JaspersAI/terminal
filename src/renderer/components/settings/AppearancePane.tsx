@@ -69,7 +69,7 @@ export function AppearancePane(): ReactElement {
  */
 function GridSizeRow(): ReactElement {
   const workspace = useAppState(currentWorkspace)
-  const size = useAppState((s) => s.grids[s.currentWorkspaceId]?.[MAIN_WINDOW]?.size) ?? DEFAULT_SIZE
+  const size = useAppState((s) => s.grids[workspace.id]?.[MAIN_WINDOW]?.size ?? s.gridSize) ?? DEFAULT_SIZE
   const [draft, setDraft] = useState<{ cols: string; rows: string }>({
     cols: String(size.cols),
     rows: String(size.rows),
@@ -98,7 +98,7 @@ function GridSizeRow(): ReactElement {
         failed ? (
           <span className="text-destructive">{failed}</span>
         ) : (
-          `Columns × rows of cells in ${workspace.name}, ${SIZE_MIN.cols} × ${SIZE_MIN.rows} to ${SIZE_MAX.cols} × ${SIZE_MAX.rows}. Every window of this workspace shows the same grid.`
+          `Columns × rows of cells (${SIZE_MIN.cols} × ${SIZE_MIN.rows} to ${SIZE_MAX.cols} × ${SIZE_MAX.rows}), remembered across restarts and applied across tabs and windows.`
         )
       }
     >

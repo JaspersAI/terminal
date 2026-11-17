@@ -3,7 +3,7 @@
 // Keep this file free of Node and DOM imports.
 
 // The extension is explicit because Node's test runner resolves this import at run time.
-import { EMPTY_GRID, type Grid, type GridSize } from './grid.ts'
+import { EMPTY_GRID, sameGridSize, type Grid, type GridSize } from './grid.ts'
 
 export const MAIN_WINDOW = 1
 /** Main and the extensions together. The prompt maps every open window, so it stays small. */
@@ -38,21 +38,25 @@ export function windowNumbers(open: number[]): number[] {
 
 /**
  * The grids with an empty one for every open window that had none. The same object when none was
- * missing. A new window takes the size the workspace's other windows have, not the default: the size
- * is the workspace's, so opening a second window on a 40 × 30 grid shows 40 × 30.
+ * missing. A new window takes the size the workspace's other windows have, or `defaultSize` (the
+ * user's persistent grid setting): opening a new tab or a second window on a 16 × 24 grid shows 16 × 24.
  */
-export function withWindows(grids: Record<number, Grid>, open: number[]): Record<number, Grid> {
+export function withWindows(
+  grids: Record<number, Grid>,
+  open: number[],
+  defaultSize: GridSize = EMPTY_GRID.size,
+): Record<number, Grid> {
   const missing = windowNumbers(open).filter((n) => !Object.hasOwn(grids, n))
   if (missing.length === 0) return grids
   const next = { ...grids }
-  const size = sizeOf(grids)
-  for (const n of missing) next[n] = size === EMPTY_GRID.size ? EMPTY_GRID : { ...EMPTY_GRID, size }
+  const size = sizeOf(grids, defaultSize)
+  for (const n of missing) next[n] = sameGridSize(size, EMPTY_GRID.size) ? EMPTY_GRID : { ...EMPTY_GRID, size }
   return next
 }
 
-/** The size a workspace's grids are at: any of them, since they are all the same, or the default when it has none. */
-export function sizeOf(grids: Record<number, Grid>): GridSize {
-  return grids[MAIN_WINDOW]?.size ?? Object.values(grids)[0]?.size ?? EMPTY_GRID.size
+/** The size a workspace's grids are at: any of them, since they are all the same, or `defaultSize` when it has none. */
+export function sizeOf(grids: Record<number, Grid>, defaultSize: GridSize = EMPTY_GRID.size): GridSize {
+  return grids[MAIN_WINDOW]?.size ?? Object.values(grids)[0]?.size ?? defaultSize
 }
 
 /** Where a window's content sits on the screen, in the same units the renderer's screen coordinates use. */

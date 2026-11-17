@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import type { Grid } from '../shared/grid/grid'
+import type { Grid, GridSize } from '../shared/grid/grid'
 import type { Loops } from '../shared/loops/loops'
 import type {
   Memory,
@@ -54,6 +54,8 @@ export interface MainState {
   workspaces: Workspace[]
   /** Always the id of one of `workspaces`. */
   currentWorkspaceId: string
+  /** The user's persistent grid size setting, stored in state.json and applied across tabs and restarts. */
+  gridSize?: GridSize
   /** One record of grids per workspace, keyed by window number. The outer keys are exactly the workspace ids. */
   grids: Record<string, Record<number, Grid>>
   /** Each workspace's loops and the counter their ids come from. The keys are exactly the workspace ids. Saved in the workspace's own file, with its grids. */
@@ -253,6 +255,7 @@ export function toPublic(state: MainState): AppState {
     search: stripProvider(state.search),
     workspaces: state.workspaces,
     currentWorkspaceId: state.currentWorkspaceId,
+    ...(state.gridSize ? { gridSize: state.gridSize } : {}),
     grids: state.grids,
     loops,
     closedLoops,

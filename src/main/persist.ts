@@ -5,8 +5,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   DEFAULT_SIZE,
-  SIZE_MAX,
-  sizeProblem,
+  fitGridSize,
+  parseGridSize,
+  readGridSize,
+  resolveStoredGridSize,
+  sameGridSize,
   withoutPanels,
   type Grid,
   type GridSize,
@@ -56,6 +59,8 @@ interface StateFile {
   search?: StoredProvider | null
   workspaces: Workspace[]
   currentWorkspaceId: string
+  /** The user's persistent grid size setting. Files from before it have none, and take their workspaces' size or 16 × 12. */
+  gridSize?: GridSize
   /** The open extension windows, ascending. Files from before windows have none. */
   windows: number[]
   /** Sealed, by plugin id then key. The only place a plugin's credentials live. */
@@ -105,6 +110,7 @@ const EMPTY: StateFile = {
   search: null,
   workspaces: [],
   currentWorkspaceId: '',
+  gridSize: DEFAULT_SIZE,
   windows: [],
   secrets: {},
   oauth: {},
@@ -168,11 +174,22 @@ export function load(): MainState {
     stateDirty = true
   }
   const windows = checkWindows(state.windows)
+  const storedWorkspaces: Record<string, { grids: Record<number, Grid>; loops: Loops }> = {}
+  const storedGrids: Record<string, Record<number, Grid>> = {}
+  for (const w of state.workspaces) {
+    const stored = loadWorkspace(workspacePath(w.id))
+    storedWorkspaces[w.id] = stored
+    storedGrids[w.id] = stored.grids
+  }
+  const gridSize = resolveStoredGridSize(raw?.gridSize, state.workspaces, state.currentWorkspaceId, storedGrids)
+  if (raw !== null && parseGridSize(raw.gridSize) === null) {
+    stateDirty = true
+  }
   const rawGrids: Record<string, Record<number, Grid>> = {}
   const rawLoops: Record<string, Loops> = {}
   for (const w of state.workspaces) {
-    const stored = loadWorkspace(workspacePath(w.id))
-    const windowed = withWindows(stored.grids, windows)
+    const stored = storedWorkspaces[w.id]!
+    const windowed = withWindows(stored.grids, windows, gridSize)
     // Every tile has a room, and every room a frame its other tiles are inside. A file from before
     // either is made so here, and is written so with the first change, as the patches above are.
     const whole = adopt(windowed, stored.loops, seenInFile, Date.now())
@@ -195,7 +212,7 @@ export function load(): MainState {
     stateDirty = true
   }
   const terms = loadTermsState(state, bundledTerms)
-  return {
+  const loaded: MainState = {
     termsAccepted: terms.termsAccepted,
     acceptedTerms: terms.acceptedTerms,
     termsText: terms.termsText,
@@ -205,6 +222,7 @@ export function load(): MainState {
     search: state.search ?? null,
     workspaces: state.workspaces,
     currentWorkspaceId: state.currentWorkspaceId,
+    gridSize,
     grids,
     loops,
     windows,
@@ -248,6 +266,11 @@ export function load(): MainState {
     collab: EMPTY_COLLAB,
     allowedApps: readAllowedApps(state.allowedApps),
   }
+  latest = loaded
+  if (stateDirty || dirtyWorkspaces.size > 0) {
+    timer ??= setTimeout(flush, SAVE_DELAY_MS)
+  }
+  return loaded
 }
 
 /** A stored list of skill ids: strings, each once, sorted. */
@@ -341,52 +364,25 @@ function patchGrid(stored: Grid): Grid {
   // Wide enough for what the file holds. A grid saved by a later version, or edited by hand, can
   // carry elements past the size it records; the size grows to cover them rather than leaving them
   // off the grid, where every placement and every map for the model would have to guard for them.
-  const size = fits(readSize(grid.size), grid.elements ?? [])
-  if (grid.panels.length === 0) return grid.cells && grid.size === size ? grid : { ...grid, cells, size }
-  return {
-    ...grid,
-    cells,
-    size,
-    elements: grid.elements.map(retagged),
-    panels: grid.panels.map(({ error: _error, ...p }) => ({
-      ...p,
-      content: (p.content as { kind: string }).kind === 'empty' ? { kind: 'frame' } : p.content,
-      state: p.state ?? {},
-      output: p.output ?? null,
-      summary: p.summary ?? null,
-      text: p.text ?? null,
-      refreshedAt: p.refreshedAt ?? null,
-    })),
-  }
-}
-
-/** A stored grid size, or 16 × 12 for a file from before there was one and for one written wrong. */
-/** The size, grown to hold every element, never past what a grid may be. */
-function fits(size: GridSize, elements: { rect?: { x?: number; y?: number; w?: number; h?: number } }[]): GridSize {
-  let { cols, rows } = size
-  for (const element of elements) {
-    const rect = element.rect
-    if (!rect) continue
-    const right = Number(rect.x) + Number(rect.w)
-    const bottom = Number(rect.y) + Number(rect.h)
-    if (Number.isFinite(right)) cols = Math.max(cols, Math.min(right, SIZE_MAX.cols))
-    if (Number.isFinite(bottom)) rows = Math.max(rows, Math.min(bottom, SIZE_MAX.rows))
-  }
-  return cols === size.cols && rows === size.rows ? size : { cols, rows }
-}
-
-function readSize(value: unknown): GridSize {
-  if (typeof value === 'object' && value !== null) {
-    const { cols, rows } = value as { cols?: unknown; rows?: unknown }
-    const size = { cols: Number(cols), rows: Number(rows) }
-    if (sizeProblem(size) === null) return size
-  }
-  return DEFAULT_SIZE
+  const elements = (grid.elements ?? []).map(retagged)
+  const panels: Panel[] = grid.panels.map(({ error: _error, ...p }): Panel => ({
+    ...p,
+    content: (p.content as { kind: string }).kind === 'empty' ? { kind: 'frame' } : p.content,
+    state: p.state ?? {},
+    output: p.output ?? null,
+    summary: p.summary ?? null,
+    text: p.text ?? null,
+    refreshedAt: p.refreshedAt ?? null,
+  }))
+  const baseSize = readGridSize(grid.size)
+  return fitGridSize({ ...grid, cells, size: baseSize, elements, panels }, baseSize)
 }
 
 /** The store's subscriber. Notes what changed, by reference, and arms the write. */
 export function save(next: MainState, prev: MainState): void {
   latest = next
+  const gridSizeChanged =
+    next.gridSize !== prev.gridSize && !sameGridSize(next.gridSize ?? DEFAULT_SIZE, prev.gridSize ?? DEFAULT_SIZE)
   if (
     next.termsAccepted !== prev.termsAccepted ||
     next.acceptedTerms !== prev.acceptedTerms ||
@@ -397,6 +393,7 @@ export function save(next: MainState, prev: MainState): void {
     next.search !== prev.search ||
     next.workspaces !== prev.workspaces ||
     next.currentWorkspaceId !== prev.currentWorkspaceId ||
+    gridSizeChanged ||
     next.windows !== prev.windows ||
     next.secrets !== prev.secrets ||
     next.oauth !== prev.oauth ||
@@ -420,7 +417,7 @@ export function save(next: MainState, prev: MainState): void {
   for (const id of Object.keys(prev.grids)) {
     if (!Object.hasOwn(next.grids, id)) deletedWorkspaces.add(id)
   }
-  if (next.jaspers !== prev.jaspers || next.oauth !== prev.oauth) {
+  if (next.jaspers !== prev.jaspers || next.oauth !== prev.oauth || gridSizeChanged) {
     flush()
     return
   }
@@ -444,6 +441,7 @@ export function flush(): void {
       search: latest.search,
       workspaces: latest.workspaces,
       currentWorkspaceId: latest.currentWorkspaceId,
+      gridSize: latest.gridSize ?? DEFAULT_SIZE,
       windows: latest.windows,
       secrets: latest.secrets,
       oauth: latest.oauth,
