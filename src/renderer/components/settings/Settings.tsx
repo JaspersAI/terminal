@@ -33,7 +33,8 @@ const PANES: { id: Pane; label: string; icon: () => ReactElement }[] = [
 ]
 
 interface Props {
-  initialPane?: Pane
+  /** What opening Settings asked for: the pane to show, when the request named one. */
+  asked: { pane?: Pane }
   onClose: () => void
   /** Leaves Settings for View loops, the loops of the workspace on screen. */
   onViewLoops: () => void
@@ -48,16 +49,17 @@ interface Props {
  * Settings for the list of the workspace's loops, open and closed (`LoopsDialog`). Escape, the
  * cross, or a press on the backdrop closes it.
  */
-export function Settings({ initialPane, onClose, onViewLoops }: Props): ReactElement {
-  const [pane, setPane] = useState<Pane>(initialPane ?? 'llm')
+export function Settings({ asked, onClose, onViewLoops }: Props): ReactElement {
+  const [pane, setPane] = useState<Pane>(asked.pane ?? 'llm')
   const signedIn = useAppState((s) => s.jaspers.signedIn)
   const dialog = useRef<HTMLDivElement>(null)
   const close = useRef(onClose)
   close.current = onClose
 
+  const askedPane = asked.pane
   useEffect(() => {
-    if (initialPane) setPane(initialPane)
-  }, [initialPane])
+    if (askedPane) setPane(askedPane)
+  }, [askedPane])
 
   // Focus starts inside, so keys land here and not on the workspace underneath.
   useEffect(() => dialog.current?.focus(), [])

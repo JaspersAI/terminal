@@ -20,8 +20,9 @@ interface Props {
  * the TabBar at the bottom, and Settings or Rooms over it when opened.
  */
 export function Home({ welcome }: Props): ReactElement {
-  const [settings, setSettings] = useState(false)
-  const [settingsPane, setSettingsPane] = useState<SettingsPane | undefined>(undefined)
+  // Settings as it was last asked for, null while it is closed: the pane is part of the request, so
+  // there is no pane without Settings open.
+  const [settings, setSettings] = useState<{ pane?: SettingsPane } | null>(null)
   const [loops, setLoops] = useState(false)
   const [openedSettingsFromPrompt, setOpenedSettingsFromPrompt] = useState(false)
   const [dismissedSignIn, setDismissedSignIn] = useState(false)
@@ -29,8 +30,7 @@ export function Home({ welcome }: Props): ReactElement {
     () =>
       window.app.onOpenSettings((pane) => {
         setLoops(false)
-        setSettingsPane(isSettingsPane(pane) ? pane : undefined)
-        setSettings(true)
+        setSettings(isSettingsPane(pane) ? { pane } : {})
       }),
     [],
   )
@@ -60,19 +60,15 @@ export function Home({ welcome }: Props): ReactElement {
   }, [welcome, termsAccepted, askSignIn, askEye])
   return (
     <>
-      <div inert={!termsAccepted || settings || loops || askSignIn || askEye} className="contents">
+      <div inert={!termsAccepted || settings !== null || loops || askSignIn || askEye} className="contents">
         <Workspace onOpenRooms={() => setLoops(true)} />
       </div>
       {settings && (
         <Settings
-          initialPane={settingsPane}
-          onClose={() => {
-            setSettings(false)
-            setSettingsPane(undefined)
-          }}
+          asked={settings}
+          onClose={() => setSettings(null)}
           onViewLoops={() => {
-            setSettings(false)
-            setSettingsPane(undefined)
+            setSettings(null)
             setLoops(true)
           }}
         />
@@ -84,7 +80,7 @@ export function Home({ welcome }: Props): ReactElement {
           onOpenSettings={() => {
             setOpenedSettingsFromPrompt(true)
             setLoops(false)
-            setSettings(true)
+            setSettings({})
           }}
         />
       )}
