@@ -33,7 +33,7 @@ const PANES: { id: Pane; label: string; icon: () => ReactElement }[] = [
 ]
 
 interface Props {
-  /** What opening Settings asked for: the pane to show, when the request named one. */
+  /** What opening Settings asked for: the pane to show, when the request named one. A new object each time it is asked for. */
   asked: { pane?: Pane }
   onClose: () => void
   /** Leaves Settings for View loops, the loops of the workspace on screen. */
@@ -56,10 +56,13 @@ export function Settings({ asked, onClose, onViewLoops }: Props): ReactElement {
   const close = useRef(onClose)
   close.current = onClose
 
-  const askedPane = asked.pane
+  // Asked for again while open, it goes to the pane the request names. It follows the request and
+  // not the pane's name, since the user may have left that pane since it was last asked for, and it
+  // leaves the pane on show as a press on another one does, so unsaved edits ask first.
   useEffect(() => {
-    if (askedPane) setPane(askedPane)
-  }, [askedPane])
+    const wanted = asked.pane
+    if (wanted) requestLeave(() => setPane(wanted))
+  }, [asked])
 
   // Focus starts inside, so keys land here and not on the workspace underneath.
   useEffect(() => dialog.current?.focus(), [])
