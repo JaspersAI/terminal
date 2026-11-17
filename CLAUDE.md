@@ -74,6 +74,6 @@ See [Development](docs/development.md) for process, security, packaging, and ext
 - One feature at a time. No speculative abstractions, frameworks, or dependencies. Prefer small functions and explicit composition.
 - Keep domain logic beside its feature; share a helper when it represents the same rule in multiple places.
 - Prettier defines formatting: single quotes, no semicolons, 120-column target. No separate linter is required. Prefix intentionally unused parameters with `_`.
-- Square corners are the house style: no `rounded-*` classes. The talk orb is the deliberate exception. Use the color, typography, and motion tokens in `src/renderer/styles.css`; its colors come from `src/host-runtime/theme.css`, which plugin views share, so give a new color a dark value too.
+- Square corners are the house style: no `rounded-*` classes. The talk orb and a person's circle (`TeammateBadge`, and the agent's beside it, `AgentAvatar`) are the deliberate exceptions: round is what is not a control. Use the color, typography, and motion tokens in `src/renderer/styles.css`; its colors come from `src/host-runtime/theme.css`, which plugin views share, so give a new color a dark value too.
 - Preserve comments that explain constraints and tradeoffs. Avoid narrating obvious operations or keeping obsolete behavior in comments.
 - Update docs when commands, contracts, or architecture change. Keep implementation details out of user flows.
