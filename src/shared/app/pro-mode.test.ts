@@ -347,7 +347,12 @@ test('approval prompts, tool descriptions, and folder hints match the platform a
 
   assert.match(runShellDescription('darwin', true), /only place it can write/)
   assert.match(runShellDescription('darwin', true), /create_room.*extensive or multi-step.*cluttering Central/i)
+  assert.match(runShellDescription('darwin', true), /Never attempt to bypass this confinement/)
+  assert.match(runShellDescription('darwin', true), /browser cookie stores, session files, or OS credentials/)
+  assert.match(runShellDescription('darwin', true), /Once per conversation/)
+  assert.match(runShellDescription('darwin', true), /Allow every command in this conversation/)
   assert.doesNotMatch(runShellDescription('linux', false), /only place it can write/)
+  assert.match(runShellDescription('linux', false), /Never attempt to read browser cookie stores/)
   assert.match(runShellDescription('win32', false), /PowerShell/)
   assert.match(commandParameterDescription('darwin', true), /set -e/)
   assert.match(commandParameterDescription('win32', false), /\$ErrorActionPreference = 'Stop'/)

@@ -16,6 +16,7 @@ import {
   CUT_TEXT_NOTE,
   CUTS_MAX,
   cutShort,
+  resolveRefusal,
   resolveRoundFailure,
   RESTATED_TIMEOUT_MS,
   windowFull,
@@ -140,6 +141,7 @@ async function loop({
   let rounds = 0
   let mends = 0
   let cuts = 0
+  let refusals = 0
 
   try {
     // One round past the last is for the answer alone: the model is told the round before that its
@@ -265,8 +267,26 @@ async function loop({
 
       const short = cutShort(reply.stopReason)
       if (short === 'refusal') {
-        const said = reply.text.trim()
-        throw new Error(`${config.provider.name} declined this request${said ? `: ${said}` : '.'}`)
+        const outcome = resolveRefusal({
+          providerName: config.provider.name,
+          model: config.model,
+          stopReason: reply.stopReason,
+          text: reply.text,
+          round,
+          hasToolCalls: reply.toolCalls.length > 0,
+          hasTools: available.length > 0,
+          quiet,
+          spent,
+          refusals,
+        })
+        refusals = outcome.refusals
+        if (outcome.kind === 'restate') {
+          tell(outcome.tell)
+          restate(history, prompt.round(), outcome.note)
+          round--
+          continue
+        }
+        throw new Error(outcome.message)
       }
       if (short === 'length' && (reply.toolCalls.length > 0 || quiet) && !spent) {
         // A call cut off part way has arguments that stop mid-word. It is never run, and the reply is
