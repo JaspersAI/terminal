@@ -199,19 +199,14 @@ export function LoopBox({
   const drop = useFileDrop(attachments.attach)
   const tileBox = useTileBox(place)
   /** In a shared room the line also reaches its people: its hint says how, and `@` offers them. */
-  const sharing = useAppState((s) =>
-    roomSharing(
-      s.collab,
-      s.workspaces.find((one) => one.id === workspaceId),
-      loop,
-    ),
-  )
-  const accountId = useAppState((s) => s.collab.accountId)
+  const collab = useAppState((s) => s.collab)
+  const workspace = useAppState((s) => s.workspaces.find((one) => one.id === workspaceId))
+  const sharing = roomSharing(collab, workspace, loop)
   const shared = sharing !== null
   const { expanded: open, draft, live, earlier, more, scrollTop, split } = tileBox
   const [mentionIndex, setMentionIndex] = useState(0)
   const roomInputRef = useRef<HTMLInputElement>(null)
-  const roomPeople = sharing?.share ? othersIn(sharing.share, accountId) : []
+  const roomPeople = sharing?.share ? othersIn(sharing.share, collab.accountId) : []
   const roomMention = draft.trimStart().startsWith('@') ? matchTeammateMentions(draft, roomPeople) : null
   const roomMentionOptions = roomMention ? roomMention.matches : []
   const activeRoomMention =
