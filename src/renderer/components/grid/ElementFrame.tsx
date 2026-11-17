@@ -29,13 +29,7 @@ import { waitingViews } from '../../../shared/plugins/needs'
 import { canDropPersonOnRoom, membersWithPerson, roomSharing } from '../../../shared/collab/collab'
 import { noteZoom } from '../../lib/eye'
 import { useAppState } from '../../lib/state'
-import {
-  RoomPeople,
-  TeammateDrop,
-  TeammateOriginShield,
-  TeammatePassThrough,
-  useTeammateDrag,
-} from '../collab/RoomPeople'
+import { RoomPeople, TeammateDrop, TeammateShield, useTeammateDrag } from '../collab/RoomPeople'
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
 import { loopHeaderTitle, loopTitle, ROOM_TITLE_MAX, showsChat } from '../../../shared/loops/loops'
@@ -242,12 +236,10 @@ export function ElementFrame({
   /** A teammate's room: its views are answered by its owner's terminal, so nothing is asked for here. */
   const replica = sharing?.role === 'member'
   const dragged = useTeammateDrag()
-  /** A person dragged from the workspace bar or another room may be dropped on an owned room that lacks them. */
   const minimized = element.mode === 'minimized'
-  const takesDrop = !minimized && dragged !== null && frame && canDropPersonOnRoom(dragged, workspace, loop, sharing)
-  const dragOrigin =
-    !minimized && dragged !== null && dragged.from?.workspaceId === workspaceId && dragged.from.room === loop?.id
-  const passThroughDrop = !minimized && dragged !== null && dragged.from !== null && !takesDrop && !dragOrigin
+  /** A person in mid-drag is offered to every open room: one of this terminal's own that lacks them takes the drop, and any other is shielded from it. */
+  const offered = !minimized && dragged !== null && frame
+  const takesDrop = offered && canDropPersonOnRoom(dragged, workspace, loop, sharing)
   // The asks the user set aside in this tile, by name: their views are drawn as they are.
   const [setAside, setSetAside] = useState<ReadonlySet<string>>(() => new Set())
   // The views inside that have nothing to show until their plugin is given what it needs.
@@ -784,8 +776,7 @@ export function ElementFrame({
             }}
           />
         )}
-        {dragOrigin && <TeammateOriginShield />}
-        {passThroughDrop && <TeammatePassThrough />}
+        {offered && !takesDrop && <TeammateShield />}
       </div>
       {frameEdges(element.mode).map((handle) => (
         <div

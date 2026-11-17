@@ -15,7 +15,7 @@ Removing a teammate also takes each of you out of the other's shared rooms and t
 
 ## Sharing a room or a tab
 
-- **A room:** open the room's menu and use **Share**. Add a teammate by name or `@name`, or type an email address to invite someone new. Or drag a teammate's circle onto the room; dragging a member's circle out of a room you own removes them from it.
+- **A room:** open the room's menu and use **Share**. Add a teammate by name or `@name`, or type an email address to invite someone new. Or drag a teammate's circle onto the room. To take a member out of a room you own, drag their circle from the foot of the room and drop it outside every room.
 - **A tab:** right-click the tab and use **Share**. Every room on the tab is shared, laid out for your teammates as it is for you, and rooms you add later join it.
 - **By asking:** tell Central who to share an existing or new room, or a tab, with, by name, `@name`, or email address. It asks you to confirm in its command bar before anything is shared.
 
