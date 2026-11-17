@@ -156,7 +156,7 @@ const engine = createCollabEngine({
   bundle: bundleOf,
   live: (plugin, key) => getLive(plugin, key),
   hasPlugin: (plugin) => Object.hasOwn(getState().plugins, plugin),
-  emptyGrids: (state) => withWindows({}, state.windows),
+  emptyGrids: (state) => withWindows({}, state.windows, state.gridSize),
 
   runPrompt: (workspaceId, loopId, input) => sendToLoop(workspaceId, loopId, { typed: input }),
   fileMessage: (workspaceId, loopId, question) => {

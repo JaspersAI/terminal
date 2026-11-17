@@ -189,18 +189,11 @@ export function load(): MainState {
   const rawLoops: Record<string, Loops> = {}
   for (const w of state.workspaces) {
     const stored = storedWorkspaces[w.id]!
-    const fittedStored: Record<number, Grid> = {}
-    let sizeChanged = false
-    for (const [winKey, grid] of Object.entries(stored.grids)) {
-      const fitted = fitGridSize(grid, gridSize)
-      if (fitted !== grid) sizeChanged = true
-      fittedStored[Number(winKey)] = fitted
-    }
-    const windowed = withWindows(fittedStored, windows, gridSize)
+    const windowed = withWindows(stored.grids, windows, gridSize)
     // Every tile has a room, and every room a frame its other tiles are inside. A file from before
     // either is made so here, and is written so with the first change, as the patches above are.
     const whole = adopt(windowed, stored.loops, seenInFile, Date.now())
-    if (sizeChanged || whole.grids !== windowed || whole.loops !== stored.loops) dirtyWorkspaces.add(w.id)
+    if (whole.grids !== windowed || whole.loops !== stored.loops) dirtyWorkspaces.add(w.id)
     rawGrids[w.id] = whole.grids
     rawLoops[w.id] = whole.loops
   }
