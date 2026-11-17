@@ -9,12 +9,7 @@ import {
 } from 'react'
 import { askedIn } from '../../../shared/agent/asking'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
-import {
-  applyTeammateMention,
-  fullName,
-  matchTeammateMentions,
-  teammateMentionText,
-} from '../../../shared/collab/collab'
+import { applyTeammateMention, fullName, matchTeammateMentions, personName } from '../../../shared/collab/collab'
 import { formatAsOf } from '../../../shared/tasks/tasks'
 import { currentWorkspace, useAppState } from '../../lib/state'
 import { TeammateBadge } from '../collab/TeammateBadge'
@@ -414,7 +409,7 @@ export function Composer(): ReactElement {
                       lit={tm.online}
                       size={16}
                     />
-                    <span className="truncate">@{teammateMentionText(tm)}</span>
+                    <span className="truncate">@{personName(tm)}</span>
                     {named && <span className="ml-auto truncate text-muted-foreground">{tm.email}</span>}
                   </button>
                 )

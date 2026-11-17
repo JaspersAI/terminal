@@ -13,14 +13,36 @@ import { tabSwatchStyle } from '../tabs/tabs.ts'
 
 export const NAME_MAX = 80
 
-/** One part of a person's name (first or last): control and format characters gone, spaces collapsed, cut to NAME_MAX. */
+/** What a name is not made of: anything but letters, their marks, spaces, apostrophes, hyphens and periods. */
+const NOT_NAME = /[^\p{L}\p{M}'’.\- ]/gu
+
+const collapsed = (raw: string): string => raw.replace(/\s+/g, ' ').trim()
+
+/**
+ * One part of a person's name (first or last): what a name is made of and nothing else, spaces
+ * collapsed, cut to NAME_MAX characters. Account holds names to the same, but a name is a teammate's
+ * own words, shown here and read by the assistant, so it is read through this wherever it arrives.
+ */
 export function cleanPersonName(raw: unknown): string {
   if (typeof raw !== 'string') return ''
-  return raw
-    .replace(/[\p{Cc}\p{Cf}]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, NAME_MAX)
+  return collapsed([...collapsed(raw.replace(NOT_NAME, ' '))].slice(0, NAME_MAX).join(''))
+}
+
+/**
+ * The first and last name someone types as their own, or why it is not one: both parts, each within
+ * NAME_MAX and made of what a name is made of. It is refused rather than changed, as Account refuses
+ * it, so the name kept is the one they saw.
+ */
+export function ownName(firstName: string, lastName: string): { firstName: string; lastName: string } {
+  const [first, last] = [collapsed(firstName), collapsed(lastName)]
+  if (!first || !last) throw new Error('Enter both your first and last name.')
+  if ([first, last].some((part) => [...part].length > NAME_MAX)) {
+    throw new Error(`A name is at most ${NAME_MAX} characters.`)
+  }
+  if (cleanPersonName(first) !== first || cleanPersonName(last) !== last) {
+    throw new Error('A name holds letters, spaces, apostrophes, hyphens and periods only.')
+  }
+  return { firstName: first, lastName: last }
 }
 
 /** A person's full name (`First Last`), or `''` when neither part is set. */
@@ -33,19 +55,25 @@ export function personName(person: { firstName?: string | null; lastName?: strin
   return fullName(person) || person.email
 }
 
-/** A person's name with their email in parentheses when named, else their email alone. */
+/**
+ * How the signed-in account is named to its own user: its name and address, whichever of the two
+ * there is, or null when it has neither.
+ */
+export function accountLabel(
+  name: { firstName?: string | null; lastName?: string | null },
+  email: string | null,
+): string | null {
+  return email ? personDetail({ ...name, email }) : fullName(name) || null
+}
+
+/**
+ * A person's name with their email in parentheses when named, else their email alone. The address is
+ * what Account checked and a name is whatever its account typed, so this, not `personName`, is how
+ * someone who is not a teammate yet is named.
+ */
 export function personDetail(person: { firstName?: string | null; lastName?: string | null; email: string }): string {
   const named = fullName(person)
   return named ? `${named} (${person.email})` : person.email
-}
-
-/** What completing an `@` mention inserts after `@`: the person's full name when set, else their email. */
-export function teammateMentionText(person: {
-  firstName?: string | null
-  lastName?: string | null
-  email: string
-}): string {
-  return fullName(person) || person.email
 }
 
 export interface Teammate {
@@ -101,6 +129,7 @@ export interface CollabState {
   /** Whether the event stream is open: nothing shared moves while it is not. */
   connected: boolean
   accountId: string | null
+  /** The account's own name as Account has it, `''` while it has none: the one place this terminal keeps it. */
   firstName: string
   lastName: string
   teammates: Teammate[]
@@ -253,9 +282,10 @@ function fullNameForms(person: { firstName?: string | null; lastName?: string | 
 }
 
 /**
- * The person a name means, among these: by whole address, by full name, or by first name, last name,
- * or the part before the @ when exactly one of them has it. Never by a fragment: a letter that happens
- * to be in an address or a name names nobody.
+ * The person a name means, among these: by whole address, by full name, or by a first name, a last
+ * name, or the part before the @ when it is exactly one person's. A word that is one person's first
+ * name and another's last name or handle names nobody, and neither does a fragment: a letter that
+ * happens to be in an address or a name.
  */
 export function resolveTeammate<T extends { email: string; firstName?: string | null; lastName?: string | null }>(
   query: string,
@@ -270,12 +300,13 @@ export function resolveTeammate<T extends { email: string; firstName?: string | 
   if (exact) return exact
   const byFull = people.filter((one) => fullNameForms(one).includes(q))
   if (byFull.length === 1) return byFull[0]!
-  const byFirst = people.filter((one) => cleanPersonName(one.firstName).toLowerCase() === q)
-  if (byFirst.length === 1) return byFirst[0]!
-  const byLast = people.filter((one) => cleanPersonName(one.lastName).toLowerCase() === q)
-  if (byLast.length === 1) return byLast[0]!
-  const byHandle = people.filter((one) => handleOf(one.email) === q)
-  return byHandle.length === 1 ? byHandle[0]! : null
+  const byWord = people.filter(
+    (one) =>
+      cleanPersonName(one.firstName).toLowerCase() === q ||
+      cleanPersonName(one.lastName).toLowerCase() === q ||
+      handleOf(one.email) === q,
+  )
+  return byWord.length === 1 ? byWord[0]! : null
 }
 
 /** What was said to the room's people and not to its agent: the answer an exchange is filed with. */
@@ -372,16 +403,12 @@ export function teammateInitials(
   emailOrPerson: string | { email: string; firstName?: string | null; lastName?: string | null },
 ): string {
   if (typeof emailOrPerson !== 'string') {
-    const first = cleanPersonName(emailOrPerson.firstName)
-      .replace(/[^a-zA-Z0-9\s]/g, '')
-      .trim()
-    const last = cleanPersonName(emailOrPerson.lastName)
-      .replace(/[^a-zA-Z0-9\s]/g, '')
-      .trim()
-    if (first && last) return `${first[0]!}${last[0]!}`.toUpperCase()
-    if (first) return teammateInitials(first)
-    if (last) return teammateInitials(last)
-    return teammateInitials(emailOrPerson.email)
+    // The first letter of each part, or the first two of the only one, in whatever script the name is written.
+    const parts = [emailOrPerson.firstName, emailOrPerson.lastName]
+      .map((part) => cleanPersonName(part).match(/\p{L}/gu) ?? [])
+      .filter((letters) => letters.length > 0)
+    const letters = parts.length === 2 ? [parts[0]![0]!, parts[1]![0]!] : (parts[0]?.slice(0, 2) ?? [])
+    return letters.length > 0 ? letters.join('').toUpperCase() : teammateInitials(emailOrPerson.email)
   }
   const clean = emailOrPerson.trim()
   if (!clean) return '??'
@@ -458,7 +485,7 @@ export function applyTeammateMention(
   draft: string,
   target: string | { email: string; firstName?: string | null; lastName?: string | null },
 ): string {
-  const inserted = typeof target === 'string' ? target : teammateMentionText(target)
+  const inserted = typeof target === 'string' ? target : personName(target)
   const twoWord = /(^|\s)@([^\s@]+\s+[^\s@]*)$/.exec(draft)
   if (twoWord) {
     return `${draft.slice(0, draft.length - (twoWord[2]?.length ?? 0) - 1)}@${inserted} `
@@ -530,7 +557,8 @@ export function shareTargets(
     }
     const contact = parseInviteContact(raw)
     if (contact) {
-      members.set(contact.email, formatInviteContact(contact))
+      // Named twice, the address keeps the name it was given with.
+      if (!members.has(contact.email) || fullName(contact)) members.set(contact.email, formatInviteContact(contact))
       continue
     }
     if (raw.trim()) unknown.push(raw.trim())

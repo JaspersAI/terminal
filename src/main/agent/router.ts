@@ -220,7 +220,7 @@ const DO_NOT_SHARE = 'No'
 const shareRoomTool: Tool = {
   name: 'share_room',
   description:
-    'Shares a room on the grid with teammates, named by first name, last name, full name, @tag, or email address: each sees the room live on their own terminal and may ask its agent, which runs here. A teammate is someone under Teammates in the state; an address that is not one yet (or "First Last <email@domain.com>") is invited, and joins the room once they accept. The user is asked before anything is shared. Central itself is never shared, only rooms.',
+    'Shares a room on the grid with teammates, named by name or email address: each sees the room live on their own terminal and may ask its agent, which runs here. A teammate is someone under Teammates in the state; an address that is not one yet is invited, and joins the room once they accept. The user is asked before anything is shared. Central itself is never shared, only rooms.',
   parameters: {
     type: 'object',
     properties: {
@@ -229,7 +229,7 @@ const shareRoomTool: Tool = {
         type: 'array',
         items: { type: 'string' },
         description:
-          'Teammates to add to the room (by name, @tag, or email address), or new people to invite by email address or "First Last <email@domain.com>".',
+          'Who to add: a teammate by name or email address, or someone new by email address or "First Last <email>".',
       },
     },
     required: ['room', 'teammates'],
@@ -313,8 +313,7 @@ function createRoomTool(context: ToolContext): Tool {
         teammates: {
           type: 'array',
           items: { type: 'string' },
-          description:
-            'Optional teammates or invitees to share the new room with (teammates by first name, last name, full name, @tag, or email address; new people by email address or "First Last <email@domain.com>").',
+          description: 'Optional: who to share the new room with, named as for share_room.',
         },
         message: MESSAGE,
         // Defaults to top-left quarter on screens 15 inches and larger, and left half on screens under 15 inches.
@@ -351,6 +350,12 @@ function createRoomTool(context: ToolContext): Tool {
       let shareShortLabels: string[] = []
       if (namedTeammates.length > 0) {
         if (ran.task !== undefined) throw new Error('A scheduled task cannot share a room.')
+        // Before the user is asked and anything is made: a room that cannot be shared now is not started as one that is.
+        if (!getState().collab.connected) {
+          throw new Error(
+            'Not connected to Jaspers, so a room cannot be shared right now. Sign in, or check the connection, and try again.',
+          )
+        }
         const currentTeammates = getState().collab.teammates
         const resolved = shareTargets(namedTeammates, currentTeammates)
         if (resolved.unknown.length > 0) {
@@ -383,22 +388,17 @@ function createRoomTool(context: ToolContext): Tool {
         { desc, brief, plugins, skills, ...(model ? { model } : {}), ...(systemPrompt ? { systemPrompt } : {}) },
         placement,
       )
-      if (initialMembers.length > 0) {
-        await shareRoom(workspaceId, loop.id, initialMembers)
-      }
+      // The room is made and the user said Start: its work begins whatever its sharing comes to, and
+      // a share that failed is said with the room, not instead of it.
+      const shared =
+        initialMembers.length === 0
+          ? undefined
+          : await shareRoom(workspaceId, loop.id, initialMembers).then(
+              () => `shared with ${shareShortLabels.join(', ')}`,
+              (err: unknown) => `not shared: ${(err instanceof Error ? err.message : String(err)).replace(/\.$/, '')}`,
+            )
       const written = handoffWritten({ message, brief, systemPrompt })
-      const started =
-        shareShortLabels.length > 0
-          ? `Started ${loopName(loop.id)} (shared with ${shareShortLabels.join(', ')})`
-          : `Started ${loopName(loop.id)}`
-      return hand(
-        ran,
-        loop,
-        written,
-        shareShortLabels.length > 0
-          ? handoffSummary('Started', loop.id, written).replace(`Started ${loopName(loop.id)}`, started)
-          : handoffSummary('Started', loop.id, written),
-      )
+      return hand(ran, loop, written, handoffSummary('Started', loop.id, written, shared))
     },
   }
 }

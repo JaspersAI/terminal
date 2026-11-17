@@ -126,11 +126,7 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
     // In a shared room a message that opens with `@` and someone in it is for the people: it is
     // filed in the room's conversation under the sender's name, and the room's agent is not run.
     const people = sharing.share ? othersIn(sharing.share, state.collab.accountId) : []
-    const sender =
-      fullName({
-        firstName: state.collab.firstName || state.jaspers.firstName,
-        lastName: state.collab.lastName || state.jaspers.lastName,
-      }) || state.jaspers.email
+    const sender = fullName(state.collab) || state.jaspers.email
     const parsed = task === undefined && !written ? parseRoomInput(input, sender, people) : null
     if (parsed?.kind === 'human') {
       if (sharing.role === 'member') return collab.message(sharing.shareId, record!.replica!.room, input.trim())

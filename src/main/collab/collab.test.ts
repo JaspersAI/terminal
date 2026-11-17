@@ -748,13 +748,24 @@ test('an address that is not a teammate is invited, and nothing reaches them unt
   await dave.connect()
   await settle()
 
+  // A name that is no name is refused here, before Account is asked; one that is, is told with the address.
+  await assert.rejects(alice.engine.setProfile('Dave Other (your admin)', 'Security'), /letters, spaces, apostrophes/)
+  await assert.rejects(alice.engine.setProfile('Alice', ' '), /both your first and last name/)
+  assert.equal(alice.state.collab.firstName, '')
+  await alice.engine.setProfile('Alice', 'Jones')
+
   await alice.engine.shareRoom('ws', made.loop.id, ['dave@other.com'])
   await settle()
   assert.deepEqual(alice.state.collab.shares[0]?.pendingEmails, ['dave@other.com'])
   assert.equal(roomOf(dave), null, 'nothing is drawn for someone who has not accepted')
   assert.deepEqual(dave.state.collab.teammates, [])
   assert.equal(dave.state.collab.incomingInvites.length, 1)
-  assert.ok(dave.notices.some((text) => text.includes('alice@fund.com invited you')))
+  // Not a teammate yet: the name they typed is never said without the address Account checked.
+  assert.ok(
+    dave.notices.includes(
+      'Alice Jones (alice@fund.com) invited you to be teammates. Accept or decline in Settings, Team.',
+    ),
+  )
 
   await dave.engine.accept(dave.state.collab.incomingInvites[0]!.inviteId)
   await settle()
@@ -947,7 +958,6 @@ test('setting first and last name propagates via profile.updated, addresses shar
 
   assert.equal(alice.state.collab.firstName, 'Alice')
   assert.equal(alice.state.collab.lastName, 'Jones')
-  assert.equal(alice.state.jaspers.firstName, 'Alice')
   assert.equal(bob.state.collab.teammates[0]?.firstName, 'Alice')
   assert.equal(bob.state.collab.teammates[0]?.lastName, 'Jones')
 

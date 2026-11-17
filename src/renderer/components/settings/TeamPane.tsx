@@ -1,8 +1,8 @@
 import { useState, type FormEvent, type ReactElement } from 'react'
-import { jaspersAccountLabel } from '../../../shared/app/jaspers'
-import { fullName, personDetail, personName } from '../../../shared/collab/collab'
+import { accountLabel, fullName, personDetail, personName } from '../../../shared/collab/collab'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
+import { useOwnName } from '../collab/own-name'
 import { TeammateBadge } from '../collab/TeammateBadge'
 import { BUTTON } from './Row'
 
@@ -15,20 +15,13 @@ export function TeamPane(): ReactElement {
   const jaspers = useAppState((s) => s.jaspers)
   const signedIn = jaspers.signedIn
   const collab = useAppState((s) => s.collab)
-  const storedFirst = (collab.firstName || jaspers.firstName || '').trim()
-  const storedLast = (collab.lastName || jaspers.lastName || '').trim()
-  const [firstDraft, setFirstDraft] = useState<string | null>(null)
-  const [lastDraft, setLastDraft] = useState<string | null>(null)
+  const mine = useOwnName()
   const [profileSaved, setProfileSaved] = useState(false)
   const [emailDraft, setEmailDraft] = useState('')
   const [inviteFirstDraft, setInviteFirstDraft] = useState('')
   const [inviteLastDraft, setInviteLastDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const firstValue = firstDraft ?? storedFirst
-  const lastValue = lastDraft ?? storedLast
-  const nameChanged = firstValue.trim() !== storedFirst || lastValue.trim() !== storedLast
 
   function act(work: () => Promise<void>): void {
     setError(null)
@@ -40,14 +33,10 @@ export function TeamPane(): ReactElement {
 
   function submitProfile(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    const first = firstValue.trim()
-    const last = lastValue.trim()
-    if (!first || !last || busy) return
+    if (!mine.changed || busy) return
     setProfileSaved(false)
     act(async () => {
-      await dispatch({ type: 'collab.setProfile', firstName: first, lastName: last })
-      setFirstDraft(null)
-      setLastDraft(null)
+      await mine.save()
       setProfileSaved(true)
     })
   }
@@ -96,7 +85,7 @@ export function TeamPane(): ReactElement {
 
   const shared = collab.shares.filter((one) => one.role === 'owner')
   const joined = collab.shares.filter((one) => one.role === 'member')
-  const signedInAs = jaspersAccountLabel(jaspers, collab)
+  const signedInAs = accountLabel(collab, jaspers.email)
 
   return (
     <div data-team-pane className="max-w-2xl space-y-6 text-sm">
@@ -117,7 +106,7 @@ export function TeamPane(): ReactElement {
       <section data-team-profile className="space-y-2 border-t border-border pt-4">
         <h4 className="text-xs font-medium text-muted-foreground">Your name</h4>
         <p className="text-xs text-muted-foreground">
-          {storedFirst && storedLast
+          {mine.named
             ? 'Teammates see and @tag you by your name across shared rooms, tabs, and invitations.'
             : 'Provide your first and last name so teammates can address and @tag you.'}
         </p>
@@ -128,10 +117,10 @@ export function TeamPane(): ReactElement {
             aria-label="First name"
             placeholder="First name"
             maxLength={80}
-            value={firstValue}
+            value={mine.first}
             onChange={(e) => {
               setProfileSaved(false)
-              setFirstDraft(e.target.value)
+              mine.setFirst(e.target.value)
             }}
             required
             className="min-w-0 flex-1 border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
@@ -142,10 +131,10 @@ export function TeamPane(): ReactElement {
             aria-label="Last name"
             placeholder="Last name"
             maxLength={80}
-            value={lastValue}
+            value={mine.last}
             onChange={(e) => {
               setProfileSaved(false)
-              setLastDraft(e.target.value)
+              mine.setLast(e.target.value)
             }}
             required
             className="min-w-0 flex-1 border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
@@ -153,12 +142,12 @@ export function TeamPane(): ReactElement {
           <button
             type="submit"
             data-team-profile-save
-            disabled={busy || !collab.connected || !firstValue.trim() || !lastValue.trim() || !nameChanged}
+            disabled={busy || !collab.connected || !mine.changed}
             className={BUTTON}
           >
             Save
           </button>
-          {profileSaved && !nameChanged && <span className="text-xs text-muted-foreground">Saved</span>}
+          {profileSaved && !mine.changed && <span className="text-xs text-muted-foreground">Saved</span>}
         </form>
       </section>
 

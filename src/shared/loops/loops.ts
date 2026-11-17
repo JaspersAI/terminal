@@ -176,9 +176,15 @@ export function startInstructions(
  * Formats the tool return string for `create_room` (`Started`) and `update_room` (`Sent to`),
  * including the refined instructions passed on to the room when present.
  */
-export function handoffSummary(prefix: 'Started' | 'Sent to', loopId: string, instructions?: string | null): string {
+export function handoffSummary(
+  prefix: 'Started' | 'Sent to',
+  loopId: string,
+  instructions?: string | null,
+  aside?: string,
+): string {
   const trimmed = typeof instructions === 'string' ? instructions.trim() : ''
-  return trimmed ? `${prefix} ${loopName(loopId)}:\n${trimmed}` : `${prefix} ${loopName(loopId)}.`
+  const room = aside ? `${loopName(loopId)} (${aside})` : loopName(loopId)
+  return trimmed ? `${prefix} ${room}:\n${trimmed}` : `${prefix} ${room}.`
 }
 
 /**
