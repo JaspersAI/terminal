@@ -468,8 +468,10 @@ export type Action =
    * and those windows close. Refused, with what is in the way named, when something cannot be moved.
    */
   | { type: 'window.oneScreen' }
-  /** Invites an address to be a teammate. Nothing is shared with them until they accept. */
-  | { type: 'collab.invite'; email: string }
+  /** Sets the signed-in user's first and last name on their Jaspers account. */
+  | { type: 'collab.setProfile'; firstName: string; lastName: string }
+  /** Invites an address to be a teammate, with optional invitee first and last name. Nothing is shared with them until they accept. */
+  | { type: 'collab.invite'; email: string; firstName?: string; lastName?: string }
   /** Accepts an invitation, by its id: the two accounts are teammates from then. */
   | { type: 'collab.accept'; invite: string }
   /** Declines an invitation received, or takes back one sent. */

@@ -9,7 +9,12 @@ import {
 } from 'react'
 import { askedIn } from '../../../shared/agent/asking'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
-import { applyTeammateMention, matchTeammateMentions } from '../../../shared/collab/collab'
+import {
+  applyTeammateMention,
+  fullName,
+  matchTeammateMentions,
+  teammateMentionText,
+} from '../../../shared/collab/collab'
 import { formatAsOf } from '../../../shared/tasks/tasks'
 import { currentWorkspace, useAppState } from '../../lib/state'
 import { TeammateBadge } from '../collab/TeammateBadge'
@@ -132,7 +137,7 @@ export function Composer(): ReactElement {
       }
       if (event.key === 'Tab' && activeMention) {
         event.preventDefault()
-        setDraft(applyTeammateMention(draft, activeMention.email))
+        setDraft(applyTeammateMention(draft, activeMention))
         setMentionIndex(0)
         return
       }
@@ -383,6 +388,7 @@ export function Composer(): ReactElement {
             >
               {mentionMatch.matches.map((tm, idx) => {
                 const selected = idx === Math.min(mentionIndex, mentionMatch.matches.length - 1)
+                const named = fullName(tm)
                 return (
                   <button
                     key={tm.accountId}
@@ -392,7 +398,7 @@ export function Composer(): ReactElement {
                     data-central-mention-option={tm.email}
                     onMouseDown={(event) => {
                       event.preventDefault()
-                      setDraft(applyTeammateMention(draft, tm.email))
+                      setDraft(applyTeammateMention(draft, tm))
                       setMentionIndex(0)
                       inputRef.current?.focus()
                     }}
@@ -400,8 +406,16 @@ export function Composer(): ReactElement {
                       selected ? 'bg-muted font-medium' : 'hover:bg-muted'
                     }`}
                   >
-                    <TeammateBadge email={tm.email} index={idx} lit={tm.online} size={16} />
-                    <span className="truncate">@{tm.email}</span>
+                    <TeammateBadge
+                      email={tm.email}
+                      firstName={tm.firstName}
+                      lastName={tm.lastName}
+                      index={idx}
+                      lit={tm.online}
+                      size={16}
+                    />
+                    <span className="truncate">@{teammateMentionText(tm)}</span>
+                    {named && <span className="ml-auto truncate text-muted-foreground">{tm.email}</span>}
                   </button>
                 )
               })}

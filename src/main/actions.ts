@@ -115,6 +115,7 @@ import { installDefaultsForSignUp, removeInstalled } from './plugins/install'
 import { connect } from './plugins/mcp'
 import { dismissNotice } from './app/notices'
 import { authorize } from './plugins/oauth'
+import { personName } from '../shared/collab/collab'
 import { checkSignIn, signIn, signOut, signedIn } from './jaspers/jaspers'
 import {
   acceptTeammateInvite,
@@ -126,6 +127,7 @@ import {
   replicaRefresh,
   replicaSet,
   setCollabHands,
+  setCollabProfile,
   shareRoom,
   shareTab,
   stopSharing,
@@ -367,7 +369,12 @@ const HANDLERS: Record<Action['type'], Handler> = {
   },
   'window.allScreens': () => allScreensWithNotice(),
   'window.oneScreen': () => oneScreenOrNotice(),
-  'collab.invite': (raw) => inviteTeammate(asString(raw.email)),
+  'collab.setProfile': (raw) => setCollabProfile(asString(raw.firstName), asString(raw.lastName)),
+  'collab.invite': (raw) =>
+    inviteTeammate(asString(raw.email), {
+      firstName: typeof raw.firstName === 'string' ? raw.firstName : undefined,
+      lastName: typeof raw.lastName === 'string' ? raw.lastName : undefined,
+    }),
   'collab.accept': (raw) => acceptTeammateInvite(asString(raw.invite)),
   'collab.decline': (raw) => declineTeammateInvite(asString(raw.invite)),
   'collab.removeTeammate': (raw) => removeTeammate(asString(raw.accountId)),
@@ -1482,7 +1489,10 @@ setCollabHands({
 
 /** Whose a room is, when it is a teammate's: for saying why something is not done to it here. */
 function ownerOf(shareId: string | undefined): string {
-  return getState().collab.shares.find((one) => one.shareId === shareId)?.ownerEmail ?? 'a teammate'
+  const share = getState().collab.shares.find((one) => one.shareId === shareId)
+  return share
+    ? personName({ firstName: share.ownerFirstName, lastName: share.ownerLastName, email: share.ownerEmail })
+    : 'a teammate'
 }
 
 /** Refuses a change to a teammate's room that only its owner's terminal makes. */

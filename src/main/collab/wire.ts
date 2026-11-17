@@ -20,6 +20,8 @@ export interface WireCommand {
   /** `<account>/<client>`: whose edits an acknowledgement is filed under. */
   sender: string
   senderEmail: string
+  senderFirstName: string
+  senderLastName: string
   kind: string
   payload: Record<string, unknown>
 }
@@ -46,7 +48,8 @@ export interface WireState {
 
 export interface CollabApi {
   state(): Promise<WireState>
-  invite(email: string): Promise<void>
+  setProfile(firstName: string, lastName: string): Promise<{ firstName: string; lastName: string }>
+  invite(email: string, names?: { firstName?: string; lastName?: string }): Promise<void>
   accept(invite: string): Promise<void>
   decline(invite: string): Promise<void>
   removeTeammate(accountId: string): Promise<void>
@@ -78,12 +81,20 @@ const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
 
 function readInvite(raw: unknown): TeammateInvite[] {
   if (!isRecord(raw) || !text(raw.invite_id) || !text(raw.inviter_email) || !text(raw.invitee_email)) return []
+  const inviterFirstName = text(raw.inviter_first_name).trim()
+  const inviterLastName = text(raw.inviter_last_name).trim()
+  const inviteeFirstName = text(raw.invitee_first_name).trim()
+  const inviteeLastName = text(raw.invitee_last_name).trim()
   return [
     {
       inviteId: text(raw.invite_id),
       inviterAccountId: text(raw.inviter_account_id),
       inviterEmail: text(raw.inviter_email),
+      ...(inviterFirstName ? { inviterFirstName } : {}),
+      ...(inviterLastName ? { inviterLastName } : {}),
       inviteeEmail: text(raw.invitee_email),
+      ...(inviteeFirstName ? { inviteeFirstName } : {}),
+      ...(inviteeLastName ? { inviteeLastName } : {}),
       createdAt: number(raw.created_at),
     },
   ]
@@ -91,23 +102,39 @@ function readInvite(raw: unknown): TeammateInvite[] {
 
 function readMember(raw: unknown): ShareMember[] {
   if (!isRecord(raw) || !text(raw.account_id) || !text(raw.email)) return []
-  return [{ accountId: text(raw.account_id), email: text(raw.email), addedAt: number(raw.added_at) }]
+  const firstName = text(raw.first_name).trim()
+  const lastName = text(raw.last_name).trim()
+  return [
+    {
+      accountId: text(raw.account_id),
+      email: text(raw.email),
+      ...(firstName ? { firstName } : {}),
+      ...(lastName ? { lastName } : {}),
+      addedAt: number(raw.added_at),
+    },
+  ]
 }
 
 /** The server's state as the tree keeps it, read as this account on this terminal. */
 export function readState(raw: unknown, clientId: string): WireState {
   const state = isRecord(raw) ? raw : {}
   const me = text(state.account_id)
+  const firstName = text(state.first_name).trim()
+  const lastName = text(state.last_name).trim()
   const online = list(state.online).flatMap((one) =>
     isRecord(one) ? [{ account: text(one.account_id), client: text(one.client_id) }] : [],
   )
   const teammates = list(state.teammates).flatMap((one): Teammate[] => {
     if (!isRecord(one) || !text(one.account_id) || !text(one.email)) return []
     const accountId = text(one.account_id)
+    const mateFirst = text(one.first_name).trim()
+    const mateLast = text(one.last_name).trim()
     return [
       {
         accountId,
         email: text(one.email),
+        ...(mateFirst ? { firstName: mateFirst } : {}),
+        ...(mateLast ? { lastName: mateLast } : {}),
         since: number(one.since),
         online: online.some((o) => o.account === accountId),
       },
@@ -118,6 +145,8 @@ export function readState(raw: unknown, clientId: string): WireState {
     if (!isRecord(one) || !text(one.share_id) || (one.kind !== 'room' && one.kind !== 'workspace')) return []
     const ownerAccountId = text(one.owner_account_id)
     const ownerClient = text(one.owner_client_id)
+    const ownerFirstName = text(one.owner_first_name).trim()
+    const ownerLastName = text(one.owner_last_name).trim()
     const mine = ownerAccountId === me && ownerClient === clientId
     if (mine) owned.set(text(one.share_id), text(one.local_id))
     return [
@@ -127,6 +156,8 @@ export function readState(raw: unknown, clientId: string): WireState {
         role: mine ? 'owner' : 'member',
         ownerAccountId,
         ownerEmail: text(one.owner_email),
+        ...(ownerFirstName ? { ownerFirstName } : {}),
+        ...(ownerLastName ? { ownerLastName } : {}),
         ownerOnline: mine || online.some((o) => o.account === ownerAccountId && o.client === ownerClient),
         title: text(one.title) || 'Shared',
         members: list(one.members).flatMap(readMember),
@@ -137,6 +168,8 @@ export function readState(raw: unknown, clientId: string): WireState {
   return {
     collab: {
       accountId: me || null,
+      firstName,
+      lastName,
       teammates,
       outgoingInvites: list(state.outgoing_invites).flatMap(readInvite),
       incomingInvites: list(state.incoming_invites).flatMap(readInvite),
@@ -159,6 +192,8 @@ export function readCommand(raw: unknown): WireCommand | null {
     shareId: text(raw.share_id),
     sender: `${text(raw.sender_account_id)}/${text(raw.sender_client_id)}`,
     senderEmail: text(raw.sender_email),
+    senderFirstName: text(raw.sender_first_name).trim(),
+    senderLastName: text(raw.sender_last_name).trim(),
     kind: text(raw.kind),
     payload: isRecord(raw.payload) ? raw.payload : {},
   }
@@ -196,6 +231,7 @@ export function readEvent(raw: unknown): WireEvent | null {
     case 'invite.removed':
     case 'teammate.accepted':
     case 'teammate.removed':
+    case 'profile.updated':
     case 'share.updated':
     case 'share.removed':
     case 'presence':

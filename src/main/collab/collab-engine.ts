@@ -1,8 +1,10 @@
 import type { Exchange } from '../../shared/agent/transcript.ts'
 import {
   attributed,
+  cleanPersonName,
   EMPTY_COLLAB,
   HUMAN_ROOM_ANSWER,
+  personName,
   type CollabShare,
   type CollabState,
 } from '../../shared/collab/collab.ts'
@@ -62,7 +64,7 @@ export interface CollabEngineState {
   currentWorkspaceId: string
   grids: Record<string, Record<number, Grid>>
   loops: Record<string, Loops>
-  jaspers: { email: string | null }
+  jaspers: { email: string | null; firstName?: string | null; lastName?: string | null }
   collab: CollabState
 }
 
@@ -247,6 +249,10 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
   const me = (): string => `${deps.getState().collab.accountId ?? ''}/${deps.clientId}`
   const shareOf = (shareId: string): CollabShare | undefined =>
     deps.getState().collab.shares.find((one) => one.shareId === shareId)
+  const shareOwnerName = (share: CollabShare): string =>
+    personName({ firstName: share.ownerFirstName, lastName: share.ownerLastName, email: share.ownerEmail })
+  const commandSenderName = (command: WireCommand): string =>
+    personName({ firstName: command.senderFirstName, lastName: command.senderLastName, email: command.senderEmail })
 
   // The tree's own account of what is shared.
 
@@ -586,13 +592,17 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       case 'prompt': {
         const input = typeof payload.input === 'string' ? payload.input.trim() : ''
         if (!input) throw new Error('There was nothing to ask.')
-        const reply = await deps.runPrompt(target.workspaceId, needRoom(), attributed(command.senderEmail, input))
+        const reply = await deps.runPrompt(
+          target.workspaceId,
+          needRoom(),
+          attributed(commandSenderName(command), input),
+        )
         return { reply: reply.slice(0, REPLY_MAX) }
       }
       case 'message': {
         const text = typeof payload.text === 'string' ? payload.text.trim() : ''
         if (!text) throw new Error('There was nothing to say.')
-        deps.fileMessage(target.workspaceId, needRoom(), attributed(command.senderEmail, text))
+        deps.fileMessage(target.workspaceId, needRoom(), attributed(commandSenderName(command), text))
         said(target.workspaceId, needRoom())
         return {}
       }
@@ -759,7 +769,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           loop.id,
           part,
           memory.pending,
-          (view) => onlyThere(view, share.ownerEmail),
+          (view) => onlyThere(view, shareOwnerName(share)),
         )
         return { ...state, grids: { ...state.grids, [tab]: next.grids }, loops: { ...state.loops, [tab]: next.loops } }
       })
@@ -903,7 +913,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     if (!connected) throw new Error('Not connected to Jaspers: this room is read-only until it is.')
     if (!share.ownerOnline) {
       throw new Error(
-        `${share.ownerEmail} is offline. This room lives on their terminal and is read-only until they are back.`,
+        `${shareOwnerName(share)} is offline. This room lives on their terminal and is read-only until they are back.`,
       )
     }
     return share
@@ -1057,6 +1067,14 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     const mine = new Set(wire.owned.keys())
     deps.update((state) => ({
       ...state,
+      jaspers:
+        state.jaspers.email && (wire.collab.firstName || wire.collab.lastName)
+          ? {
+              ...state.jaspers,
+              ...(wire.collab.firstName ? { firstName: wire.collab.firstName } : {}),
+              ...(wire.collab.lastName ? { lastName: wire.collab.lastName } : {}),
+            }
+          : state.jaspers,
       collab: { ...wire.collab, connected: true, error: null },
       // A room or tab of this terminal's own the server no longer has shared is plain again.
       workspaces: state.workspaces.map((one) => {
@@ -1094,7 +1112,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     for (const target of targets) if (!owned.get(target.shareId)?.sent) schedule(target.shareId)
     for (const share of wire.collab.shares) {
       if (share.role !== 'member') continue
-      if (!share.ownerOnline) failWaiting(`${share.ownerEmail} went offline.`, share.shareId)
+      if (!share.ownerOnline) failWaiting(`${shareOwnerName(share)} went offline.`, share.shareId)
       if (!replicas.has(share.shareId)) void pull(share.shareId)
     }
     tell(was, wire.collab)
@@ -1110,18 +1128,23 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     if (!was.connected) return
     for (const invite of now.incomingInvites) {
       if (!was.incomingInvites.some((one) => one.inviteId === invite.inviteId)) {
-        deps.notice(`${invite.inviterEmail} invited you to be teammates. Accept or decline in Settings, Team.`)
+        const inviter = personName({
+          firstName: invite.inviterFirstName,
+          lastName: invite.inviterLastName,
+          email: invite.inviterEmail,
+        })
+        deps.notice(`${inviter} invited you to be teammates. Accept or decline in Settings, Team.`)
       }
     }
     for (const teammate of now.teammates) {
       if (!was.teammates.some((one) => one.accountId === teammate.accountId)) {
-        deps.notice(`${teammate.email} is now a teammate.`)
+        deps.notice(`${personName(teammate)} is now a teammate.`)
       }
     }
     for (const share of now.shares) {
       if (share.role === 'member' && !was.shares.some((one) => one.shareId === share.shareId)) {
         deps.notice(
-          `${share.ownerEmail} shared ${share.kind === 'room' ? 'a room' : 'a tab'} with you: ${share.title}.`,
+          `${shareOwnerName(share)} shared ${share.kind === 'room' ? 'a room' : 'a tab'} with you: ${share.title}.`,
         )
       }
     }
@@ -1311,9 +1334,29 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
 
     // People.
 
-    async invite(email: string): Promise<void> {
+    async setProfile(firstName: string, lastName: string): Promise<void> {
+      const first = cleanPersonName(firstName)
+      const last = cleanPersonName(lastName)
+      if (!first || !last) throw new Error('Enter both your first and last name.')
       requireConnected()
-      await deps.api.invite(email)
+      const saved = await deps.api.setProfile(first, last)
+      deps.update((state) => ({
+        ...state,
+        jaspers: state.jaspers.email
+          ? { ...state.jaspers, firstName: saved.firstName, lastName: saved.lastName }
+          : state.jaspers,
+        collab: { ...state.collab, firstName: saved.firstName, lastName: saved.lastName },
+      }))
+      await refresh()
+    },
+    async invite(email: string, names?: { firstName?: string; lastName?: string }): Promise<void> {
+      requireConnected()
+      const first = cleanPersonName(names?.firstName)
+      const last = cleanPersonName(names?.lastName)
+      await deps.api.invite(email, {
+        ...(first ? { firstName: first } : {}),
+        ...(last ? { lastName: last } : {}),
+      })
       await refresh()
     },
     async accept(invite: string): Promise<void> {
@@ -1444,7 +1487,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       if (!memory.have.has(key)) {
         throw new Error(
           share && !share.ownerOnline
-            ? `${share.ownerEmail} is offline, and this was not read while they were here.`
+            ? `${shareOwnerName(share)} is offline, and this was not read while they were here.`
             : 'The room has no data for this yet.',
         )
       }
@@ -1471,7 +1514,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       if (answer) return answer
       throw new Error(
         share && !share.ownerOnline
-          ? `${share.ownerEmail} is offline, and this was not read while they were here.`
+          ? `${shareOwnerName(share)} is offline, and this was not read while they were here.`
           : 'The room has no answer for this yet.',
       )
     },

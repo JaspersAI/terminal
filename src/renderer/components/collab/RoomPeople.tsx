@@ -1,5 +1,5 @@
 import { useSyncExternalStore, type ReactElement } from 'react'
-import { peopleIn, type RoomSharing } from '../../../shared/collab/collab'
+import { peopleIn, personDetail, personName, type RoomSharing } from '../../../shared/collab/collab'
 import type { Loop } from '../../../shared/loops/loops'
 import { useAppState } from '../../lib/state'
 import { TeammateBadge } from './TeammateBadge'
@@ -8,10 +8,11 @@ import { TeammateBadge } from './TeammateBadge'
 // in a teammate's room, whether its owner's terminal is there to answer. A badge of a room of this
 // terminal's own can be dragged onto another of its rooms to share that one with the same person.
 
-/** The teammate being dragged, if one is: the account (or invited address), and the room it left. */
+/** The teammate being dragged, if one is: the account (or invited address), their display name, and the room it left. */
 interface Drag {
   id: string
   email: string
+  name: string
   from: string
 }
 
@@ -56,7 +57,16 @@ export function RoomPeople({ loop, sharing, lit }: Props): ReactElement | null {
   const people = peopleIn(share, collab).filter((one) => !one.me)
   // A copy of a room that another of this account's own terminals holds reads as "your room", not as someone else's.
   const mine = share.ownerAccountId === collab.accountId
-  const owner = share.role !== 'member' ? null : mine ? 'your other terminal' : share.ownerEmail
+  const owner =
+    share.role !== 'member'
+      ? null
+      : mine
+        ? 'your other terminal'
+        : personName({
+            firstName: share.ownerFirstName,
+            lastName: share.ownerLastName,
+            email: share.ownerEmail,
+          })
   const away = mine ? 'It is offline' : 'They are offline'
   return (
     <div data-room-people data-room-role={share.role} className={STRIP}>
@@ -70,6 +80,7 @@ export function RoomPeople({ loop, sharing, lit }: Props): ReactElement | null {
       <div className="flex shrink-0 items-center gap-1">
         {people.map((person, index) => {
           const draggable = share.role === 'owner' && person.role !== 'owner'
+          const display = personName(person)
           return (
             <span
               key={person.id}
@@ -78,17 +89,19 @@ export function RoomPeople({ loop, sharing, lit }: Props): ReactElement | null {
                 if (!draggable) return
                 event.dataTransfer.effectAllowed = 'copy'
                 event.dataTransfer.setData('text/plain', person.email)
-                setDragging({ id: person.id, email: person.email, from: loop.id })
+                setDragging({ id: person.id, email: person.email, name: display, from: loop.id })
               }}
               onDragEnd={() => setDragging(null)}
               className={draggable ? 'cursor-grab' : undefined}
             >
               <TeammateBadge
                 email={person.email}
+                firstName={person.firstName}
+                lastName={person.lastName}
                 index={index}
                 lit={lit && person.online}
                 title={[
-                  person.email,
+                  personDetail(person),
                   person.role === 'invited' ? 'invited, not joined yet' : person.online ? 'here now' : 'away',
                   draggable ? 'drag onto another room to share it too' : '',
                 ]
@@ -110,7 +123,7 @@ const STRIP =
  * Laid over a room while a teammate is being dragged: a view's frame would swallow the drop, and
  * this says where it lands.
  */
-export function TeammateDrop({ email, onDrop }: { email: string; onDrop(): void }): ReactElement {
+export function TeammateDrop({ email, name, onDrop }: { email: string; name?: string; onDrop(): void }): ReactElement {
   return (
     <div
       data-teammate-drop
@@ -125,7 +138,7 @@ export function TeammateDrop({ email, onDrop }: { email: string; onDrop(): void 
       }}
       className="absolute inset-0 z-40 flex items-center justify-center border-2 border-dashed border-primary bg-background/80 text-xs"
     >
-      Share this room with {email}
+      Share this room with {name || email}
     </div>
   )
 }

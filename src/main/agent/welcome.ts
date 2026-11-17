@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { sleep } from '../../shared/abort'
 import { CENTRAL_CHAT } from '../../shared/agent/history'
-import { EXAMPLE_ASK, EXAMPLE_FALLBACK, EXPLANATION, GREETING, WELCOME_NOTE } from '../../shared/agent/welcome'
+import { EXAMPLE_ASK, EXAMPLE_FALLBACK, EXPLANATION, greetingFor, WELCOME_NOTE } from '../../shared/agent/welcome'
 import { getState, update } from '../state'
 import { runWelcome, said } from './orchestrator'
 import { modelFor } from './utils/settings'
@@ -60,7 +60,8 @@ async function welcome(workspaceId: string): Promise<void> {
     )
     const late = sleep(EXAMPLE_MAX_MS).then(() => null)
     await sleep(FIRST_MS)
-    await say(workspaceId, GREETING)
+    const nowState = getState()
+    await say(workspaceId, greetingFor(nowState.collab.firstName || nowState.jaspers.firstName))
     await sleep(BEAT_MS)
     await say(workspaceId, EXPLANATION)
     const [, third] = await Promise.all([sleep(BEAT_MS), Promise.race([example, late])])

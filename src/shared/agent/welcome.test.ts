@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { EXAMPLE_ASK, EXPLANATION, GREETING, WELCOME_NOTE } from './welcome.ts'
+import { EXAMPLE_ASK, EXPLANATION, GREETING, greetingFor, WELCOME_NOTE } from './welcome.ts'
 
 test('the explanation puts talking first, keeps typing as a way in, and explains Dock for extended text', () => {
   assert.match(EXPLANATION, /hold the orb/)
@@ -14,4 +14,6 @@ test('the notes are one parenthesized line each, the shape the transcript tells 
     assert.doesNotMatch(note, /\n/)
   }
   assert.notEqual(GREETING, '')
+  assert.equal(greetingFor('Seth'), 'Hi Seth, I’m Jaspers, the assistant in this terminal. Welcome.')
+  assert.equal(greetingFor(''), GREETING)
 })

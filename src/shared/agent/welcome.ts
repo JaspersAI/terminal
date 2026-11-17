@@ -13,6 +13,11 @@ export const WELCOME_NOTE =
 
 export const GREETING = 'Hi, I’m Jaspers, the assistant in this terminal. Welcome.'
 
+export function greetingFor(firstName?: string | null): string {
+  const clean = typeof firstName === 'string' ? firstName.trim() : ''
+  return clean ? `Hi ${clean}, I’m Jaspers, the assistant in this terminal. Welcome.` : GREETING
+}
+
 /** What the terminal is, and how to speak to it: talking first, typing in the command line, and Dock for an extended text conversation. */
 export const EXPLANATION = [
   'This is a terminal for financial research: tabs along the bottom, isolated rooms on the grid, and plugins that bring views and data.',

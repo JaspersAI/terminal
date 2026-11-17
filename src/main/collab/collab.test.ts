@@ -37,8 +37,9 @@ interface FakeShare {
 
 function fakeAccount() {
   const emails = new Map<string, string>()
+  const profiles = new Map<string, { firstName: string; lastName: string }>()
   const teammates = new Set<string>()
-  const invites: { id: string; from: string; to: string }[] = []
+  const invites: { id: string; from: string; to: string; firstName?: string; lastName?: string }[] = []
   const shares = new Map<string, FakeShare>()
   const commands = new Map<string, { raw: Record<string, unknown>; share: string; sender: string; status: string }>()
   const streams = new Map<string, (raw: unknown) => void>()
@@ -58,16 +59,26 @@ function fakeAccount() {
     }
   }
   const everyone = (share: FakeShare): string[] => [share.owner, ...share.members]
+  const profileOf = (account: string): { firstName: string; lastName: string } =>
+    profiles.get(account) ?? { firstName: '', lastName: '' }
   const info = (share: FakeShare, me: string): Record<string, unknown> => ({
     share_id: share.id,
     kind: share.kind,
     owner_account_id: share.owner,
     owner_email: emails.get(share.owner),
+    owner_first_name: profileOf(share.owner).firstName,
+    owner_last_name: profileOf(share.owner).lastName,
     owner_client_id: share.client,
     local_id: share.localId,
     title: share.title,
     revision: 1,
-    members: share.members.map((account) => ({ account_id: account, email: emails.get(account), added_at: 1 })),
+    members: share.members.map((account) => ({
+      account_id: account,
+      email: emails.get(account),
+      first_name: profileOf(account).firstName,
+      last_name: profileOf(account).lastName,
+      added_at: 1,
+    })),
     pending_emails: me === share.owner ? share.pending : [],
     updated_at: 1,
   })
@@ -123,16 +134,28 @@ function fakeAccount() {
             {
               account_id: account,
               email,
+              first_name: profileOf(account).firstName,
+              last_name: profileOf(account).lastName,
               teammates: [...emails.keys()]
                 .filter((other) => teammates.has(pair(account, other)) && other !== account)
-                .map((other) => ({ account_id: other, email: emails.get(other), since: 1 })),
+                .map((other) => ({
+                  account_id: other,
+                  email: emails.get(other),
+                  first_name: profileOf(other).firstName,
+                  last_name: profileOf(other).lastName,
+                  since: 1,
+                })),
               outgoing_invites: invites
                 .filter((one) => one.from === account)
                 .map((one) => ({
                   invite_id: one.id,
                   inviter_account_id: one.from,
                   inviter_email: email,
+                  inviter_first_name: profileOf(account).firstName,
+                  inviter_last_name: profileOf(account).lastName,
                   invitee_email: one.to,
+                  invitee_first_name: one.firstName ?? '',
+                  invitee_last_name: one.lastName ?? '',
                   created_at: 1,
                 })),
               incoming_invites: invites
@@ -141,7 +164,11 @@ function fakeAccount() {
                   invite_id: one.id,
                   inviter_account_id: one.from,
                   inviter_email: emails.get(one.from),
+                  inviter_first_name: profileOf(one.from).firstName,
+                  inviter_last_name: profileOf(one.from).lastName,
                   invitee_email: one.to,
+                  invitee_first_name: one.firstName ?? '',
+                  invitee_last_name: one.lastName ?? '',
                   created_at: 1,
                 })),
               shares: [...shares.values()]
@@ -154,8 +181,22 @@ function fakeAccount() {
             },
             client,
           ),
-        invite: async (to) => {
-          invites.push({ id: `inv-${++seq}`, from: account, to })
+        setProfile: async (firstName, lastName) => {
+          profiles.set(account, { firstName, lastName })
+          emit(
+            [...emails.keys()],
+            {
+              type: 'profile.updated',
+              account_id: account,
+              first_name: firstName,
+              last_name: lastName,
+            },
+            who,
+          )
+          return { firstName, lastName }
+        },
+        invite: async (to, names) => {
+          invites.push({ id: `inv-${++seq}`, from: account, to, ...names })
           const invitee = [...emails].find(([, address]) => address === to)?.[0]
           if (invitee) emit([invitee], { type: 'invite.created' })
         },
@@ -277,6 +318,8 @@ function fakeAccount() {
               sender_account_id: account,
               sender_client_id: client,
               sender_email: email,
+              sender_first_name: profileOf(account).firstName,
+              sender_last_name: profileOf(account).lastName,
               kind,
               payload,
             },
@@ -894,4 +937,28 @@ test('a room held by a terminal that is gone can still be taken back: its accoun
   assert.equal(roomOf(second), null)
   assert.equal(roomOf(bob), null, 'and gone for the teammate too, not left read-only for ever')
   assert.deepEqual(bob.state.collab.shares, [])
+})
+
+test('setting first and last name propagates via profile.updated, addresses shared rooms by name, and attributes messages by name', async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.setProfile('Alice', 'Jones')
+  await bob.engine.setProfile('Bob', 'Smith')
+  await settle()
+
+  assert.equal(alice.state.collab.firstName, 'Alice')
+  assert.equal(alice.state.collab.lastName, 'Jones')
+  assert.equal(alice.state.jaspers.firstName, 'Alice')
+  assert.equal(bob.state.collab.teammates[0]?.firstName, 'Alice')
+  assert.equal(bob.state.collab.teammates[0]?.lastName, 'Jones')
+
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  assert.ok(bob.notices.some((line) => line.startsWith('Alice Jones shared a room with you:')))
+  assert.equal(bob.state.collab.shares[0]?.ownerFirstName, 'Alice')
+  assert.equal(bob.state.collab.shares[0]?.ownerLastName, 'Jones')
+
+  const replica = roomOf(bob)!.loop
+  await bob.engine.message(replica.shareId!, replica.replica!.room, '@Alice Jones looks good')
+  await settle()
+  assert.equal(alice.chats.get(`ws/${room}`)?.at(-1)?.question, '[Bob Smith] @Alice Jones looks good')
 })

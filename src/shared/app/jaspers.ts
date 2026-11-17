@@ -213,6 +213,8 @@ const ACCESS_TTL_MS = 60 * 60_000
 export interface JaspersSignIn {
   signedIn: boolean
   email: string | null
+  firstName?: string | null
+  lastName?: string | null
   /** Why the last sign-in ended on its own, when it did: Account refused to renew it. Cleared by the next sign-in. */
   reason: string | null
 }
@@ -224,6 +226,8 @@ export interface StoredJaspers {
   tokens: string | null
   /** From the access token's claims, kept open so the tree can say who is signed in without opening the tokens. */
   email: string | null
+  firstName?: string | null
+  lastName?: string | null
   reason: string | null
 }
 
@@ -340,15 +344,29 @@ export function readTokens(value: unknown): JaspersTokens | null {
 /** The sign-in as a state file holds it. A file from before the sign-in, or one edited wrong, reads as signed out. */
 export function readStoredJaspers(value: unknown): StoredJaspers {
   if (typeof value !== 'object' || value === null) return SIGNED_OUT
-  const { client, tokens, email, reason } = value as Record<string, unknown>
+  const { client, tokens, email, firstName, lastName, reason } = value as Record<string, unknown>
   if (typeof tokens !== 'string' || !tokens)
     return { ...SIGNED_OUT, reason: typeof reason === 'string' ? reason : null }
   return {
     client: client ?? null,
     tokens,
     email: typeof email === 'string' && email ? email : null,
+    ...(typeof firstName === 'string' && firstName.trim() ? { firstName: firstName.trim() } : {}),
+    ...(typeof lastName === 'string' && lastName.trim() ? { lastName: lastName.trim() } : {}),
     reason: null,
   }
+}
+
+/** How the signed-in Jaspers user is shown (`First Last (email)` when named, else `email`). */
+export function jaspersAccountLabel(
+  jaspers: { email: string | null; firstName?: string | null; lastName?: string | null },
+  collab?: { firstName?: string | null; lastName?: string | null },
+): string | null {
+  const first = (collab?.firstName?.trim() || jaspers.firstName?.trim() || '').trim()
+  const last = (collab?.lastName?.trim() || jaspers.lastName?.trim() || '').trim()
+  const name = [first, last].filter(Boolean).join(' ')
+  if (name && jaspers.email) return `${name} (${jaspers.email})`
+  return name || jaspers.email || null
 }
 
 /** Whether the access token is about to run out, or has: renew it before sending anything on it. */

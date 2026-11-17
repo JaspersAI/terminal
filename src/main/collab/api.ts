@@ -42,7 +42,21 @@ export function collabApi(base: () => string, send: Send, clientId: string): Col
 
   return {
     state: async () => readState(await call('/state'), clientId),
-    invite: async (email) => void (await call('/teammates', 'POST', { email })),
+    setProfile: async (firstName, lastName) => {
+      const answer = await call('/profile', 'PUT', { first_name: firstName, last_name: lastName })
+      const profile =
+        typeof answer.profile === 'object' && answer.profile !== null ? (answer.profile as Record<string, unknown>) : {}
+      return {
+        firstName: typeof profile.first_name === 'string' ? profile.first_name.trim() : firstName,
+        lastName: typeof profile.last_name === 'string' ? profile.last_name.trim() : lastName,
+      }
+    },
+    invite: async (email, names) =>
+      void (await call('/teammates', 'POST', {
+        email,
+        ...(names?.firstName ? { first_name: names.firstName } : {}),
+        ...(names?.lastName ? { last_name: names.lastName } : {}),
+      })),
     accept: async (invite) => void (await call('/teammates/accept', 'POST', { invite })),
     decline: async (invite) => void (await call('/teammates/decline', 'POST', { invite })),
     removeTeammate: async (accountId) => void (await call(`/teammates/${encodeURIComponent(accountId)}`, 'DELETE')),

@@ -278,7 +278,13 @@ export function toPublic(state: MainState): AppState {
     theme: state.theme,
     proMode: state.proMode,
     // Whether, and as whom: the tokens themselves stay here.
-    jaspers: { signedIn: state.jaspers.tokens !== null, email: state.jaspers.email, reason: state.jaspers.reason },
+    jaspers: {
+      signedIn: state.jaspers.tokens !== null,
+      email: state.jaspers.email,
+      ...(state.jaspers.firstName ? { firstName: state.jaspers.firstName } : {}),
+      ...(state.jaspers.lastName ? { lastName: state.jaspers.lastName } : {}),
+      reason: state.jaspers.reason,
+    },
     collab: state.collab,
     eye: {
       recording: state.eye.recording,

@@ -810,6 +810,39 @@ test('the orchestrator is told each room on the tab by its name: what it is doin
     ),
     'Work on this workspace: none.\nRooms open on other tabs: room_2 (in Tab 2, working): "Backtest FLWS".',
   )
+  const sharedReplica = {
+    ...NOTE_LOOP,
+    id: 'f107',
+    desc: 'ASCII cat art',
+    shareId: 'share-107',
+    replica: { room: 'f1', tiles: {} },
+  }
+  const withShare = {
+    ...tree(placeView(EMPTY_GRID, { content: { kind: 'frame' }, loop: 'f107' }).grid),
+    loops: { [WS]: [sharedReplica] },
+    collab: {
+      ...EMPTY_COLLAB,
+      shares: [
+        {
+          shareId: 'share-107',
+          kind: 'room' as const,
+          role: 'member' as const,
+          ownerAccountId: 'acct-seth',
+          ownerEmail: 'sj+testuser@jsprai.com',
+          ownerFirstName: 'Seth',
+          ownerLastName: 'Johnson',
+          ownerOnline: true,
+          title: 'ASCII cat art',
+          members: [],
+          pendingEmails: [],
+        },
+      ],
+    },
+  }
+  assert.match(
+    describeLoops(withShare, WS, () => 'idle'),
+    /- room_107, idle, owned by Seth Johnson \(sj\+testuser@jsprai\.com\): "ASCII cat art"\. Tile: e1\./,
+  )
 })
 
 test("the grid primer explains the map and the cells for the workspace's own size, once, for the system prompt", () => {

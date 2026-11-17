@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactElement, type Ref } from 'react'
+import { jaspersAccountLabel } from '../../shared/app/jaspers'
 import {
   defaultLlmProviderForPath,
   findProvider,
@@ -309,6 +310,11 @@ function StepForm({ index, onBack, onNext }: StepFormProps): ReactElement {
  */
 function SignInWithJaspers({ onDone }: { onDone: () => void }): ReactElement {
   const jaspers = state.useAppState((s) => s.jaspers)
+  const collab = state.useAppState((s) => s.collab)
+  const storedFirst = (collab.firstName || jaspers.firstName || '').trim()
+  const storedLast = (collab.lastName || jaspers.lastName || '').trim()
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -332,12 +338,22 @@ function SignInWithJaspers({ onDone }: { onDone: () => void }): ReactElement {
     setError(null)
     setBusy(true)
     action()
-      .then(() => ensureJaspersLlm())
+      .then(async () => {
+        const first = (firstName || storedFirst).trim()
+        const last = (lastName || storedLast).trim()
+        if (first && last && state.get().collab.connected) {
+          await state.dispatch({ type: 'collab.setProfile', firstName: first, lastName: last }).catch(() => undefined)
+        }
+        await ensureJaspersLlm()
+      })
       .then(onDone, (err: unknown) => {
         setError(errorMessage(err))
         setBusy(false)
       })
   }
+
+  const signedInAs = jaspersAccountLabel(jaspers, collab) ?? 'a Jaspers account'
+  const needsName = jaspers.signedIn && (!storedFirst || !storedLast)
 
   return (
     <section aria-labelledby="jaspers-sign-in-title" className="mt-4 border border-border p-4">
@@ -347,10 +363,32 @@ function SignInWithJaspers({ onDone }: { onDone: () => void }): ReactElement {
       <p className="mt-0.5 text-xs text-muted-foreground">
         Models, voice, web search, and the Jaspers Screener and Research plugins, in one step. It opens your browser.
       </p>
+      {needsName && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <input
+            type="text"
+            aria-label="First name"
+            placeholder="First name"
+            maxLength={80}
+            value={firstName || storedFirst}
+            onChange={(e) => setFirstName(e.target.value)}
+            className="border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
+          />
+          <input
+            type="text"
+            aria-label="Last name"
+            placeholder="Last name"
+            maxLength={80}
+            value={lastName || storedLast}
+            onChange={(e) => setLastName(e.target.value)}
+            className="border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-foreground"
+          />
+        </div>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-3">
         {jaspers.signedIn ? (
           <>
-            <span className="text-sm">Signed in as {jaspers.email ?? 'a Jaspers account'}</span>
+            <span className="text-sm">Signed in as {signedInAs}</span>
             <button
               type="button"
               autoFocus
