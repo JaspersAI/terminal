@@ -35,6 +35,8 @@ import {
   browserReadPageScript,
   browserResolveTargetScript,
   browserSelectAllActiveScript,
+  MAX_BROWSER_CONTROL_LABEL,
+  MAX_BROWSER_CONTROLS,
   resolveBrowserKeySpec,
   type BrowserInteraction,
   type BrowserInteractionOutcome,
@@ -177,8 +179,6 @@ const BACKGROUND_MEDIA_SCRIPT = (backgrounded: boolean): string => `
 })()
 `
 
-const READ_PAGE_SCRIPT = browserReadPageScript()
-
 interface ResolvedDomTarget {
   ok: boolean
   error?: string
@@ -190,6 +190,14 @@ interface ResolvedDomTarget {
   alreadyFocused?: boolean
   handledSelect?: boolean
   selectedText?: string
+  nextControlSeq?: number
+}
+
+function capTargetLabel(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  const clean = raw.replace(/\s+/g, ' ').trim()
+  if (!clean) return ''
+  return clean.length > MAX_BROWSER_CONTROL_LABEL ? `${clean.slice(0, MAX_BROWSER_CONTROL_LABEL).trimEnd()}…` : clean
 }
 
 function ensureDebuggerAttached(webContents: WebContents): boolean {
@@ -750,6 +758,12 @@ function createNativeView(
   }
 
   let activeInteractions = 0
+  let nextControlSeq = 0
+  const updateControlSeq = (candidate: unknown): void => {
+    if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > nextControlSeq) {
+      nextControlSeq = Math.floor(candidate)
+    }
+  }
   const syncBackgroundThrottling = (): void => {
     if (webContents.isDestroyed()) return
     const throttle = activeInteractions === 0 && (!lastVisible || lastBackgrounded) && !loadTracker.isLoading()
@@ -1014,13 +1028,17 @@ function createNativeView(
     readPageText: async () => {
       if (webContents.isDestroyed()) return null
       try {
-        const raw: unknown = await executeInBrowserIsolatedWorld(webContents, READ_PAGE_SCRIPT)
+        const raw: unknown = await executeInBrowserIsolatedWorld(
+          webContents,
+          browserReadPageScript(MAX_BROWSER_CONTROLS, nextControlSeq),
+        )
         const pageUrl = webContents.isDestroyed() ? '' : webContents.getURL()
         if (typeof raw === 'string') {
           return formatBrowserPageText(raw, [], pageUrl, PANEL_TEXT_MAX)
         }
         if (typeof raw === 'object' && raw !== null) {
-          const record = raw as { text?: unknown; links?: unknown; controls?: unknown }
+          const record = raw as { text?: unknown; links?: unknown; controls?: unknown; nextControlSeq?: unknown }
+          updateControlSeq(record.nextControlSeq)
           const links = Array.isArray(record.links) ? (record.links as BrowserPageLink[]) : []
           const controls = Array.isArray(record.controls) ? (record.controls as BrowserPageControl[]) : []
           return formatBrowserPageText(record.text, links, pageUrl, PANEL_TEXT_MAX, controls)
@@ -1044,21 +1062,28 @@ function createNativeView(
           case 'click': {
             const raw = (await executeInBrowserIsolatedWorld(
               webContents,
-              browserResolveTargetScript({ mode: 'click', target: interaction }),
+              browserResolveTargetScript({ mode: 'click', target: interaction, minNextSeq: nextControlSeq }),
             )) as ResolvedDomTarget | undefined
+            updateControlSeq(raw?.nextControlSeq)
             if (!raw?.ok || typeof raw.x !== 'number' || typeof raw.y !== 'number') {
               throw new Error(raw?.error || 'Could not find target control to click.')
             }
             if (signal?.aborted) throw new Error('Browser action was stopped.')
             await dispatchSyntheticClick(webContents, raw.x, raw.y, interaction.doubleClick === true)
             const verb = interaction.doubleClick ? 'Double-clicked' : 'Clicked'
-            const desc = raw.label ? `${raw.role || 'control'} ${JSON.stringify(raw.label)}` : `(${raw.x}, ${raw.y})`
+            const label = capTargetLabel(raw.label)
+            const byCoords = typeof interaction.x === 'number' && typeof interaction.y === 'number'
+            const desc = label
+              ? `${raw.role || 'element'} ${JSON.stringify(label)}`
+              : byCoords || !raw.role || raw.role === 'page' || raw.role === 'point'
+                ? `(${raw.x}, ${raw.y})`
+                : `${raw.role} at (${raw.x}, ${raw.y})`
             return {
               detail: `${verb} ${desc}.`,
               x: raw.x,
               y: raw.y,
               role: raw.role,
-              label: raw.label,
+              ...(label ? { label } : {}),
             }
           }
           case 'type': {
@@ -1068,18 +1093,22 @@ function createNativeView(
                 mode: 'type',
                 target: interaction,
                 selectValue: interaction.value,
+                minNextSeq: nextControlSeq,
               }),
             )) as ResolvedDomTarget | undefined
+            updateControlSeq(raw?.nextControlSeq)
             if (!raw?.ok) {
               throw new Error(raw?.error || 'Could not find target field to type into.')
             }
             if (signal?.aborted) throw new Error('Browser action was stopped.')
+            const label = capTargetLabel(raw.label)
             if (raw.handledSelect) {
-              const selected = raw.selectedText ? JSON.stringify(raw.selectedText) : JSON.stringify(interaction.value)
+              const selectedLabel = capTargetLabel(raw.selectedText) || capTargetLabel(interaction.value)
+              const selected = JSON.stringify(selectedLabel)
               return {
-                detail: `Selected ${selected} in ${raw.label ? JSON.stringify(raw.label) : 'dropdown'}.`,
+                detail: `Selected ${selected} in ${label ? JSON.stringify(label) : 'dropdown'}.`,
                 role: raw.role,
-                label: raw.label,
+                ...(label ? { label } : {}),
               }
             }
             if (!raw.alreadyFocused && typeof raw.x === 'number' && typeof raw.y === 'number') {
@@ -1100,14 +1129,14 @@ function createNativeView(
               const enter = resolveBrowserKeySpec('Enter')!
               await dispatchSyntheticKey(webContents, enter)
             }
-            const fieldDesc = raw.label ? `${raw.role || 'field'} ${JSON.stringify(raw.label)}` : 'focused field'
+            const fieldDesc = label ? `${raw.role || 'field'} ${JSON.stringify(label)}` : 'focused field'
             const submitNote = interaction.submit ? ' and pressed Enter' : ''
             return {
               detail: `Typed into ${fieldDesc}${submitNote}.`,
               x: raw.x,
               y: raw.y,
               role: raw.role,
-              label: raw.label,
+              ...(label ? { label } : {}),
             }
           }
           case 'press': {
@@ -1121,11 +1150,13 @@ function createNativeView(
           case 'scroll': {
             const raw = (await executeInBrowserIsolatedWorld(
               webContents,
-              browserResolveTargetScript({ mode: 'scroll', target: interaction }),
+              browserResolveTargetScript({ mode: 'scroll', target: interaction, minNextSeq: nextControlSeq }),
             )) as ResolvedDomTarget | undefined
+            updateControlSeq(raw?.nextControlSeq)
             if (!raw?.ok || typeof raw.x !== 'number' || typeof raw.y !== 'number') {
               throw new Error(raw?.error || 'Could not resolve scroll target.')
             }
+            const label = capTargetLabel(raw.label)
             if (interaction.direction === 'top' || interaction.direction === 'bottom') {
               await executeInBrowserIsolatedWorld(
                 webContents,
@@ -1155,7 +1186,7 @@ function createNativeView(
               x: raw.x,
               y: raw.y,
               role: raw.role,
-              label: raw.label,
+              ...(label ? { label } : {}),
             }
           }
           default:

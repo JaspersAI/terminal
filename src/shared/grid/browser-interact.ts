@@ -480,6 +480,12 @@ const BROWSER_DOM_HELPERS = `
 
   const normSpace = (s) => String(s || '').replace(/\\s+/g, ' ').trim();
 
+  const capLabel = (s, max = ${MAX_BROWSER_CONTROL_LABEL}) => {
+    const clean = normSpace(s);
+    if (!clean) return '';
+    return clean.length > max ? clean.slice(0, max).trimEnd() + '…' : clean;
+  };
+
   const isVisible = (el) => {
     if (!el || el.nodeType !== 1) return false;
     if (el.isConnected === false) return false;
@@ -536,6 +542,7 @@ const BROWSER_DOM_HELPERS = `
   };
 
   const controlRole = (el) => {
+    if (!el || el === document.body || el === document.documentElement) return 'page';
     const explicit = normSpace(typeof el.getAttribute === 'function' ? el.getAttribute('role') : '').toLowerCase();
     if (explicit && explicit !== 'presentation' && explicit !== 'none') return explicit;
     const tag = String(el.tagName || '').toUpperCase();
@@ -554,7 +561,7 @@ const BROWSER_DOM_HELPERS = `
     }
     const ce = typeof el.getAttribute === 'function' ? el.getAttribute('contenteditable') : null;
     if (el.isContentEditable || ce === '' || ce === 'true') return 'textbox';
-    return 'button';
+    return tag ? tag.toLowerCase() : 'element';
   };
 
   const readLabelledBy = (el) => {
@@ -607,6 +614,9 @@ const BROWSER_DOM_HELPERS = `
   };
 
   const candidateLabels = (el) => {
+    if (!el || el === document.body || el === document.documentElement) {
+      return { primary: '', all: [] };
+    }
     const tag = String(el.tagName || '').toUpperCase();
     const isInputLike = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
     const inputType = tag === 'INPUT' ? String(el.type || 'text').toLowerCase() : '';
@@ -625,9 +635,33 @@ const BROWSER_DOM_HELPERS = `
     const nameAttr = isInputLike ? normSpace(typeof el.getAttribute === 'function' ? el.getAttribute('name') : '') : '';
     const testId = typeof el.getAttribute === 'function' ? humanizeTestId(el.getAttribute('data-testid')) : '';
 
-    const primary = ariaLabel || labelledBy || assocLabel || inner || buttonVal || placeholder || title || imgAlt || nameAttr || testId;
+    const rawPrimary = ariaLabel || labelledBy || assocLabel || inner || buttonVal || placeholder || title || imgAlt || nameAttr || testId;
+    const primary = capLabel(rawPrimary);
     const all = [ariaLabel, labelledBy, assocLabel, inner, buttonVal, placeholder, title, imgAlt, nameAttr, testId].filter(Boolean);
     return { primary, all };
+  };
+
+  const getControlState = (minNextSeq) => {
+    const w = typeof window !== 'undefined' ? window : globalThis;
+    let state = w.__jaspersControlState;
+    if (!state || typeof state !== 'object') {
+      state = {
+        elementIds: new WeakMap(),
+        byId: new Map(),
+        nextSeq: 0,
+      };
+      w.__jaspersControlState = state;
+    }
+    if (typeof minNextSeq === 'number' && Number.isFinite(minNextSeq) && minNextSeq > state.nextSeq) {
+      state.nextSeq = Math.floor(minNextSeq);
+    }
+    if (state.byId.size > 500) {
+      for (const [key, ref] of state.byId.entries()) {
+        const node = ref && typeof ref.deref === 'function' ? ref.deref() : null;
+        if (!node || node.isConnected === false) state.byId.delete(key);
+      }
+    }
+    return state;
   };
 
   const isNavigableHttpAnchor = (el) => {
@@ -638,8 +672,9 @@ const BROWSER_DOM_HELPERS = `
     return url.startsWith('https://') || url.startsWith('http://');
   };
 
-  const collectControls = (maxCount) => {
+  const collectControls = (maxCount, minNextSeq) => {
     const w = typeof window !== 'undefined' ? window : globalThis;
+    const state = getControlState(minNextSeq);
     const dialog = findOpenDialog();
     const rawNodes = typeof document !== 'undefined' && typeof document.querySelectorAll === 'function'
       ? Array.from(document.querySelectorAll(CONTROL_SELECTOR))
@@ -696,10 +731,13 @@ const BROWSER_DOM_HELPERS = `
     });
 
     const limited = typeof maxCount === 'number' && maxCount > 0 ? items.slice(0, maxCount) : items;
-    const map = new Map();
-    const serialized = limited.map((item, idx) => {
-      const id = 'c' + (idx + 1);
-      map.set(id, typeof WeakRef === 'function' ? new WeakRef(item.el) : { deref: () => item.el });
+    const serialized = limited.map((item) => {
+      let id = state.elementIds.get(item.el);
+      if (!id) {
+        id = 'c' + (++state.nextSeq);
+        state.elementIds.set(item.el, id);
+        state.byId.set(id, typeof WeakRef === 'function' ? new WeakRef(item.el) : { deref: () => item.el });
+      }
       return {
         id,
         role: item.role,
@@ -709,18 +747,20 @@ const BROWSER_DOM_HELPERS = `
         ...(item.inDialog ? { inDialog: true } : {}),
       };
     });
-    w.__jaspersBrowserControls = map;
-    return { items, serialized, map };
+    return { items, serialized, state };
   };
 `
 
 /**
  * Isolated-world script that reads a `core/browser` page's visible text, navigable `http(s)` links,
  * and visible interactive controls without mutating page DOM attributes or reading password values.
+ * Control ids stick to their DOM elements via a `WeakMap` and advance monotonically from `minNextSeq`.
  */
-export function browserReadPageScript(maxControls = MAX_BROWSER_CONTROLS): string {
+export function browserReadPageScript(maxControls = MAX_BROWSER_CONTROLS, minNextSeq = 0): string {
+  const safeMax = Math.max(1, Math.floor(maxControls))
+  const safeMinSeq = Math.max(0, Math.floor(minNextSeq))
   return `(() => {
-  if (typeof document === 'undefined' || !document.body) return { text: '', links: [], controls: [] };
+  if (typeof document === 'undefined' || !document.body) return { text: '', links: [], controls: [], nextControlSeq: ${safeMinSeq} };
   ${BROWSER_DOM_HELPERS}
   const text = document.body.innerText || '';
   const links = [];
@@ -735,8 +775,8 @@ export function browserReadPageScript(maxControls = MAX_BROWSER_CONTROLS): strin
     if (!label) continue;
     links.push({ text: label, url });
   }
-  const { serialized } = collectControls(${Math.max(1, Math.floor(maxControls))});
-  return { text, links, controls: serialized };
+  const { serialized, state } = collectControls(${safeMax}, ${safeMinSeq});
+  return { text, links, controls: serialized, nextControlSeq: state.nextSeq };
 })()`
 }
 
@@ -744,6 +784,7 @@ export interface BrowserResolveScriptOptions {
   mode: 'click' | 'type' | 'scroll'
   target: BrowserTargetSpec
   selectValue?: string
+  minNextSeq?: number
 }
 
 /**
@@ -861,19 +902,41 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
   if (typeof target.x === 'number' && typeof target.y === 'number') {
     const px = Math.max(0, Math.min(vw() - 1, Math.round(target.x)));
     const py = Math.max(0, Math.min(vh() - 1, Math.round(target.y)));
-    const hit = typeof document.elementFromPoint === 'function' ? document.elementFromPoint(px, py) : null;
-    if (hit && isFileInput(hit)) {
+    const rawHit = typeof document.elementFromPoint === 'function' ? document.elementFromPoint(px, py) : null;
+    const hitControl = rawHit && typeof rawHit.closest === 'function' ? rawHit.closest(CONTROL_SELECTOR) : null;
+    if ((rawHit && isFileInput(rawHit)) || (hitControl && isFileInput(hitControl))) {
       return { ok: false, error: 'File upload inputs cannot be clicked by the assistant.' };
     }
-    const labels = hit ? candidateLabels(hit) : { primary: '' };
-    const role = hit ? controlRole(hit) : 'point';
+    if (hitControl) {
+      const labels = candidateLabels(hitControl);
+      const role = controlRole(hitControl);
+      return {
+        ok: true,
+        x: px,
+        y: py,
+        role,
+        label: labels.primary,
+        editable: isEditable(hitControl),
+        nextControlSeq: getControlState(opts.minNextSeq).nextSeq,
+      };
+    }
+    let leafLabel = '';
+    if (rawHit && rawHit !== document.body && rawHit !== document.documentElement) {
+      const attrLabel = typeof rawHit.getAttribute === 'function'
+        ? (rawHit.getAttribute('aria-label') || rawHit.getAttribute('title') || '')
+        : '';
+      const hasChildren = Boolean(rawHit.children && rawHit.children.length > 0);
+      leafLabel = capLabel(attrLabel || (!hasChildren ? (rawHit.innerText || rawHit.textContent || '') : ''));
+    }
+    const role = rawHit ? controlRole(rawHit) : 'point';
     return {
       ok: true,
       x: px,
       y: py,
       role,
-      label: labels.primary || '(' + px + ', ' + py + ')',
-      editable: hit ? isEditable(hit) : false,
+      label: leafLabel,
+      editable: rawHit ? isEditable(rawHit) : false,
+      nextControlSeq: getControlState(opts.minNextSeq).nextSeq,
     };
   }
 
@@ -890,6 +953,7 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
             y: Math.max(1, Math.min(vh() - 1, Math.round(dr.top + dr.height / 2))),
             role: 'dialog',
             label: 'dialog',
+            nextControlSeq: getControlState(opts.minNextSeq).nextSeq,
           };
         }
       }
@@ -898,7 +962,8 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
         x: Math.round(vw() / 2),
         y: Math.round(vh() / 2),
         role: 'page',
-        label: 'page',
+        label: '',
+        nextControlSeq: getControlState(opts.minNextSeq).nextSeq,
       };
     }
     const active = document.activeElement;
@@ -916,8 +981,9 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
       ok: true,
       alreadyFocused: true,
       role: controlRole(active),
-      label: labels.primary || 'focused field',
+      label: labels.primary,
       editable: true,
+      nextControlSeq: getControlState(opts.minNextSeq).nextSeq,
     };
   }
 
@@ -925,24 +991,24 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
   let resolvedEl = null;
 
   if (target.control) {
-    let map = w.__jaspersBrowserControls;
-    let ref = map && typeof map.get === 'function' ? map.get(target.control) : null;
-    let candidate = ref && typeof ref.deref === 'function' ? ref.deref() : null;
+    const state = getControlState(opts.minNextSeq);
+    const ref = state.byId.get(target.control);
+    const candidate = ref && typeof ref.deref === 'function' ? ref.deref() : null;
     if (!candidate || !isVisible(candidate)) {
-      const refreshed = collectControls(${MAX_BROWSER_CONTROLS});
-      ref = refreshed.map.get(target.control);
-      candidate = ref && typeof ref.deref === 'function' ? ref.deref() : null;
-    }
-    if (!candidate || !isVisible(candidate)) {
-      const { serialized } = collectControls(8);
+      const { serialized } = collectControls(8, opts.minNextSeq);
       const hint = serialized.map((c) => '[' + c.id + '] ' + c.role + (c.label ? ' "' + c.label + '"' : '')).join(', ');
       return {
         ok: false,
-        error: 'Control ' + target.control + ' is not visible on the page.' + (hint ? ' Visible controls: ' + hint + '.' : ''),
+        nextControlSeq: state.nextSeq,
+        error: 'Control ' + target.control + ' is no longer visible on the page.' + (hint ? ' Visible controls: ' + hint + '.' : ''),
       };
     }
     if (isDisabled(candidate)) {
-      return { ok: false, error: 'Control ' + target.control + ' is disabled.' };
+      return {
+        ok: false,
+        nextControlSeq: state.nextSeq,
+        error: 'Control ' + target.control + ' is disabled.',
+      };
     }
     resolvedEl = candidate;
   } else if (target.selector) {
@@ -965,7 +1031,7 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
     resolvedEl = visible[index];
   } else if (target.text) {
     const query = normSpace(target.text).toLowerCase();
-    const { items, serialized } = collectControls(0);
+    const { items, serialized, state } = collectControls(${MAX_BROWSER_CONTROLS}, opts.minNextSeq);
     const dialog = findOpenDialog();
     const candidates = items.map((item) => ({
       el: item.el,
@@ -1046,6 +1112,7 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
         .join(', ');
       return {
         ok: false,
+        nextControlSeq: state.nextSeq,
         error:
           'No visible ' +
           (opts.mode === 'type' ? 'editable field' : 'control') +
@@ -1058,6 +1125,7 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
     if (index >= chosenTier.length) {
       return {
         ok: false,
+        nextControlSeq: state.nextSeq,
         error:
           'Text ' +
           JSON.stringify(target.text) +
@@ -1083,7 +1151,8 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
 
   const labels = candidateLabels(resolvedEl);
   const role = controlRole(resolvedEl);
-  const label = labels.primary || role;
+  const label = labels.primary;
+  const seqAfter = getControlState(opts.minNextSeq).nextSeq;
 
   if (opts.mode === 'type' && String(resolvedEl.tagName || '').toUpperCase() === 'SELECT') {
     const wanted = String(opts.selectValue ?? '').trim();
@@ -1096,11 +1165,12 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
     if (!match) {
       const available = optionsList
         .slice(0, 10)
-        .map((o) => JSON.stringify(normSpace(o.textContent || o.value)))
+        .map((o) => JSON.stringify(capLabel(o.textContent || o.value)))
         .join(', ');
       return {
         ok: false,
-        error: 'No option matching ' + JSON.stringify(wanted) + ' in select ' + JSON.stringify(label) + (available ? ' (options: ' + available + ').' : '.'),
+        nextControlSeq: seqAfter,
+        error: 'No option matching ' + JSON.stringify(wanted) + ' in select ' + JSON.stringify(label || role) + (available ? ' (options: ' + available + ').' : '.'),
       };
     }
     resolvedEl.value = match.value;
@@ -1113,16 +1183,17 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
       handledSelect: true,
       role,
       label,
-      selectedText: normSpace(match.textContent || match.value),
+      selectedText: capLabel(match.textContent || match.value),
+      nextControlSeq: seqAfter,
     };
   }
 
   const hit = hitTestElement(resolvedEl, true);
   if (!hit.ok) {
     if (opts.mode === 'scroll' && typeof hit.x === 'number' && typeof hit.y === 'number') {
-      return { ok: true, x: hit.x, y: hit.y, role, label };
+      return { ok: true, x: hit.x, y: hit.y, role, label, nextControlSeq: seqAfter };
     }
-    return { ok: false, error: hit.error };
+    return { ok: false, nextControlSeq: seqAfter, error: hit.error };
   }
 
   return {
@@ -1132,6 +1203,7 @@ export function browserResolveTargetScript(options: BrowserResolveScriptOptions)
     role,
     label,
     editable: isEditable(resolvedEl),
+    nextControlSeq: seqAfter,
   };
 })()`
 }

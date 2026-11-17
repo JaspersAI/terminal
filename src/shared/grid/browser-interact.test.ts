@@ -10,6 +10,7 @@ import {
   browserSelectAllActiveScript,
   extractBrowserTextSummary,
   formatBrowserControls,
+  MAX_BROWSER_CONTROL_LABEL,
   normalizeControlId,
   readBrowserInteraction,
   resolveBrowserKeySpec,
@@ -251,7 +252,7 @@ function makeSandbox(body: MockNode, hitAt?: (x: number, y: number) => MockNode 
     win,
     doc,
     evalScript<T>(code: string): T {
-      return vm.runInNewContext(code, {
+      const raw = vm.runInNewContext(code, {
         window: win,
         document: doc,
         WeakRef,
@@ -261,7 +262,8 @@ function makeSandbox(body: MockNode, hitAt?: (x: number, y: number) => MockNode 
             this.type = type
           }
         },
-      }) as T
+      })
+      return raw === undefined ? (undefined as T) : (JSON.parse(JSON.stringify(raw)) as T)
     },
   }
 }
@@ -626,4 +628,144 @@ test('resolveBrowserPanelTarget resolves element ids, panel ids, and single-brow
     () => resolveBrowserPanelTarget({ 1: gridWithTwo }, loops, 'room_1', 'f1'),
     /Multiple core\/browser views/,
   )
+})
+
+test('control ids stick to their DOM element across lazy feed insertions, refuse removed or cross-document stale ids, and cap container labels and roles', () => {
+  const buttons: MockNode[] = []
+  for (let i = 1; i <= 12; i++) {
+    buttons.push(
+      new MockNode({
+        tagName: 'button',
+        innerText: `Post ${i}`,
+        rect: { left: 40, top: i * 40, width: 120, height: 32 },
+      }),
+    )
+  }
+  const archiveSpan = new MockNode({
+    tagName: 'span',
+    innerText: 'Archive',
+    rect: { left: 44, top: 564, width: 112, height: 24 },
+  })
+  const archiveButton = new MockNode({
+    tagName: 'button',
+    innerText: 'Archive',
+    rect: { left: 40, top: 560, width: 120, height: 32 },
+    children: [archiveSpan],
+  })
+  buttons.push(archiveButton)
+
+  const hugeArticleText = Array.from(
+    { length: 200 },
+    (_, i) => `Story headline number ${i + 1} with summary text.`,
+  ).join(' ')
+  const article = new MockNode({
+    tagName: 'article',
+    innerText: hugeArticleText,
+    rect: { left: 300, top: 40, width: 800, height: 700 },
+    children: buttons,
+  })
+  const body = new MockNode({
+    tagName: 'body',
+    innerText: hugeArticleText,
+    rect: { left: 0, top: 0, width: 1280, height: 800 },
+    children: [article],
+  })
+
+  const sandbox = makeSandbox(body)
+  const firstRead = sandbox.evalScript<{
+    controls: { id: string; role: string; label: string }[]
+    nextControlSeq: number
+  }>(browserReadPageScript())
+
+  const archiveEntry = firstRead.controls.find((c) => c.label === 'Archive')
+  assert.deepEqual(archiveEntry, { id: 'c13', role: 'button', label: 'Archive' })
+  assert.equal(firstRead.nextControlSeq, 13)
+
+  // A lazy-loaded feed inserts a "Late arrival" button at the top above everything else, and re-reads page text.
+  const lateArrival = new MockNode({
+    tagName: 'button',
+    innerText: 'Late arrival',
+    rect: { left: 40, top: 8, width: 120, height: 28 },
+  })
+  lateArrival.parentElement = article
+  article.children.unshift(lateArrival)
+
+  const secondRead = sandbox.evalScript<{
+    controls: { id: string; role: string; label: string }[]
+    nextControlSeq: number
+  }>(browserReadPageScript(80, firstRead.nextControlSeq))
+
+  assert.deepEqual(secondRead.controls[0], { id: 'c14', role: 'button', label: 'Late arrival' })
+  assert.deepEqual(
+    secondRead.controls.find((c) => c.label === 'Archive'),
+    { id: 'c13', role: 'button', label: 'Archive' },
+  )
+
+  // Clicking c13 still resolves to Archive (100, 576), NEVER Late arrival (100, 22)!
+  const clickC13 = sandbox.evalScript<{ ok: boolean; x?: number; y?: number; role?: string; label?: string }>(
+    browserResolveTargetScript({ mode: 'click', target: { control: 'c13' }, minNextSeq: secondRead.nextControlSeq }),
+  )
+  assert.equal(clickC13.ok, true)
+  assert.equal(clickC13.label, 'Archive')
+  assert.equal(clickC13.x, 100)
+  assert.equal(clickC13.y, 576)
+
+  // Once Archive is removed from the DOM, clicking c13 refuses rather than rebinding to another button.
+  archiveButton.isConnected = false
+  article.children = article.children.filter((c) => c !== archiveButton)
+  const clickRemoved = sandbox.evalScript<{ ok: boolean; error?: string; nextControlSeq?: number }>(
+    browserResolveTargetScript({ mode: 'click', target: { control: 'c13' }, minNextSeq: secondRead.nextControlSeq }),
+  )
+  assert.equal(clickRemoved.ok, false)
+  assert.match(clickRemoved.error ?? '', /Control c13 is no longer visible/)
+
+  // Across a full document navigation (fresh isolated-world window), minNextSeq prevents c13 from ever matching on the new page.
+  const nextDocBtn = new MockNode({
+    tagName: 'button',
+    innerText: 'Delete account',
+    rect: { left: 40, top: 40, width: 140, height: 36 },
+  })
+  const nextDocBody = new MockNode({
+    tagName: 'body',
+    innerText: 'Settings',
+    rect: { left: 0, top: 0, width: 1280, height: 800 },
+    children: [nextDocBtn],
+  })
+  const nextSandbox = makeSandbox(nextDocBody)
+  const nextDocRead = nextSandbox.evalScript<{
+    controls: { id: string; label: string }[]
+    nextControlSeq: number
+  }>(browserReadPageScript(80, clickRemoved.nextControlSeq ?? secondRead.nextControlSeq))
+  assert.equal(nextDocRead.controls[0]?.id, 'c15')
+  const staleCrossDoc = nextSandbox.evalScript<{ ok: boolean; error?: string }>(
+    browserResolveTargetScript({ mode: 'click', target: { control: 'c13' }, minNextSeq: nextDocRead.nextControlSeq }),
+  )
+  assert.equal(staleCrossDoc.ok, false)
+
+  // Coordinate click landing on the multi-thousand-char <article> container reports role 'article' and empty label (not 'button' + 10k chars).
+  const clickContainerCoords = sandbox.evalScript<{ ok: boolean; role?: string; label?: string }>(
+    browserResolveTargetScript({ mode: 'click', target: { x: 500, y: 300 } }),
+  )
+  assert.equal(clickContainerCoords.ok, true)
+  assert.equal(clickContainerCoords.role, 'article')
+  assert.equal(clickContainerCoords.label, '')
+
+  // Coordinate click landing on an inner <span> inside a <button> resolves the enclosing button's role and label.
+  archiveButton.isConnected = true
+  article.children.push(archiveButton)
+  const clickInnerSpanCoords = sandbox.evalScript<{ ok: boolean; role?: string; label?: string }>(
+    browserResolveTargetScript({ mode: 'click', target: { x: 60, y: 570 } }),
+  )
+  assert.equal(clickInnerSpanCoords.ok, true)
+  assert.equal(clickInnerSpanCoords.role, 'button')
+  assert.equal(clickInnerSpanCoords.label, 'Archive')
+
+  // Broad selector click on 'article' reports role 'article' (not 'button') and caps label to MAX_BROWSER_CONTROL_LABEL + ellipsis.
+  const clickArticleSelector = sandbox.evalScript<{ ok: boolean; role?: string; label?: string }>(
+    browserResolveTargetScript({ mode: 'click', target: { selector: 'article' } }),
+  )
+  assert.equal(clickArticleSelector.ok, true)
+  assert.equal(clickArticleSelector.role, 'article')
+  assert.ok((clickArticleSelector.label?.length ?? 0) <= MAX_BROWSER_CONTROL_LABEL + 1)
+  assert.match(clickArticleSelector.label ?? '', /…$/)
 })
