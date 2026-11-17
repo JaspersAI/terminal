@@ -32,7 +32,7 @@ Three built-in views render whatever a source or a query answers, so a server ne
 - **Chart** — line, area, bar, horizontal bar, scatter, pie, candlestick, or heatmap, with stacking, a log scale, and a zoom bar for a long series. Each axis can be written plain, grouped, compact (391B), or as a percent; a column of years reads 2015, not 2,015, in charts and tables alike.
 - **Metric** — one number, large.
 
-Each takes either a source and its arguments, or SQL over the store. A fourth built-in view, **Browser** (`core/browser`), opens a live web page or stream on the grid in an isolated browser session that keeps your sign-ins across restarts.
+Each takes either a source and its arguments, or SQL over the store. A fourth built-in view, **Browser** (`core/browser`), opens a live web page or stream on the grid in an isolated browser session that keeps your sign-ins across restarts, where a room's assistant can also read the page and click, type, scroll, or switch tabs when you ask.
 
 ## A server's own views
 

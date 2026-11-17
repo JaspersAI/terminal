@@ -3,6 +3,7 @@
 // navigation; the renderer uses them to measure and sync the tile's viewport. No Node or DOM imports.
 
 import { elementZoom, layoutOf, type Grid, type GridElement } from './grid.ts'
+import { formatBrowserControls, type BrowserPageControl } from './browser-interact.ts'
 
 export const BROWSER_VIEW = 'core/browser'
 export const BROWSER_PARTITION = 'persist:browser'
@@ -923,14 +924,16 @@ export const MAX_BROWSER_LINKS = 150
 export const MAX_BROWSER_LINK_TEXT = 160
 
 /**
- * Formats a browser page's visible text together with its deduplicated navigable links so the
- * assistant can read headlines and follow links via `state.url`.
+ * Formats a browser page's visible text together with its interactive controls and deduplicated
+ * navigable links so the assistant can read headlines, act on controls via `use_browser`, and
+ * follow links via `state.url` or `use_browser`.
  */
 export function formatBrowserPageText(
   rawText: unknown,
   rawLinks: readonly BrowserPageLink[] = [],
   pageUrl?: unknown,
   maxChars = 200_000,
+  rawControls: readonly BrowserPageControl[] = [],
 ): string | null {
   const body = typeof rawText === 'string' ? rawText.trim() : ''
   const currentUrl = typeof pageUrl === 'string' ? normalizeBrowserUrl(pageUrl) : null
@@ -957,16 +960,23 @@ export function formatBrowserPageText(
     }
   }
 
+  const controlsBlock = formatBrowserControls(rawControls)
   const linksBlock =
     byUrl.size > 0
       ? ['Links:', ...Array.from(byUrl.entries(), ([url, label]) => `- [${label}](${url})`)].join('\n')
       : ''
+  const tail = [controlsBlock, linksBlock].filter(Boolean).join('\n\n')
 
-  if (!body && !linksBlock) return null
-  if (!linksBlock) return body.slice(0, maxChars)
-  if (!body) return linksBlock.slice(0, maxChars)
-  const combined = `${body}\n\n${linksBlock}`
-  return combined.length <= maxChars ? combined : combined.slice(0, maxChars)
+  if (!body && !tail) return null
+  if (!tail) return body.slice(0, maxChars)
+  if (!body) return tail.slice(0, maxChars)
+  const combined = `${body}\n\n${tail}`
+  if (combined.length <= maxChars) return combined
+  const bodyBudget = maxChars - tail.length - 2
+  if (bodyBudget >= 64) {
+    return `${body.slice(0, bodyBudget).trimEnd()}\n\n${tail}`
+  }
+  return combined.slice(0, maxChars)
 }
 
 function resolveBrowserLinkUrl(rawUrl: unknown, baseUrl: string | null): string | null {

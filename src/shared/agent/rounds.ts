@@ -72,6 +72,19 @@ export function trimToolCalls<T extends { id: string; name: string; input: Recor
     if (emptyInput && droppedDuplicates.has(call.name)) {
       continue
     }
+    if (!emptyInput && call.name === 'use_browser') {
+      const prev = kept[kept.length - 1]
+      const act = typeof call.input.action === 'string' ? call.input.action.trim().toLowerCase() : ''
+      if (
+        (act === 'navigate' || act === 'load' || act === 'goto' || act === 'open') &&
+        prev?.name === 'use_browser' &&
+        sameValue(prev.input, call.input)
+      ) {
+        continue
+      }
+      kept.push(call)
+      continue
+    }
     if (!emptyInput && kept.some((earlier) => earlier.name === call.name && sameValue(earlier.input, call.input))) {
       droppedDuplicates.add(call.name)
       if (call.name === 'place_view') dropRemainingPlaceViews = true
@@ -393,6 +406,12 @@ export function callLine(name: string, input: Record<string, unknown>): string {
   const source = name === 'run_source' ? pick(input, ['source']) : null
   if (source) return cap(sourceWords(source, input.input), NAMED_MAX)
   const words = toolWords(name)
+  if (name === 'use_browser') {
+    const elem = pick(input, ['elementId', 'panelId', 'id'])
+    const act = pick(input, ['action'])
+    const subject = elem && act ? `${elem} (${act})` : (elem ?? act)
+    return subject ? `${words}: ${cap(subject, NAMED_MAX)}` : words
+  }
   const subject = pick(input, NAMING) ?? (name === 'query' ? 'the store' : null)
   return subject ? `${words}: ${cap(subject, NAMED_MAX)}` : words
 }

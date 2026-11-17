@@ -28,6 +28,11 @@ import {
   type BrowserStanding,
   type BrowserTab,
 } from '../../shared/grid/browser.ts'
+import type {
+  BrowserInteraction,
+  BrowserInteractionAction,
+  BrowserInteractionOutcome,
+} from '../../shared/grid/browser-interact.ts'
 import { panelOf, type Grid, type Panel } from '../../shared/grid/grid.ts'
 
 export interface BrowserViewEvents {
@@ -59,6 +64,7 @@ export interface ManagedBrowserView {
   setZoomFactor?(zoom: number): void
   clearBotCookies?(url?: string): Promise<void> | void
   readPageText(): Promise<string | null>
+  interact?(interaction: BrowserInteraction, signal?: AbortSignal): Promise<BrowserInteractionOutcome>
   destroy(): void
 }
 
@@ -94,6 +100,14 @@ export interface BrowserManagerDeps {
   hydrationWindowMs?: number
   /** Poll interval within `hydrationWindowMs` when waiting for DOM text hydration to stabilize. */
   hydrationPollMs?: number
+  /** Short settle delay after synthetic click, key, or scroll input so async UI updates commit. */
+  postActionDelayMs?: number
+}
+
+export interface BrowserInteractionResult {
+  action: BrowserInteractionAction
+  detail: string
+  snapshot: BrowserSnapshot
 }
 
 export interface BrowserManager {
@@ -111,6 +125,12 @@ export interface BrowserManager {
     rawAction: unknown,
     rawUrl?: unknown,
   ): Promise<BrowserSnapshot>
+  interact(
+    rawWorkspaceId: unknown,
+    rawPanelId: unknown,
+    interaction: BrowserInteraction,
+    signal?: AbortSignal,
+  ): Promise<BrowserInteractionResult>
   syncPanelText(rawWorkspaceId: unknown, rawPanelId: unknown, signal?: AbortSignal): Promise<string | null>
   detach(callerWindow: number | null, rawWorkspaceId: unknown, rawPanelId: unknown): void
   sweep(state?: BrowserManagerState): void
@@ -182,6 +202,7 @@ export const DEFAULT_HYDRATION_DELAYS_MS: readonly number[] = [350, 1_000, 2_200
 export const DEFAULT_SETTLE_TIMEOUT_MS = 4_000
 export const DEFAULT_HYDRATION_WINDOW_MS = 1_500
 export const DEFAULT_HYDRATION_POLL_MS = 250
+export const DEFAULT_POST_ACTION_DELAY_MS = 150
 const SUBSTANTIAL_HYDRATION_CHARS = 2_000
 
 const entryKey = (workspaceId: string, panelId: string): string => `${workspaceId}\n${panelId}`
@@ -193,6 +214,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
   const settleTimeoutMs = deps.settleTimeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS
   const hydrationWindowMs = deps.hydrationWindowMs ?? DEFAULT_HYDRATION_WINDOW_MS
   const hydrationPollMs = Math.max(10, deps.hydrationPollMs ?? DEFAULT_HYDRATION_POLL_MS)
+  const postActionDelayMs = Math.max(0, deps.postActionDelayMs ?? DEFAULT_POST_ACTION_DELAY_MS)
 
   function emptySnapshot(workspaceId: string, panelId: string): BrowserSnapshot {
     return {
@@ -951,6 +973,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     callerWindow: number | null,
     rawWorkspaceId: unknown,
     rawPanelId: unknown,
+    checkWindow = true,
   ): { state: BrowserManagerState; workspaceId: string; panel: Panel; standing: BrowserStanding } {
     const state = deps.getState()
     if (typeof rawWorkspaceId !== 'string' || !state.workspaces.some((w) => w.id === rawWorkspaceId)) {
@@ -966,10 +989,57 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     if (panel.content.kind !== 'view' || panel.content.view !== BROWSER_VIEW) {
       throw new Error(`${rawPanelId} does not show a browser view.`)
     }
-    if (callerWindow !== standing.window) {
+    if (checkWindow && callerWindow !== standing.window) {
       throw new Error('This panel is not in this window.')
     }
     return { state, workspaceId: rawWorkspaceId, panel, standing }
+  }
+
+  async function settleTabAfterAction(entry: Entry, signal?: AbortSignal, pollForDomChange = false): Promise<void> {
+    if (entry.destroyed || signal?.aborted) return
+    let tab = activeTab(entry)
+    if (tab.destroyed || tab.suspended) return
+    if ((tab.loading || tab.view.isLoading()) && settleTimeoutMs > 0) {
+      await waitForTabLoad(tab, settleTimeoutMs, signal)
+    }
+    tab = activeTab(entry)
+    if (
+      tab.destroyed ||
+      tab.suspended ||
+      entry.destroyed ||
+      tab.loading ||
+      tab.view.isLoading() ||
+      tab.error !== null ||
+      signal?.aborted
+    ) {
+      return
+    }
+    const beforeText = tab.text
+    const firstRead = await readTabTextNow(entry, tab)
+    if (
+      pollForDomChange &&
+      postActionDelayMs > 0 &&
+      firstRead === beforeText &&
+      !signal?.aborted &&
+      !tab.destroyed &&
+      !tab.suspended &&
+      !entry.destroyed
+    ) {
+      await sleepOrAbort(Math.min(250, postActionDelayMs * 2), signal)
+      const latest = activeTab(entry)
+      if (!signal?.aborted && !latest.destroyed && !latest.suspended && !entry.destroyed) {
+        if ((latest.loading || latest.view.isLoading()) && settleTimeoutMs > 0) {
+          await waitForTabLoad(latest, settleTimeoutMs, signal)
+        }
+        if (!latest.loading && !latest.view.isLoading() && latest.error === null) {
+          await readTabTextNow(entry, latest)
+        }
+      }
+    }
+    const settledTab = activeTab(entry)
+    if (!settledTab.destroyed && !settledTab.suspended && !entry.destroyed && settledTab.error === null) {
+      scheduleHydrationReads(entry, settledTab)
+    }
   }
 
   return {
@@ -1081,6 +1151,167 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       positionEntry(entry, deps.getState())
       pushSnapshot(entry)
       return snapshotOf(entry)
+    },
+
+    async interact(rawWorkspaceId, rawPanelId, interaction, signal) {
+      const { workspaceId, panel } = resolveBrowserPanel(null, rawWorkspaceId, rawPanelId, false)
+      const entry = ensureEntry(workspaceId, panel)
+      const stateUrl = readBrowserState(panel.state).url
+      if (!entry.stateUrl && stateUrl) {
+        entry.stateUrl = stateUrl
+        entry.stateRef = panel.state
+        loadTabAddress(entry, activeTab(entry), stateUrl)
+      } else if (stateUrl) {
+        applyPanelState(entry, panel, stateUrl)
+      }
+
+      const resetIdleTimer = (tab: TabEntry): void => {
+        if (tab.backgrounded && tab.suspendTimer !== null) {
+          clearSuspendTimer(tab)
+          setTabBackgrounded(entry, tab, true)
+        }
+      }
+
+      if (interaction.action === 'navigate') {
+        updatePanelUrl(entry, interaction.url)
+        loadTabAddress(entry, activeTab(entry), interaction.url)
+        await this.syncPanelText(workspaceId, panel.id, signal)
+        const snap = snapshotOf(entry)
+        return { action: 'navigate', detail: `Navigated to ${snap.url}.`, snapshot: snap }
+      }
+
+      if (interaction.action === 'new_tab') {
+        const opened = createTab(entry, interaction.url)
+        entry.tabs.push(opened)
+        entry.activeTabId = opened.id
+        loadTabAddress(entry, opened, interaction.url)
+        await this.syncPanelText(workspaceId, panel.id, signal)
+        const snap = snapshotOf(entry)
+        return { action: 'new_tab', detail: `Opened tab ${opened.id} at ${snap.url}.`, snapshot: snap }
+      }
+
+      if (interaction.action === 'select_tab') {
+        const found = entry.tabs.find((one) => one.id === interaction.tabId)
+        if (!found) {
+          throw new Error(
+            `No tab ${JSON.stringify(interaction.tabId)}. Open tabs: ${entry.tabs.map((t) => t.id).join(', ')}.`,
+          )
+        }
+        entry.activeTabId = found.id
+        if (found.suspended) {
+          wakeTab(entry, found)
+          await this.syncPanelText(workspaceId, panel.id, signal)
+        } else {
+          resetIdleTimer(found)
+          positionEntry(entry, deps.getState())
+          await settleTabAfterAction(entry, signal)
+          pushSnapshot(entry)
+        }
+        const snap = snapshotOf(entry)
+        return { action: 'select_tab', detail: `Switched to tab ${found.id} (${snap.url || 'blank'}).`, snapshot: snap }
+      }
+
+      if (interaction.action === 'close_tab') {
+        const targetId = interaction.tabId ?? entry.activeTabId
+        if (!entry.tabs.some((one) => one.id === targetId)) {
+          throw new Error(`No tab ${JSON.stringify(targetId)}. Open tabs: ${entry.tabs.map((t) => t.id).join(', ')}.`)
+        }
+        closeTabById(entry, targetId, false)
+        const next = activeTab(entry)
+        if (next.suspended) {
+          wakeTab(entry, next)
+          await this.syncPanelText(workspaceId, panel.id, signal)
+        } else {
+          await settleTabAfterAction(entry, signal)
+          pushSnapshot(entry)
+        }
+        const snap = snapshotOf(entry)
+        return {
+          action: 'close_tab',
+          detail: `Closed tab ${targetId}; active tab is ${snap.activeTabId}.`,
+          snapshot: snap,
+        }
+      }
+
+      if (interaction.action === 'reload') {
+        reloadTab(entry, activeTab(entry))
+        await this.syncPanelText(workspaceId, panel.id, signal)
+        const snap = snapshotOf(entry)
+        return { action: 'reload', detail: `Reloaded ${snap.url}.`, snapshot: snap }
+      }
+
+      if (interaction.action === 'back' || interaction.action === 'forward') {
+        const active = activeTab(entry)
+        if (active.suspended) {
+          wakeTab(entry, active)
+          if (settleTimeoutMs > 0) await waitForTabLoad(active, settleTimeoutMs, signal)
+        }
+        resetIdleTimer(active)
+        if (interaction.action === 'back') {
+          if (!active.view.canGoBack()) throw new Error('Cannot go back in this browser tab.')
+          active.error = null
+          active.view.goBack()
+        } else {
+          if (!active.view.canGoForward()) throw new Error('Cannot go forward in this browser tab.')
+          active.error = null
+          active.view.goForward()
+        }
+        positionEntry(entry, deps.getState())
+        if (postActionDelayMs > 0) await sleepOrAbort(postActionDelayMs, signal)
+        await settleTabAfterAction(entry, signal)
+        pushSnapshot(entry)
+        const snap = snapshotOf(entry)
+        return {
+          action: interaction.action,
+          detail: `Went ${interaction.action} to ${snap.url}.`,
+          snapshot: snap,
+        }
+      }
+
+      let tab = activeTab(entry)
+      if (tab.suspended) {
+        wakeTab(entry, tab)
+      }
+      resetIdleTimer(tab)
+      if ((tab.loading || tab.view.isLoading()) && settleTimeoutMs > 0) {
+        await waitForTabLoad(tab, settleTimeoutMs, signal)
+      }
+      tab = activeTab(entry)
+      if (signal?.aborted) throw new Error('Browser action was stopped.')
+      if (entry.destroyed || tab.destroyed) throw new Error('Browser view was closed.')
+      if (tab.error !== null) throw new Error(`Browser page failed to load: ${tab.error}`)
+      if (!tab.view.interact) throw new Error('Browser interaction is unavailable.')
+
+      const tabsBefore = entry.tabs.length
+      const activeBefore = entry.activeTabId
+      const loadSeqBefore = tab.loadSeq
+      const outcome = await tab.view.interact(interaction, signal)
+
+      if (postActionDelayMs > 0) {
+        await sleepOrAbort(postActionDelayMs, signal)
+      }
+      const current = activeTab(entry)
+      if (!current.destroyed && !current.suspended && !entry.destroyed) {
+        resetIdleTimer(current)
+        if (current === tab && current.loadSeq === loadSeqBefore && !current.loading && !current.view.isLoading()) {
+          current.loadSeq++
+          current.loadedAt = Date.now()
+        }
+        const pollDomChange =
+          interaction.action === 'click' ||
+          interaction.action === 'press' ||
+          (interaction.action === 'type' && interaction.submit)
+        await settleTabAfterAction(entry, signal, pollDomChange)
+      }
+      pushSnapshot(entry)
+      const snap = snapshotOf(entry)
+      const openedNote =
+        entry.tabs.length > tabsBefore && entry.activeTabId !== activeBefore ? ` Opened tab ${entry.activeTabId}.` : ''
+      return {
+        action: interaction.action,
+        detail: `${outcome.detail}${openedNote}`,
+        snapshot: snap,
+      }
     },
 
     async syncPanelText(rawWorkspaceId, rawPanelId, signal) {

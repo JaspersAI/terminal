@@ -1,5 +1,6 @@
 import { LOOP_EXCLUDED_TOOLS, ORCHESTRATOR_TOOLS } from '../../shared/loops/loops'
 import { askForUnsetKey } from '../actions'
+import { browserTools } from './tools/browser'
 import { buildTools } from './tools/build'
 import { cellsTools } from './tools/cells'
 import { conversationTools } from './tools/conversation'
@@ -23,6 +24,7 @@ const TOOLS: Tool[] = [
   ...memoryTools,
   ...conversationTools,
   ...stateTools,
+  ...browserTools,
   ...installTools,
   ...publishTools,
   ...settingsTools,

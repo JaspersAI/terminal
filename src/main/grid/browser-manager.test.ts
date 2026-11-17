@@ -6,6 +6,7 @@ import {
   type BrowserBounds,
   type BrowserSnapshot,
 } from '../../shared/grid/browser.ts'
+import type { BrowserInteraction, BrowserInteractionOutcome } from '../../shared/grid/browser-interact.ts'
 import {
   EMPTY_GRID,
   layoutOf,
@@ -44,6 +45,11 @@ interface FakeView extends ManagedBrowserView {
   reloads: number
   pageText: string | null
   readPageTextCalls: number
+  interactions: BrowserInteraction[]
+  onInteract?: (
+    interaction: BrowserInteraction,
+    view: FakeView,
+  ) => Promise<BrowserInteractionOutcome> | BrowserInteractionOutcome
 }
 
 function createHarness(
@@ -53,6 +59,7 @@ function createHarness(
     settleTimeoutMs?: number
     hydrationWindowMs?: number
     hydrationPollMs?: number
+    postActionDelayMs?: number
   } = {},
 ) {
   const placed = placeFramed(EMPTY_GRID, {
@@ -123,6 +130,12 @@ function createHarness(
         reloads: 0,
         pageText: 'Bloomberg Live TV stream',
         readPageTextCalls: 0,
+        interactions: [],
+        async interact(interaction: BrowserInteraction) {
+          view.interactions.push(interaction)
+          if (view.onInteract) return view.onInteract(interaction, view)
+          return { detail: `Executed ${interaction.action}.` }
+        },
         async loadURL(url: string) {
           view.history = [...view.history.slice(0, view.index + 1), url]
           view.index = view.history.length - 1
@@ -187,6 +200,7 @@ function createHarness(
     settleTimeoutMs: options.settleTimeoutMs,
     hydrationWindowMs: options.hydrationWindowMs,
     hydrationPollMs: options.hydrationPollMs,
+    postActionDelayMs: options.postActionDelayMs ?? 0,
     publishPanel: (workspaceId, panelId, snapshot) => {
       published.push({ workspaceId, panelId, snapshot })
     },
@@ -951,6 +965,82 @@ test('attaches browser views with their clipped bounds and visible state already
     visible: true,
     bounds: { x: 16, y: 60, width: 680, height: 420 },
   })
+
+  manager.closeAll()
+})
+
+test('interact drives navigate, click, type, press, scroll, tabs, history, and wakes suspended browser views while refreshing published page text', async () => {
+  const { manager, placed, views, published, getState, setState } = createHarness({
+    idleSuspendMs: 15,
+    hydrationDelaysMs: [],
+    hydrationWindowMs: 0,
+    postActionDelayMs: 0,
+  })
+
+  // Interact works even before renderer IPC sync has run on the panel.
+  const nav = await manager.interact('ws-1', placed.panel.id, {
+    action: 'navigate',
+    url: 'https://example.com/follow?account=acme',
+  })
+  assert.equal(nav.snapshot.url, 'https://example.com/follow?account=acme')
+  assert.equal(views.length, 1)
+  const v1 = views[0]!
+  v1.pageText = 'Follow @acme?\n\nControls:\n- [c1] button "Follow" (in dialog)'
+
+  // Clicking a modal confirmation button updates DOM text in place without a URL change and publishes the new text.
+  v1.onInteract = (interaction, view) => {
+    if (interaction.action === 'click') {
+      view.pageText = 'Following @acme\n\nControls:\n- [c1] button "Following"'
+      return { detail: 'Clicked button "Follow".', x: 640, y: 402, role: 'button', label: 'Follow' }
+    }
+    return { detail: `Ran ${interaction.action}.` }
+  }
+  const clicked = await manager.interact('ws-1', placed.panel.id, { action: 'click', text: 'Follow' })
+  assert.equal(clicked.detail, 'Clicked button "Follow".')
+  assert.match(clicked.snapshot.text ?? '', /Following @acme/)
+  assert.match(published.at(-1)?.snapshot.text ?? '', /Following @acme/)
+
+  // Clicking a link that opens a popup tab switches to the new tab and notes it in detail.
+  v1.onInteract = () => {
+    v1.events.onOpenWindow?.('https://example.com/acme/lists')
+    views.at(-1)!.pageText = 'Lists by @acme'
+    return { detail: 'Clicked link "View Lists".' }
+  }
+  const popupClick = await manager.interact('ws-1', placed.panel.id, { action: 'click', text: 'View Lists' })
+  assert.equal(popupClick.snapshot.tabCount, 2)
+  assert.equal(popupClick.snapshot.activeTabId, 't2')
+  assert.match(popupClick.detail, /Opened tab t2\.$/)
+  assert.equal(popupClick.snapshot.text, 'Lists by @acme')
+
+  // Switch back to t1 and close t2.
+  const switched = await manager.interact('ws-1', placed.panel.id, { action: 'select_tab', tabId: 't1' })
+  assert.equal(switched.snapshot.activeTabId, 't1')
+  const closed = await manager.interact('ws-1', placed.panel.id, { action: 'close_tab', tabId: 't2' })
+  assert.equal(closed.snapshot.tabCount, 1)
+  assert.equal(closed.snapshot.activeTabId, 't1')
+
+  // Navigate to a second page, then go back and forward.
+  await manager.interact('ws-1', placed.panel.id, { action: 'navigate', url: 'https://example.com/home' })
+  const back = await manager.interact('ws-1', placed.panel.id, { action: 'back' })
+  assert.equal(back.snapshot.url, 'https://example.com/follow?account=acme')
+  const fwd = await manager.interact('ws-1', placed.panel.id, { action: 'forward' })
+  assert.equal(fwd.snapshot.url, 'https://example.com/home')
+
+  // Suspend the browser on an inactive workspace, then interact: it wakes automatically and executes the action.
+  setState({ ...getState(), currentWorkspaceId: 'ws-2' })
+  manager.sweep()
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(v1.destroyed, true)
+
+  const scrolled = await manager.interact('ws-1', placed.panel.id, {
+    action: 'scroll',
+    direction: 'down',
+    pixels: 600,
+  })
+  assert.equal(scrolled.action, 'scroll')
+  const woken = views.at(-1)!
+  assert.notEqual(woken, v1)
+  assert.equal(woken.interactions.at(-1)?.action, 'scroll')
 
   manager.closeAll()
 })

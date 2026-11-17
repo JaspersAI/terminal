@@ -30,6 +30,19 @@ import {
   type BrowserEmulationOverride,
   type BrowserPageLink,
 } from '../../shared/grid/browser'
+import {
+  browserEdgeScrollScript,
+  browserReadPageScript,
+  browserResolveTargetScript,
+  browserSelectAllActiveScript,
+  MAX_BROWSER_CONTROL_LABEL,
+  MAX_BROWSER_CONTROLS,
+  resolveBrowserKeySpec,
+  type BrowserInteraction,
+  type BrowserInteractionOutcome,
+  type BrowserKeySpec,
+  type BrowserPageControl,
+} from '../../shared/grid/browser-interact'
 import { PANEL_TEXT_MAX, panelOf, stepZoom, tileZoom } from '../../shared/grid/grid'
 import { publishChecked, publishTextChecked, setPanelStateChecked } from '../actions'
 import { getState, subscribe } from '../state'
@@ -37,6 +50,7 @@ import {
   createBrowserLoadTracker,
   createBrowserManager,
   createBrowserUserAgentSync,
+  type BrowserInteractionResult,
   type BrowserManager,
   type BrowserViewEvents,
   type ManagedBrowserView,
@@ -165,30 +179,187 @@ const BACKGROUND_MEDIA_SCRIPT = (backgrounded: boolean): string => `
 })()
 `
 
-const READ_PAGE_SCRIPT = `
-(() => {
-  if (typeof document === 'undefined' || !document.body) return { text: '', links: [] };
-  const text = document.body.innerText || '';
-  const links = [];
-  for (const el of document.querySelectorAll('a[href]')) {
-    if (!(el instanceof HTMLAnchorElement)) continue;
-    const rawHref = (el.getAttribute('href') || '').trim();
-    if (!rawHref || rawHref.startsWith('#') || /^(?:javascript|mailto|tel|data|blob|file|about):/i.test(rawHref)) continue;
-    const url = el.href;
-    if (!url || (!url.startsWith('https://') && !url.startsWith('http://'))) continue;
-    if (el.getClientRects().length === 0) continue;
-    const style = typeof window !== 'undefined' && window.getComputedStyle ? window.getComputedStyle(el) : null;
-    if (style && (style.display === 'none' || style.visibility === 'hidden')) continue;
-    const imgAlt = el.querySelector('img[alt]')?.getAttribute('alt') || '';
-    const label = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || imgAlt || '')
-      .replace(/\\s+/g, ' ')
-      .trim();
-    if (!label) continue;
-    links.push({ text: label, url });
+interface ResolvedDomTarget {
+  ok: boolean
+  error?: string
+  x?: number
+  y?: number
+  role?: string
+  label?: string
+  editable?: boolean
+  alreadyFocused?: boolean
+  handledSelect?: boolean
+  selectedText?: string
+  nextControlSeq?: number
+}
+
+function capTargetLabel(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  const clean = raw.replace(/\s+/g, ' ').trim()
+  if (!clean) return ''
+  return clean.length > MAX_BROWSER_CONTROL_LABEL ? `${clean.slice(0, MAX_BROWSER_CONTROL_LABEL).trimEnd()}…` : clean
+}
+
+function ensureDebuggerAttached(webContents: WebContents): boolean {
+  if (webContents.isDestroyed()) return false
+  try {
+    if (!webContents.debugger.isAttached()) {
+      webContents.debugger.attach('1.3')
+    }
+    return webContents.debugger.isAttached()
+  } catch {
+    return false
   }
-  return { text, links };
-})()
-`
+}
+
+function electronModifiers(mask: number): ('alt' | 'control' | 'meta' | 'shift')[] {
+  const mods: ('alt' | 'control' | 'meta' | 'shift')[] = []
+  if (mask & 1) mods.push('alt')
+  if (mask & 2) mods.push('control')
+  if (mask & 4) mods.push('meta')
+  if (mask & 8) mods.push('shift')
+  return mods
+}
+
+async function dispatchSyntheticClick(
+  webContents: WebContents,
+  x: number,
+  y: number,
+  doubleClick = false,
+): Promise<void> {
+  if (webContents.isDestroyed()) return
+  if (ensureDebuggerAttached(webContents)) {
+    await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x,
+      y,
+      button: 'none',
+      buttons: 0,
+    })
+    await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x,
+      y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    })
+    await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x,
+      y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    })
+    if (doubleClick && !webContents.isDestroyed()) {
+      await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mousePressed',
+        x,
+        y,
+        button: 'left',
+        buttons: 1,
+        clickCount: 2,
+      })
+      await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseReleased',
+        x,
+        y,
+        button: 'left',
+        buttons: 0,
+        clickCount: 2,
+      })
+    }
+    return
+  }
+  const zoom = webContents.getZoomFactor() || 1
+  const dx = Math.round(x * zoom)
+  const dy = Math.round(y * zoom)
+  webContents.sendInputEvent({ type: 'mouseMove', x: dx, y: dy })
+  webContents.sendInputEvent({ type: 'mouseDown', x: dx, y: dy, button: 'left', clickCount: 1 })
+  webContents.sendInputEvent({ type: 'mouseUp', x: dx, y: dy, button: 'left', clickCount: 1 })
+  if (doubleClick && !webContents.isDestroyed()) {
+    webContents.sendInputEvent({ type: 'mouseDown', x: dx, y: dy, button: 'left', clickCount: 2 })
+    webContents.sendInputEvent({ type: 'mouseUp', x: dx, y: dy, button: 'left', clickCount: 2 })
+  }
+}
+
+async function dispatchSyntheticKey(webContents: WebContents, spec: BrowserKeySpec): Promise<void> {
+  if (webContents.isDestroyed()) return
+  if (ensureDebuggerAttached(webContents)) {
+    await webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+      type: spec.text ? 'keyDown' : 'rawKeyDown',
+      key: spec.key,
+      code: spec.code,
+      windowsVirtualKeyCode: spec.windowsVirtualKeyCode,
+      nativeVirtualKeyCode: spec.windowsVirtualKeyCode,
+      modifiers: spec.modifiers,
+      ...(spec.text ? { text: spec.text, unmodifiedText: spec.text } : {}),
+    })
+    if (!webContents.isDestroyed()) {
+      await webContents.debugger.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: spec.key,
+        code: spec.code,
+        windowsVirtualKeyCode: spec.windowsVirtualKeyCode,
+        nativeVirtualKeyCode: spec.windowsVirtualKeyCode,
+        modifiers: spec.modifiers,
+      })
+    }
+    return
+  }
+  const modifiers = electronModifiers(spec.modifiers)
+  webContents.sendInputEvent({ type: 'keyDown', keyCode: spec.accelerator, modifiers })
+  if (spec.text && spec.text !== '\r') {
+    webContents.sendInputEvent({ type: 'char', keyCode: spec.text, modifiers })
+  }
+  webContents.sendInputEvent({ type: 'keyUp', keyCode: spec.accelerator, modifiers })
+}
+
+async function dispatchSyntheticInsertText(webContents: WebContents, text: string): Promise<void> {
+  if (webContents.isDestroyed() || !text) return
+  if (ensureDebuggerAttached(webContents)) {
+    await webContents.debugger.sendCommand('Input.insertText', { text })
+    return
+  }
+  await webContents.insertText(text)
+}
+
+async function dispatchSyntheticWheel(
+  webContents: WebContents,
+  x: number,
+  y: number,
+  deltaX: number,
+  deltaY: number,
+): Promise<void> {
+  if (webContents.isDestroyed()) return
+  if (ensureDebuggerAttached(webContents)) {
+    await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x,
+      y,
+      button: 'none',
+      buttons: 0,
+    })
+    await webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      x,
+      y,
+      deltaX,
+      deltaY,
+    })
+    return
+  }
+  const zoom = webContents.getZoomFactor() || 1
+  webContents.sendInputEvent({
+    type: 'mouseWheel',
+    x: Math.round(x * zoom),
+    y: Math.round(y * zoom),
+    deltaX: -Math.round(deltaX * zoom),
+    deltaY: -Math.round(deltaY * zoom),
+    canScroll: true,
+  })
+}
 
 const nativeViews = new WeakMap<ManagedBrowserView, WebContentsView>()
 const viewOwners = new WeakMap<WebContentsView, BrowserWindow>()
@@ -586,9 +757,16 @@ function createNativeView(
     inFlightUrlsByWebContentsId.set(webContents.id, initialUrl)
   }
 
+  let activeInteractions = 0
+  let nextControlSeq = 0
+  const updateControlSeq = (candidate: unknown): void => {
+    if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > nextControlSeq) {
+      nextControlSeq = Math.floor(candidate)
+    }
+  }
   const syncBackgroundThrottling = (): void => {
     if (webContents.isDestroyed()) return
-    const throttle = (!lastVisible || lastBackgrounded) && !loadTracker.isLoading()
+    const throttle = activeInteractions === 0 && (!lastVisible || lastBackgrounded) && !loadTracker.isLoading()
     webContents.setBackgroundThrottling(throttle)
   }
 
@@ -850,19 +1028,173 @@ function createNativeView(
     readPageText: async () => {
       if (webContents.isDestroyed()) return null
       try {
-        const raw: unknown = await executeInBrowserIsolatedWorld(webContents, READ_PAGE_SCRIPT)
+        const raw: unknown = await executeInBrowserIsolatedWorld(
+          webContents,
+          browserReadPageScript(MAX_BROWSER_CONTROLS, nextControlSeq),
+        )
         const pageUrl = webContents.isDestroyed() ? '' : webContents.getURL()
         if (typeof raw === 'string') {
           return formatBrowserPageText(raw, [], pageUrl, PANEL_TEXT_MAX)
         }
         if (typeof raw === 'object' && raw !== null) {
-          const record = raw as { text?: unknown; links?: unknown }
+          const record = raw as { text?: unknown; links?: unknown; controls?: unknown; nextControlSeq?: unknown }
+          updateControlSeq(record.nextControlSeq)
           const links = Array.isArray(record.links) ? (record.links as BrowserPageLink[]) : []
-          return formatBrowserPageText(record.text, links, pageUrl, PANEL_TEXT_MAX)
+          const controls = Array.isArray(record.controls) ? (record.controls as BrowserPageControl[]) : []
+          return formatBrowserPageText(record.text, links, pageUrl, PANEL_TEXT_MAX, controls)
         }
         return null
       } catch {
         return null
+      }
+    },
+    interact: async (interaction, signal): Promise<BrowserInteractionOutcome> => {
+      if (webContents.isDestroyed()) {
+        throw new Error('Browser view was closed.')
+      }
+      if (signal?.aborted) {
+        throw new Error('Browser action was stopped.')
+      }
+      activeInteractions++
+      syncBackgroundThrottling()
+      try {
+        switch (interaction.action) {
+          case 'click': {
+            const raw = (await executeInBrowserIsolatedWorld(
+              webContents,
+              browserResolveTargetScript({ mode: 'click', target: interaction, minNextSeq: nextControlSeq }),
+            )) as ResolvedDomTarget | undefined
+            updateControlSeq(raw?.nextControlSeq)
+            if (!raw?.ok || typeof raw.x !== 'number' || typeof raw.y !== 'number') {
+              throw new Error(raw?.error || 'Could not find target control to click.')
+            }
+            if (signal?.aborted) throw new Error('Browser action was stopped.')
+            await dispatchSyntheticClick(webContents, raw.x, raw.y, interaction.doubleClick === true)
+            const verb = interaction.doubleClick ? 'Double-clicked' : 'Clicked'
+            const label = capTargetLabel(raw.label)
+            const byCoords = typeof interaction.x === 'number' && typeof interaction.y === 'number'
+            const desc = label
+              ? `${raw.role || 'element'} ${JSON.stringify(label)}`
+              : byCoords || !raw.role || raw.role === 'page' || raw.role === 'point'
+                ? `(${raw.x}, ${raw.y})`
+                : `${raw.role} at (${raw.x}, ${raw.y})`
+            return {
+              detail: `${verb} ${desc}.`,
+              x: raw.x,
+              y: raw.y,
+              role: raw.role,
+              ...(label ? { label } : {}),
+            }
+          }
+          case 'type': {
+            const raw = (await executeInBrowserIsolatedWorld(
+              webContents,
+              browserResolveTargetScript({
+                mode: 'type',
+                target: interaction,
+                selectValue: interaction.value,
+                minNextSeq: nextControlSeq,
+              }),
+            )) as ResolvedDomTarget | undefined
+            updateControlSeq(raw?.nextControlSeq)
+            if (!raw?.ok) {
+              throw new Error(raw?.error || 'Could not find target field to type into.')
+            }
+            if (signal?.aborted) throw new Error('Browser action was stopped.')
+            const label = capTargetLabel(raw.label)
+            if (raw.handledSelect) {
+              const selectedLabel = capTargetLabel(raw.selectedText) || capTargetLabel(interaction.value)
+              const selected = JSON.stringify(selectedLabel)
+              return {
+                detail: `Selected ${selected} in ${label ? JSON.stringify(label) : 'dropdown'}.`,
+                role: raw.role,
+                ...(label ? { label } : {}),
+              }
+            }
+            if (!raw.alreadyFocused && typeof raw.x === 'number' && typeof raw.y === 'number') {
+              await dispatchSyntheticClick(webContents, raw.x, raw.y, false)
+            }
+            if (interaction.clear && !webContents.isDestroyed()) {
+              const selected = (await executeInBrowserIsolatedWorld(webContents, browserSelectAllActiveScript())) as
+                { hasContent?: boolean } | undefined
+              if (selected?.hasContent) {
+                const backspace = resolveBrowserKeySpec('Backspace')!
+                await dispatchSyntheticKey(webContents, backspace)
+              }
+            }
+            if (interaction.value.length > 0 && !webContents.isDestroyed()) {
+              await dispatchSyntheticInsertText(webContents, interaction.value)
+            }
+            if (interaction.submit && !webContents.isDestroyed()) {
+              const enter = resolveBrowserKeySpec('Enter')!
+              await dispatchSyntheticKey(webContents, enter)
+            }
+            const fieldDesc = label ? `${raw.role || 'field'} ${JSON.stringify(label)}` : 'focused field'
+            const submitNote = interaction.submit ? ' and pressed Enter' : ''
+            return {
+              detail: `Typed into ${fieldDesc}${submitNote}.`,
+              x: raw.x,
+              y: raw.y,
+              role: raw.role,
+              ...(label ? { label } : {}),
+            }
+          }
+          case 'press': {
+            const spec = resolveBrowserKeySpec(interaction.key)
+            if (!spec) {
+              throw new Error(`Unsupported key ${JSON.stringify(interaction.key)}.`)
+            }
+            await dispatchSyntheticKey(webContents, spec)
+            return { detail: `Pressed ${interaction.key}.` }
+          }
+          case 'scroll': {
+            const raw = (await executeInBrowserIsolatedWorld(
+              webContents,
+              browserResolveTargetScript({ mode: 'scroll', target: interaction, minNextSeq: nextControlSeq }),
+            )) as ResolvedDomTarget | undefined
+            updateControlSeq(raw?.nextControlSeq)
+            if (!raw?.ok || typeof raw.x !== 'number' || typeof raw.y !== 'number') {
+              throw new Error(raw?.error || 'Could not resolve scroll target.')
+            }
+            const label = capTargetLabel(raw.label)
+            if (interaction.direction === 'top' || interaction.direction === 'bottom') {
+              await executeInBrowserIsolatedWorld(
+                webContents,
+                browserEdgeScrollScript(interaction.direction, { x: raw.x, y: raw.y }),
+              )
+              return {
+                detail: `Scrolled to ${interaction.direction}.`,
+                x: raw.x,
+                y: raw.y,
+              }
+            }
+            const deltaX =
+              interaction.direction === 'right'
+                ? interaction.pixels
+                : interaction.direction === 'left'
+                  ? -interaction.pixels
+                  : 0
+            const deltaY =
+              interaction.direction === 'down'
+                ? interaction.pixels
+                : interaction.direction === 'up'
+                  ? -interaction.pixels
+                  : 0
+            await dispatchSyntheticWheel(webContents, raw.x, raw.y, deltaX, deltaY)
+            return {
+              detail: `Scrolled ${interaction.direction} by ${interaction.pixels}px.`,
+              x: raw.x,
+              y: raw.y,
+              role: raw.role,
+              ...(label ? { label } : {}),
+            }
+          }
+          default:
+            throw new Error(`Unsupported native browser interaction: ${interaction.action}`)
+        }
+      } finally {
+        activeInteractions = Math.max(0, activeInteractions - 1)
+        syncBackgroundThrottling()
       }
     },
     destroy: () => {
@@ -1027,4 +1359,13 @@ export async function syncBrowserPanelText(
 ): Promise<string | null> {
   if (!activeManager) return null
   return activeManager.syncPanelText(workspaceId, panelId, signal)
+}
+
+export async function interactBrowserPanel(
+  workspaceId: string,
+  panelId: string,
+  interaction: BrowserInteraction,
+  signal?: AbortSignal,
+): Promise<BrowserInteractionResult> {
+  return manager().interact(workspaceId, panelId, interaction, signal)
 }
