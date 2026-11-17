@@ -1020,6 +1020,15 @@ test('handoffSummary includes the refined instructions passed on to the room', (
     'Sent to room_12:\nFilter to the last 3 months.',
   )
   assert.equal(handoffSummary('Sent to', 'f12', undefined), 'Sent to room_12.')
+  // What else is true of the room goes beside its name: who it was shared with, or why it was not.
+  assert.equal(
+    handoffSummary('Started', 'f3', 'Review margins.', 'shared with Seth Johnson'),
+    'Started room_3 (shared with Seth Johnson):\nReview margins.',
+  )
+  assert.equal(
+    handoffSummary('Started', 'f3', undefined, 'not shared: Not connected to Jaspers'),
+    'Started room_3 (not shared: Not connected to Jaspers).',
+  )
 })
 
 test('editedInstructionsPrompt builds the follow-up message when the user corrects room instructions', () => {

@@ -20,7 +20,7 @@ import type { Tool } from './types'
 export const settingsTools: Tool[] = [
   {
     name: SETTINGS_TOOL,
-    description: `Changes a setting when the user asks for it. setting is one of: theme (theme), open_at_login (enabled), grid_size of this workspace (cols, rows), task_budget, the tokens scheduled tasks may spend a day (daily_tokens), skill turned on or off (id, enabled), reconnect a connection (id), remove_plugin (id), profile: the signed-in user's first and last name (first_name, last_name), provider: what serves a kind (kind, and provider, model, base_url as they change; what is left out stays as it is on the same provider, else is the provider's default). Removing a plugin and switching a provider ask the user first; the rest apply at once. A provider's key is never passed here: one saved for it is kept, Jaspers is served by the sign-in, and any other key is pasted in Settings. Providers: ${providerIds()}.`,
+    description: `Changes a setting when the user asks for it. setting is one of: theme (theme), open_at_login (enabled), grid_size of this workspace (cols, rows), task_budget, the tokens scheduled tasks may spend a day (daily_tokens), skill turned on or off (id, enabled), reconnect a connection (id), remove_plugin (id), profile: the user's own name (first_name, last_name), provider: what serves a kind (kind, and provider, model, base_url as they change; what is left out stays as it is on the same provider, else is the provider's default). Removing a plugin and switching a provider ask the user first; the rest apply at once. A provider's key is never passed here: one saved for it is kept, Jaspers is served by the sign-in, and any other key is pasted in Settings. Providers: ${providerIds()}.`,
     parameters: {
       type: 'object',
       properties: {
@@ -35,8 +35,8 @@ export const settingsTools: Tool[] = [
         provider: { type: 'string', description: 'The provider by id.' },
         model: { type: 'string' },
         base_url: { type: 'string' },
-        first_name: { type: 'string', description: "The signed-in user's first name." },
-        last_name: { type: 'string', description: "The signed-in user's last name." },
+        first_name: { type: 'string' },
+        last_name: { type: 'string' },
       },
       required: ['setting'],
     },

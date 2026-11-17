@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactElement } from 'react'
-import { jaspersAccountLabel } from '../../../shared/app/jaspers'
+import { accountLabel } from '../../../shared/collab/collab'
 import { JASPERS, PROVIDERS, findProvider, signsIn, takesModel } from '../../../shared/llm/providers'
 import type { ProviderKind } from '../../../shared/state'
 import { errorMessage } from '../../lib/errors'
@@ -227,7 +227,7 @@ function ProviderSection({ kind, title, blurb, onSaved }: SectionProps): ReactEl
             <div className="flex flex-wrap items-center justify-end gap-3">
               <span className="text-right text-sm">
                 {jaspers.signedIn
-                  ? `Signed in as ${jaspersAccountLabel(jaspers, collab) ?? 'a Jaspers account'}`
+                  ? `Signed in as ${accountLabel(collab, jaspers.email) ?? 'a Jaspers account'}`
                   : 'Not signed in'}
               </span>
               {jaspers.signedIn && (

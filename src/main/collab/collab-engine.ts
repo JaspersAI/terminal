@@ -4,6 +4,8 @@ import {
   cleanPersonName,
   EMPTY_COLLAB,
   HUMAN_ROOM_ANSWER,
+  ownName,
+  personDetail,
   personName,
   type CollabShare,
   type CollabState,
@@ -64,7 +66,7 @@ export interface CollabEngineState {
   currentWorkspaceId: string
   grids: Record<string, Record<number, Grid>>
   loops: Record<string, Loops>
-  jaspers: { email: string | null; firstName?: string | null; lastName?: string | null }
+  jaspers: { email: string | null }
   collab: CollabState
 }
 
@@ -1067,14 +1069,6 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     const mine = new Set(wire.owned.keys())
     deps.update((state) => ({
       ...state,
-      jaspers:
-        state.jaspers.email && (wire.collab.firstName || wire.collab.lastName)
-          ? {
-              ...state.jaspers,
-              ...(wire.collab.firstName ? { firstName: wire.collab.firstName } : {}),
-              ...(wire.collab.lastName ? { lastName: wire.collab.lastName } : {}),
-            }
-          : state.jaspers,
       collab: { ...wire.collab, connected: true, error: null },
       // A room or tab of this terminal's own the server no longer has shared is plain again.
       workspaces: state.workspaces.map((one) => {
@@ -1128,7 +1122,8 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     if (!was.connected) return
     for (const invite of now.incomingInvites) {
       if (!was.incomingInvites.some((one) => one.inviteId === invite.inviteId)) {
-        const inviter = personName({
+        // Not a teammate yet, so not by name alone: anyone may invite, under any name they typed.
+        const inviter = personDetail({
           firstName: invite.inviterFirstName,
           lastName: invite.inviterLastName,
           email: invite.inviterEmail,
@@ -1335,18 +1330,10 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     // People.
 
     async setProfile(firstName: string, lastName: string): Promise<void> {
-      const first = cleanPersonName(firstName)
-      const last = cleanPersonName(lastName)
-      if (!first || !last) throw new Error('Enter both your first and last name.')
+      const mine = ownName(firstName, lastName)
       requireConnected()
-      const saved = await deps.api.setProfile(first, last)
-      deps.update((state) => ({
-        ...state,
-        jaspers: state.jaspers.email
-          ? { ...state.jaspers, firstName: saved.firstName, lastName: saved.lastName }
-          : state.jaspers,
-        collab: { ...state.collab, firstName: saved.firstName, lastName: saved.lastName },
-      }))
+      const saved = await deps.api.setProfile(mine.firstName, mine.lastName)
+      deps.update((state) => ({ ...state, collab: { ...state.collab, ...saved } }))
       await refresh()
     },
     async invite(email: string, names?: { firstName?: string; lastName?: string }): Promise<void> {

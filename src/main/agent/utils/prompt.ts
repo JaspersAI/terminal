@@ -68,10 +68,7 @@ export function stateNow(workspaceId: string): string {
     state.workspaces.length > 0
       ? `Tabs: ${state.workspaces.map((w) => (w.id === workspaceId ? `${w.name} (active)` : w.name)).join(', ')}.`
       : ''
-  const myFullName = fullName({
-    firstName: state.collab.firstName || state.jaspers.firstName,
-    lastName: state.collab.lastName || state.jaspers.lastName,
-  })
+  const myFullName = fullName(state.collab)
   const userLine = myFullName ? `User: ${myFullName}${state.jaspers.email ? ` (${state.jaspers.email})` : ''}.` : ''
   const teammates = state.collab.teammates.map((one) => personDetail(one))
   const teammatesLine = teammates.length > 0 ? `Teammates: ${teammates.join(', ')}.` : ''
@@ -139,10 +136,7 @@ export function loopPrompt(workspaceId: string, loopId: string, preface: string[
 export function loopStateNow(workspaceId: string, loopId: string): string {
   const state = toPublic(getState())
   const loop = loopsOf(workspaceId).list.find((one) => one.id === loopId)
-  const myFullName = fullName({
-    firstName: state.collab.firstName || state.jaspers.firstName,
-    lastName: state.collab.lastName || state.jaspers.lastName,
-  })
+  const myFullName = fullName(state.collab)
   const userLine = myFullName ? `User: ${myFullName}.` : ''
   return [
     ...(userLine ? [userLine] : []),

@@ -13,6 +13,7 @@ import {
 } from '../../../shared/collab/collab'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
+import { useOwnName } from './own-name'
 import { TeammateBadge } from './TeammateBadge'
 
 interface Props {
@@ -22,8 +23,6 @@ interface Props {
   /** Shares it with exactly these: teammates by account id, and addresses to invite. */
   share(members: string[]): Promise<void>
   /** Stops sharing it, or, for a teammate's, leaves it. */
-}
-interface SharePanelProps extends Props {
   stop(): Promise<void>
 }
 
@@ -36,16 +35,13 @@ const FIELD = 'min-w-0 flex-1 border border-border bg-background px-1.5 py-0.5 o
  * take someone out, stop. For a teammate's: who is in it, whether its owner's terminal is there to
  * answer, and leaving.
  */
-export function SharePanel({ what, sharing, share, stop }: SharePanelProps): ReactElement {
+export function SharePanel({ what, sharing, share, stop }: Props): ReactElement {
   const signedIn = useAppState((s) => s.jaspers.signedIn)
-  const myStoredFirst = useAppState((s) => (s.collab.firstName || s.jaspers.firstName || '').trim())
-  const myStoredLast = useAppState((s) => (s.collab.lastName || s.jaspers.lastName || '').trim())
+  const myName = useOwnName()
   const collab = useAppState((s) => s.collab)
   const [entry, setEntry] = useState('')
   const [inviteFirst, setInviteFirst] = useState('')
   const [inviteLast, setInviteLast] = useState('')
-  const [myFirst, setMyFirst] = useState('')
-  const [myLast, setMyLast] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -113,17 +109,7 @@ export function SharePanel({ what, sharing, share, stop }: SharePanelProps): Rea
 
   function saveMyName(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    const first = (myFirst || myStoredFirst).trim()
-    const last = (myLast || myStoredLast).trim()
-    if (!first || !last) {
-      setError('Enter both your first and last name.')
-      return
-    }
-    act(async () => {
-      await dispatch({ type: 'collab.setProfile', firstName: first, lastName: last })
-      setMyFirst('')
-      setMyLast('')
-    })
+    act(myName.save)
   }
 
   function invite(event: FormEvent<HTMLFormElement>): void {
@@ -156,7 +142,7 @@ export function SharePanel({ what, sharing, share, stop }: SharePanelProps): Rea
   return (
     <div data-share-panel data-share-role="owner" className="space-y-1.5">
       {!collab.connected && <p className="text-muted-foreground">Not connected to Jaspers. Sharing waits for it.</p>}
-      {collab.connected && (!myStoredFirst || !myStoredLast) && (
+      {collab.connected && !myName.named && (
         <form data-share-profile onSubmit={saveMyName} className="space-y-1 border border-border bg-muted/30 p-1.5">
           <p className="text-muted-foreground">Your name (shown to teammates):</p>
           <div className="flex gap-1">
@@ -166,8 +152,8 @@ export function SharePanel({ what, sharing, share, stop }: SharePanelProps): Rea
               aria-label="Your first name"
               placeholder="First name"
               maxLength={80}
-              value={myFirst || myStoredFirst}
-              onChange={(e) => setMyFirst(e.target.value)}
+              value={myName.first}
+              onChange={(e) => myName.setFirst(e.target.value)}
               className={FIELD}
             />
             <input
@@ -176,11 +162,11 @@ export function SharePanel({ what, sharing, share, stop }: SharePanelProps): Rea
               aria-label="Your last name"
               placeholder="Last name"
               maxLength={80}
-              value={myLast || myStoredLast}
-              onChange={(e) => setMyLast(e.target.value)}
+              value={myName.last}
+              onChange={(e) => myName.setLast(e.target.value)}
               className={FIELD}
             />
-            <button type="submit" disabled={busy} className={SMALL}>
+            <button type="submit" disabled={busy || !myName.changed} className={SMALL}>
               Save
             </button>
           </div>

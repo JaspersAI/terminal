@@ -19,8 +19,8 @@ import {
   isForPeople,
   matchTeammateMentions,
   othersIn,
+  personName,
   roomSharing,
-  teammateMentionText,
 } from '../../../shared/collab/collab'
 import { editedInstructionsPrompt, type Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
@@ -602,7 +602,7 @@ export function LoopBox({
                         lit={true}
                         size={16}
                       />
-                      <span className="truncate">@{teammateMentionText(person)}</span>
+                      <span className="truncate">@{personName(person)}</span>
                       {named && <span className="ml-auto truncate text-muted-foreground">{person.email}</span>}
                     </button>
                   )
