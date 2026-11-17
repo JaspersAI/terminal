@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { personDetail, teammateBadgeStyle, teammateColorIndex, teammateInitials } from '../../../shared/collab/collab'
+import { personDetail, teammateBadgeStyle, teammateInitials } from '../../../shared/collab/collab'
 import { useColorScheme } from '../../lib/color-scheme'
 import { openSettings } from '../../lib/settings-nav'
 
@@ -7,8 +7,6 @@ interface Props {
   email: string
   firstName?: string | null
   lastName?: string | null
-  /** Where they stand among the people shown beside them: it picks the color. */
-  index?: number
   /** In color when their room is in use, they are connected, or their message is shown; grey otherwise. */
   lit: boolean
   /** Diameter of the circle, in pixels. */
@@ -25,15 +23,13 @@ export function TeammateBadge({
   email,
   firstName,
   lastName,
-  index,
   lit,
   size = 20,
   title,
   className = '',
 }: Props): ReactElement {
   const dark = useColorScheme() === 'dark'
-  const slot = index ?? teammateColorIndex(email)
-  const colors = teammateBadgeStyle(slot, lit, dark)
+  const colors = teammateBadgeStyle(email, lit, dark)
   const label = personDetail({ email, firstName, lastName })
   return (
     <span

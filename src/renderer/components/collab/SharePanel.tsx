@@ -9,7 +9,6 @@ import {
   personDetail,
   personName,
   resolveTeammate,
-  teammateColorIndex,
   type RoomSharing,
 } from '../../../shared/collab/collab'
 import { errorMessage } from '../../lib/errors'
@@ -184,7 +183,6 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
                     email={person.email}
                     firstName={person.firstName}
                     lastName={person.lastName}
-                    index={teammateColorIndex(person.email, people)}
                     lit={person.online}
                     size={16}
                   />
@@ -207,7 +205,7 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
       )}
       {addable.length > 0 && (
         <ul data-share-teammates className="space-y-1">
-          {addable.map((teammate, index) => {
+          {addable.map((teammate) => {
             const named = fullName(teammate)
             return (
               <li
@@ -220,7 +218,6 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
                     email={teammate.email}
                     firstName={teammate.firstName}
                     lastName={teammate.lastName}
-                    index={index}
                     lit={teammate.online}
                     size={16}
                   />
@@ -257,7 +254,7 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
         </div>
         {mentionMatches.length > 0 && (
           <ul data-share-mentions className="border border-border bg-background py-0.5">
-            {mentionMatches.map((tm, idx) => (
+            {mentionMatches.map((tm) => (
               <li key={tm.accountId}>
                 <button
                   type="button"
@@ -273,7 +270,6 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
                     email={tm.email}
                     firstName={tm.firstName}
                     lastName={tm.lastName}
-                    index={idx}
                     lit={tm.online}
                     size={14}
                   />
@@ -340,7 +336,6 @@ function People({ people }: { people: ReturnType<typeof peopleIn> }): ReactEleme
               email={person.email}
               firstName={person.firstName}
               lastName={person.lastName}
-              index={teammateColorIndex(person.email, people)}
               lit={person.online}
               size={16}
             />

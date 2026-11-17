@@ -1,12 +1,5 @@
 import { useSyncExternalStore, type ReactElement } from 'react'
-import {
-  peopleIn,
-  personDetail,
-  personName,
-  teammateColorIndex,
-  type DraggedPerson,
-  type RoomSharing,
-} from '../../../shared/collab/collab'
+import { peopleIn, personDetail, personName, type DraggedPerson, type RoomSharing } from '../../../shared/collab/collab'
 import type { Loop } from '../../../shared/loops/loops'
 import { useAppState } from '../../lib/state'
 import { TeammateBadge } from './TeammateBadge'
@@ -70,7 +63,6 @@ export function WorkspaceTeammates(): ReactElement | null {
             email={teammate.email}
             firstName={teammate.firstName}
             lastName={teammate.lastName}
-            index={teammateColorIndex(teammate.email, teammates)}
             lit={teammate.online}
             size={20}
             className="cursor-grab"
@@ -186,7 +178,6 @@ export function RoomPeople({ workspaceId, loop, sharing, lit }: Props): ReactEle
                 email={person.email}
                 firstName={person.firstName}
                 lastName={person.lastName}
-                index={teammateColorIndex(person.email, allPeople)}
                 lit={lit && person.online}
                 className={`cursor-grab ${beingDragged ? 'opacity-50' : ''}`}
                 title={[

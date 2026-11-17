@@ -10,7 +10,7 @@ import {
 import { ADDED } from '../../../shared/agent/agent'
 import type { Citation } from '../../../shared/agent/citations'
 import type { Exchange } from '../../../shared/agent/transcript'
-import { isHumanExchange, parseRoomQuestion, teammateColorIndex, type SharePerson } from '../../../shared/collab/collab'
+import { isHumanExchange, parseRoomQuestion, type SharePerson } from '../../../shared/collab/collab'
 import { formatAsOf } from '../../../shared/tasks/tasks'
 import { useAppState } from '../../lib/state'
 import { AgentAvatar } from '../collab/AgentAvatar'
@@ -437,7 +437,6 @@ function Bubble({
           email={sender.email}
           firstName={sender.firstName}
           lastName={sender.lastName}
-          index={teammateColorIndex(sender.email, sharedRoom)}
           lit
           size={20}
           className="mt-1.5"

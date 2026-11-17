@@ -246,7 +246,7 @@ export function TeamPane(): ReactElement {
           <p className="text-xs text-muted-foreground">No teammates yet.</p>
         ) : (
           <ul className="divide-y divide-border border border-border">
-            {collab.teammates.map((teammate, index) => {
+            {collab.teammates.map((teammate) => {
               const named = fullName(teammate)
               return (
                 <li
@@ -259,7 +259,6 @@ export function TeamPane(): ReactElement {
                       email={teammate.email}
                       firstName={teammate.firstName}
                       lastName={teammate.lastName}
-                      index={index}
                       lit={teammate.online}
                     />
                     <span className="truncate font-medium">{named || teammate.email}</span>
