@@ -92,7 +92,7 @@ test('a stream that goes quiet is given up on, and says so, even if keep-alive c
 })
 
 test('once a stream has delivered its first data frame, mid-stream stalls time out at the tighter stream silence limit', async () => {
-  assert.equal(STREAM_QUIET_MS, 90_000)
+  assert.equal(STREAM_QUIET_MS, 180_000)
   await serving(
     (res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -243,27 +243,43 @@ test('a refusal carries its status and how long the provider asked to be left al
   )
 })
 
-test('an HTML error page from a proxy or gateway is replaced with a clean status detail instead of raw markup', async () => {
+test('an HTML error page or Cloudflare RFC 9457 JSON from a proxy or gateway is replaced with a clean status detail instead of raw markup', async () => {
   const cloudflare524 =
     '<!DOCTYPE html>\n<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->\n<head><title>account.jsprai.com | 524: A timeout occurred</title></head>'
-  for (const [status, body, expected] of [
-    [524, cloudflare524, 'Test returned 524: timed out'],
+  const cloudflareJson502 = JSON.stringify({
+    type: 'https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-502/',
+    title: 'Error 502: Bad gateway',
+    status: 502,
+    detail: 'The origin web server returned a 502 Bad Gateway error.',
+  })
+  const rfc9457Json = JSON.stringify({
+    type: 'about:blank',
+    title: 'Service Unavailable',
+    status: 503,
+    detail: 'Upstream capacity exhausted.',
+  })
+  for (const [status, contentType, body, expected] of [
+    [524, 'text/html', cloudflare524, 'Test returned 524: timed out'],
     [
       502,
+      'text/html',
       '<html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1></body></html>',
       'Test returned 502: bad gateway',
     ],
+    [502, 'application/problem+json', cloudflareJson502, 'Test returned 502: bad gateway'],
+    [503, 'application/problem+json', rfc9457Json, 'Test returned 503: Upstream capacity exhausted.'],
     [
       503,
+      'text/html',
       '  <!doctype html><html><body>Service Temporarily Unavailable</body></html>',
       'Test returned 503: unavailable',
     ],
-    [529, '', 'Test returned 529: overloaded'],
+    [529, 'text/html', '', 'Test returned 529: overloaded'],
   ] as const) {
     await serving(
       (res) => {
         res.writeHead(status, {
-          'content-type': 'text/html',
+          'content-type': contentType,
           ...(status === 524 ? { 'retry-after': '120' } : {}),
         })
         res.end(body)

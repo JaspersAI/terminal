@@ -105,6 +105,14 @@ export async function openai(
           }
           return readOpenai(reader.done())
         } catch (err) {
+          if (err instanceof OpenAiStreamError) {
+            throw new ProviderError(
+              err.status !== null
+                ? `${config.provider.name} returned ${err.status}: ${err.message}`
+                : `${config.provider.name}: ${err.message}`,
+              err.status,
+            )
+          }
           if (reader.finished() && canSalvageStream(err, options.signal)) return readOpenai(reader.done())
           if (sawFrame && !emittedText && !options.signal?.aborted && reset < RESET_RETRIES && isConnectionDrop(err)) {
             continue
@@ -274,6 +282,15 @@ export function readOpenai(data: OpenAiResponse): Completion {
  * model starts writing it. `onThinking` hears what the model thinks, where a provider sends it
  * (`thinkingOf`): it is for showing, and no part of the reply that is kept or sent back.
  */
+class OpenAiStreamError extends Error {
+  readonly status: number | null
+
+  constructor(message: string, status: number | null = null) {
+    super(message)
+    this.status = status
+  }
+}
+
 export function openaiStream(
   onText?: (delta: string) => void,
   onCall?: (name: string) => void,
@@ -291,6 +308,17 @@ export function openaiStream(
   const calls = new Map<number, { id: string; name: string; arguments: string; extra?: unknown }>()
   return {
     push(event) {
+      if (isRecord(event.error)) {
+        const message =
+          typeof event.error.message === 'string' && event.error.message.trim()
+            ? event.error.message.trim()
+            : 'the stream failed'
+        const code = typeof event.error.code === 'number' && Number.isFinite(event.error.code) ? event.error.code : null
+        throw new OpenAiStreamError(message, code)
+      }
+      if (typeof event.error === 'string' && event.error.trim()) {
+        throw new OpenAiStreamError(event.error.trim(), null)
+      }
       if (isRecord(event.usage)) usage = event.usage as OpenAiResponse['usage']
       if (looped) return
       const choice = Array.isArray(event.choices) ? event.choices[0] : undefined

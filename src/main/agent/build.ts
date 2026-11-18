@@ -4,6 +4,7 @@ import { describeFolder } from '../../shared/agent/build/files'
 import { builderRound, builderSystem } from '../../shared/agent/build/prompt'
 import { forkOf } from '../../shared/agent/fork'
 import { closeOff } from '../../shared/agent/history'
+import { resumedAfterStall, TIMEOUT_NOTE } from '../../shared/agent/stop'
 import { failedNote, STOPPED_NOTE } from '../../shared/agent/transcript'
 import { isPluginId } from '../../shared/plugins/id'
 import { buildRoot } from '../home'
@@ -157,8 +158,15 @@ export async function runBuild(request: string, rawId: string, parent: ToolConte
   let ranOut = false
   let text: string
   let builtPlugin = getState().plugins[id]
+  const roundState = (note?: string): string =>
+    builderRound(
+      describeFolder(listFilesSync(session.folder)),
+      pluginLine(getState().plugins[id], id, session.folder.live),
+      note,
+    )
+  const stalledBefore = resumedAfterStall(history)
   try {
-    history.push({ role: 'user', text: request })
+    history.push({ role: 'user', text: request, context: roundState(stalledBefore ? TIMEOUT_NOTE : undefined) })
     keep()
     text = await agentLoop({
       label: `build ${id} `,
@@ -178,11 +186,7 @@ export async function runBuild(request: string, rawId: string, parent: ToolConte
             built,
             memories,
           }),
-        round: () =>
-          builderRound(
-            describeFolder(listFilesSync(session.folder)),
-            pluginLine(getState().plugins[id], id, session.folder.live),
-          ),
+        round: () => roundState(),
       },
       tools: () => [
         ...builderTools(session, context),
@@ -195,6 +199,7 @@ export async function runBuild(request: string, rawId: string, parent: ToolConte
       // A reply that carries a whole file is long: a provider's default limit has cut one off before
       // a single call. This is the least it needs; a provider that gives more room keeps it.
       maxTokens: 16_000,
+      lowEffortFirstRound: stalledBefore,
       rounds: BUILD_ROUNDS,
       outOfRounds: () => {
         ranOut = true

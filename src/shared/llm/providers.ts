@@ -35,7 +35,7 @@ export interface Provider<Api extends string = string> {
 /**
  * Jaspers' own service, which serves every kind under the one sign-in with Jaspers: Google's Gemini
  * models on Vertex AI (`gemini-3.8-flash` and `gemini-4-argon`) for language models, Google Cloud
- * Speech-to-Text (`chirp_3`) for voice, and OpenRouter for search, in OpenAI's shapes. The server is
+ * Speech-to-Text (`chirp_3`) for voice, and Grounding with Google Search for web search. The server is
  * the jaspers-account repo; the base URL here is the public gateway, and main follows Account's address
  * instead when the environment names another. Jaspers picks the model, not the app: a request that names
  * `fast` runs on the account's fast model, and one that names anything else on its model.

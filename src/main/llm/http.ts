@@ -128,9 +128,16 @@ function detail(text: string, status: number, statusText = ''): string {
   try {
     const raw: unknown = JSON.parse(text)
     const parsed = (Array.isArray(raw) ? raw[0] : raw) as
-      { error?: { message?: string } | string; message?: string } | undefined
+      | { error?: { message?: string } | string; message?: string; type?: string; title?: string; detail?: string }
+      | undefined
     const message = typeof parsed?.error === 'string' ? parsed.error : (parsed?.error?.message ?? parsed?.message)
     if (typeof message === 'string' && message.trim() && !/^\s*</.test(message)) return message.trim()
+    // Cloudflare answers non-HTML 5xx errors with RFC 9457 JSON (`{ type, title, status, detail }`).
+    if (typeof parsed?.type === 'string' && /cloudflare\.com/i.test(parsed.type) && STATUS_DETAIL[status]) {
+      return STATUS_DETAIL[status]
+    }
+    const rfcDetail = typeof parsed?.detail === 'string' ? parsed.detail : parsed?.title
+    if (typeof rfcDetail === 'string' && rfcDetail.trim() && !/^\s*</.test(rfcDetail)) return rfcDetail.trim()
   } catch {
     // not JSON; fall through to the raw text
   }
@@ -147,8 +154,12 @@ function detail(text: string, status: number, statusText = ''): string {
 
 /** How long a stream may go without its first `data:` frame before it is given up on. */
 export const QUIET_MS = 300_000
-/** How long a stream that has already sent `data:` frames may go silent between frames before it is given up on. */
-export const STREAM_QUIET_MS = 90_000
+/**
+ * How long a stream that has already sent `data:` frames may go silent between frames before it is
+ * given up on. Providers without eager tool-input streaming buffer an entire tool call's JSON after
+ * thinking deltas, which takes 90–165 s on large plugin file writes.
+ */
+export const STREAM_QUIET_MS = 180_000
 
 const inFlight = new Set<() => void>()
 const wakeListeners = new Set<() => void>()

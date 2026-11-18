@@ -567,7 +567,7 @@ test('the Responses stream follows the text and takes the whole response off the
   assert.deepEqual(reply.usage, { input: 800, output: 30, cacheRead: 0, cacheWrite: 0 })
 })
 
-test('a stream that fails part way through says so rather than answering with half a reply', () => {
+test('a stream that fails part way through says so rather than answering with half a reply', async () => {
   const anthropic = anthropicStream()
   anthropic.push({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
   assert.throws(
@@ -576,6 +576,40 @@ test('a stream that fails part way through says so rather than answering with ha
   )
   const responses = responsesStream()
   assert.throws(() => responses.push({ type: 'error', message: 'The model is busy.' }), /The model is busy/)
+  const chat = openaiStream()
+  assert.throws(
+    () => chat.push({ error: { message: 'The model service could not be reached.', code: 502 } }),
+    /The model service could not be reached/,
+  )
+
+  const jaspers = findProvider('llm', 'jaspers')!
+  const server = createServer((_req, res: ServerResponse) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(': keep-alive\n\n')
+    res.end(`data: ${JSON.stringify({ error: { message: 'The model service could not be reached.', code: 502 } })}\n\n`)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    await assert.rejects(
+      complete(
+        { provider: jaspers, baseUrl, model: 'gemini-4-argon', token: 'tok', fetch },
+        'System',
+        [{ role: 'user', text: 'Build.' }],
+        [],
+        { stream: true },
+      ),
+      (err: unknown) => {
+        assert.ok(err instanceof Error && 'status' in err)
+        assert.equal(err.message, 'Jaspers returned 502: The model service could not be reached.')
+        assert.equal(err.status, 502)
+        return true
+      },
+    )
+  } finally {
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  }
 })
 
 // The state a turn rode with, on the protocols with no message of its own for it. Only the newest is
