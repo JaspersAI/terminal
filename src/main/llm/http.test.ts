@@ -4,17 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
 import { isRetryable } from '../../shared/llm/limits.ts'
 import type { Provider } from '../../shared/llm/providers.ts'
-import {
-  isLlmSleeping,
-  post,
-  ProviderError,
-  QUIET_MS,
-  sse,
-  STREAM_QUIET_MS,
-  suspendLlm,
-  waitUntilLlmAwake,
-  wakeLlm,
-} from './http.ts'
+import { isLlmSleeping, post, ProviderError, QUIET_MS, sse, suspendLlm, waitUntilLlmAwake, wakeLlm } from './http.ts'
 
 const TEST: Provider = {
   id: 'test',
@@ -91,28 +81,25 @@ test('a stream that goes quiet is given up on, and says so, even if keep-alive c
   )
 })
 
-test('once a stream has delivered its first data frame, mid-stream stalls time out at the tighter stream silence limit', async () => {
-  assert.equal(STREAM_QUIET_MS, 180_000)
+test('a stream that stalls after its first data frame gets the whole silence limit again, not less', async () => {
+  assert.equal(QUIET_MS, 300_000)
   await serving(
     (res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
-      // First frame arrives after 80 ms (within the 300 ms initial wait), then the stream stalls.
-      const timer = setTimeout(() => {
-        res.write('data: {"n":1}\n\n')
-      }, 80)
-      res.on('close', () => clearTimeout(timer))
+      // One frame at once, then silence: a model writing a whole tool call before it sends any of it.
+      res.write('data: {"n":1}\n\n')
     },
     async (url) => {
       const got: string[] = []
       const started = Date.now()
       await assert.rejects(async () => {
-        for await (const payload of sse(WIRE, url, {}, '{}', 300, undefined, 50)) {
+        for await (const payload of sse(WIRE, url, {}, '{}', 200)) {
           got.push(payload)
         }
       }, /Test: .*nothing arrived for/)
       const elapsed = Date.now() - started
       assert.deepEqual(got, ['{"n":1}'])
-      assert.ok(elapsed < 260, `expected mid-stream stall to abort well before 300 ms, took ${elapsed} ms`)
+      assert.ok(elapsed >= 190, `expected the stall to wait out the 200 ms limit, took ${elapsed} ms`)
     },
   )
 })
