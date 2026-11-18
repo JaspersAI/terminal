@@ -733,6 +733,14 @@ export interface DraggedPerson {
   from: { workspaceId: string; room: string } | null
 }
 
+/**
+ * Whether nobody is left in a share: no member and no one invited. However the last one went (taken
+ * out, removed as a teammate, left, declined), the room is no longer shared.
+ */
+export function nobodyIn(share: Pick<CollabShare, 'members' | 'pendingEmails'>): boolean {
+  return share.members.length === 0 && share.pendingEmails.length === 0
+}
+
 /** Whether `person` is already part of `share` (as owner, joined member, or invited address). */
 export function isPersonInShare(share: CollabShare | null | undefined, person: { id: string; email: string }): boolean {
   if (!share) return false

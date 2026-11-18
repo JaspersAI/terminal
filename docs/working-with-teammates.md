@@ -21,7 +21,7 @@ Removing a teammate also takes each of you out of the other's shared rooms and t
 
 If the address is not a teammate yet, they are invited, and they join the room the moment they accept. Until then they are listed as invited.
 
-To stop, use **Stop sharing** in the same place. Your room is untouched; it goes from your teammates' terminals. Deleting a shared room for good stops sharing it too.
+To stop, use **Stop sharing** in the same place. Your room is untouched; it goes from your teammates' terminals. Deleting a shared room for good stops sharing it too, and so does the last person leaving it when nobody else is invited.
 
 ## What a teammate sees and can do
 

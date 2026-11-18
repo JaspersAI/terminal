@@ -700,15 +700,26 @@ test("a room of this terminal's own that the server no longer lists is unmarked,
   assert.deepEqual(kept.panels[0]?.state, { text: 'first' })
 })
 
-test('a teammate leaving takes the room off their terminal only', async (t) => {
-  const { alice, bob, settle, room } = await pair(t)
+test('a teammate leaving takes the room off their terminal, and the last one to leave ends the share', async (t) => {
+  const { alice, bob, settle, room, note } = await pair(t)
   await alice.engine.shareRoom('ws', room, ['bob'])
   await settle()
   await bob.engine.leave(bob.state.collab.shares[0]!.shareId)
   await settle()
   assert.equal(roomOf(bob), null)
-  assert.ok(roomOf(alice)?.loop.shareId, 'still shared, with nobody in it')
-  assert.deepEqual(alice.state.collab.shares[0]?.members, [])
+  assert.equal(roomOf(alice)?.loop.shareId, undefined, 'nobody is left in it, so it is not shared')
+  assert.deepEqual(alice.state.collab.shares, [])
+  assert.deepEqual(roomOf(alice)?.panels.find((one) => one.elementId === note)?.state, { text: 'first' })
+})
+
+test('a share with someone still invited is kept when its last member leaves', async (t) => {
+  const { alice, bob, settle, room } = await pair(t)
+  await alice.engine.shareRoom('ws', room, ['bob', 'dave@other.com'])
+  await settle()
+  await bob.engine.leave(bob.state.collab.shares[0]!.shareId)
+  await settle()
+  assert.ok(roomOf(alice)?.loop.shareId, 'still shared, waiting on the invitation')
+  assert.deepEqual(alice.state.collab.shares[0]?.pendingEmails, ['dave@other.com'])
 })
 
 test("signing out takes teammates' rooms off this terminal and keeps its own", async (t) => {
@@ -858,7 +869,8 @@ test('a shared tab is drawn for a teammate as a tab of its own, its rooms where 
     false,
   )
   assert.equal(bob.state.currentWorkspaceId, 'ws')
-  assert.ok(alice.state.workspaces[0]?.shareId, "the owner's tab is still shared, with nobody in it")
+  assert.equal(alice.state.workspaces[0]?.shareId, undefined, "nobody is left in the owner's tab, so it is not shared")
+  assert.equal(roomOf(alice)?.loop.id, room, 'and its room is still there')
 })
 
 test('a source whose rows differ on every run is not asked for again and again by the view that reads it', async (t) => {

@@ -28,6 +28,7 @@ import {
   shareTargets,
   teammateBadgeStyle,
   teammateInitials,
+  nobodyIn,
   type CollabShare,
   type CollabState,
   type Teammate,
@@ -464,4 +465,11 @@ test('dragging a person includes them in an owned room lacking them and removes 
   assert.deepEqual(membersWithoutPerson({ ...share, pendingEmails: [] }, { id: 'acct-bob', email: 'bob@fund.com' }), [])
   assert.equal(membersWithoutPerson({ ...share, role: 'member' }, { id: 'acct-bob', email: 'bob@fund.com' }), null)
   assert.equal(membersWithoutPerson(share, { id: 'acct-carol', email: 'carol.diaz@fund.com' }), null)
+})
+
+test('a share with no member and no one invited has nobody in it', () => {
+  const member = { accountId: 'acct-bob', email: 'bob@fund.com', addedAt: 1 }
+  assert.equal(nobodyIn({ members: [], pendingEmails: [] }), true)
+  assert.equal(nobodyIn({ members: [member], pendingEmails: [] }), false)
+  assert.equal(nobodyIn({ members: [], pendingEmails: ['dave@other.com'] }), false)
 })

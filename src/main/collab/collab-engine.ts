@@ -4,6 +4,7 @@ import {
   cleanPersonName,
   EMPTY_COLLAB,
   HUMAN_ROOM_ANSWER,
+  nobodyIn,
   ownName,
   personDetail,
   personName,
@@ -1102,6 +1103,11 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
     for (const shareId of mine) {
       // Shared by this terminal and no longer anywhere on it: nothing is left to share.
       if (!targets.some((one) => one.shareId === shareId)) void deps.api.deleteShare(shareId).catch(() => undefined)
+    }
+    for (const share of wire.collab.shares) {
+      // Its last person went (left, was removed as a teammate, declined) and nobody is invited: ended,
+      // as taking out the last one by hand ends it, rather than sent on for no one.
+      if (mine.has(share.shareId) && nobodyIn(share)) void stopSharing(share.shareId)
     }
     for (const shareId of [...owned.keys()]) if (!mine.has(shareId)) owned.delete(shareId)
     // What this terminal has not sent since it connected is sent now; the rest goes as it changes.
