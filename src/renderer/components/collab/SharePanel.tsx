@@ -112,13 +112,19 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
     act(myName.save)
   }
 
+  function addTeammate(accountId: string): void {
+    act(async () => {
+      await share([...new Set([...ids, accountId])])
+      setEntry('')
+    })
+  }
+
   function invite(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    if (matchedTeammate) {
-      act(async () => {
-        await share([...new Set([...ids, matchedTeammate.accountId])])
-        setEntry('')
-      })
+    // A partial @name with one teammate suggested under it means that teammate, as a click on it does.
+    const chosen = matchedTeammate ?? (mentionMatches.length === 1 ? mentionMatches[0]! : null)
+    if (chosen) {
+      addTeammate(chosen.accountId)
       return
     }
     const contact = parseInviteContact(typed)
@@ -258,12 +264,7 @@ export function SharePanel({ what, sharing, share, stop }: Props): ReactElement 
               <li key={tm.accountId}>
                 <button
                   type="button"
-                  onClick={() =>
-                    act(async () => {
-                      await share([...new Set([...ids, tm.accountId])])
-                      setEntry('')
-                    })
-                  }
+                  onClick={() => addTeammate(tm.accountId)}
                   className="flex w-full items-center gap-1.5 px-1.5 py-0.5 text-left hover:bg-muted"
                 >
                   <TeammateBadge
