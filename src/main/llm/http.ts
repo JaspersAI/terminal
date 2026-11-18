@@ -128,9 +128,16 @@ function detail(text: string, status: number, statusText = ''): string {
   try {
     const raw: unknown = JSON.parse(text)
     const parsed = (Array.isArray(raw) ? raw[0] : raw) as
-      { error?: { message?: string } | string; message?: string } | undefined
+      | { error?: { message?: string } | string; message?: string; type?: string; title?: string; detail?: string }
+      | undefined
     const message = typeof parsed?.error === 'string' ? parsed.error : (parsed?.error?.message ?? parsed?.message)
     if (typeof message === 'string' && message.trim() && !/^\s*</.test(message)) return message.trim()
+    // Cloudflare answers non-HTML 5xx errors with RFC 9457 JSON (`{ type, title, status, detail }`).
+    if (typeof parsed?.type === 'string' && /cloudflare\.com/i.test(parsed.type) && STATUS_DETAIL[status]) {
+      return STATUS_DETAIL[status]
+    }
+    const rfcDetail = typeof parsed?.detail === 'string' ? parsed.detail : parsed?.title
+    if (typeof rfcDetail === 'string' && rfcDetail.trim() && !/^\s*</.test(rfcDetail)) return rfcDetail.trim()
   } catch {
     // not JSON; fall through to the raw text
   }
@@ -145,10 +152,12 @@ function detail(text: string, status: number, statusText = ''): string {
   return status >= 500 ? 'server error' : 'no details'
 }
 
-/** How long a stream may go without its first `data:` frame before it is given up on. */
+/**
+ * How long a stream may go without a `data:` frame, before its first or between two, before it is
+ * given up on. Mid-stream silence is no shorter: a provider without eager tool-input streaming sends
+ * nothing while it writes a whole tool call, and a builder's call at its 16,000-token cap took 220 s.
+ */
 export const QUIET_MS = 300_000
-/** How long a stream that has already sent `data:` frames may go silent between frames before it is given up on. */
-export const STREAM_QUIET_MS = 90_000
 
 const inFlight = new Set<() => void>()
 const wakeListeners = new Set<() => void>()
@@ -221,9 +230,9 @@ export function waitUntilLlmAwake(signal?: AbortSignal): Promise<void> {
  *
  * The limit is on the silence between `data:` pieces, not on the whole stream, which is the point of
  * streaming a long reply: a model that thinks for ten minutes and says so as it goes is working, and
- * one that has sent no `data:` frame for five minutes before starting (or ninety seconds mid-stream,
- * even if a proxy sends keep-alive comments) is not. A caller that stops reading (a `break`, or an
- * error thrown at it) cancels the body.
+ * one that has sent no `data:` frame for five minutes, before starting or part way, is not, even if a
+ * proxy sends keep-alive comments. A caller that stops reading (a `break`, or an error thrown at it)
+ * cancels the body.
  */
 export async function* sse(
   { provider, fetch }: Wire,
@@ -232,7 +241,6 @@ export async function* sse(
   body: string,
   quietMs = QUIET_MS,
   signal?: AbortSignal,
-  streamQuietMs = STREAM_QUIET_MS,
 ): AsyncGenerator<string> {
   const quiet = new AbortController()
   const onSleep = (): void => quiet.abort(new Error(SLEEP_INTERRUPTED_MESSAGE))
@@ -329,7 +337,7 @@ export async function* sse(
           buffer += chunk.value
           const { data, rest } = sseFrames(buffer)
           buffer = rest
-          if (data.length > 0) heard(Math.min(quietMs, streamQuietMs))
+          if (data.length > 0) heard()
           for (const payload of data) {
             if (payload === SSE_DONE) return
             yielded = true

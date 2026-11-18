@@ -82,7 +82,9 @@ test('the procedure asks for approval first, writes complete files in a single p
   assert.match(fixed!, /shell: true/)
   assert.match(fixed!, /~\/Jaspers\/shell/)
   assert.match(fixed!, /Call install_plugin again only when/)
-  // Complete files in one pass with plugin.tsx last, rather than not-written-yet shells.
+  // Complete files in one pass, one file per round, with plugin.tsx last, rather than not-written-yet shells.
+  assert.match(fixed!, /one file per round/)
+  assert.match(fixed!, /at most once per round/)
   assert.match(fixed!, /plugin\.tsx last/)
   assert.match(fixed!, /rather than throwing not written yet shells/)
   // Automatic validation on each save from write_file and edit_file.
@@ -165,6 +167,14 @@ test('a round says what the folder holds and what the tree says of the plugin', 
   assert.equal(
     builderRound('plugin.tsx 2.1 KB\npackage.json 0.2 KB', 'fred: ready (v1), sources fred/series'),
     'Folder:\nplugin.tsx 2.1 KB\npackage.json 0.2 KB\n\nPlugin: fred: ready (v1), sources fred/series',
+  )
+  assert.equal(
+    builderRound(
+      'plugin.tsx 2.1 KB',
+      'fred: ready (v1)',
+      'Your last reply timed out before finishing, likely because a tool call was too large for one turn.',
+    ),
+    'Folder:\nplugin.tsx 2.1 KB\n\nPlugin: fred: ready (v1)\nYour last reply timed out before finishing, likely because a tool call was too large for one turn.',
   )
 })
 

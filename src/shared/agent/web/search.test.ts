@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { bedrockSearch, formatResults, parseBedrock, parseBrave, parseJaspers, SEARCH_COUNT } from './search.ts'
+import {
+  bedrockSearch,
+  formatResults,
+  parseBedrock,
+  parseBrave,
+  parseJaspers,
+  SEARCH_COUNT,
+  searchErrorDetail,
+} from './search.ts'
 
 test("Brave's web results are read as title, url, and snippet, tolerating what is missing", () => {
   const results = parseBrave({
@@ -126,4 +134,25 @@ test("a Bedrock search asks a model for a results page, from Amazon's own index,
   // Off, the search never leaves AWS and needs no permission beyond the search itself.
   assert.deepEqual(body['tools'], [{ type: 'web_search', external_web_access: false, search_context_size: 'medium' }])
   assert.equal(body['store'], false)
+})
+
+test('searchErrorDetail extracts concise messages from OpenAI JSON, Cloudflare RFC 9457 JSON, HTML, and plain text', () => {
+  assert.equal(
+    searchErrorDetail('{"error":{"message":"The model service could not be reached."}}'),
+    ': The model service could not be reached.',
+  )
+  assert.equal(
+    searchErrorDetail(
+      JSON.stringify({
+        type: 'https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-502/',
+        title: 'Error 502: Bad gateway',
+        status: 502,
+        detail: 'The origin web server returned a 502 Bad Gateway error.',
+      }),
+    ),
+    ': The origin web server returned a 502 Bad Gateway error.',
+  )
+  assert.equal(searchErrorDetail('<html><body>502 Bad Gateway</body></html>'), '.')
+  assert.equal(searchErrorDetail(''), '.')
+  assert.equal(searchErrorDetail('Rate limit exceeded'), ': Rate limit exceeded')
 })

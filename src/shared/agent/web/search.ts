@@ -116,6 +116,40 @@ export function formatResults(list: SearchResult[]): string {
     .join('\n')
 }
 
+/**
+ * Extracts a concise human-readable error suffix from a failed search HTTP response body, handling
+ * OpenAI-style `{ error: { message } }` JSON, RFC 9457 problem-details JSON (such as Cloudflare 502/524
+ * responses), HTML error pages, and plain text.
+ */
+export function searchErrorDetail(rawText: string): string {
+  const raw = rawText.trim()
+  if (!raw || raw.startsWith('<') || /<(!doctype|html|head|body)\b/i.test(raw)) return '.'
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    const obj = Array.isArray(parsed) ? parsed[0] : parsed
+    if (isRecord(obj)) {
+      const errObj = obj['error']
+      const message =
+        typeof errObj === 'string'
+          ? errObj
+          : isRecord(errObj) && typeof errObj['message'] === 'string'
+            ? errObj['message']
+            : typeof obj['message'] === 'string'
+              ? obj['message']
+              : undefined
+      if (message && message.trim() && !/^\s*</.test(message)) return `: ${message.trim().slice(0, 200)}`
+      const detail = typeof obj['detail'] === 'string' ? obj['detail'] : obj['title']
+      if (typeof detail === 'string' && detail.trim() && !/^\s*</.test(detail)) {
+        return `: ${detail.trim().slice(0, 200)}`
+      }
+    }
+  } catch {
+    // not JSON; fall through to plain text
+  }
+  const text = raw.split('\n')[0]?.slice(0, 200) ?? ''
+  return text ? `: ${text}` : '.'
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

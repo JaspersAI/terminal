@@ -85,6 +85,8 @@ export interface Request {
   quiet: boolean
   /** The room a reply needs at least, where the provider's default is less: a builder's reply carries whole files. */
   maxTokens?: number
+  /** Whether round 1 resumes from a stalled turn and should start at low reasoning effort without burning `cuts`. */
+  lowEffortFirstRound?: boolean
   /** The rounds of tool calls it gets, where the usual number is too few: a build is many short steps. */
   rounds?: number
   /**
@@ -123,6 +125,7 @@ async function loop({
   run: entry,
   quiet,
   maxTokens,
+  lowEffortFirstRound = false,
   rounds: limit = MAX_ROUNDS,
   outOfRounds,
   added,
@@ -190,7 +193,7 @@ async function loop({
           shown: !quiet,
           maxTokens,
           timeoutMs: roundTimeoutMs,
-          ...(cuts > 0 ? { effort: 'low' as const } : {}),
+          ...(cuts > 0 || (lowEffortFirstRound && round === 1) ? { effort: 'low' as const } : {}),
           restateOnTimeout: canRestateCut(available.length > 0, quiet, spent) || partial,
           abortOnSleep: partial || entry.origin === 'task',
         })

@@ -15,6 +15,7 @@ import {
   resolveRoundFailure,
   RESTATED_TIMEOUT_MS,
   restate,
+  resumedAfterStall,
   TIMEOUT_NOTE,
   turnTimeoutCut,
   windowFull,
@@ -60,7 +61,8 @@ test('a stalled turn in a tool or quiet loop is restated with a smaller-step not
   assert.match(TIMEOUT_NOTE, /old and new/)
   assert.match(TIMEOUT_NOTE, /excel-export\/export-tables/)
   assert.match(TIMEOUT_NOTE, /1 or 2 tables per round with the same filename/)
-  assert.equal(RESTATED_TIMEOUT_MS, 90_000)
+  assert.match(TIMEOUT_NOTE, /at most once per round/)
+  assert.equal(RESTATED_TIMEOUT_MS, 180_000)
 
   const silent = turnTimeoutCut('Jaspers: nothing arrived for 300 s', CUTS_MAX, false, true, false)
   assert.equal(silent?.note, TIMEOUT_NOTE)
@@ -261,5 +263,64 @@ test('a mid-loop safety filter or refusal restates once for a safe approach and 
   assert.equal(
     refusalError('Jaspers', 'gemini-4-argon', 'refusal', '  '),
     'Jaspers (gemini-4-argon) declined this request.',
+  )
+})
+
+test('resumedAfterStall detects build or chat threads whose prior run ended in a timeout or output-limit cut', () => {
+  assert.equal(resumedAfterStall([]), false)
+  assert.equal(
+    resumedAfterStall([
+      { role: 'user', text: 'build it' },
+      {
+        role: 'assistant',
+        text: '(Failed before this was finished: Jaspers: nothing arrived for 180 s.)',
+        toolCalls: [],
+        raw: null,
+      },
+    ]),
+    true,
+  )
+  assert.equal(
+    resumedAfterStall([
+      { role: 'user', text: 'build it' },
+      {
+        role: 'assistant',
+        text: '(Failed before this was finished: Jaspers returned 524: timed out.)',
+        toolCalls: [],
+        raw: null,
+      },
+    ]),
+    true,
+  )
+  assert.equal(
+    resumedAfterStall([
+      { role: 'user', text: 'build it' },
+      {
+        role: 'assistant',
+        text: '(Failed before this was finished: Jaspers kept running past its output limit.)',
+        toolCalls: [],
+        raw: null,
+      },
+    ]),
+    true,
+  )
+  assert.equal(
+    resumedAfterStall([
+      { role: 'user', text: 'build it' },
+      {
+        role: 'assistant',
+        text: '(Failed before this was finished: Jaspers returned 401: invalid token.)',
+        toolCalls: [],
+        raw: null,
+      },
+    ]),
+    false,
+  )
+  assert.equal(
+    resumedAfterStall([
+      { role: 'user', text: 'build it' },
+      { role: 'assistant', text: '(Stopped by the user before this was finished.)', toolCalls: [], raw: null },
+    ]),
+    false,
   )
 })

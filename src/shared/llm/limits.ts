@@ -40,9 +40,17 @@ export const STALLED_TURN_MS = 60_000
  * such as Cloudflare's ~100–125 s cutoff), or a request/gateway timeout (`408`, `504`, `timed out`)
  * that waited at least `STALLED_TURN_MS`. Repeating the identical prompt 6 times in place stalls
  * the same way; restating the turn with a smaller-step note lets the loop recover.
+ *
+ * A response cut off part way (`terminated`, `other side closed`, `premature close`) after that long
+ * is the same stall seen from the other side: a proxy in between (Cloudflare drops a stream that has
+ * sent nothing for about 100 s) closed it while the model was still writing a large call. Only a
+ * known wait counts, since the same words a moment in are a dropped connection worth trying again.
  */
 export function isTurnTimeout(message: string, elapsedMs?: number): boolean {
   if (/nothing arrived for \d+ s/i.test(message) || /returned (522|524)\b/.test(message)) return true
+  if (/\bterminated\b|other side closed|premature close/i.test(message)) {
+    return elapsedMs !== undefined && elapsedMs >= STALLED_TURN_MS
+  }
   if (/returned 4(?!08\b)\d\d\b/.test(message) || /returned 5(?!04\b)\d\d\b/.test(message)) return false
   if (!/returned (408|504)\b|aborted due to timeout|timed out/i.test(message)) return false
   return elapsedMs === undefined || elapsedMs >= STALLED_TURN_MS

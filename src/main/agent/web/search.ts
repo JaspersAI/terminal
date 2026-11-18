@@ -4,6 +4,7 @@ import {
   parseBrave,
   parseJaspers,
   SEARCH_COUNT,
+  searchErrorDetail,
   type SearchResult,
 } from '../../../shared/agent/web/search'
 import { getProviderConfig, hasCredential, type ProviderConfig } from '../../secrets'
@@ -15,6 +16,8 @@ import { getProviderConfig, hasCredential, type ProviderConfig } from '../../sec
 // page-fetch.ts, which imports nothing of the app.
 
 const SEARCH_TIMEOUT_MS = 15_000
+/** Jaspers' gateway runs grounded search and resolves cited redirects within a 30 s budget. */
+const JASPERS_SEARCH_TIMEOUT_MS = 30_000
 /** Bedrock's search is a model searching and then writing out what it found: twelve to eighteen seconds, measured, where an engine takes one or two. */
 const BEDROCK_TIMEOUT_MS = 60_000
 
@@ -52,7 +55,7 @@ async function jaspers(config: ProviderConfig<'search'>, query: string, signal?:
   // Sent as the account: the sign-in is the credential, and the request goes out with it.
   const response = await config.fetch(url, {
     headers: { accept: 'application/json' },
-    signal: withTimeout(signal, SEARCH_TIMEOUT_MS),
+    signal: withTimeout(signal, JASPERS_SEARCH_TIMEOUT_MS),
   })
   if (response.status === 404) throw new Error('Search is not available on this account yet.')
   if (!response.ok) throw new Error(`Jaspers search answered ${response.status}${await reason(response)}`)
@@ -76,8 +79,5 @@ function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal {
 }
 
 async function reason(response: Response): Promise<string> {
-  const raw = (await response.text().catch(() => '')).trim()
-  if (!raw || raw.startsWith('<')) return '.'
-  const text = raw.split('\n')[0]?.slice(0, 200) ?? ''
-  return text ? `: ${text}` : '.'
+  return searchErrorDetail(await response.text().catch(() => ''))
 }

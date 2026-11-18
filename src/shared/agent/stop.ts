@@ -12,7 +12,7 @@ export const CUTS_MAX = 2
 /** How often one run may restate a turn cut short by a provider safety filter or mid-loop refusal. */
 export const REFUSALS_MAX = 1
 /** Silence/request timeout on a turn already restated at low effort after a timeout. */
-export const RESTATED_TIMEOUT_MS = 90_000
+export const RESTATED_TIMEOUT_MS = 180_000
 export const CUT_OFF = "(Cut off at the model's output limit.)"
 export const PARTIAL_TIMEOUT_NOTE =
   '(Stopped after completing the steps above because the model timed out while finishing its reply.)'
@@ -23,7 +23,7 @@ export const CUT_NOTE =
 export const REFUSAL_NOTE =
   "Your last reply was stopped by the model provider's safety filter before finishing, so it was dropped and nothing was run. Stay within the documented tool boundaries — never attempt to bypass OS sandboxes (such as launchctl or open -a) or read browser cookie stores, session files, or OS credentials — and either complete the request safely or explain plainly to the user what requires their manual action."
 export const TIMEOUT_NOTE =
-  'Your last reply timed out before finishing, likely because a tool call was too large for one turn. Make one smaller tool call at a time: for panel state updates (set), update one panel per round or pass old and new to edit one section of a long markdown or sql string instead of rewriting the whole value; for multi-sheet exports (like excel-export/export-tables), pass 1 or 2 tables per round with the same filename (each call adds or updates sheets in that workbook); for files, write one file per round or use edit_file on one passage at a time.'
+  'Your last reply timed out before finishing, likely because a tool call was too large for one turn. Make one smaller tool call at a time: for panel state updates (set), update one panel per round or pass old and new to edit one section of a long markdown or sql string instead of rewriting the whole value; for multi-sheet exports (like excel-export/export-tables), pass 1 or 2 tables per round with the same filename (each call adds or updates sheets in that workbook); for files, call write_file or edit_file at most once per round on one short file (under ~150 lines; split large datasets, calculations, and views across separate files) or replace one small passage at a time with edit_file instead of rewriting a large file whole.'
 
 /** A reply that ran out of room before the model was done: its output cap, or the model's whole window. */
 const LENGTH = new Set(['max_tokens', 'model_context_window_exceeded', 'length', 'max_output_tokens'])
@@ -77,6 +77,17 @@ export function restate(history: Turn[], state: string, note?: string): void {
   const last = history[history.length - 1]
   if (!last || last.role === 'assistant') return
   last.context = [state, ...(note ? [note] : [])].join('\n')
+}
+
+/**
+ * Whether a persisted thread's previous run ended in a turn timeout or output-limit cut (`failedNote`),
+ * so a resumed run (such as `build_plugin` carrying on from a stalled build) can start its first round
+ * at low reasoning effort with `TIMEOUT_NOTE` instead of repeating the same oversized generation.
+ */
+export function resumedAfterStall(history: readonly Turn[]): boolean {
+  const last = history[history.length - 1]
+  if (last?.role !== 'assistant' || !last.text.startsWith('(Failed before this was finished:')) return false
+  return isTurnTimeout(last.text) || /kept running past its output limit/i.test(last.text)
 }
 
 /**

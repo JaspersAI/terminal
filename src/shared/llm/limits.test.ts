@@ -88,6 +88,12 @@ test('a turn that stalled on a silent stream or a gateway timeout is told apart 
   assert.equal(isTurnTimeout('Jaspers: nothing arrived for 90 s', 5_000), true)
   assert.equal(isTurnTimeout('Anthropic returned 504: timed out', 5_000), false)
   assert.equal(isTurnTimeout('Anthropic returned 408: request timeout', 5_000), false)
+  // A stream a proxy cut off while the model was still writing a large call, as seen on 2026-11-17 after 179 s.
+  const cutOff = 'Jaspers: terminated (Response does not match the HTTP/1.1 protocol (Invalid EOF state))'
+  assert.equal(isTurnTimeout(cutOff, 179_000), true)
+  assert.equal(isTurnTimeout('Jaspers: other side closed', STALLED_TURN_MS), true)
+  assert.equal(isTurnTimeout(cutOff, 5_000), false)
+  assert.equal(isTurnTimeout(cutOff), false)
 
   for (const message of [
     'Anthropic returned 429: rate limited',
@@ -183,6 +189,25 @@ test('a turn interrupted by system sleep or wake is told apart from an awake tur
       restateOnTimeout: false,
     }),
     { action: 'throw', sleepInterrupted: false },
+  )
+  // A stream cut off after a long wait goes back to the loop to be restated smaller, not sent again whole.
+  const cutOff = 'Jaspers: terminated (Response does not match the HTTP/1.1 protocol (Invalid EOF state))'
+  assert.deepEqual(
+    shouldRetryRoundError({
+      message: cutOff,
+      attempt: 0,
+      retryAfterMs: null,
+      elapsedMs: 179_000,
+      restateOnTimeout: true,
+    }),
+    { action: 'throw', sleepInterrupted: false },
+  )
+  assert.deepEqual(
+    shouldRetryRoundError(
+      { message: cutOff, attempt: 0, retryAfterMs: null, elapsedMs: 3_000, restateOnTimeout: true },
+      () => 0.5,
+    ),
+    { action: 'retry', waitMs: 1_500, waitAwake: false, sleepInterrupted: false },
   )
 })
 
