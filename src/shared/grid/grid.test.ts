@@ -10,11 +10,13 @@ import {
   presetSlots,
   PRESET_NAMES,
   fitGridSize,
+  fitWorkspaceGrids,
   readGridSize,
   resolveStoredGridSize,
   resizeGrid,
   resizeWorkspaceGrids,
   sameGridSize,
+  workspaceGridSizesChanged,
   SIZE_MIN,
   sizeProblem,
   type Anchor,
@@ -1796,6 +1798,11 @@ test('resizing a grid with framed rooms checks the frame on the window grid and 
   const shrunkStacked = resizeGrid(stackedInside, { cols: 16, rows: 12 }).grid
   assert.deepEqual(shrunkStacked.elements.find((e) => e.id === 'e2')?.rect, r(0, 0, 16, 6))
   assert.deepEqual(shrunkStacked.elements.find((e) => e.id === 'e3')?.rect, r(0, 6, 16, 6))
+
+  // Growing that 16×12 grid back to 16×24 scales the frame-filling child views back to 16×24 together.
+  const regrownStacked = fitGridSize(shrunkStacked, { cols: 16, rows: 24 })
+  assert.deepEqual(regrownStacked.elements.find((e) => e.id === 'e2')?.rect, r(0, 0, 16, 12))
+  assert.deepEqual(regrownStacked.elements.find((e) => e.id === 'e3')?.rect, r(0, 12, 16, 12))
 })
 
 test('fitGridSize and resolveStoredGridSize remember the user grid setting and apply it persistently across tabs', () => {
@@ -1840,18 +1847,29 @@ test('fitGridSize and resolveStoredGridSize remember the user grid setting and a
   assert.deepEqual(resolveStoredGridSize(undefined, workspaces, 'ws-2', gridsByWs), custom)
   assert.deepEqual(resolveStoredGridSize(undefined, workspaces, 'ws-1', gridsByWs), custom)
 
-  // Changing grid size on the active tab updates all other tabs that fit, while preserving wider tabs' required columns.
-  const resizedAll = resizeWorkspaceGrids(
-    {
-      'ws-1': { 1: defaultTab },
-      'ws-2': { 1: EMPTY_GRID, 2: EMPTY_GRID },
-      'ws-3': { 1: wideTab },
-    },
-    'ws-1',
-    custom,
-  )
+  // Changing grid size on the active tab updates all other tabs that fit, while preserving wider tabs' required columns
+  // uniformly across all windows of that wider tab.
+  const beforeResize: Record<string, Record<number, Grid>> = {
+    'ws-1': { 1: defaultTab },
+    'ws-2': { 1: EMPTY_GRID, 2: EMPTY_GRID },
+    'ws-3': { 1: wideTab, 2: { ...EMPTY_GRID, size: { cols: 20, rows: 24 } } },
+  }
+  const resizedAll = resizeWorkspaceGrids(beforeResize, 'ws-1', custom)
   assert.deepEqual(resizedAll['ws-1']?.[1]?.size, custom)
   assert.deepEqual(resizedAll['ws-2']?.[1]?.size, custom)
   assert.deepEqual(resizedAll['ws-2']?.[2]?.size, custom)
   assert.deepEqual(resizedAll['ws-3']?.[1]?.size, { cols: 20, rows: 24 })
+  assert.deepEqual(resizedAll['ws-3']?.[2]?.size, { cols: 20, rows: 24 })
+
+  // Startup fitting upgrades saved 16×12 tabs to the persistent gridSize and repairs mismatched window sizes on a wider tab.
+  assert.deepEqual(fitWorkspaceGrids({ 1: defaultTab, 2: EMPTY_GRID }, custom)[1]?.size, custom)
+  assert.deepEqual(fitWorkspaceGrids({ 1: defaultTab, 2: EMPTY_GRID }, custom)[2]?.size, custom)
+  const repairedWide = fitWorkspaceGrids({ 1: wideTab, 2: { ...EMPTY_GRID, size: custom } }, custom)
+  assert.deepEqual(repairedWide[1]?.size, { cols: 20, rows: 24 })
+  assert.deepEqual(repairedWide[2]?.size, { cols: 20, rows: 24 })
+  assert.equal(fitWorkspaceGrids(repairedWide, custom), repairedWide)
+
+  // Detecting workspace grid size changes triggers immediate persistence even when state.gridSize was already custom.
+  assert.equal(workspaceGridSizesChanged(resizedAll, beforeResize), true)
+  assert.equal(workspaceGridSizesChanged(resizedAll, resizedAll), false)
 })

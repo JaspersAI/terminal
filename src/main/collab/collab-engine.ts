@@ -45,7 +45,7 @@ import {
   type SyncedQuery,
 } from '../../shared/collab/parts.ts'
 import { stableStringify } from '../../shared/data/hash.ts'
-import { layoutOf, type Grid } from '../../shared/grid/grid.ts'
+import { layoutOf, type Grid, type GridSize } from '../../shared/grid/grid.ts'
 import { globalSeq } from '../../shared/loops/closed.ts'
 import { frameOf, loopChat, loopTitle, NO_LOOPS, viewPlugin, type Loops } from '../../shared/loops/loops.ts'
 import type { Workspace } from '../../shared/state.ts'
@@ -65,6 +65,7 @@ import { CollabError, type CollabApi, type WireCommand, type WireEvent, type Wir
 export interface CollabEngineState {
   workspaces: Workspace[]
   currentWorkspaceId: string
+  gridSize?: GridSize
   grids: Record<string, Record<number, Grid>>
   loops: Record<string, Loops>
   jaspers: { email: string | null }
@@ -854,6 +855,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
           minSeq: globalSeq(next.loops),
           mirror,
           at,
+          gridSize: next.gridSize,
         })
         next = {
           ...next,

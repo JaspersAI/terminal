@@ -3,7 +3,7 @@
 // Keep this file free of Node and DOM imports.
 
 // The extension is explicit because Node's test runner resolves this import at run time.
-import { EMPTY_GRID, sameGridSize, type Grid, type GridSize } from './grid.ts'
+import { EMPTY_GRID, fitWorkspaceGrids, resolveStoredGridSize, sameGridSize, type Grid, type GridSize } from './grid.ts'
 
 export const MAIN_WINDOW = 1
 /** Main and the extensions together. The prompt maps every open window, so it stays small. */
@@ -57,6 +57,30 @@ export function withWindows(
 /** The size a workspace's grids are at: any of them, since they are all the same, or `defaultSize` when it has none. */
 export function sizeOf(grids: Record<number, Grid>, defaultSize: GridSize = EMPTY_GRID.size): GridSize {
   return grids[MAIN_WINDOW]?.size ?? Object.values(grids)[0]?.size ?? defaultSize
+}
+
+/**
+ * Resolves the user's persistent `gridSize` on startup and applies it uniformly across every
+ * workspace's open and stored windows, reporting which workspaces changed so `workspace.json` is saved.
+ */
+export function restoreStoredGrids(
+  storedGridSize: unknown,
+  workspaces: readonly { id: string }[],
+  currentWorkspaceId: string,
+  storedGrids: Record<string, Record<number, Grid>>,
+  open: number[],
+): { gridSize: GridSize; grids: Record<string, Record<number, Grid>>; dirtyWorkspaceIds: string[] } {
+  const gridSize = resolveStoredGridSize(storedGridSize, workspaces, currentWorkspaceId, storedGrids)
+  const grids: Record<string, Record<number, Grid>> = {}
+  const dirtyWorkspaceIds: string[] = []
+  for (const w of workspaces) {
+    const stored = storedGrids[w.id] ?? {}
+    const windowed = withWindows(stored, open, gridSize)
+    const fitted = fitWorkspaceGrids(windowed, gridSize)
+    if (fitted !== stored) dirtyWorkspaceIds.push(w.id)
+    grids[w.id] = fitted
+  }
+  return { gridSize, grids, dirtyWorkspaceIds }
 }
 
 /** Where a window's content sits on the screen, in the same units the renderer's screen coordinates use. */

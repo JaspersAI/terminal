@@ -17,6 +17,7 @@ import type { Exchange } from '../agent/transcript.ts'
 import {
   DEFAULT_SIZE,
   EMPTY_GRID,
+  fitWorkspaceGrids,
   layoutOf,
   placeFrame,
   removeElement,
@@ -27,6 +28,7 @@ import {
   type ElementMode,
   type Grid,
   type GridElement,
+  type GridSize,
   type Panel,
   type PanelContent,
   type Rect,
@@ -396,7 +398,7 @@ export function withReplicaRoom(
   loops: Loops,
   shareId: string,
   ref: SharedRoomRef,
-  options: { minSeq: number; mirror: boolean; at: number },
+  options: { minSeq: number; mirror: boolean; at: number; gridSize?: GridSize },
 ): { grids: Record<number, Grid>; loops: Loops; loopId: string } {
   const existing = replicaOf(loops, shareId, ref.id)
   if (existing) {
@@ -404,7 +406,8 @@ export function withReplicaRoom(
     if (!frame || !options.mirror) return { grids, loops, loopId: existing.id }
     const grid = grids[frame.window]!
     const moved = grid.elements.map((element) => (element.id === frame.element.id ? mirrored(element, ref) : element))
-    return { grids: { ...grids, [frame.window]: { ...grid, elements: moved } }, loops, loopId: existing.id }
+    const nextGrids = fitWorkspaceGrids({ ...grids, [frame.window]: { ...grid, elements: moved } }, grid.size)
+    return { grids: nextGrids, loops, loopId: existing.id }
   }
   const number = Math.max(loops.seq, options.minSeq, ...loops.list.map((one) => loopNumber(one.id))) + 1
   const loopId = `f${number}`
@@ -419,10 +422,11 @@ export function withReplicaRoom(
     shareId,
     replica: { room: ref.id, tiles: {} },
   }
-  const base = grids[1] ?? { ...EMPTY_GRID, size: DEFAULT_SIZE }
+  const base = grids[1] ?? { ...EMPTY_GRID, size: options.gridSize ?? DEFAULT_SIZE }
   const placed = options.mirror ? withFrameAt(base, loopId, ref) : withFrameSomewhere(base, loopId, ref)
+  const nextGrids = options.mirror ? fitWorkspaceGrids({ ...grids, 1: placed }, base.size) : { ...grids, 1: placed }
   return {
-    grids: { ...grids, 1: placed },
+    grids: nextGrids,
     loops: { ...loops, seq: number, list: [...loops.list, record] },
     loopId,
   }

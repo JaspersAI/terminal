@@ -1972,10 +1972,21 @@ function scaleRect(rect: Rect, fromSize: GridSize, newSize: GridSize): Rect {
   return { x, y, w: right - x, h: bottom - y }
 }
 
+function homeExtentOf(elements: GridElement[]): Rect | null {
+  if (elements.length === 0) return null
+  const homes = elements.map(homeRect)
+  const x = Math.min(...homes.map((r) => r.x))
+  const y = Math.min(...homes.map((r) => r.y))
+  const right = Math.max(...homes.map((r) => r.x + r.w))
+  const bottom = Math.max(...homes.map((r) => r.y + r.h))
+  return { x, y, w: right - x, h: bottom - y }
+}
+
 function resizeFrameChildren(children: GridElement[], oldSize: GridSize, newSize: GridSize): Map<string, GridElement> {
   const fullOld = fullRect(oldSize)
+  const homeSpan = homeExtentOf(children)
   const needsScale =
-    (children.length === 1 && sameRect(homeRect(children[0]!), fullOld)) ||
+    (homeSpan !== null && sameRect(homeSpan, fullOld)) ||
     children.some(
       (c) =>
         rectProblem(homeRect(c), newSize) !== null || (c.mode !== 'maximized' && rectProblem(c.rect, newSize) !== null),
@@ -2089,12 +2100,7 @@ function sameRect(a: Rect, b: Rect): boolean {
   return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h
 }
 
-/**
- * Applies `size` (such as the user's persistent grid setting) to `grid`, growing `cols` or `rows`
- * only as needed to keep any top-level elements or written cells on `grid` inside the grid.
- */
-export function fitGridSize(grid: Grid, size: GridSize): Grid {
-  if (sizeProblem(size) !== null) return grid
+function boundsRequired(grid: Grid, size: GridSize): GridSize {
   let { cols, rows } = size
   for (const element of grid.elements) {
     if (element.parent !== undefined) continue
@@ -2110,10 +2116,55 @@ export function fitGridSize(grid: Grid, size: GridSize): Grid {
     cols = Math.max(cols, Math.min(cell.x + 1, SIZE_MAX.cols))
     rows = Math.max(rows, Math.min(cell.y + 1, SIZE_MAX.rows))
   }
-  const target: GridSize = { cols, rows }
+  return cols === size.cols && rows === size.rows ? size : { cols, rows }
+}
+
+/**
+ * Applies `size` (such as the user's persistent grid setting) to `grid`, growing `cols` or `rows`
+ * only as needed to keep any top-level elements or written cells on `grid` inside the grid.
+ */
+export function fitGridSize(grid: Grid, size: GridSize): Grid {
+  if (sizeProblem(size) !== null) return grid
+  const target = boundsRequired(grid, size)
   const elements = resizeGridElements(grid.elements, grid.size, target)
   if (sameGridSize(grid.size, target) && elements === grid.elements) return grid
   return { ...grid, size: target, elements }
+}
+
+/**
+ * Applies `size` uniformly across every window of one workspace: all windows of a workspace share a
+ * single `GridSize`, grown only as needed so no window's top-level elements or written cells fall outside.
+ */
+export function fitWorkspaceGrids(grids: Record<number, Grid>, size: GridSize): Record<number, Grid> {
+  if (sizeProblem(size) !== null) return grids
+  let target = size
+  for (const grid of Object.values(grids)) {
+    target = boundsRequired(grid, target)
+  }
+  let changed = false
+  const next: Record<number, Grid> = {}
+  for (const [key, grid] of Object.entries(grids)) {
+    const fitted = fitGridSize(grid, target)
+    if (fitted !== grid) changed = true
+    next[Number(key)] = fitted
+  }
+  return changed ? next : grids
+}
+
+/** Whether any existing window grid's `size` changed between two `grids` records. */
+export function workspaceGridSizesChanged(
+  next: Record<string, Record<number, Grid>>,
+  prev: Record<string, Record<number, Grid>>,
+): boolean {
+  for (const [id, windows] of Object.entries(next)) {
+    const before = prev[id]
+    if (!before || windows === before) continue
+    for (const [win, grid] of Object.entries(windows)) {
+      const prevGrid = before[Number(win)]
+      if (prevGrid && !sameGridSize(grid.size, prevGrid.size)) return true
+    }
+  }
+  return false
 }
 
 /**
@@ -2174,14 +2225,8 @@ export function resizeWorkspaceGrids(
   }
   for (const [otherId, otherWindows] of Object.entries(gridsByWorkspace)) {
     if (otherId === workspaceId) continue
-    let changed = false
-    const fittedWindows: Record<number, Grid> = {}
-    for (const [winKey, winGrid] of Object.entries(otherWindows)) {
-      const fitted = fitGridSize(winGrid, size)
-      if (fitted !== winGrid) changed = true
-      fittedWindows[Number(winKey)] = fitted
-    }
-    if (changed) next[otherId] = fittedWindows
+    const fittedWindows = fitWorkspaceGrids(otherWindows, size)
+    if (fittedWindows !== otherWindows) next[otherId] = fittedWindows
   }
   return next
 }

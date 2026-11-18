@@ -265,3 +265,25 @@ test('a room taken off a tab leaves nothing of itself and nothing else changed',
   )
   assert.deepEqual(gone.grids[1]!.elements, own.grids[1]!.elements)
 })
+
+test('a mirrored shared tab respects the persistent grid size and grows uniformly when a shared room sits beyond it', () => {
+  const custom = { cols: 16, rows: 24 }
+  const seeded = withReplicaRoom(
+    {},
+    { seq: 0, list: [] },
+    'share-tab',
+    { id: 'f1', rect: { x: 0, y: 0, w: 8, h: 12 }, z: 0, mode: 'tiled' },
+    { ...AT, mirror: true, gridSize: custom },
+  )
+  assert.deepEqual(seeded.grids[1]?.size, custom)
+
+  const wider = withReplicaRoom(
+    { 1: EMPTY, 2: EMPTY },
+    { seq: 0, list: [] },
+    'share-wide',
+    { id: 'f2', rect: { x: 12, y: 12, w: 8, h: 12 }, z: 0, mode: 'tiled' },
+    { ...AT, mirror: true, gridSize: DEFAULT_SIZE },
+  )
+  assert.deepEqual(wider.grids[1]?.size, { cols: 20, rows: 24 })
+  assert.deepEqual(wider.grids[2]?.size, { cols: 20, rows: 24 })
+})

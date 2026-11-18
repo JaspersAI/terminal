@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { EMPTY_GRID } from './grid.ts'
+import { EMPTY_GRID, placeFramed } from './grid.ts'
 import {
   anyWindowInFront,
   checkWindows,
   isOpenWindow,
   lowestFreeWindow,
   MAIN_WINDOW,
+  restoreStoredGrids,
   windowAt,
   windowNumbers,
   WINDOWS_MAX,
@@ -94,4 +95,41 @@ test('destroyed windows in the map are skipped without calling isVisible or isFo
   assert.equal(anyWindowInFront([destroyed]), false)
   assert.equal(anyWindowInFront([destroyed, hidden, unfocused]), false)
   assert.equal(anyWindowInFront([destroyed, hidden, front]), true)
+})
+
+test('restoreStoredGrids applies the saved or inferred grid size to all tabs on relaunch instead of leaving 16×12 tabs behind', () => {
+  const custom = { cols: 16, rows: 24 }
+  const wideGrid = placeFramed(
+    { ...EMPTY_GRID, size: { cols: 20, rows: 24 } },
+    { content: { kind: 'view', view: 'core/table' }, loop: 'f1', rect: { x: 12, y: 0, w: 8, h: 12 } },
+  ).grid
+  const activeDefault = placeFramed(EMPTY_GRID, {
+    content: { kind: 'view', view: 'core/browser' },
+    loop: 'f2',
+    rect: { x: 0, y: 0, w: 8, h: 12 },
+  }).grid
+
+  const workspaces = [{ id: 'tab-wide' }, { id: 'tab-active' }, { id: 'tab-screener' }]
+  const storedGrids = {
+    'tab-screener': { 1: { ...EMPTY_GRID, size: custom }, 2: { ...EMPTY_GRID, size: custom } },
+    'tab-wide': { 1: wideGrid, 2: { ...EMPTY_GRID, size: custom } },
+    'tab-active': { 1: activeDefault, 2: EMPTY_GRID },
+  }
+
+  // Legacy state.json without gridSize infers 16×24 and resizes the active 16×12 tab while unifying tab-wide's windows to 20×24.
+  const migrated = restoreStoredGrids(undefined, workspaces, 'tab-active', storedGrids, [2])
+  assert.deepEqual(migrated.gridSize, custom)
+  assert.deepEqual(migrated.grids['tab-screener']?.[1]?.size, custom)
+  assert.deepEqual(migrated.grids['tab-active']?.[1]?.size, custom)
+  assert.deepEqual(migrated.grids['tab-active']?.[2]?.size, custom)
+  assert.deepEqual(migrated.grids['tab-wide']?.[1]?.size, { cols: 20, rows: 24 })
+  assert.deepEqual(migrated.grids['tab-wide']?.[2]?.size, { cols: 20, rows: 24 })
+  assert.deepEqual(migrated.dirtyWorkspaceIds, ['tab-wide', 'tab-active'])
+
+  // Explicit state.json with gridSize 16×24 also upgrades any tab whose workspace.json was still saved at 16×12, and is idempotent afterwards.
+  const explicit = restoreStoredGrids(custom, workspaces, 'tab-active', storedGrids, [2])
+  assert.deepEqual(explicit.grids['tab-active']?.[1]?.size, custom)
+  assert.deepEqual(explicit.dirtyWorkspaceIds, ['tab-wide', 'tab-active'])
+  const steady = restoreStoredGrids(custom, workspaces, 'tab-active', explicit.grids, [2])
+  assert.deepEqual(steady.dirtyWorkspaceIds, [])
 })

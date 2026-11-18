@@ -20,7 +20,7 @@ The public state replaces provider tokens with `hasToken` and plugin secrets wit
 
 `persist.ts` writes changed branches after a 300 ms debounce, using a temporary file and rename, mode 0600, and flushing on quit:
 
-- `<userData>/state.json`: providers, workspace identities, open windows, sealed credentials, OAuth, the Jaspers sign-in (its registered client, sealed tokens, email, and why a sign-in ended when Account ended it), disabled skills, budgets, and the theme.
+- `<userData>/state.json`: providers, workspace identities, the persistent grid size, open windows, sealed credentials, OAuth, the Jaspers sign-in (its registered client, sealed tokens, email, and why a sign-in ended when Account ended it), disabled skills, budgets, and the theme.
 - `<userData>/workspaces/<id>/workspace.json`: grids by window number. Version 1 files load into window 1; current files use version 2.
 - `<userData>/tasks.json`: tasks and their monotonic id counter.
 
