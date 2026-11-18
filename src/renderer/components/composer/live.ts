@@ -117,7 +117,9 @@ export function heard(list: LiveExchange[], event: AgentEvent): LiveExchange[] {
       const steps = stepped(one.steps, event)
       // A round asked again starts its reply over: what got out of it is about to be said again.
       if (event.kind === 'round') return same(one, { answer: null, steps, thinking })
-      if (event.kind === 'text') return { ...one, answer: (one.answer ?? '') + event.delta }
+      // Once the run is over its reply is whole: the request answered with it, and a piece heard after
+      // (the two come on different channels) was already in it.
+      if (event.kind === 'text') return one.working ? { ...one, answer: (one.answer ?? '') + event.delta } : one
       if (event.kind === 'citations') return { ...one, citations: event.citations }
       if (event.kind === 'handed') return one.handed ? one : { ...one, handed: true }
       return same(one, { answer: one.answer, steps, thinking })

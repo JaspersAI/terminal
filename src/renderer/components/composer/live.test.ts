@@ -204,6 +204,24 @@ test('a stopped run goes, and a failed one stays with why and clears any partial
   assert.equal(workingOn(list, 'w1'), false)
 })
 
+// The reply comes back from the request and its pieces come as events, on two channels: the last
+// piece can arrive after the whole reply has landed, and must not be written a second time.
+test('a piece of the reply heard after the run is over changes nothing, and its sources still land', () => {
+  let list = two()
+  list = heard(list, { kind: 'text', runId: 'run1', delta: 'Ye' })
+  list = answered(list, 'a', 'Yes.')
+  const late = heard(list, { kind: 'text', runId: 'run1', delta: 's.' })
+  assert.equal(late, list)
+  assert.equal(late.find((one) => one.ask === 'a')?.answer, 'Yes.')
+  const cited = heard(late, { kind: 'citations', runId: 'run1', citations: [{ id: 's1', title: 'Source' }] })
+  assert.deepEqual(cited.find((one) => one.ask === 'a')?.citations, [{ id: 's1', title: 'Source' }])
+
+  list = heard(cited, { kind: 'text', runId: 'run2', delta: 'Partial' })
+  list = failed(list, 'b', 'No key.')
+  const after = heard(list, { kind: 'text', runId: 'run2', delta: ' more' })
+  assert.equal(after.find((one) => one.ask === 'b')?.answer, null)
+})
+
 test('dismissing the box lets go of what is over and hides what still works, until its reply lands', () => {
   let list = two()
   list = answered(list, 'b', 'Second is done.')
