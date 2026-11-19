@@ -185,7 +185,9 @@ export function TeamChat({ panel }: ViewProps): ReactElement {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-1.5 text-xs">
                     <span className="truncate font-medium text-foreground">{senderLabel}</span>
-                    {isMe && <span className="shrink-0 text-muted-foreground">you</span>}
+                    {isMe && senderLabel.toLowerCase() !== 'you' && (
+                      <span className="shrink-0 text-muted-foreground">you</span>
+                    )}
                     <span className="shrink-0 text-[11px] text-muted-foreground">{formatAsOf(msg.at)}</span>
                   </div>
                   <div className="mt-0.5 font-prose text-prose break-words text-foreground">
