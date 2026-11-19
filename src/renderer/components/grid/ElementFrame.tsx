@@ -345,7 +345,9 @@ export function ElementFrame({
       if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault()
         setSelected(true)
-        tileRef.current?.querySelector<HTMLInputElement>('input[name="loop-prompt"]')?.focus()
+        tileRef.current
+          ?.querySelector<HTMLElement>('input[name="loop-prompt"], textarea[name="prompt"], input[name="prompt"]')
+          ?.focus()
         return
       }
       if (event.key === 'Escape' && zoomPopover) {
