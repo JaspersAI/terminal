@@ -1,4 +1,4 @@
-import { app, clipboard, ipcMain, shell } from 'electron'
+import { app, clipboard, ipcMain, net, shell } from 'electron'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { allScreensWithNotice, askForMissingSecret, dispatch, oneScreenOrNotice } from './actions'
@@ -43,7 +43,7 @@ import { installUpdate, startUpdates } from './app/updates'
 import { startTasks, stopTasks, suspendTasks, wakeTasks } from './tasks/tasks'
 import { findTool } from './agent/tools'
 import { registerSchemes, registerViewHost } from './plugins/viewhost'
-import { suspendLlm, wakeLlm } from './llm/http'
+import { setOnlineCheck, suspendLlm, wakeLlm } from './llm/http'
 import { registerVoiceIpc } from './llm/voice'
 import { closeAllBrowsers, registerBrowserIpc, startBrowsers } from './grid/browser'
 import {
@@ -94,6 +94,7 @@ if (!primary) app.quit()
 
 app.whenReady().then(async () => {
   if (!primary) return
+  setOnlineCheck(() => net.isOnline())
   start()
   await Promise.all([refreshTerms(), checkSignIn()])
   // Light, dark, or the system's, before the first window opens.

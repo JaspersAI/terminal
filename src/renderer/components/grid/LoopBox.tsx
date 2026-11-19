@@ -25,6 +25,7 @@ import {
 } from '../../../shared/collab/collab'
 import type { Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
+import { noteConnectivityFailure } from '../../lib/connectivity'
 import { errorMessage } from '../../lib/errors'
 import { get, subscribe as subscribeState, useAppState } from '../../lib/state'
 import { TeammateBadge } from '../collab/TeammateBadge'
@@ -117,7 +118,11 @@ export function sendToRoom(place: Place, loopId: string, text: string): void {
   // A request that began is ended by its run's events. What comes back here settles one that never did.
   window.app.agent.run(trimmed, ask, loopId).then(
     (reply) => updateTileBox(place, (b) => tileBoxSettled(b, ask, reply, null)),
-    (err: unknown) => updateTileBox(place, (b) => tileBoxSettled(b, ask, '', errorMessage(err))),
+    (err: unknown) => {
+      const msg = errorMessage(err)
+      noteConnectivityFailure(msg)
+      updateTileBox(place, (b) => tileBoxSettled(b, ask, '', msg))
+    },
   )
 }
 

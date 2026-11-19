@@ -5,6 +5,7 @@ import path from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { LIMITS } from '../../shared/plugins/install.ts'
+import { messageOf } from '../../shared/rpc.ts'
 import { installRoot } from '../home.ts'
 
 // Fetching an archive to install, for plugins and skills alike: downloaded, copied, or taken from an
@@ -144,7 +145,7 @@ function tooLarge(): Error {
 }
 
 export function errorReason(err: unknown): string {
-  if (!(err instanceof Error)) return String(err)
-  const cause = (err as { cause?: unknown }).cause
-  return cause instanceof Error ? cause.message : err.message
+  const full = messageOf(err)
+  const unwrapped = /^fetch failed \((.+)\)$/i.exec(full)
+  return unwrapped ? unwrapped[1]! : full
 }

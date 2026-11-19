@@ -4,7 +4,17 @@ import type { AddressInfo } from 'node:net'
 import { test } from 'node:test'
 import { isRetryable } from '../../shared/llm/limits.ts'
 import type { Provider } from '../../shared/llm/providers.ts'
-import { isLlmSleeping, post, ProviderError, QUIET_MS, sse, suspendLlm, waitUntilLlmAwake, wakeLlm } from './http.ts'
+import {
+  isLlmSleeping,
+  post,
+  ProviderError,
+  QUIET_MS,
+  setOnlineCheck,
+  sse,
+  suspendLlm,
+  waitUntilLlmAwake,
+  wakeLlm,
+} from './http.ts'
 
 const TEST: Provider = {
   id: 'test',
@@ -361,4 +371,55 @@ test('a stream reset after a trailing data frame without a blank line yields the
       assert.deepEqual(got, ['{"n":1}', '{"n":2}'])
     },
   )
+})
+
+test('network and offline failures on cloud requests report clear connectivity guidance instead of raw fetch failed', async () => {
+  const cloudUrl = 'https://account.jsprai.com/v1/chat/completions'
+  const dnsWire = {
+    provider: { ...TEST, name: 'Jaspers' },
+    fetch: async () => {
+      throw new Error('fetch failed', {
+        cause: new TypeError('fetch failed', {
+          cause: Object.assign(new Error('getaddrinfo ENOTFOUND account.jsprai.com'), { code: 'ENOTFOUND' }),
+        }),
+      })
+    },
+  }
+  await assert.rejects(post(dnsWire, cloudUrl, {}, '{}'), (err: unknown) => {
+    assert.ok(err instanceof ProviderError)
+    assert.equal(
+      err.message,
+      "Connection issue — couldn't reach Jaspers. Check your internet connection and try again; your workspace is safe.",
+    )
+    assert.equal(isRetryable(err.message), true)
+    return true
+  })
+
+  try {
+    setOnlineCheck(() => false)
+    const offlineWire = {
+      provider: { ...TEST, name: 'Jaspers' },
+      fetch: async () => {
+        throw new TypeError('fetch failed')
+      },
+    }
+    await assert.rejects(
+      async () => {
+        for await (const _ of sse(offlineWire, cloudUrl, {}, '{}')) {
+          // unreachable
+        }
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof ProviderError)
+        assert.equal(
+          err.message,
+          "No internet connection — couldn't reach Jaspers. Check your network connection and try again; your workspace is safe.",
+        )
+        assert.equal(isRetryable(err.message), true)
+        return true
+      },
+    )
+  } finally {
+    setOnlineCheck(() => true)
+  }
 })

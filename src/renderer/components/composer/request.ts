@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript'
+import { noteConnectivityFailure, noteConnectivityRecovered } from '../../lib/connectivity'
 import { errorMessage } from '../../lib/errors'
 import {
   answered,
@@ -183,6 +184,7 @@ export async function askCentral(text: string, options?: { fromOrb?: boolean }):
     if (!reply) void reread(false)
   } catch (err) {
     const msg = errorMessage(err)
+    noteConnectivityFailure(msg)
     const clearOrbDraft = orbDraftText !== null && store.draft === orbDraftText
     if (clearOrbDraft) orbDraftText = null
     emitStore({
@@ -221,6 +223,7 @@ async function attemptVoice(action: () => Promise<void>): Promise<void> {
     await action()
   } catch (err) {
     const msg = errorMessage(err)
+    noteConnectivityFailure(msg)
     emitStore({ error: msg, voice: 'idle', responsePreview: firstLineOf(msg) })
   }
 }
@@ -229,6 +232,7 @@ async function finishVoice(source: 'orb' | 'command'): Promise<void> {
   const recording = await recorder.stop()
   emitStore({ voice: 'transcribing' })
   const text = await window.app.voice.transcribe(recording.audio, recording.mimeType)
+  noteConnectivityRecovered()
   if (!text) throw new Error('Did not catch that. Try again.')
   console.log('[voice] heard:', text)
   // Always populate the command line with the user's transcribed words.

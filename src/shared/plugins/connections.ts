@@ -198,7 +198,7 @@ export function offersTool(connection: Connection, tool: string): boolean {
 
 const AUTH_FAILURE = /\b(?:401|403)\b|unauthoriz|forbidden|insufficient_scope/i
 const OFFLINE_OR_SLEEP_FAILURE =
-  /\b(?:enotfound|eai_again|enetunreach|ehostunreach|enetdown|err_internet_disconnected|while the computer is sleeping or waking)\b/i
+  /\b(?:enotfound|eai_again|eai_fail|enetunreach|ehostunreach|enetdown|eaddrnotavail|err_internet_disconnected|while the computer is sleeping or waking)\b|^(?:no internet connection|connection issue) — /i
 const STALE_HTTP_SESSION =
   /error posting to endpoint|failed to open sse stream|sse stream disconnected|session (?:not found|expired|id)|(?:invalid|missing|unknown|no valid) session|mcp-session-id|not initialized|fetch failed|socket hang up|econnreset|econnrefused/i
 

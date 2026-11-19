@@ -1,7 +1,9 @@
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { formatFetchFailure, formatStreamDropFailure } from '../../shared/llm/connectivity.ts'
 import { retryAfter, SLEEP_INTERRUPTED_MESSAGE } from '../../shared/llm/limits.ts'
 import type { Provider } from '../../shared/llm/providers'
 import { SSE_DONE, sseFrames, sseTail } from '../../shared/llm/sse.ts'
+import { messageOf } from '../../shared/rpc.ts'
 import { WAKE_GRACE_MS } from '../../shared/tasks/tasks.ts'
 import { isConnectionDrop, RESET_RETRIES } from './wire.ts'
 
@@ -59,18 +61,22 @@ export async function post<T>(
           signal: requestSignal,
         })
       } catch (err) {
-        const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
-        if (!requestSignal.aborted && reset < RESET_RETRIES && isConnectionDrop(wrapped)) continue
-        throw wrapped
+        const online = isLlmOnline()
+        if (!requestSignal.aborted && reset < RESET_RETRIES && online && isConnectionDrop(new Error(messageOf(err)))) {
+          continue
+        }
+        throw new ProviderError(formatFetchFailure(provider.name, err, url, online))
       }
       if (!response.ok) throw await refused(provider, response)
       let text: string
       try {
         text = await response.text()
       } catch (err) {
-        const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
-        if (!requestSignal.aborted && reset < RESET_RETRIES && isConnectionDrop(wrapped)) continue
-        throw wrapped
+        const online = isLlmOnline()
+        if (!requestSignal.aborted && reset < RESET_RETRIES && online && isConnectionDrop(new Error(messageOf(err)))) {
+          continue
+        }
+        throw new ProviderError(formatStreamDropFailure(provider.name, err, url, online))
       }
       try {
         return JSON.parse(text) as T
@@ -98,12 +104,6 @@ async function refused(provider: Provider, response: Response): Promise<Provider
     response.status,
     retryAfterMs,
   )
-}
-
-/** "fetch failed" alone says nothing; the cause (ECONNREFUSED, timeout) is what the user needs. */
-function describe(err: unknown): string {
-  if (!(err instanceof Error)) return String(err)
-  return err.cause instanceof Error ? `${err.message} (${err.cause.message})` : err.message
 }
 
 const STATUS_DETAIL: Readonly<Record<number, string>> = {
@@ -163,6 +163,20 @@ const inFlight = new Set<() => void>()
 const wakeListeners = new Set<() => void>()
 let sleeping = false
 let wakeUntil = 0
+let onlineCheck: () => boolean = () => true
+
+/** Wires the OS network-reachability probe (`net.isOnline()` in Electron main; defaults to `true` in Node tests). */
+export function setOnlineCheck(check: () => boolean): void {
+  onlineCheck = check
+}
+
+export function isLlmOnline(): boolean {
+  try {
+    return onlineCheck()
+  } catch {
+    return true
+  }
+}
 
 function abortInFlight(): void {
   for (const abort of [...inFlight]) abort()
@@ -293,9 +307,17 @@ export async function* sse(
           signal: signal ? AbortSignal.any([quiet.signal, signal]) : quiet.signal,
         })
       } catch (err) {
-        const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
-        if (!signal?.aborted && !quiet.signal.aborted && reset < RESET_RETRIES && isConnectionDrop(wrapped)) continue
-        throw wrapped
+        const online = isLlmOnline()
+        if (
+          !signal?.aborted &&
+          !quiet.signal.aborted &&
+          reset < RESET_RETRIES &&
+          online &&
+          isConnectionDrop(new Error(messageOf(err)))
+        ) {
+          continue
+        }
+        throw new ProviderError(formatFetchFailure(provider.name, err, url, online))
       }
       if (!response.ok) throw await refused(provider, response)
       if (!response.body) throw new ProviderError(`${provider.name} returned no body to read.`, response.status)
@@ -317,17 +339,18 @@ export async function* sse(
                 yield tail
               }
             }
-            const wrapped = new ProviderError(`${provider.name}: ${describe(err)}`)
+            const online = isLlmOnline()
             if (
               !yielded &&
               !signal?.aborted &&
               !quiet.signal.aborted &&
               reset < RESET_RETRIES &&
-              isConnectionDrop(wrapped)
+              online &&
+              isConnectionDrop(new Error(messageOf(err)))
             ) {
               break
             }
-            throw wrapped
+            throw new ProviderError(formatStreamDropFailure(provider.name, err, url, online))
           }
           if (chunk.done) {
             const last = sseTail(buffer)
