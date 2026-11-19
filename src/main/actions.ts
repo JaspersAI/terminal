@@ -15,6 +15,7 @@ import {
   publishText,
   refreshPanel,
   removeElement,
+  restored,
   editIn,
   setIn,
   setPanelState,
@@ -22,6 +23,7 @@ import {
   sizeProblem,
   summarizePanel,
   watchedViewPanels,
+  withLayout,
   writeCells,
   swapElements,
   type ElementMode,
@@ -53,6 +55,7 @@ import {
 import {
   archiveTabRooms,
   archiveTabTasks,
+  archiveTargetTabId,
   closedLoop,
   closedWithout,
   globalSeq,
@@ -116,6 +119,7 @@ import { connect } from './plugins/mcp'
 import { dismissNotice } from './app/notices'
 import { authorize } from './plugins/oauth'
 import { personName } from '../shared/collab/collab'
+import { TEAM_CHAT_PLUGIN_ID, TEAM_CHAT_VIEW } from '../shared/collab/team-chat'
 import { checkSignIn, signIn, signOut, signedIn } from './jaspers/jaspers'
 import {
   acceptTeammateInvite,
@@ -378,6 +382,9 @@ const HANDLERS: Record<Action['type'], Handler> = {
   'collab.accept': (raw) => acceptTeammateInvite(asString(raw.invite)),
   'collab.decline': (raw) => declineTeammateInvite(asString(raw.invite)),
   'collab.removeTeammate': (raw) => removeTeammate(asString(raw.accountId)),
+  'collab.startChat': async (raw) => {
+    await startTeammateChat(asString(raw.accountId), typeof raw.workspaceId === 'string' ? raw.workspaceId : undefined)
+  },
   'room.share': (raw) => {
     const room = asString(raw.room)
     if (!LOOP_ID.test(room)) throw new Error('room.share names a room by its id.')
@@ -928,10 +935,11 @@ export function deleteWorkspace(id: string): void {
   update((state) => {
     const index = state.workspaces.findIndex((w) => w.id === id)
     if (index < 0) throw new Error('Unknown tab.')
-    if (state.workspaces.length === 1) throw new Error('The last tab cannot be closed.')
+    const archiveIntoId = archiveTargetTabId(state.workspaces, id)
+    if (!archiveIntoId) throw new Error('The last tab cannot be closed.')
     if (state.tasks.some((t) => t.workspaceId === id && t.running)) throw new Error('A task of this tab is running.')
     const workspaces = state.workspaces.filter((w) => w.id !== id)
-    const neighborId = workspaces[Math.min(index, workspaces.length - 1)]!.id
+    const nextCurrentId = workspaces[Math.min(index, workspaces.length - 1)]!.id
     const grids = { ...state.grids }
     const closingGrids = grids[id] ?? {}
     delete grids[id]
@@ -939,10 +947,10 @@ export function deleteWorkspace(id: string): void {
     const closingLoops = loops[id] ?? NO_LOOPS
     delete loops[id]
     const now = Date.now()
-    const intoLoops = loops[neighborId] ?? NO_LOOPS
-    const intoGrids = grids[neighborId] ?? {}
-    loops[neighborId] = archiveTabRooms(closingLoops, closingGrids, id, intoLoops, now, intoGrids)
-    const closedMaxSeq = (loops[neighborId]?.closed ?? []).reduce(
+    const intoLoops = loops[archiveIntoId] ?? NO_LOOPS
+    const intoGrids = grids[archiveIntoId] ?? {}
+    loops[archiveIntoId] = archiveTabRooms(closingLoops, closingGrids, id, intoLoops, now, intoGrids)
+    const closedMaxSeq = (loops[archiveIntoId]?.closed ?? []).reduce(
       (max, c) =>
         Math.max(
           max,
@@ -951,10 +959,10 @@ export function deleteWorkspace(id: string): void {
         ),
       0,
     )
-    if (closedMaxSeq > 0 && grids[neighborId]) {
+    if (closedMaxSeq > 0 && grids[archiveIntoId]) {
       const updatedNeighborGrids: Record<number, Grid> = {}
       let gridChanged = false
-      for (const [win, g] of Object.entries(grids[neighborId]!)) {
+      for (const [win, g] of Object.entries(grids[archiveIntoId]!)) {
         if (g.seq < closedMaxSeq) {
           updatedNeighborGrids[Number(win)] = { ...g, seq: closedMaxSeq }
           gridChanged = true
@@ -962,13 +970,13 @@ export function deleteWorkspace(id: string): void {
           updatedNeighborGrids[Number(win)] = g
         }
       }
-      if (gridChanged) grids[neighborId] = updatedNeighborGrids
+      if (gridChanged) grids[archiveIntoId] = updatedNeighborGrids
     }
-    const tasks = archiveTabTasks(state.tasks, closingLoops, closingGrids, id, neighborId, now, intoLoops, intoGrids)
+    const tasks = archiveTabTasks(state.tasks, closingLoops, closingGrids, id, archiveIntoId, now, intoLoops, intoGrids)
     return {
       ...state,
       workspaces,
-      currentWorkspaceId: state.currentWorkspaceId === id ? neighborId : state.currentWorkspaceId,
+      currentWorkspaceId: state.currentWorkspaceId === id ? nextCurrentId : state.currentWorkspaceId,
       grids,
       loops,
       tasks,
@@ -1086,6 +1094,100 @@ export function createLoop(
     (next) => withLoops(next, workspaceId, made.loops),
   )
   return { loop: made.loop, element }
+}
+
+/**
+ * Starts a new direct Team Chat room (`core/team-chat`) on an owned tab and shares it with
+ * `accountId`. Falls back to a floating frame when the tab's tiled cells are full.
+ */
+export async function startTeammateChat(accountId: string, preferredWorkspaceId?: string): Promise<Loop> {
+  const state = getState()
+  if (!state.collab.connected) {
+    throw new Error('Not connected to Jaspers. Sign in, or check the connection, and try again.')
+  }
+  const teammate = state.collab.teammates.find((one) => one.accountId === accountId)
+  if (!teammate) throw new Error('Unknown teammate.')
+  const targetTab =
+    (preferredWorkspaceId ? state.workspaces.find((w) => w.id === preferredWorkspaceId && !w.replica) : undefined) ??
+    state.workspaces.find((w) => w.id === state.currentWorkspaceId && !w.replica) ??
+    state.workspaces.find((w) => !w.replica)
+  if (!targetTab) throw new Error('No owned tab available for a new chat room.')
+  if (state.currentWorkspaceId !== targetTab.id) selectWorkspace(targetTab.id)
+
+  const name = personName(teammate)
+  const title = `Chat with ${name}`
+  const spec: LoopSpec = {
+    desc: `Direct chat with ${name}`,
+    brief: '',
+    plugins: [TEAM_CHAT_PLUGIN_ID],
+    skills: [],
+  }
+  let createdLoop: Loop
+  try {
+    const created = createLoop(targetTab.id, MAIN_WINDOW, spec, {})
+    createdLoop = created.loop
+    placeChecked(
+      targetTab.id,
+      MAIN_WINDOW,
+      { kind: 'view', view: TEAM_CHAT_VIEW },
+      { messages: {} },
+      { size: 'full' },
+      createdLoop.id,
+    )
+  } catch (err) {
+    if (!message(err).startsWith('grid_full:')) throw err
+    const made = withLoopAsked(loopsOf(targetTab.id), spec, Date.now(), globalSeq(getState().loops))
+    createdLoop = made.loop
+    changeWindow(
+      targetTab.id,
+      MAIN_WINDOW,
+      (grid) => {
+        const top = layoutOf(grid)
+        const w = Math.min(Math.max(Math.round(grid.size.cols / 2), 6), grid.size.cols)
+        const h = Math.min(Math.max(Math.round(grid.size.rows / 2), 6), grid.size.rows)
+        const z = top.elements.reduce((most, e) => Math.max(most, e.z), 0) + 1
+        const frameSeq = grid.seq + 1
+        const frameId = `e${frameSeq}`
+        const framePanelId = `p${frameSeq}`
+        const frameElement: GridElement = {
+          id: frameId,
+          panelId: framePanelId,
+          rect: { x: Math.max(0, grid.size.cols - w), y: Math.max(0, Math.floor((grid.size.rows - h) / 2)), w, h },
+          z,
+          mode: 'floating',
+          loop: createdLoop.id,
+        }
+        const framePanel: Panel = {
+          id: framePanelId,
+          elementId: frameId,
+          content: { kind: 'frame' },
+          state: {},
+          output: null,
+          summary: null,
+          text: null,
+          refreshedAt: null,
+        }
+        const withFrame = withLayout(grid, undefined, {
+          ...top,
+          elements: [...top.elements.map((e) => (e.mode === 'maximized' ? restored(e) : e)), frameElement],
+          panels: [...top.panels, framePanel],
+          focus: [frameId, ...top.focus],
+          seq: frameSeq,
+        })
+        const held = placeView(layoutOf(withFrame, frameId), {
+          content: { kind: 'view', view: TEAM_CHAT_VIEW },
+          state: { messages: {} },
+          size: 'full',
+          loop: createdLoop.id,
+        })
+        return { grid: withLayout(withFrame, frameId, held.grid) }
+      },
+      (next) => withLoops(next, targetTab.id, made.loops),
+    )
+  }
+  renameLoop(targetTab.id, createdLoop.id, title)
+  await shareRoom(targetTab.id, createdLoop.id, [teammate.accountId])
+  return loopsOf(targetTab.id).list.find((one) => one.id === createdLoop.id) ?? createdLoop
 }
 
 /** A loop's frame as it is placed: where the orchestrator said, or top-left quarter on 15"+ screens and left half under 15". */

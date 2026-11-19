@@ -287,3 +287,17 @@ test('a mirrored shared tab respects the persistent grid size and grows uniforml
   assert.deepEqual(wider.grids[1]?.size, { cols: 20, rows: 24 })
   assert.deepEqual(wider.grids[2]?.size, { cols: 20, rows: 24 })
 })
+
+test('built-in core/team-chat crosses intact to a replica and takes edits back to the owner', () => {
+  const { grids, loops, room, tile } = tab('core/team-chat', {
+    messages: { m1: { id: 'm1', senderEmail: 'alice@fund.com', text: 'hi team', at: 100 } },
+  })
+  const part = roomPart(grids, loops, room)!
+  const drawn = replica(part)
+  const inner = tilesOf(drawn.grids, drawn.loops, drawn.loopId)
+  assert.deepEqual(inner.panels[0]!.content, { kind: 'view', view: 'core/team-chat' })
+  assert.deepEqual(inner.panels[0]!.state, {
+    messages: { m1: { id: 'm1', senderEmail: 'alice@fund.com', text: 'hi team', at: 100 } },
+  })
+  assert.equal(replicaPanel(drawn.grids, drawn.loops, inner.panels[0]!.id)?.tile, tile)
+})

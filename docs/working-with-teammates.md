@@ -10,12 +10,14 @@ A teammate is someone who accepted your invitation, or whose invitation you acce
 
 1. Open **Settings, Team**, set your first and last name, and invite teammates by email (with optional first and last name), or ask Central to invite someone by email. They get an email, and the invitation shows in their own Settings, Team.
 2. They accept or decline there, or by asking Central. Until they accept, nothing is shared with them.
+3. Click the chat icon beside any teammate in **Settings, Team** to open a new shared **Team Chat** room (`core/team-chat`) where you and your teammate can message directly without triggering an AI agent.
 
 Removing a teammate also takes each of you out of the other's shared rooms and tabs.
 
 ## Sharing a room or a tab
 
-- **A room:** open the room's menu and use **Share**. Add a teammate by name or `@name`, or type an email address to invite someone new. Or drag a teammate's circle onto the room. To take a member out of a room you own, drag their circle from the foot of the room and drop it outside every room.
+- **A room:** open the room's menu and use **Share**. Add a teammate by name or `@name`, or type an email address to invite someone new. Or drag a teammate's circle from one shared room onto another room of your own. To take a member out of a room you own, drag their circle from the foot of the room out onto the workspace (a red cross appears next to the cursor outside rooms) and drop it.
+- **Rooms view:** open **Rooms** in the header bar to see which of your rooms are shared and who is in them, and check **Shared with you** at the bottom of Rooms for rooms owned by teammates.
 - **A tab:** right-click the tab and use **Share**. Every room on the tab is shared, laid out for your teammates as it is for you, and rooms you add later join it.
 - **By asking:** tell Central who to share an existing or new room, or a tab, with, by name, `@name`, or email address. It asks you to confirm in its command bar before anything is shared.
 

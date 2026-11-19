@@ -479,6 +479,8 @@ export type Action =
   /** Declines an invitation received, or takes back one sent. */
   | { type: 'collab.decline'; invite: string }
   | { type: 'collab.removeTeammate'; accountId: string }
+  /** Starts a new shared Team Chat room with a teammate on an owned tab. */
+  | { type: 'collab.startChat'; accountId: string; workspaceId?: string }
   /**
    * Shares a room of this terminal's own with exactly these people: teammates by account id, and
    * email addresses, which are invited and join when they accept. With none, sharing stops.

@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react'
 import type { PanelRef } from '@jaspers-ai/sdk'
 import { BROWSER_VIEW } from '../../shared/grid/browser'
+import { TEAM_CHAT_VIEW } from '../../shared/collab/team-chat'
 import { CHAT_VIEW } from '../../shared/grid/grid'
 import { APP_VIEW } from '../../shared/plugins/apps'
 import { App } from './App'
@@ -13,6 +14,7 @@ import { Note } from './Note'
 import { Plugins } from './Plugins'
 import { Table } from './Table'
 import { Tasks } from './Tasks'
+import { TeamChat } from './TeamChat'
 
 // The views the app ships with, by the id main's registry knows them under. A plugin's views will
 // not be here: they arrive as a bundle and mount in an iframe instead.
@@ -27,6 +29,7 @@ export const BUILT_IN_VIEWS: Record<string, ComponentType<ViewProps>> = {
   'core/metric': Metric,
   'core/chart': Chart,
   [CHAT_VIEW]: Chat,
+  [TEAM_CHAT_VIEW]: TeamChat,
   'core/plugins': Plugins,
   'core/tasks': Tasks,
   'core/inbox': Inbox,

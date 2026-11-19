@@ -1,4 +1,5 @@
 import { useId, useState, type FormEvent, type ReactElement, type ReactNode } from 'react'
+import { TEAM_CHAT_PLUGIN_ID, TEAM_CHAT_PLUGIN_TITLE } from '../../../shared/collab/team-chat'
 import { BROWSER_PLUGIN_ID, BROWSER_PLUGIN_TITLE } from '../../../shared/grid/browser'
 import type { ConnectionSummary } from '../../../shared/paths'
 import type { Action, ConnectionInfo, PluginInfo } from '../../../shared/state'
@@ -87,7 +88,13 @@ export function PluginList({ plugins, connections, installs = false }: ListProps
                       id={plugin.id}
                       selected={shown.id === plugin.id}
                       onSelect={() => setOpen(plugin.id)}
-                      title={plugin.id === BROWSER_PLUGIN_ID ? BROWSER_PLUGIN_TITLE : plugin.id}
+                      title={
+                        plugin.id === BROWSER_PLUGIN_ID
+                          ? BROWSER_PLUGIN_TITLE
+                          : plugin.id === TEAM_CHAT_PLUGIN_ID
+                            ? TEAM_CHAT_PLUGIN_TITLE
+                            : plugin.id
+                      }
                       line={
                         <>
                           {version} · <span className={alert ? 'text-destructive' : undefined}>{status}</span>
@@ -175,7 +182,11 @@ function PluginSection({ plugin, connections, installer }: SectionProps): ReactE
       {/* Clear of the close cross in the corner. */}
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pr-8">
         <h3 className="text-base font-semibold">
-          {plugin.id === BROWSER_PLUGIN_ID ? BROWSER_PLUGIN_TITLE : plugin.id}
+          {plugin.id === BROWSER_PLUGIN_ID
+            ? BROWSER_PLUGIN_TITLE
+            : plugin.id === TEAM_CHAT_PLUGIN_ID
+              ? TEAM_CHAT_PLUGIN_TITLE
+              : plugin.id}
         </h3>
         <span className={`text-sm ${PLUGIN_COLOR[plugin.status]}`}>{PLUGIN_STATUS[plugin.status]}</span>
         {/* Builds, not the package's version, which the Installed row and the list show. */}

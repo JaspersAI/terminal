@@ -268,11 +268,14 @@ export function globalRoomLog(
 ): GlobalLogEntry[] {
   const nameOf = new Map(workspaces.map((w) => [w.id, w.name]))
   const tabIds = [...new Set([...workspaces.map((w) => w.id), ...Object.keys(openByTab), ...Object.keys(closedByTab)])]
+  const seen = new Set<string>()
   const all: GlobalLogEntry[] = []
   for (const workspaceId of tabIds) {
     const workspaceName = nameOf.get(workspaceId) ?? 'Saved'
     const entries = loopLog(openByTab[workspaceId] ?? [], closedByTab[workspaceId] ?? [])
     for (const entry of entries) {
+      if (seen.has(entry.loop.id)) continue
+      seen.add(entry.loop.id)
       all.push({
         ...entry,
         workspaceId,
@@ -282,6 +285,66 @@ export function globalRoomLog(
     }
   }
   return all.sort((a, b) => b.lastActiveAt - a.lastActiveAt || loopNumber(b.loop.id) - loopNumber(a.loop.id))
+}
+
+/** Splits a room log into rooms owned on this terminal (`own`) and replicas shared by another owner (`sharedWithYou`). */
+export function partitionRoomLog<T extends { loop: Pick<Loop, 'replica'> }>(
+  entries: readonly T[],
+): { own: T[]; sharedWithYou: T[] } {
+  const own: T[] = []
+  const sharedWithYou: T[] = []
+  for (const entry of entries) {
+    if (entry.loop.replica) sharedWithYou.push(entry)
+    else own.push(entry)
+  }
+  return { own, sharedWithYou }
+}
+
+export interface RoomCounts {
+  own: number
+  sharedWithYou: number
+  total: number
+  highestNumber: number
+}
+
+/** Counts every unique room across all tabs (open and saved in memory), with no cap. */
+export function roomCounts(
+  workspaces: readonly { id: string; name: string }[],
+  openByTab: Record<string, readonly Loop[]>,
+  closedByTab: Record<string, readonly Loop[]>,
+): RoomCounts {
+  const entries = globalRoomLog(workspaces, openByTab, closedByTab)
+  let own = 0
+  let sharedWithYou = 0
+  let highestNumber = 0
+  for (const entry of entries) {
+    if (entry.loop.replica) sharedWithYou += 1
+    else own += 1
+    const num = loopNumber(entry.loop.id)
+    if (num > highestNumber) highestNumber = num
+  }
+  return { own, sharedWithYou, total: own + sharedWithYou, highestNumber }
+}
+
+/**
+ * Picks the owned tab (`!replica`) that inherits a closing tab's open and saved rooms so archived
+ * rooms are never placed onto a transient teammate replica tab. Returns null when no owned tab remains.
+ */
+export function archiveTargetTabId(
+  workspaces: readonly { id: string; replica?: boolean }[],
+  closingTabId: string,
+): string | null {
+  const index = workspaces.findIndex((w) => w.id === closingTabId)
+  const remaining = workspaces.filter((w) => w.id !== closingTabId)
+  if (remaining.length === 0) return null
+  const start = index < 0 ? 0 : Math.min(index, remaining.length - 1)
+  for (let i = start; i < remaining.length; i++) {
+    if (!remaining[i]!.replica) return remaining[i]!.id
+  }
+  for (let i = start - 1; i >= 0; i--) {
+    if (!remaining[i]!.replica) return remaining[i]!.id
+  }
+  return null
 }
 
 /**

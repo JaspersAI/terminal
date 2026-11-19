@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { membersWithoutPerson, roomSharing, type DraggedPerson } from '../../../shared/collab/collab'
 import { chatElement, EMPTY_GRID } from '../../../shared/grid/grid'
 import { MAIN_WINDOW } from '../../../shared/grid/windows'
+import { roomCounts } from '../../../shared/loops/closed'
 import {
   INACTIVE_TAB_IDLE_MS,
   MAX_MOUNTED_TABS,
@@ -11,7 +12,13 @@ import {
 } from '../../../shared/tabs/tabs'
 import { errorMessage } from '../../lib/errors'
 import { currentWorkspace, dispatch, useAppState, windowWorkspaces } from '../../lib/state'
-import { clearTeammateDrag, useTeammateDrag, WorkspaceTeammates } from '../collab/RoomPeople'
+import {
+  clearTeammateDrag,
+  setTeammateRemoveCursor,
+  TeammateRemoveCursor,
+  triggerTeammateRemovedBurst,
+  useTeammateDrag,
+} from '../collab/RoomPeople'
 import { Composer } from '../composer/Composer'
 import { dockChat, useDockedChat } from '../composer/dock'
 import { FloatingOrb } from '../composer/Orb'
@@ -58,9 +65,23 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
   const docked = useDockedChat(current.id, MAIN_WINDOW)
   const orbOpen = useOrbOpen()
   const dragged = useTeammateDrag()
-  const totalRooms =
-    Object.values(app.loops).reduce((n, list) => n + list.length, 0) +
-    Object.values(app.closedLoops).reduce((n, list) => n + list.length, 0)
+  const counts = useMemo(
+    () => roomCounts(app.workspaces, app.loops, app.closedLoops),
+    [app.workspaces, app.loops, app.closedLoops],
+  )
+  const totalRooms = counts.total
+  const roomsTitle = useMemo(() => {
+    if (totalRooms === 0) return 'Open Rooms'
+    const parts = [
+      counts.sharedWithYou > 0
+        ? `${counts.own} ${counts.own === 1 ? 'room' : 'rooms'} of your own · ${counts.sharedWithYou} shared with you`
+        : `${counts.own} ${counts.own === 1 ? 'room' : 'rooms'} in memory`,
+    ]
+    if (counts.highestNumber > totalRooms) {
+      parts.push(`latest Room ${counts.highestNumber}`)
+    }
+    return parts.join(' · ')
+  }, [counts, totalRooms])
 
   function removeDraggedFromRoom(person: DraggedPerson): void {
     const origin = person.from
@@ -98,6 +119,17 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
           ? (event) => {
               event.preventDefault()
               event.dataTransfer.dropEffect = 'move'
+              setTeammateRemoveCursor({ x: event.clientX, y: event.clientY })
+            }
+          : undefined
+      }
+      onDragLeave={
+        dragged?.from
+          ? (event) => {
+              const related = event.relatedTarget as Node | null
+              if (!related || !event.currentTarget.contains(related)) {
+                setTeammateRemoveCursor(null)
+              }
             }
           : undefined
       }
@@ -106,6 +138,7 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
           ? (event) => {
               event.preventDefault()
               const currentDrag = dragged
+              triggerTeammateRemovedBurst(event.clientX, event.clientY)
               clearTeammateDrag()
               removeDraggedFromRoom(currentDrag)
             }
@@ -116,7 +149,6 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
       <header className="flex min-h-8 shrink-0 items-start gap-2 border-b border-border bg-background px-4 py-1">
         <Composer />
         <div className="flex h-6 shrink-0 items-center gap-1.5 self-start">
-          <WorkspaceTeammates />
           <button
             type="button"
             id="central-dock-toggle"
@@ -148,6 +180,7 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
               type="button"
               id="open-rooms-button"
               aria-label="Open Rooms"
+              title={roomsTitle}
               onClick={onOpenRooms}
               className="flex h-6 items-center justify-center gap-1.5 border border-border bg-background px-2.5 text-xs leading-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
@@ -168,6 +201,7 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
         {orbOpen && <FloatingOrb />}
       </div>
       <TabBar workspaces={tabs} currentId={current.id} />
+      <TeammateRemoveCursor />
     </main>
   )
 }

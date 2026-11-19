@@ -4,13 +4,26 @@ import type { Loop } from '../../../shared/loops/loops'
 import { useAppState } from '../../lib/state'
 import { TeammateBadge } from './TeammateBadge'
 
-// The people of a shared room, along the foot of its frame, and the workspace's own teammate circles
-// in the header bar: dragging a person onto an owned room includes them in it, and dropping a member
-// of an owned room outside every room removes them from it. A drop on a room that cannot take them
-// changes nothing.
+// The people of a shared room, along the foot of its frame: dragging a person onto another owned
+// room includes them in it, and pulling a member out of an owned room and dropping outside every
+// room removes them from it (with a red cross cursor indicator while outside rooms). A drop on a
+// room that cannot take them changes nothing.
 
 let dragging: DraggedPerson | null = null
+let removeCursor: { x: number; y: number } | null = null
+let removedBurst: { key: number; x: number; y: number } | null = null
+let burstSeq = 0
+let burstTimer: number | null = null
 const watchers = new Set<() => void>()
+
+function notifyDragWatchers(): void {
+  for (const watcher of watchers) watcher()
+}
+
+function subscribeDragWatchers(watcher: () => void): () => void {
+  watchers.add(watcher)
+  return () => watchers.delete(watcher)
+}
 
 /**
  * What a person in mid-drag is carried as: a type of this app's own, and never their address as
@@ -19,64 +32,83 @@ const watchers = new Set<() => void>()
 const PERSON = 'application/x-jaspers-person'
 
 /** A circle picked up: the drag carries the person, and the rooms and the workspace are told who. */
-function pickUp(event: DragEvent<HTMLElement>, person: DraggedPerson): void {
+export function pickUpTeammate(event: DragEvent<HTMLElement>, person: DraggedPerson): void {
   event.dataTransfer.effectAllowed = 'copyMove'
   event.dataTransfer.setData(PERSON, person.id)
   dragging = person
-  for (const watcher of watchers) watcher()
+  removeCursor = null
+  notifyDragWatchers()
+}
+
+export function setTeammateRemoveCursor(next: { x: number; y: number } | null): void {
+  if (next === null) {
+    if (removeCursor === null) return
+    removeCursor = null
+    notifyDragWatchers()
+    return
+  }
+  if (dragging?.from === null || dragging === null) return
+  if (removeCursor && removeCursor.x === next.x && removeCursor.y === next.y) return
+  removeCursor = next
+  notifyDragWatchers()
+}
+
+export function triggerTeammateRemovedBurst(x: number, y: number): void {
+  if (burstTimer !== null) window.clearTimeout(burstTimer)
+  removedBurst = { key: ++burstSeq, x, y }
+  removeCursor = null
+  notifyDragWatchers()
+  burstTimer = window.setTimeout(() => {
+    burstTimer = null
+    removedBurst = null
+    notifyDragWatchers()
+  }, 240)
 }
 
 export function clearTeammateDrag(): void {
-  if (dragging === null) return
+  if (dragging === null && removeCursor === null) return
   dragging = null
-  for (const watcher of watchers) watcher()
+  removeCursor = null
+  notifyDragWatchers()
 }
 
 /** The person in mid-drag, for rooms and the workspace to answer. */
 export function useTeammateDrag(): DraggedPerson | null {
-  return useSyncExternalStore(
-    (watcher) => {
-      watchers.add(watcher)
-      return () => watchers.delete(watcher)
-    },
-    () => dragging,
-  )
+  return useSyncExternalStore(subscribeDragWatchers, () => dragging)
+}
+
+function useRemoveIndicatorState(): {
+  cursor: { x: number; y: number } | null
+  burst: { key: number; x: number; y: number } | null
+} {
+  const cursor = useSyncExternalStore(subscribeDragWatchers, () => removeCursor)
+  const burst = useSyncExternalStore(subscribeDragWatchers, () => removedBurst)
+  return { cursor, burst }
 }
 
 /**
- * Your teammates in the top workspace bar: circular avatars that can be dragged onto any owned room
- * to share it with them, or double-clicked / right-clicked to open Settings > Team.
+ * Red cross badge beside the mouse pointer while pulling a teammate circle out of an owned room
+ * into the workspace removal zone, with a short pop-out animation when dropped.
  */
-export function WorkspaceTeammates(): ReactElement | null {
-  const teammates = useAppState((s) => s.collab.teammates)
-  if (teammates.length === 0) return null
+export function TeammateRemoveCursor(): ReactElement | null {
+  const dragged = useTeammateDrag()
+  const { cursor, burst } = useRemoveIndicatorState()
+  const showLive = Boolean(dragged?.from && cursor)
+  if (!showLive && !burst) return null
+  const active = showLive ? cursor! : burst!
   return (
-    <div data-workspace-teammates className="flex h-6 shrink-0 items-center gap-1">
-      {teammates.map((teammate) => (
-        <span
-          key={teammate.accountId}
-          draggable
-          onDragStart={(event) =>
-            pickUp(event, { id: teammate.accountId, email: teammate.email, name: personName(teammate), from: null })
-          }
-          onDragEnd={() => clearTeammateDrag()}
-          className="flex shrink-0"
-        >
-          <TeammateBadge
-            email={teammate.email}
-            firstName={teammate.firstName}
-            lastName={teammate.lastName}
-            lit={teammate.online}
-            size={20}
-            className="cursor-grab"
-            title={[
-              personDetail(teammate),
-              teammate.online ? 'here now' : 'away',
-              'drag onto a room to add · double-click or right-click for Team settings',
-            ].join(' · ')}
-          />
-        </span>
-      ))}
+    <div
+      key={showLive ? 'live' : `burst-${burst!.key}`}
+      data-teammate-remove-cursor={showLive ? 'dragging' : 'dropped'}
+      aria-hidden
+      style={{ left: active.x + 12, top: active.y + 12 }}
+      className={`pointer-events-none fixed z-50 flex h-5 w-5 items-center justify-center rounded-full border border-background bg-destructive text-white shadow-md motion-reduce:animate-none ${
+        showLive ? 'animate-remove-badge-in' : 'animate-remove-badge-out'
+      }`}
+    >
+      <svg viewBox="0 0 10 10" fill="none" className="h-2.5 w-2.5 stroke-current stroke-[1.75]">
+        <path d="M2.25 2.25 7.75 7.75M7.75 2.25 2.25 7.75" />
+      </svg>
     </div>
   )
 }
@@ -153,7 +185,7 @@ export function RoomPeople({ workspaceId, loop, sharing, lit }: Props): ReactEle
               draggable
               onDragStart={(event) => {
                 setPickedHere(true)
-                pickUp(event, {
+                pickUpTeammate(event, {
                   id: person.id,
                   email: person.email,
                   name: personName(person),
@@ -205,6 +237,7 @@ export function TeammateDrop({ name, onDrop }: { name: string; onDrop(): void })
       onDragOver={(event) => {
         event.preventDefault()
         event.stopPropagation()
+        setTeammateRemoveCursor(null)
         event.dataTransfer.dropEffect = 'copy'
       }}
       onDrop={(event) => {
@@ -225,6 +258,7 @@ const KEPT = {
   onDragOver(event: DragEvent<HTMLElement>): void {
     event.preventDefault()
     event.stopPropagation()
+    setTeammateRemoveCursor(null)
     event.dataTransfer.dropEffect = 'copy'
   },
   onDrop(event: DragEvent<HTMLElement>): void {
