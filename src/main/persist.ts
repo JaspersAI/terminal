@@ -8,9 +8,9 @@ import {
   fitGridSize,
   parseGridSize,
   readGridSize,
-  resolveStoredGridSize,
   sameGridSize,
   withoutPanels,
+  workspaceGridSizesChanged,
   type Grid,
   type GridSize,
   type Panel,
@@ -35,7 +35,7 @@ import { PRO_MODE_OFF, readProMode, type ProMode } from '../shared/app/pro-mode'
 import { EMPTY_COLLAB } from '../shared/collab/collab'
 import { readAllowedApps } from '../shared/plugins/apps'
 import type { Task } from '../shared/tasks/tasks'
-import { checkWindows, MAIN_WINDOW, withWindows } from '../shared/grid/windows'
+import { checkWindows, MAIN_WINDOW, restoreStoredGrids } from '../shared/grid/windows'
 import bundledTerms from '../../build/license.txt?raw'
 import type { MainState, StoredOAuth, StoredProvider } from './state'
 
@@ -181,19 +181,21 @@ export function load(): MainState {
     storedWorkspaces[w.id] = stored
     storedGrids[w.id] = stored.grids
   }
-  const gridSize = resolveStoredGridSize(raw?.gridSize, state.workspaces, state.currentWorkspaceId, storedGrids)
+  const restored = restoreStoredGrids(raw?.gridSize, state.workspaces, state.currentWorkspaceId, storedGrids, windows)
+  const { gridSize } = restored
   if (raw !== null && parseGridSize(raw.gridSize) === null) {
     stateDirty = true
   }
+  for (const id of restored.dirtyWorkspaceIds) dirtyWorkspaces.add(id)
   const rawGrids: Record<string, Record<number, Grid>> = {}
   const rawLoops: Record<string, Loops> = {}
   for (const w of state.workspaces) {
     const stored = storedWorkspaces[w.id]!
-    const windowed = withWindows(stored.grids, windows, gridSize)
+    const fitted = restored.grids[w.id]!
     // Every tile has a room, and every room a frame its other tiles are inside. A file from before
     // either is made so here, and is written so with the first change, as the patches above are.
-    const whole = adopt(windowed, stored.loops, seenInFile, Date.now())
-    if (whole.grids !== windowed || whole.loops !== stored.loops) dirtyWorkspaces.add(w.id)
+    const whole = adopt(fitted, stored.loops, seenInFile, Date.now())
+    if (whole.grids !== fitted || whole.loops !== stored.loops) dirtyWorkspaces.add(w.id)
     rawGrids[w.id] = whole.grids
     rawLoops[w.id] = whole.loops
   }
@@ -267,7 +269,9 @@ export function load(): MainState {
     allowedApps: readAllowedApps(state.allowedApps),
   }
   latest = loaded
-  if (stateDirty || dirtyWorkspaces.size > 0) {
+  if (raw !== null && (stateDirty || dirtyWorkspaces.size > 0)) {
+    flush()
+  } else if (stateDirty || dirtyWorkspaces.size > 0) {
     timer ??= setTimeout(flush, SAVE_DELAY_MS)
   }
   return loaded
@@ -383,6 +387,7 @@ export function save(next: MainState, prev: MainState): void {
   latest = next
   const gridSizeChanged =
     next.gridSize !== prev.gridSize && !sameGridSize(next.gridSize ?? DEFAULT_SIZE, prev.gridSize ?? DEFAULT_SIZE)
+  const tabGridSizesChanged = next.grids !== prev.grids && workspaceGridSizesChanged(next.grids, prev.grids)
   if (
     next.termsAccepted !== prev.termsAccepted ||
     next.acceptedTerms !== prev.acceptedTerms ||
@@ -417,7 +422,7 @@ export function save(next: MainState, prev: MainState): void {
   for (const id of Object.keys(prev.grids)) {
     if (!Object.hasOwn(next.grids, id)) deletedWorkspaces.add(id)
   }
-  if (next.jaspers !== prev.jaspers || next.oauth !== prev.oauth || gridSizeChanged) {
+  if (next.jaspers !== prev.jaspers || next.oauth !== prev.oauth || gridSizeChanged || tabGridSizesChanged) {
     flush()
     return
   }
