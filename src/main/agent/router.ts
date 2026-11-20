@@ -97,14 +97,17 @@ function asRoomArg(input: Record<string, unknown>): string {
 
 /**
  * Hands the request to a room. The user's run does not wait: the tool answers with a line
- * saying it went, and the room answers for itself in its tile. A task's run waits for the work and
- * answers with what the work said, so one run of a task is over only when its work is, and what the
- * task says in the chat is what its work found, or nothing when the work had nothing to say.
+ * saying it went, and the room answers for itself in its tile. A task's run waits for the room to
+ * finish so the scheduler's one run of a task at a time and its lanes hold through the work, while
+ * the room's reply stays inside its own tile conversation rather than being pushed into Central.
  */
 async function hand(context: ToolContext, loop: Loop, written: string | undefined, went: string): Promise<string> {
   const tabId = findRoomTab(getState(), loop.id) ?? context.workspaceId
   const handed = handedBy(context.asked, context.task, written)
-  if (context.task !== undefined) return sendToLoop(tabId, loop.id, handed)
+  if (context.task !== undefined) {
+    await sendToLoop(tabId, loop.id, handed)
+    return went
+  }
   handOver(tabId, loop.id, handed)
   return went
 }

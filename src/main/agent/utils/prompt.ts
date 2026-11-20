@@ -5,6 +5,8 @@ import {
   describeInstalledFor,
   describeInstalledToRoute,
   describeNow,
+  describeOtherTabTasks,
+  describeRoomTasks,
   describeRound,
   describeTiles,
   LOOP_PLACEMENT,
@@ -80,6 +82,7 @@ export function stateNow(workspaceId: string): string {
     describeLoops(state, workspaceId, (loop, tabId = workspaceId) => statusNow(state, tabId, loop.id)),
     // What the focused element shows, without its view's instructions: those are for whoever drives it.
     describeRound(state, workspaceId, () => undefined, undefined, focusedWindow()),
+    ...describeOtherTabTasks(state, workspaceId),
     ...(filed.length > 0 ? [describeFiled(filed, state.sources)] : []),
   ].join('\n')
 }
@@ -133,20 +136,21 @@ export function loopPrompt(
   }
 }
 
-/** What is true right now for a room's agent: its own tile and views, the clock, and the sources filed (blind to other rooms). */
+/** What is true right now for a room's agent: its own tile and views, its own scheduled tasks, the clock, and the sources filed (blind to other rooms). */
 export function loopStateNow(workspaceId: string, loopId: string): string {
   const state = toPublic(getState())
   const loop = loopsOf(workspaceId).list.find((one) => one.id === loopId)
   const myFullName = fullName(state.collab)
   const userLine = myFullName ? `User: ${myFullName}.` : ''
+  const clock = defaultClock()
   return [
     ...(userLine ? [userLine] : []),
     ...(loop ? [describeTiles(state, workspaceId, loop, (id) => getView(id)?.instructions)] : []),
-    describeNow(defaultClock()),
+    ...(loop ? describeRoomTasks(state, workspaceId, loop, clock) : [describeNow(clock)]),
     describeFiled(sourcesSeen(), state.sources),
   ].join('\n')
 }
 
-export function taskPreface(id: string, commands: readonly string[] = []): string {
-  return buildTaskPreface(id, commands, getState().proMode.enabled)
+export function taskPreface(id: string, commands: readonly string[] = [], inRoom = false): string {
+  return buildTaskPreface(id, commands, getState().proMode.enabled, inRoom)
 }

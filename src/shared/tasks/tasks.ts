@@ -6,7 +6,7 @@
 import { COMMAND_MAX, TASK_COMMANDS_MAX } from '../app/pro-mode.ts'
 import { refreshGridOnWake, type Grid } from '../grid/grid.ts'
 import { MAIN_WINDOW } from '../grid/windows.ts'
-import { refreshTarget, type Loops } from '../loops/loops.ts'
+import { LOOP_EXCLUDED_TOOLS, LOOP_ID, loopName, refreshTarget, type Loops } from '../loops/loops.ts'
 import type { Workspace } from '../state.ts'
 import { checkRule, nextByRule, ruleText, type ClockRule } from './clock-rule.ts'
 
@@ -61,6 +61,17 @@ export const TASK_EXCLUDED_TOOLS: readonly string[] = [
   'stop_sharing',
 ]
 
+/** Tools a room-scoped task may not call or name in its instructions: Central-only router and window tools. */
+export const ROOM_TASK_EXCLUDED_TOOLS: readonly string[] = [
+  ...LOOP_EXCLUDED_TOOLS,
+  'create_room',
+  'update_room',
+  'close_room',
+  'reopen_room',
+  'delete_room',
+  'detach_tab',
+]
+
 /**
  * A command is not on that list: a run may make one, and it runs unasked only when it is, to the
  * letter, one the user allowed the task (`Task.commands`). It is not a call, though: a call is made
@@ -75,10 +86,13 @@ export const TASK_PRO_MODE_OFF =
  * The first tool a run does not have that these instructions name, or nothing. Instructions are a
  * request the assistant writes to itself, and it writes them with every tool in front of it: one that
  * says `cancel_task` makes a task that fails at every run, so it is refused while the assistant is
- * still there to say so to the user.
+ * still there to say so to the user. When `inRoom` is true, Central-only router and window tools are
+ * refused as well, since a room task runs directly inside that room's agent.
  */
-export function missingInRun(instructions: string, proMode = true): string | undefined {
-  const excluded = proMode ? TASK_EXCLUDED_TOOLS : [...TASK_EXCLUDED_TOOLS, SHELL_TOOL]
+export function missingInRun(instructions: string, proMode = true, inRoom = false): string | undefined {
+  const roomOnly = inRoom ? ROOM_TASK_EXCLUDED_TOOLS.filter((tool) => tool.includes('_')) : []
+  const base = roomOnly.length > 0 ? [...TASK_EXCLUDED_TOOLS, ...roomOnly] : TASK_EXCLUDED_TOOLS
+  const excluded = proMode ? base : [...base, SHELL_TOOL]
   return excluded.find((tool) => new RegExp(`\\b${tool}\\b`).test(instructions))
 }
 
@@ -109,6 +123,8 @@ export interface Task {
   /** t1, t2, … from a persisted counter; never reused. */
   id: string
   workspaceId: string
+  /** The room on this workspace this task runs inside (like f3 for room_3), or null/undefined for Central. */
+  loop?: string | null
   /** What the task does, in words: the request an ask run starts from, the label of a call. */
   instructions: string
   /** Set: the scheduler runs this tool. Null: the orchestrator runs the instructions. */
@@ -156,6 +172,8 @@ export type TaskStatus = 'running' | 'paused' | 'scheduled' | 'done' | 'failed'
 /** What a task is made from. */
 export interface TaskInput {
   workspaceId: string
+  /** The room on `workspaceId` this task runs inside (like f3 for room_3); null or omitted for Central. */
+  loop?: string | null
   instructions: string
   executeAt: number
   every: number | null
@@ -171,11 +189,14 @@ export interface TaskInput {
 }
 
 export type TaskPatch = Partial<
-  Pick<Task, 'instructions' | 'executeAt' | 'every' | 'at' | 'speak' | 'enabled' | 'call' | 'model' | 'commands'>
+  Pick<
+    Task,
+    'loop' | 'instructions' | 'executeAt' | 'every' | 'at' | 'speak' | 'enabled' | 'call' | 'model' | 'commands'
+  >
 >
 
-/** What checkTaskInput answers with: an input whose model and commands have been settled, one way or the other. */
-export type CheckedTaskInput = TaskInput & { model: string | null; commands: string[] }
+/** What checkTaskInput answers with: an input whose loop, model, and commands have been settled, one way or the other. */
+export type CheckedTaskInput = TaskInput & { loop: string | null; model: string | null; commands: string[] }
 
 export interface CheckOptions {
   /** Whether the orchestrator has a tool by this name now. */
@@ -458,6 +479,7 @@ export function afterRun(task: Task, run: TaskRun): Task {
 /** The input a task is made from, checked and trimmed. What is wrong is said for the model and the user alike. */
 export function checkTaskInput(input: TaskInput, options: CheckOptions): CheckedTaskInput {
   const proMode = options.proMode ?? true
+  const loop = checkLoop(input.loop)
   const instructions = input.instructions.trim()
   if (!instructions || instructions.length > TASK_INSTRUCTIONS_MAX) {
     throw new Error(`instructions must be 1 to ${TASK_INSTRUCTIONS_MAX} characters saying what the task does.`)
@@ -466,7 +488,7 @@ export function checkTaskInput(input: TaskInput, options: CheckOptions): Checked
     throw new Error(TASK_PRO_MODE_OFF)
   }
   if (!Number.isFinite(input.executeAt)) throw new Error('executeAt must be a time in milliseconds since the epoch.')
-  const call = checkCall(input.call, options)
+  const call = checkCall(input.call, options, loop)
   const at = checkAt(input.at)
   const speak = input.speak === 'changed' ? 'changed' : 'always'
   // Nothing to compare: a watch is a call run again and again, and instructions answer afresh each
@@ -477,6 +499,7 @@ export function checkTaskInput(input: TaskInput, options: CheckOptions): Checked
   const every = at ? null : checkEvery(input.every, call !== null)
   return {
     workspaceId: input.workspaceId,
+    loop,
     instructions,
     executeAt: Math.floor(input.executeAt),
     every,
@@ -486,6 +509,15 @@ export function checkTaskInput(input: TaskInput, options: CheckOptions): Checked
     model: checkModel(input.model),
     commands: checkCommands(input.commands, proMode),
   }
+}
+
+/** A room id like f3, or null when the task is not bound to a room. */
+export function checkLoop(loop: string | null | undefined): string | null {
+  if (loop === null || loop === undefined) return null
+  const id = String(loop).trim()
+  if (!id) return null
+  if (!LOOP_ID.test(id)) throw new Error('loop must be a room id like f3.')
+  return id
 }
 
 /** The scripts as they are kept and compared: trimmed, each once, in the order given. Nothing here allows one. */
@@ -538,11 +570,12 @@ function checkEvery(every: number | null, isCall: boolean): number | null {
   return Math.floor(every)
 }
 
-function checkCall(call: TaskCall | null, options: CheckOptions): TaskCall | null {
+function checkCall(call: TaskCall | null, options: CheckOptions, loop: string | null = null): TaskCall | null {
   if (call === null) return null
   const tool = call.tool.trim()
   if (!tool) throw new Error('call.tool must name a tool.')
   if (TASK_EXCLUDED_TOOLS.includes(tool)) throw new Error(`A task cannot call ${tool}.`)
+  if (loop !== null && ROOM_TASK_EXCLUDED_TOOLS.includes(tool)) throw new Error(`A room task cannot call ${tool}.`)
   if (tool === SHELL_TOOL) {
     if (options.proMode === false) throw new Error(TASK_PRO_MODE_OFF)
     throw new Error(
@@ -584,7 +617,7 @@ export const FAILURE_WAIT_MAX_MS = 15 * 60_000
  */
 export function runNotice(
   label: string,
-  task: Pick<Task, 'call' | 'lastRun' | 'history' | 'every'>,
+  task: Pick<Task, 'call' | 'lastRun' | 'history' | 'every' | 'loop'>,
   run: Pick<TaskRun, 'ok' | 'result'> & { changed: boolean },
 ): string | null {
   if (!run.ok) {
@@ -595,8 +628,21 @@ export function runNotice(
     const waits = task.every !== null && task.every <= FAILURE_WAIT_MAX_MS
     return streak === (waits ? 1 : 0) ? `${label} failed: ${run.result}` : null
   }
+  // A room-scoped task already posted any reply inside its room's own tile conversation, never in Central.
+  if (task.loop) return null
   const said = run.result.trim()
   return said && (!task.call || run.changed) ? `${label}: ${said}` : null
+}
+
+/** "t3", "t3 on room_2", or "t3 on room_2 on Research" when there is more than one workspace to tell apart. */
+export function formatTaskLabel(
+  task: Pick<Task, 'id' | 'workspaceId' | 'loop'>,
+  workspaces: readonly Workspace[],
+): string {
+  const room = task.loop ? loopName(task.loop) : undefined
+  const name = workspaces.length > 1 ? workspaces.find((w) => w.id === task.workspaceId)?.name : undefined
+  const where = room && name ? `${room} on ${name}` : (room ?? name)
+  return where ? `${task.id} on ${where}` : task.id
 }
 
 /** How often a task runs, however it was said. */

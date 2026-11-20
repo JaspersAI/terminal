@@ -375,13 +375,15 @@ async function loop({
       })
       keep?.()
       // A round that only handed the request over is the run's end: the work goes on in runs of its
-      // own, and what each handoff answered is the reply. A run stopped under its calls is not one.
-      const handed = joined.length === 0 ? handoffReply(reply.toolCalls, results, isHandoff, reply.text) : null
+      // own, and what each handoff answered is the reply (or silent for a scheduled task, since each
+      // room already posted its reply inside its own tile conversation). A run stopped under its calls is not one.
+      const handed =
+        joined.length === 0 ? handoffReply(reply.toolCalls, results, isHandoff, reply.text, entry.origin) : null
       if (handed !== null && !signal.aborted) {
-        const citations = citedBy(handed, history, context.workspaceId)
+        const citations = handed ? citedBy(handed, history, context.workspaceId) : []
         const sources = citations.length > 0 ? { citations } : {}
         history.push({ role: 'assistant', text: handed, toolCalls: [], raw: null, ...sources })
-        log(`final: ${handed} [handed over]`)
+        log(`final: ${handed || '(no text)'} [handed over]`)
         if (citations.length > 0 && !quiet) emit({ kind: 'citations', runId: entry.runId, citations })
         // The box that asked has nothing more to show when the run only handed work over; when it also
         // answered in words, keep the box up so the user can read them.

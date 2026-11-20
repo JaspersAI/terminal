@@ -5,19 +5,20 @@ import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { taskNote } from '../../shared/agent/transcript'
 import { WELCOME_PREFACE } from '../../shared/agent/welcome'
 import { EXCHANGES_MAX } from '../../shared/data/store'
-import { closedCallMessage } from '../../shared/loops/closed'
+import { closedCallMessage, closedRoomTaskMessage } from '../../shared/loops/closed'
 import { addressed, LOOP_ID, loopName } from '../../shared/loops/loops'
 import type { Turn } from '../../shared/llm/llm'
-import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
+import { ROOM_TASK_EXCLUDED_TOOLS, TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { answerQuestion, withoutSecretPrompts } from '../actions'
 import { readOnly } from '../collab/collab'
 import { recordRun } from '../data/store'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
+import { findRoomTab } from '../loops/loops'
 import { getState } from '../state'
 import { expandSlash } from '../skills/skills'
 import { agentLoop } from './agent'
 import { parseAttachment } from './attachments'
-import { callOff, loopHistory, handOver, runLoop } from './loop'
+import { callOff, loopHistory, handOver, runLoop, sendToLoop } from './loop'
 import { NEW_THREAD, turnText, userRequest, type Added } from './request'
 import { routerTools } from './router'
 import { findTool, orchestratorTools } from './tools'
@@ -131,12 +132,15 @@ function run(input: string, ask?: string): Promise<string> {
 
 /** What a task's run is not offered, and a task's call may not name: a key nobody is there to paste, and tasks that make tasks. */
 const EXCLUDED = new Set<string>(TASK_EXCLUDED_TOOLS)
+const ROOM_EXCLUDED = new Set<string>(ROOM_TASK_EXCLUDED_TOOLS)
 
 /** What the scheduler hands the orchestrator for a task without a call. */
 export interface TaskRequest {
   id: string
   instructions: string
   workspaceId: string
+  /** The room this task belongs to (like f3 for room_3), or null/undefined for Central. */
+  loop?: string | null
   /** A model on the configured provider, or null for whatever the app is set to. */
   model?: string | null
   /** The scripts the user allowed this task, which the run is told so it can pass one to the letter. */
@@ -144,22 +148,30 @@ export interface TaskRequest {
 }
 
 /**
- * A scheduled task's instructions, as a request: a fresh thread, the task's workspace as the grid, and
- * none of the tools a task may not have. It is the orchestrator's run, so it routes as the user's
- * does, and work it starts or sends to runs on this task's limits (`request.ts`). A call under it on a connection missing its key fails rather
- * than opening the key field. Resolves with the reply, which the scheduler puts in the chat.
+ * A scheduled task's instructions, as a request: when `task.loop` is set, runs directly inside that
+ * room's agent and files its reply in that room's conversation; otherwise runs on Central with a fresh
+ * thread, the task's workspace as the grid, and none of the tools a task may not have. Work it starts
+ * or sends to runs on this task's limits (`request.ts`). A call under it on a connection missing its
+ * key fails rather than opening the key field.
  */
 export function runTask(task: TaskRequest): Promise<string> {
   return inBackground(() => {
     if (jaspersWakeDelayMs() > 0) {
       throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
     }
-    // The provider stays the app's, since its key and base URL are what main holds; only the model
-    // changes, so a watch can run on a cheap one, unless the provider is Jaspers, which picks its own.
-    const config = configured(task.model)
     // A /name in the instructions is the skill's own text by the time a model reads it, in this run
     // and in work this run hands on.
     const said = expandSlash(task.instructions) ?? task.instructions
+    if (task.loop) {
+      const state = getState()
+      const closed = closedRoomTaskMessage(task.loop, state.loops)
+      if (closed) return Promise.resolve(closed)
+      const ownerTabId = findRoomTab(state, task.loop) ?? task.workspaceId
+      return sendToLoop(ownerTabId, task.loop, { written: said, task: task.id })
+    }
+    // The provider stays the app's, since its key and base URL are what main holds; only the model
+    // changes, so a watch can run on a cheap one, unless the provider is Jaspers, which picks its own.
+    const config = configured(task.model)
     const history: Turn[] = [{ role: 'user', text: said, context: stateNow(task.workspaceId) }]
     const entry = begin('task', task.workspaceId, `task ${task.id}`, task.instructions)
     const context: ToolContext = {
@@ -196,34 +208,43 @@ export function runTask(task: TaskRequest): Promise<string> {
 }
 
 /**
- * A task's one tool call, made the way the orchestrator would make it, on the task's workspace, with
- * no model in between and no run of the agent loop. Like a task's request it cannot open the key field.
+ * A task's one tool call, made the way the orchestrator or room agent would make it, with no model in
+ * between and no run of the agent loop. Like a task's request it cannot open the key field.
  * Resolves with the tool's answer.
  */
-export function runTaskCall(call: TaskCall, workspaceId: string): Promise<string> {
+export function runTaskCall(call: TaskCall, workspaceId: string, loop?: string | null): Promise<string> {
   return withoutSecretPrompts(async () => {
     if (jaspersWakeDelayMs() > 0) {
       throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
     }
     if (EXCLUDED.has(call.tool)) throw new Error(`A task cannot call ${call.tool}.`)
+    if (loop && ROOM_EXCLUDED.has(call.tool)) throw new Error(`A room task cannot call ${call.tool}.`)
     const tool = findTool(call.tool)
     if (!tool) throw new Error(`Unknown tool ${call.tool}.`)
-    const asleep = closedTarget(call, workspaceId)
+    const asleep = closedTarget(call, workspaceId, loop)
     if (asleep) return asleep
+    const ownerTabId = loop ? (findRoomTab(getState(), loop) ?? workspaceId) : workspaceId
     // A task's call is its own, every time: nothing a run was allowed carries into the next.
     const id = `task call ${call.tool} ${Date.now()}`
-    return tool.run(call.input, { runId: id, workspaceId, conversationId: id, unread: true, ...threadReads([]) })
+    return tool.run(call.input, {
+      runId: id,
+      workspaceId: ownerTabId,
+      conversationId: id,
+      unread: true,
+      ...(loop ? { loop } : {}),
+      ...threadReads([]),
+    })
   })
 }
 
 /**
- * What a scheduled refresh says when the tile it refreshes is in a loop the user closed: nothing to
+ * What a scheduled refresh says when the tile or room it targets is in a loop the user closed: nothing to
  * do until the loop is reopened, which brings the tile back under its id. Not a failure, so it puts
  * up no notice every run; null for any other call, which runs as it is.
  */
-function closedTarget(call: TaskCall, workspaceId: string): string | null {
+function closedTarget(call: TaskCall, workspaceId: string, loop?: string | null): string | null {
   const state = getState()
-  return closedCallMessage(call, workspaceId, state.grids, state.loops)
+  return closedCallMessage(call, workspaceId, state.grids, state.loops, loop)
 }
 
 /**

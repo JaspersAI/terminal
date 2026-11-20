@@ -9,6 +9,7 @@ import {
   archiveTargetTabId,
   closedCallMessage,
   closedHolding,
+  closedRoomTaskMessage,
   closedWithout,
   globalRoomLog,
   loopLog,
@@ -18,6 +19,7 @@ import {
   reopenRoomTasks,
   roomCounts,
   searchRooms,
+  taskForRoom,
   unifyTabRooms,
   withoutLoop,
   withoutRoomTasks,
@@ -763,5 +765,65 @@ test('archiveTargetTabId skips teammate replica tabs so archived rooms are never
       'own-only',
     ),
     null,
+  )
+})
+
+test('room-scoped tasks (task.loop) follow their room across tabs, skip cleanly while closed, and are removed when the room is deleted', () => {
+  const t1Grids = workspace()
+  const t2Grids: Record<number, Grid> = { 1: EMPTY_GRID }
+  const roomTask = sampleTask('t9', 't1', {
+    loop: 'f1',
+    instructions: 'Summarize latest stories in this room',
+    call: null,
+  })
+  const otherRoomTask = sampleTask('t10', 't1', {
+    loop: 'f2',
+    instructions: 'Summarize other stories',
+    call: null,
+  })
+
+  // taskForRoom matches by task.loop even when instructions name no element or room number.
+  assert.equal(taskForRoom(roomTask, both.list[0]!, 't1', t1Grids), true)
+  assert.equal(taskForRoom(roomTask, both.list[1]!, 't1', t1Grids), false)
+
+  // Moving f1 onto t2 moves its room-scoped task with it while leaving f2's task on t1.
+  const moved = reopenAcrossTabs(
+    { t1: t1Grids, t2: t2Grids },
+    { t1: both, t2: { seq: 2, list: [] } },
+    't2',
+    'f1',
+    1,
+    90,
+    [roomTask, otherRoomTask],
+  )
+  assert.equal(moved.tasks[0]!.workspaceId, 't2')
+  assert.equal(moved.tasks[0]!.loop, 'f1')
+  assert.equal(moved.tasks[1]!.workspaceId, 't1')
+
+  // Closing f1 produces a clean skip message for both room-scoped ask and call tasks.
+  const afterClose = closedWithout(both, t1Grids, { 1: EMPTY_GRID }, 100)
+  const closedLoopsByTab = { t1: afterClose }
+  assert.equal(
+    closedRoomTaskMessage('f1', closedLoopsByTab),
+    'Skipped: room_1 is closed. It runs again once room_1 is reopened from Rooms.',
+  )
+  assert.equal(closedRoomTaskMessage('f99', closedLoopsByTab), null)
+  assert.equal(
+    closedCallMessage(
+      { tool: 'use_browser', input: { action: 'scroll' } },
+      't1',
+      { t1: { 1: EMPTY_GRID } },
+      closedLoopsByTab,
+      'f1',
+    ),
+    'Skipped: room_1 is closed. It runs again once room_1 is reopened from Rooms.',
+  )
+
+  // Deleting f1 removes its room-scoped task while keeping f2's.
+  const shutF1 = afterClose.closed!.find((c) => c.loop.id === 'f1')!
+  const remaining = withoutRoomTasks([roomTask, otherRoomTask], shutF1, 't1', t1Grids)
+  assert.deepEqual(
+    remaining.map((t) => t.id),
+    ['t10'],
   )
 })

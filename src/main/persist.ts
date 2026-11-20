@@ -17,6 +17,7 @@ import {
 } from '../shared/grid/grid'
 import {
   adopt,
+  LOOP_ID,
   NO_LOOPS,
   readLoops,
   retagged,
@@ -302,6 +303,7 @@ function loadTasks(tasks: Task[], workspaces: Workspace[]): Task[] {
     return [
       {
         ...task,
+        loop: typeof task.loop === 'string' && LOOP_ID.test(task.loop) ? task.loop : null,
         at: task.at ?? null,
         model: task.model ?? null,
         running: false,

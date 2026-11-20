@@ -4,7 +4,9 @@ import { ORCHESTRATOR_TOOLS } from '../loops/loops.ts'
 import {
   afterRun,
   checkCommands,
+  checkLoop,
   checkTaskInput,
+  formatTaskLabel,
   missingInRun,
   needsShellInRun,
   SHELL_TOOL,
@@ -821,4 +823,69 @@ test('formatAsOf and formatLocalStamp format timestamps as "as of YYYY-MM-DD <12
   assert.equal(formatLocalStamp(0, 'America/Los_Angeles'), '')
   assert.equal(formatAsOf(0, 'America/Los_Angeles'), '')
   assert.equal(formatAsOf(Number.NaN, 'America/Los_Angeles'), '')
+})
+
+test('room-scoped tasks normalize loop ids, block Central-only tools, keep successful replies out of Central notices, and label failure streaks by room', () => {
+  const ok = { toolExists: () => true }
+  const base = {
+    workspaceId: 'ws-1',
+    instructions: 'Refresh e4 and focus on macro releases',
+    executeAt: T0,
+    every: 15 * MIN,
+    at: null,
+    speak: 'always' as const,
+    call: null,
+  }
+
+  assert.equal(checkLoop(undefined), null)
+  assert.equal(checkLoop(null), null)
+  assert.equal(checkLoop('  '), null)
+  assert.equal(checkLoop(' f4 '), 'f4')
+  assert.throws(() => checkLoop('room_4'), /loop must be a room id like f3/)
+
+  const checkedRoom = checkTaskInput({ ...base, loop: ' f4 ' }, ok)
+  assert.equal(checkedRoom.loop, 'f4')
+  assert.equal(checkTaskInput(base, ok).loop, null)
+
+  // Plain English words like "focus" and "arrange" are allowed in room instructions, while Central-only tools are caught.
+  assert.equal(missingInRun('Refresh e4 and focus on macro releases, then arrange key rows.', true, true), undefined)
+  assert.equal(missingInRun('Call update_room on room_4 every 15 minutes.', true, true), 'update_room')
+  assert.equal(missingInRun('Call read_room on room_5 first.', true, true), 'read_room')
+  assert.equal(missingInRun('Call update_room on room_4 every 15 minutes.', true, false), undefined)
+
+  // Room-scoped call tasks reject Central-only tools.
+  assert.throws(
+    () => checkTaskInput({ ...base, loop: 'f4', call: { tool: 'arrange', input: {} } }, ok),
+    /A room task cannot call arrange/,
+  )
+  assert.throws(
+    () => checkTaskInput({ ...base, loop: 'f4', call: { tool: 'read_room', input: {} } }, ok),
+    /A room task cannot call read_room/,
+  )
+
+  // Successful room-scoped ask and watch runs stay inside their room conversation and return null from runNotice.
+  const roomAsk = task({ id: 't4', loop: 'f3', call: null, every: 15 * MIN })
+  assert.equal(runNotice('t4 on room_3', roomAsk, { ok: true, result: 'Latest summary...', changed: false }), null)
+  const roomWatch = task({
+    id: 't5',
+    loop: 'f4',
+    speak: 'changed',
+    call: { tool: 'get', input: { path: 'panels/e4/output' } },
+    every: 15 * MIN,
+  })
+  assert.equal(runNotice('t5 on room_4', roomWatch, { ok: true, result: 'New row detected.', changed: true }), null)
+
+  // Repeated failures on a room-scoped task still surface a streak failure notice with room and workspace labels.
+  const failedOnce = { at: T0, ok: false, result: 'timeout', ms: 100 }
+  const labelSingleWs = formatTaskLabel({ id: 't4', workspaceId: 'ws-1', loop: 'f3' }, [{ id: 'ws-1', name: 'Macro' }])
+  assert.equal(labelSingleWs, 't4 on room_3')
+  const labelMultiWs = formatTaskLabel({ id: 't4', workspaceId: 'ws-1', loop: 'f3' }, [
+    { id: 'ws-1', name: 'Macro' },
+    { id: 'ws-2', name: 'Rates' },
+  ])
+  assert.equal(labelMultiWs, 't4 on room_3 on Macro')
+  assert.equal(
+    runNotice(labelMultiWs, { ...roomAsk, lastRun: failedOnce }, { ok: false, result: 'timeout', changed: false }),
+    't4 on room_3 on Macro failed: timeout',
+  )
 })

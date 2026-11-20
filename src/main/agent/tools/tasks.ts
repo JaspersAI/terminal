@@ -1,10 +1,14 @@
 import { JASPERS } from '../../../shared/llm/providers'
+import { taskForRoom } from '../../../shared/loops/closed'
+import { findLoop, loopName, named } from '../../../shared/loops/loops'
 import { parseSlash, skillUsable } from '../../../shared/skills/skills'
 import {
   checkCommands,
   formatLocal,
   missingInRun,
+  panelTargetOfCall,
   parseAt,
+  ROOM_TASK_EXCLUDED_TOOLS,
   scheduleText,
   SHELL_TOOL,
   TASK_PRO_MODE_OFF,
@@ -13,7 +17,8 @@ import {
   type TaskCall,
   type TaskPatch,
 } from '../../../shared/tasks/tasks'
-import { getState } from '../../state'
+import { findRoomTab, ownTile } from '../../loops/loops'
+import { getState, toPublic } from '../../state'
 import { askUser } from '../../actions'
 import { extractConfirmTarget } from '../../../shared/plugins/approvals'
 import { approveDestinationsForTask, defaultApprovalDeps } from '../../plugins/approvals'
@@ -89,7 +94,7 @@ const TOOLS: Tool[] = [
   {
     name: 'schedule_task',
     description:
-      'Schedule work for later, or to repeat: a task on this workspace that the app runs at its time, whether or not you are asked again, and whichever workspace is on screen then. instructions say what to do, as a request to yourself that stands alone: name element ids and what to do with them, since each run starts with no memory of this conversation, and acts on this workspace. A run works on its own, with nobody there: it has none of your tools that wait on the user to answer, approve, or paste something, and it cannot schedule, change, or cancel a task, its own included, so schedule only what can be done without those. Add call for a task that is one tool call you could make right now, such as refresh_element on an element to keep its data current: it then runs without you, and may repeat every few seconds. Without call, each run takes your time, so every is at least 60 seconds. Returns the task id and when it first runs.',
+      "Schedule work for later, or to repeat: a task that the app runs at its time, whether or not you are asked again, and whichever tab is on screen then. When called inside a room (or from Central with room set, like room_3), the task belongs to that room: each run executes directly inside that room's agent and posts any reply in that room's own conversation rather than Central. instructions say what to do, as a request that stands alone: name element ids and what to do with them, since a Central run starts with no memory of this conversation. A run works on its own, with nobody there: it has none of your tools that wait on the user to answer, approve, or paste something, and it cannot schedule, change, or cancel a task, its own included, so schedule only what can be done without those. Add call for a task that is one tool call you could make right now, such as refresh_element on an element to keep its data current: it then runs without you, and may repeat every few seconds. Without call, each run takes your time, so every is at least 60 seconds. Returns the task id and when it first runs.",
     parameters: {
       type: 'object',
       properties: {
@@ -97,6 +102,15 @@ const TOOLS: Tool[] = [
           type: 'string',
           description:
             'What the task does, up to 1000 characters: the request each run starts from when there is no call, its label when there is one.',
+        },
+        room: {
+          type: 'string',
+          description:
+            "Optional room name (like room_3) when scheduling from Central so the task runs inside that room's agent and keeps its output in that room's conversation.",
+        },
+        loop: {
+          type: 'string',
+          description: 'Alias for room, like room_3.',
         },
         at: {
           type: 'string',
@@ -141,15 +155,23 @@ const TOOLS: Tool[] = [
     async run(input, context) {
       // Everything about the task is read and checked before the user is asked anything, so a
       // script is never approved for a task that is then refused for its schedule.
+      const { workspaceId, loop } = resolveTaskTarget(input.room ?? input.loop, context)
+      const call = optional(input.call, asCall) ?? null
+      const watch = input.watch === true
       const draft = {
-        workspaceId: context.workspaceId,
-        instructions: asTaskInstructions(input.instructions, context),
+        workspaceId,
+        loop,
+        instructions: asTaskInstructions(input.instructions, context, loop !== null && (call === null || watch)),
         executeAt: whenOf(input.at, input.in, Date.now()),
         every: secondsOf(input.every),
         at: ruleOf(input.on),
-        speak: input.watch === true ? ('changed' as const) : ('always' as const),
-        call: optional(input.call, asCall) ?? null,
+        speak: watch ? ('changed' as const) : ('always' as const),
+        call,
         model: getState().llm?.providerId === JASPERS ? null : (optional(input.model, asPathString) ?? null),
+      }
+      if (context.loop !== undefined && call) {
+        const target = panelTargetOfCall({ workspaceId, call })
+        if (target) ownTile(context, target.panelId)
       }
       const wanted = checkCommands(asCommands(input.commands), getState().proMode.enabled)
       const destTargets = collectTaskDestinations(draft.call, input.destinations)
@@ -170,7 +192,7 @@ const TOOLS: Tool[] = [
   {
     name: 'update_task',
     description:
-      "Change one of this workspace's tasks: its instructions, when it runs next (at or in), how often (every, in seconds; 0 for once), its call, or enabled false to pause it and true to resume it. Only what you give changes.",
+      'Change a scheduled task: its instructions, when it runs next (at or in), how often (every, in seconds; 0 for once), its call, or enabled false to pause it and true to resume it. Central can update tasks on any tab; a room can update only its own tasks. Only what you give changes.',
     parameters: {
       type: 'object',
       properties: {
@@ -192,22 +214,44 @@ const TOOLS: Tool[] = [
       required: ['taskId'],
     },
     async run(input, context) {
+      const id = asTaskId(input.taskId)
+      const existing = accessibleTask(id, context)
       const now = Date.now()
       const patch: TaskPatch = {}
-      if (given(input.instructions)) patch.instructions = asTaskInstructions(input.instructions, context)
+      const targetLoop =
+        context.loop !== undefined && given(input.instructions) && !existing.loop
+          ? context.loop
+          : (existing.loop ?? null)
+      if (context.loop !== undefined && given(input.instructions) && !existing.loop) {
+        patch.loop = context.loop
+      }
+      const nextCall = given(input.call) ? asCall(input.call) : existing.call
+      const nextWatch = typeof input.watch === 'boolean' ? input.watch : existing.speak === 'changed'
+      if (given(input.instructions)) {
+        patch.instructions = asTaskInstructions(
+          input.instructions,
+          context,
+          targetLoop !== null && (nextCall === null || nextWatch),
+        )
+      }
       if (given(input.at) || given(input.in)) patch.executeAt = whenOf(input.at, input.in, now)
       if (given(input.every)) patch.every = secondsOf(input.every)
       if (given(input.on)) patch.at = ruleOf(input.on)
-      if (given(input.call)) patch.call = asCall(input.call)
+      if (given(input.call)) {
+        patch.call = nextCall
+        if (context.loop !== undefined && nextCall) {
+          const target = panelTargetOfCall({ workspaceId: existing.workspaceId, call: nextCall })
+          if (target) ownTile(context, target.panelId)
+        }
+      }
       if (typeof input.watch === 'boolean') patch.speak = input.watch ? 'changed' : 'always'
       if (given(input.model))
         patch.model = getState().llm?.providerId === JASPERS ? null : asPathString(input.model).trim() || null
       if (typeof input.enabled === 'boolean') patch.enabled = input.enabled
-      const id = asTaskId(input.taskId)
       if (input.commands !== undefined && input.commands !== null) {
         // The list given replaces the task's: one it already had stays allowed, a new one is asked about.
         const wanted = checkCommands(asCommands(input.commands), getState().proMode.enabled)
-        const had = getTask(id, context.workspaceId).commands
+        const had = existing.commands
         const added = await approveForTask(
           wanted.filter((command) => !had.includes(command)),
           context,
@@ -223,16 +267,18 @@ const TOOLS: Tool[] = [
           deps: defaultApprovalDeps(askUser),
         })
       }
-      return JSON.stringify(taskShown(updateTask(id, patch, Date.now(), context.workspaceId)))
+      return JSON.stringify(taskShown(updateTask(id, patch, Date.now())))
     },
   },
   {
     name: 'cancel_task',
-    description: "Cancel one of this workspace's tasks: it never runs again, and it leaves the list.",
+    description:
+      'Cancel a scheduled task: it never runs again, and it leaves the list. Central can cancel tasks on any tab; a room can cancel only its own tasks.',
     parameters: { type: 'object', properties: { taskId: TASK_ID }, required: ['taskId'] },
-    async run(input, { workspaceId }) {
+    async run(input, context) {
       const id = asTaskId(input.taskId)
-      cancelTask(id, workspaceId)
+      accessibleTask(id, context)
+      cancelTask(id)
       return JSON.stringify({ cancelled: id })
     },
   },
@@ -319,11 +365,44 @@ function asSeconds(value: unknown, what: string): number {
   throw new Error(`${what} must be a number of seconds.`)
 }
 
-function asTaskInstructions(value: unknown, context: ToolContext): string {
+function resolveTaskTarget(rawRoom: unknown, context: ToolContext): { workspaceId: string; loop: string | null } {
+  if (context.loop !== undefined) {
+    if (given(rawRoom)) {
+      const state = getState()
+      const currentRoom = (state.loops[context.workspaceId]?.list ?? []).find((l) => l.id === context.loop)
+      const matched = currentRoom ? named([currentRoom], asPathString(rawRoom)) : undefined
+      if (!matched) throw new Error('A room can only schedule tasks for itself.')
+    }
+    return { workspaceId: context.workspaceId, loop: context.loop }
+  }
+  if (!given(rawRoom)) return { workspaceId: context.workspaceId, loop: null }
+  const state = getState()
+  const room = findLoop(toPublic(state), context.workspaceId, asPathString(rawRoom))
+  const ownerTabId = findRoomTab(state, room.id) ?? context.workspaceId
+  return { workspaceId: ownerTabId, loop: room.id }
+}
+
+function accessibleTask(id: string, context: ToolContext): Task {
+  if (context.loop === undefined) return getTask(id)
+  const task = getTask(id, context.workspaceId)
+  const state = getState()
+  const room = (state.loops[context.workspaceId]?.list ?? []).find((l) => l.id === context.loop)
+  if (!room || !taskForRoom(task, room, context.workspaceId, state.grids[context.workspaceId])) {
+    throw new Error(`Unknown task ${id} in this room; get tasks lists this room's tasks.`)
+  }
+  return task
+}
+
+function asTaskInstructions(value: unknown, context: ToolContext, inRoom = false): string {
   const instructions = asInstructions(value)
-  const missing = missingInRun(instructions, getState().proMode.enabled)
+  const missing = missingInRun(instructions, getState().proMode.enabled, inRoom)
   if (missing === SHELL_TOOL) {
     throw new Error(TASK_PRO_MODE_OFF)
+  }
+  if (missing && inRoom && ROOM_TASK_EXCLUDED_TOOLS.includes(missing)) {
+    throw new Error(
+      `A room task runs directly inside that room's agent and does not have ${missing}: write instructions directly for the room's agent (or omit room when Central must coordinate multiple rooms).`,
+    )
   }
   if (missing) {
     throw new Error(
@@ -377,6 +456,7 @@ function taskShown(task: Task): Record<string, unknown> {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
   return {
     taskId: task.id,
+    ...(task.loop ? { room: loopName(task.loop) } : {}),
     status: taskStatus(task),
     nextAt: task.nextAt === null ? null : formatLocal(task.nextAt, timeZone),
     every: scheduleText(task),

@@ -327,17 +327,22 @@ export function batches<T>(calls: T[], readsOnly: (call: T) => boolean): T[][] {
 /**
  * What a round that only handed the request over answers with: what the model said above what each
  * handoff said, in the order asked. The work goes on in runs of its own, so there is nothing left for
- * the model to say and it is not asked again. Null when the round did anything else, or when a
- * handoff failed: every result goes back to the model then, which reads the failure and puts it right.
+ * the model to say and it is not asked again. In a scheduled task's run (`origin === 'task'`), each
+ * room already posted its reply inside its own tile conversation, so the handoff finishes silently
+ * (`''`) rather than echoing room updates into Central chat. Null when the round did anything else,
+ * or when a handoff failed: every result goes back to the model then, which reads the failure and
+ * puts it right.
  */
 export function handoffReply(
   calls: readonly { name: string }[],
   results: readonly { output: string; isError?: boolean }[],
   isHandoff: (name: string) => boolean,
   said = '',
+  origin: AgentOrigin = 'user',
 ): string | null {
   if (calls.length === 0 || results.length !== calls.length) return null
   if (!calls.every((call) => isHandoff(call.name)) || results.some((one) => one.isError)) return null
+  if (origin === 'task') return ''
   const handed = results.map((one) => one.output).join('\n')
   const words = said.trim()
   return words ? `${words}\n\n${handed}` : handed

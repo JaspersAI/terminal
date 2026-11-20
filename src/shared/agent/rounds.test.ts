@@ -88,6 +88,23 @@ test('a round that only handed the request over answers with what each handoff s
   assert.equal(handoffReply([], [], hands), null)
   // A call with no result of its own is not a round that went through.
   assert.equal(handoffReply([call('create_loop'), call('create_loop')], [ok('Started @a.')], hands), null)
+  // In a scheduled task run, a pure handoff round finishes silently ('') since each room already posted
+  // its output inside its own tile conversation, while errors and mixed rounds still return null.
+  assert.equal(
+    handoffReply(
+      [call('update_loop'), call('update_loop')],
+      [ok('Sent to room_4.'), ok('Sent to room_5.')],
+      hands,
+      'Refreshing rooms now.',
+      'task',
+    ),
+    '',
+  )
+  assert.equal(handoffReply([call('update_loop')], [failed('Room closed.')], hands, '', 'task'), null)
+  assert.equal(
+    handoffReply([call('update_loop'), call('read_a')], [ok('Sent to room_4.'), ok('rows')], hands, '', 'task'),
+    null,
+  )
 })
 
 test('what a run says of its model call as it arrives: the user\u2019s own run says its thinking and its words', () => {

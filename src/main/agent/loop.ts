@@ -191,7 +191,7 @@ function runOn(
       goesOn: () => {},
       // Work a task's run started is told so, as the task's own run is: it answers only when there is
       // something to hear, and is given the scripts the user allowed that task.
-      prompt: loopPrompt(workspaceId, loop, task === undefined ? [] : [taskPreface(task, commandsOf(task))], {
+      prompt: loopPrompt(workspaceId, loop, task === undefined ? [] : [taskPreface(task, commandsOf(task), true)], {
         fromTeammate,
       }),
       tools: loopTools,

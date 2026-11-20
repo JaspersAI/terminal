@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { loopName } from '../../../shared/loops/loops'
 import type { Action } from '../../../shared/state'
 import { everyText, isFinished, shortLocal, taskStatus, type Task, type TaskStatus } from '../../../shared/tasks/tasks'
 import { errorMessage } from '../../lib/errors'
@@ -161,7 +162,9 @@ function TaskDetail({ task, now, timeZone }: { task: Task; now: number; timeZone
     dispatch(action).catch((err: unknown) => setFailed(errorMessage(err)))
   }
 
-  const parts = [task.id, task.every === null ? `once at ${when(task.executeAt)}` : `every ${everyText(task.every)}`]
+  const parts = [task.id]
+  if (task.loop) parts.push(loopName(task.loop))
+  parts.push(task.every === null ? `once at ${when(task.executeAt)}` : `every ${everyText(task.every)}`)
   if (task.model) parts.push(`on ${task.model}`)
   if (task.enabled && task.nextAt !== null) parts.push(`next ${when(task.nextAt)}`)
   if (task.lastRun) parts.push(`last ${when(task.lastRun.at)} ${task.lastRun.ok ? 'ok' : 'failed'}`)

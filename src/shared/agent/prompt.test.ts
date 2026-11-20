@@ -22,7 +22,9 @@ import {
   describeInstalledToRoute,
   describeCatalog,
   describeOthers,
+  describeOtherTabTasks,
   describePlugin,
+  describeRoomTasks,
   describeRound,
   describeTiles,
   describeWork,
@@ -1502,4 +1504,135 @@ test('describeLoops, describeLoop, and ROUTER_RULES identify shared teammate roo
     describeLoops(offlineState, WS, () => 'idle'),
     /- room_5, idle, owned by alice@fund\.com \(offline\): "Shared research memo"\. Tile: e1\./,
   )
+})
+
+test('describeWork labels room-bound tasks, describeOtherTabTasks lists tasks on other open tabs for Central, describeRoomTasks isolates a room’s own tasks, and taskPreface distinguishes room vs Central runs', () => {
+  const frame4 = placeView(EMPTY_GRID, { content: { kind: 'frame' }, loop: 'f4' })
+  const frame5 = placeView(frame4.grid, {
+    content: { kind: 'frame' },
+    loop: 'f5',
+    anchor: { beside: frame4.element.id },
+  })
+  const room4 = { ...NOTE_LOOP, id: 'f4', desc: 'Rates monitor' }
+  const room5 = { ...NOTE_LOOP, id: 'f5', desc: 'FX monitor' }
+  const multiTabState: AppState = {
+    ...tree(EMPTY_GRID),
+    workspaces: [
+      { id: WS, name: 'Macro' },
+      { id: 'ws-rates', name: 'Rates' },
+    ],
+    grids: {
+      [WS]: { 1: EMPTY_GRID },
+      'ws-rates': { 1: frame5.grid },
+    },
+    loops: {
+      [WS]: [{ ...NOTE_LOOP, id: 'f3', desc: 'Yield curve check' }],
+      'ws-rates': [room4, room5],
+    },
+    tasks: [
+      {
+        id: 't4',
+        workspaceId: WS,
+        loop: 'f3',
+        instructions: 'Refresh e3 and summarize curve moves',
+        call: null,
+        executeAt: CLOCK.now,
+        every: 900_000,
+        at: null,
+        speak: 'always',
+        model: null,
+        enabled: true,
+        createdAt: CLOCK.now,
+        runs: 0,
+        lastRun: null,
+        nextAt: CLOCK.now + 900_000,
+        running: false,
+        history: [],
+        commands: [],
+      },
+      {
+        id: 't5',
+        workspaceId: 'ws-rates',
+        loop: null,
+        instructions: 'Call update_room on room_4 and update_room on room_5',
+        call: null,
+        executeAt: CLOCK.now,
+        every: 900_000,
+        at: null,
+        speak: 'always',
+        model: null,
+        enabled: true,
+        createdAt: CLOCK.now,
+        runs: 0,
+        lastRun: null,
+        nextAt: CLOCK.now + 900_000,
+        running: false,
+        history: [],
+        commands: [],
+      },
+      {
+        id: 't6',
+        workspaceId: 'ws-rates',
+        loop: 'f4',
+        instructions: 'Refresh treasury auctions and post highlights',
+        call: null,
+        executeAt: CLOCK.now,
+        every: 900_000,
+        at: null,
+        speak: 'always',
+        model: null,
+        enabled: true,
+        createdAt: CLOCK.now,
+        runs: 0,
+        lastRun: null,
+        nextAt: CLOCK.now + 900_000,
+        running: false,
+        history: [],
+        commands: [],
+      },
+      {
+        id: 't7',
+        workspaceId: 'ws-rates',
+        loop: 'f5',
+        instructions: 'Refresh FX pairs and post highlights',
+        call: null,
+        executeAt: CLOCK.now,
+        every: 900_000,
+        at: null,
+        speak: 'always',
+        model: null,
+        enabled: true,
+        createdAt: CLOCK.now,
+        runs: 0,
+        lastRun: null,
+        nextAt: CLOCK.now + 900_000,
+        running: false,
+        history: [],
+        commands: [],
+      },
+    ],
+  }
+
+  const centralWork = [describeWork(multiTabState, WS, CLOCK), ...describeOtherTabTasks(multiTabState, WS, CLOCK)].join(
+    '\n',
+  )
+  assert.match(
+    centralWork,
+    /- t4 \(room_3\) \[every 15 min, next 2026-09-14 09:27:00\]: "Refresh e3 and summarize curve moves"/,
+  )
+  assert.match(centralWork, /Tasks on other tabs \(update_task and cancel_task take any task id\):/)
+  assert.match(centralWork, /- t5 \(in Rates\) \[every 15 min/)
+  assert.match(centralWork, /- t6 \(room_4 in Rates\) \[every 15 min/)
+
+  // Room 4 sees only its own task t6, not Central's multi-room t5 or room_5's t7.
+  const room4Lines = describeRoomTasks(multiTabState, 'ws-rates', room4, CLOCK).join('\n')
+  assert.match(room4Lines, /Tasks in this room/)
+  assert.match(room4Lines, /- t6 \(room_4\)/)
+  assert.doesNotMatch(room4Lines, /t4|t5|t7/)
+
+  const centralTaskPreface = taskPreface('t5', [], false, false)
+  assert.match(centralTaskPreface, /never repeat, summarize, or announce a room's scheduled update in Central/i)
+  const roomTaskPreface = taskPreface('t6', [], false, true)
+  assert.match(roomTaskPreface, /inside your room/)
+  assert.match(roomTaskPreface, /only in this room's own tile conversation \(never in Central chat\)/i)
 })

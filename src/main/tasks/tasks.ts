@@ -5,6 +5,7 @@ import {
   computeNext,
   dueTasks,
   earliestNext,
+  formatTaskLabel,
   isPending,
   isWakeLag,
   pruneFinished,
@@ -40,9 +41,9 @@ import { watch } from '../data/store'
 export interface SchedulerDeps {
   /** Whether the orchestrator has a tool by this name now, for a call to be checked against. */
   toolExists(name: string): boolean
-  /** One tool call, the way the orchestrator would make it, on the task's workspace. Resolves with the tool's answer. */
-  runCall(call: TaskCall, workspaceId: string): Promise<string>
-  /** The task's instructions as a request to the orchestrator. Resolves with its reply. */
+  /** One tool call, the way the orchestrator or room agent would make it. Resolves with the tool's answer. */
+  runCall(call: TaskCall, workspaceId: string, loop?: string | null): Promise<string>
+  /** The task's instructions as a request to Central or to its room. Resolves with its reply. */
   runAsk(task: TaskRequest): Promise<string>
   /** A reply, into the task's workspace's conversation. Resolves whether it went in. */
   intoChat(workspaceId: string, task: string, reply: string): Promise<boolean>
@@ -184,6 +185,7 @@ export function updateTask(id: string, patch: TaskPatch, at = now(), workspaceId
   const checked = checkTaskInput(
     {
       workspaceId: merged.workspaceId,
+      loop: merged.loop ?? null,
       instructions: merged.instructions,
       executeAt: merged.executeAt,
       every: merged.every,
@@ -330,11 +332,12 @@ async function execute(task: Task): Promise<void> {
   let result = ''
   try {
     result = current.call
-      ? await run.runCall(current.call, current.workspaceId)
+      ? await run.runCall(current.call, current.workspaceId, current.loop)
       : await run.runAsk({
           id: current.id,
           instructions: current.instructions,
           workspaceId: current.workspaceId,
+          loop: current.loop,
           model: current.model,
           commands: current.commands,
         })
@@ -369,6 +372,7 @@ async function execute(task: Task): Promise<void> {
           id: current.id,
           instructions: `${current.instructions}\n\nWhat you are watching changed. This is the difference since last time:\n\n${found.text}`,
           workspaceId: current.workspaceId,
+          loop: current.loop,
           model: current.model,
           commands: current.commands,
         })
@@ -401,15 +405,15 @@ async function execute(task: Task): Promise<void> {
   replace(afterRun(before, { at, ok, result, ms }))
   const notice = runNotice(
     taskLabel(current),
-    { call: current.call, every: current.every, lastRun: before.lastRun, history: before.history },
+    { loop: current.loop, call: current.call, every: current.every, lastRun: before.lastRun, history: before.history },
     { ok, result, changed: found?.changed ?? false },
   )
   if (!notice) return
-  // A run that went well and speaks is the assistant's reply, which joins the conversation, where
-  // the chat shows it and a follow-up can refer to it. A failure is the app's to say, so it stays a
-  // notice alone. The notice goes either way: the inbox keeps it, and the system shows it while the
-  // window is away.
-  const inChat = ok && (await run.intoChat(current.workspaceId, current.id, result.trim()).catch(() => false))
+  // A Central run that went well and speaks is the assistant's reply, which joins Central's
+  // conversation; a room-scoped task already posted its reply inside its room's own conversation.
+  // A failure stays a notice alone.
+  const inChat =
+    ok && !current.loop && (await run.intoChat(current.workspaceId, current.id, result.trim()).catch(() => false))
   addNotice('tasks', notice, inChat ? current.workspaceId : undefined)
 }
 
@@ -424,9 +428,7 @@ async function compare(task: string, result: string, at = now()): Promise<{ delt
   return { delta: delta(seen.previous.text, result), previous: seen.previous.text }
 }
 
-/** "t3", or "t3 on Research" when there is more than one workspace to tell apart. */
+/** "t3", "t3 on room_2", or "t3 on room_2 on Research" when there is more than one workspace to tell apart. */
 function taskLabel(task: Task): string {
-  const { workspaces } = getState()
-  const name = workspaces.length > 1 ? workspaces.find((w) => w.id === task.workspaceId)?.name : undefined
-  return name ? `${task.id} on ${name}` : task.id
+  return formatTaskLabel(task, getState().workspaces)
 }

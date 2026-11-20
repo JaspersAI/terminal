@@ -637,6 +637,7 @@ export function taskTargetsRoom(
   sourceTabId: string,
   sourceGrids?: Record<number, Grid>,
 ): boolean {
+  if (task.loop) return task.loop === room.loop.id
   const elementIds = new Set(room.elements.map((e) => e.id))
   const panelIds = new Set(room.panels.flatMap((p) => [p.id, p.elementId]))
   const closedAt = [...(room.loop.log ?? [])].reverse().find((c) => c.change === 'closed')?.at
@@ -671,6 +672,18 @@ export function taskTargetsRoom(
   return true
 }
 
+/** Whether a scheduled task belongs to `room` open on `tabId` (either bound via `task.loop` or exclusively targeting `room` or its tiles/panels). */
+export function taskForRoom(task: Task, room: Loop, tabId: string, grids: Record<number, Grid> = {}): boolean {
+  if (task.loop) return task.loop === room.id
+  const frame = frameOf(grids, room.id)
+  const grid = frame ? grids[frame.window] : undefined
+  const inside = frame && grid ? grid.elements.filter((e) => e.parent === frame.element.id) : []
+  const elements = frame ? [frame.element, ...inside] : []
+  const ids = new Set(elements.map((e) => e.id))
+  const panels = grid ? grid.panels.filter((p) => ids.has(p.elementId)) : []
+  return taskTargetsRoom(task, { loop: room, window: frame?.window ?? 1, elements, panels }, tabId, grids)
+}
+
 function retargetTask(
   task: Task,
   targetTabId: string,
@@ -678,6 +691,7 @@ function retargetTask(
   panelIds: ReadonlyMap<string, string>,
 ): Task {
   const mapToken = (token: string): string => ids.get(token) ?? panelIds.get(token) ?? token
+  const nextLoop = task.loop ? (ids.get(task.loop) ?? task.loop) : task.loop
   const nextInstructions = task.instructions.replace(ELEMENT_PANEL_TOKEN_RE, (token) => mapToken(token))
   let nextCall = task.call
   if (task.call) {
@@ -724,12 +738,18 @@ function retargetTask(
       if (pathChanged) nextCall = { tool, input: { ...input, path: segments.join('/') } }
     }
   }
-  if (task.workspaceId === targetTabId && nextInstructions === task.instructions && nextCall === task.call) {
+  if (
+    task.workspaceId === targetTabId &&
+    nextLoop === task.loop &&
+    nextInstructions === task.instructions &&
+    nextCall === task.call
+  ) {
     return task
   }
   return {
     ...task,
     workspaceId: targetTabId,
+    ...(nextLoop !== undefined ? { loop: nextLoop } : {}),
     instructions: nextInstructions,
     call: nextCall,
   }
@@ -796,8 +816,19 @@ export function withoutRoomTasks(
 }
 
 /**
- * What a scheduled call (`refresh_element` or `set`) says when the tile or panel it targets is in
- * a room the user closed: nothing to do until the room is reopened, rather than a failure notice on
+ * What a room-scoped scheduled task says when its room is closed in memory: nothing to run until
+ * the room is reopened, rather than failing on every tick. Null when the room is not in `closed`.
+ */
+export function closedRoomTaskMessage(loopId: string, loopsByTab: Record<string, Loops>): string | null {
+  const isClosed = Object.values(loopsByTab).some((one) => (one.closed ?? []).some((c) => c.loop.id === loopId))
+  if (!isClosed) return null
+  const name = loopName(loopId)
+  return `Skipped: ${name} is closed. It runs again once ${name} is reopened from Rooms.`
+}
+
+/**
+ * What a scheduled call (`refresh_element` or `set`, or a room-scoped call) says when the tile, panel,
+ * or room it targets is closed: nothing to do until the room is reopened, rather than a failure notice on
  * every tick. Null when the target is open on a grid or not in any closed room.
  */
 export function closedCallMessage(
@@ -805,7 +836,12 @@ export function closedCallMessage(
   workspaceId: string,
   gridsByTab: Record<string, Record<number, Grid>>,
   loopsByTab: Record<string, Loops>,
+  loopId?: string | null,
 ): string | null {
+  if (loopId) {
+    const roomClosed = closedRoomTaskMessage(loopId, loopsByTab)
+    if (roomClosed) return roomClosed
+  }
   const targetInfo = panelTargetOfCall({ workspaceId, call })
   if (!targetInfo) return null
   const { workspaceId: targetTabId, panelId: target } = targetInfo
