@@ -55,6 +55,7 @@ import {
   placeFramed,
   placeView,
   removeElement,
+  replacePanelState,
   editIn,
   setIn,
   setMode,
@@ -1562,6 +1563,29 @@ test('publishOutput returns the same grid and panel when an equal output object 
   )
   assert.equal(second.grid, first.grid)
   assert.equal(second.panel, first.panel)
+
+  const multiState = replacePanelState(second.grid, placed.panel.id, {
+    url: 'https://x.com/home',
+    activeTabId: 't1',
+    tabs: [
+      { id: 't1', url: 'https://x.com/home' },
+      { id: 't2', url: 'https://www.bloomberg.com/' },
+    ],
+  })
+  assert.notEqual(multiState.grid, second.grid)
+  const sameMulti = replacePanelState(multiState.grid, placed.panel.id, {
+    tabs: [
+      { id: 't1', url: 'https://x.com/home' },
+      { id: 't2', url: 'https://www.bloomberg.com/' },
+    ],
+    activeTabId: 't1',
+    url: 'https://x.com/home',
+  })
+  assert.equal(sameMulti.grid, multiState.grid)
+  assert.equal(sameMulti.panel, multiState.panel)
+
+  const collapsed = replacePanelState(multiState.grid, placed.panel.id, { url: 'https://x.com/home' })
+  assert.deepEqual(collapsed.panel.state, { url: 'https://x.com/home' })
 })
 
 test('resizing at a shared seam between tiled elements hands off to the touching neighbor when dragging into it', () => {

@@ -5,6 +5,7 @@ import {
   BROWSER_VIEW,
   browserSummary,
   DEFAULT_BROWSER_URL,
+  MAX_PERSISTED_BROWSER_TABS,
   normalizeBrowserUrl,
 } from '../../shared/grid/browser'
 import {
@@ -470,6 +471,19 @@ const APP: ViewDef = {
   summarize: appSummary,
 }
 
+const BROWSER_TAB_STATE = z.object({
+  id: z.string().min(1),
+  url: z.string().refine(
+    (url) => {
+      const normalized = normalizeBrowserUrl(url)
+      return normalized !== null && normalized !== ''
+    },
+    { message: 'tab url must be an https:// or http:// address.' },
+  ),
+  title: z.string().optional(),
+  theater: z.boolean().optional(),
+})
+
 const BROWSER: ViewDef = {
   id: BROWSER_VIEW,
   plugin: null,
@@ -481,6 +495,8 @@ const BROWSER: ViewDef = {
       .refine((url) => normalizeBrowserUrl(url) !== null, {
         message: 'url must be an https:// or http:// address.',
       }),
+    tabs: z.array(BROWSER_TAB_STATE).max(MAX_PERSISTED_BROWSER_TABS).optional(),
+    activeTabId: z.string().optional(),
   }),
   output: z.object({
     url: z.string(),
@@ -492,7 +508,7 @@ const BROWSER: ViewDef = {
     tabCount: z.number().optional(),
     error: z.string().nullable(),
   }),
-  instructions: `${BROWSER_PLUGIN_DESCRIPTION} A web browser on the grid, for Bloomberg, live streams, and sites that need a sign-in or refuse to be framed. Launch this view whenever the user asks for Bloomberg (use https://www.bloomberg.com/live for Bloomberg Television's live stream, or ${DEFAULT_BROWSER_URL} by default). Additional windows open as switchable tabs inside the same view, so reuse an existing core/browser view in your tile rather than placing a second one. Set state.url (or call use_browser with action "navigate") to navigate, including following any link URL listed in panels/<id>/text; refresh_element reloads the page. Call use_browser to act inside the page on the user's behalf with real browser input: click buttons, modals, tabs, or links (by control id like "c1" from Controls in panels/<id>/text, visible text like "Follow", CSS selector, or x and y coordinates), type into inputs (with optional clear and submit), press keys, scroll feeds or dialogs, go back or forward, or switch and close tabs — never ask the user to paste browser cookies or session tokens. output has the active url, title, loading, canGoBack, canGoForward, theater, tabCount, and error, and the visible page text, interactive Controls, and Links are published to panels/<id>/text.`,
+  instructions: `${BROWSER_PLUGIN_DESCRIPTION} A web browser on the grid, for Bloomberg, live streams, and sites that need a sign-in or refuse to be framed. Launch this view whenever the user asks for Bloomberg (use https://www.bloomberg.com/live for Bloomberg Television's live stream, or ${DEFAULT_BROWSER_URL} by default). Additional windows open as switchable tabs inside the same view (persisted across restarts and room reloads in state.tabs and state.activeTabId), so reuse an existing core/browser view in your tile rather than placing a second one. Set state.url (or call use_browser with action "navigate") to navigate the active tab, including following any link URL listed in panels/<id>/text; refresh_element reloads the page. Call use_browser to act inside the page on the user's behalf with real browser input: click buttons, modals, tabs, or links (by control id like "c1" from Controls in panels/<id>/text, visible text like "Follow", CSS selector, or x and y coordinates), type into inputs (with optional clear and submit), press keys, scroll feeds or dialogs, go back or forward, or open, switch, and close tabs — never ask the user to paste browser cookies or session tokens. output has the active url, title, loading, canGoBack, canGoForward, theater, tabCount, and error, and the visible page text, interactive Controls, and Links are published to panels/<id>/text.`,
   summarize: browserSummary,
 }
 

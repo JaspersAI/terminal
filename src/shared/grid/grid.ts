@@ -876,6 +876,20 @@ export function setPanelState(
   return { grid: withPanel(grid, panel), panel }
 }
 
+/** Replaces a panel's whole state object, returning the same grid and panel when unchanged. */
+export function replacePanelState(
+  grid: Grid,
+  panelId: string,
+  state: Record<string, unknown>,
+): { grid: Grid; panel: Panel } {
+  const current = panelOf(grid, panelId)
+  if (!isPlainObject(state)) throw new Error('State must be an object.')
+  if (sameValue(current.state, state) && !current.error) return { grid, panel: current }
+  const { error: _was, ...rest } = current
+  const panel: Panel = { ...rest, state: { ...state } }
+  return { grid: withPanel(grid, panel), panel }
+}
+
 /** Runs a view's summarize callback on its current state and output, returning null if none is defined or if it throws on partial output. */
 export function summarizePanel(
   summarize: ((state: unknown, output: unknown) => string) | undefined,

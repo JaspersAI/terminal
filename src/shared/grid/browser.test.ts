@@ -28,11 +28,14 @@ import {
   isGoogleAuthUrl,
   isPerimeterXCookieName,
   isVideoPageUrl,
+  nextBrowserTabSeq,
   normalizeBounds,
   normalizeBrowserUrl,
   ORB_OVERLAY_PAD,
   orbOverlayBounds,
+  persistedBrowserState,
   readBrowserState,
+  sameBrowserState,
   scaleBounds,
   shouldShowBrowser,
   shouldShowOrbOverlay,
@@ -755,5 +758,73 @@ test('orbOverlayBounds pads the native Orb view for unclipped light vibration an
       browserBounds: [{ x: 800, y: 400, width: 0, height: 300 }],
     }),
     false,
+  )
+})
+
+test('persistedBrowserState, readBrowserState, nextBrowserTabSeq, and browserSummary round-trip multi-tab state cleanly', () => {
+  // Single default t1 tab collapses to { url } without tabs or activeTabId.
+  assert.deepEqual(
+    persistedBrowserState(
+      [{ id: 't1', url: 'https://www.bloomberg.com/live', title: 'Bloomberg Live', theater: true }],
+      't1',
+    ),
+    { url: 'https://www.bloomberg.com/live' },
+  )
+
+  // Single tab with custom theater override or non-t1 id keeps tabs so the id and theater setting survive restart.
+  assert.deepEqual(
+    persistedBrowserState(
+      [{ id: 't1', url: 'https://www.bloomberg.com/live', title: 'Bloomberg Live', theater: false }],
+      't1',
+    ),
+    {
+      url: 'https://www.bloomberg.com/live',
+      activeTabId: 't1',
+      tabs: [{ id: 't1', url: 'https://www.bloomberg.com/live', title: 'Bloomberg Live', theater: false }],
+    },
+  )
+
+  // Multi-tab state normalizes URLs, strips bot-challenge URLs/titles, deduplicates ids, and reports tab count in summary.
+  const multi = persistedBrowserState(
+    [
+      { id: 't1', url: 'https://x.com/home', title: 'Home / X', theater: false },
+      { id: 't2', url: 'linkedin.com/feed', title: '  Feed | LinkedIn  ', theater: false },
+      {
+        id: 't4',
+        url: 'https://www.bloomberg.com/tosv2.html?url=L21hcmtldHM=&uuid=abc',
+        title: 'Bloomberg - Are you a robot?',
+        theater: false,
+      },
+    ],
+    't1',
+  )
+  assert.deepEqual(multi, {
+    url: 'https://x.com/home',
+    activeTabId: 't1',
+    tabs: [
+      { id: 't1', url: 'https://x.com/home', title: 'Home / X' },
+      { id: 't2', url: 'https://linkedin.com/feed', title: 'Feed | LinkedIn' },
+      { id: 't4', url: 'https://www.bloomberg.com/markets' },
+    ],
+  })
+  assert.equal(sameBrowserState(readBrowserState(multi), multi), true)
+  assert.equal(nextBrowserTabSeq(multi.tabs!), 4)
+  assert.equal(
+    browserSummary(multi, { url: 'https://x.com/home', title: 'Home / X', loading: false, tabCount: 3, error: null }),
+    'Home / X (x.com), 3 tabs',
+  )
+  assert.equal(browserSummary(multi, null), 'x.com/home, 3 tabs')
+
+  // Writing state.url while unmounted updates the active tab's URL without dropping background tabs.
+  const editedOffline = readBrowserState({ ...multi, url: 'https://www.sec.gov' })
+  assert.equal(editedOffline.url, 'https://www.sec.gov/')
+  assert.equal(editedOffline.activeTabId, 't1')
+  assert.deepEqual(
+    editedOffline.tabs?.map((t) => [t.id, t.url]),
+    [
+      ['t1', 'https://www.sec.gov/'],
+      ['t2', 'https://linkedin.com/feed'],
+      ['t4', 'https://www.bloomberg.com/markets'],
+    ],
   )
 })

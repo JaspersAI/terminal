@@ -14,6 +14,7 @@ import {
   DEFAULT_BROWSER_URL,
   isVideoPageUrl,
   normalizeBrowserUrl,
+  readBrowserState,
   type BrowserAction,
   type BrowserBounds,
   type BrowserSnapshot,
@@ -30,46 +31,73 @@ import type { ViewProps } from './index'
 // Live TV) load and authenticate in a top-level browsing context while leaving the tile's resize
 // edges uncovered.
 
-const EMPTY_SNAPSHOT = (workspaceId: string, panelId: string, initialUrl: string): BrowserSnapshot => ({
-  workspaceId,
-  panelId,
-  url: initialUrl,
-  title: '',
-  loading: false,
-  canGoBack: false,
-  canGoForward: false,
-  theater: isVideoPageUrl(initialUrl),
-  tabCount: 1,
-  activeTabId: 't1',
-  tabs: [
-    {
-      id: 't1',
-      url: initialUrl,
-      title: '',
-      loading: false,
-      canGoBack: false,
-      canGoForward: false,
-      theater: isVideoPageUrl(initialUrl),
-      error: null,
-    },
-  ],
-  error: null,
-  text: null,
-})
+const EMPTY_SNAPSHOT = (workspaceId: string, panelId: string, rawState: unknown): BrowserSnapshot => {
+  const parsed = readBrowserState(rawState)
+  const initialTabs: BrowserTab[] =
+    parsed.tabs && parsed.tabs.length > 0
+      ? parsed.tabs.map((tab) => ({
+          id: tab.id,
+          url: tab.url,
+          title: tab.title ?? '',
+          loading: false,
+          canGoBack: false,
+          canGoForward: false,
+          theater: tab.theater ?? isVideoPageUrl(tab.url),
+          error: null,
+        }))
+      : [
+          {
+            id: 't1',
+            url: parsed.url,
+            title: '',
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            theater: isVideoPageUrl(parsed.url),
+            error: null,
+          },
+        ]
+  const activeTab = initialTabs.find((tab) => tab.id === parsed.activeTabId) ?? initialTabs[0]!
+  return {
+    workspaceId,
+    panelId,
+    url: activeTab.url,
+    title: activeTab.title,
+    loading: false,
+    canGoBack: false,
+    canGoForward: false,
+    theater: activeTab.theater,
+    tabCount: initialTabs.length,
+    activeTabId: activeTab.id,
+    tabs: initialTabs,
+    error: null,
+    text: null,
+  }
+}
 
 const NAV_BUTTON =
   'flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent'
 
 export function Browser({ panel }: ViewProps): ReactElement {
   const [stateUrl] = usePanelState<string>(panel, 'url', DEFAULT_BROWSER_URL)
+  const [stateTabs] = usePanelState<unknown>(panel, 'tabs', undefined)
+  const [stateActiveTabId] = usePanelState<unknown>(panel, 'activeTabId', undefined)
   const working = usePanelWorking()
   const refreshedAt = useData(`workspaces/${panel.workspaceId}/panels/${panel.id}/refreshedAt`)
   const tabActive = useAppState((s) => currentWorkspace(s).id === panel.workspaceId)
   const updateAvailable = useAppState((s) => (s.updates.status === 'ready' ? s.updates.available : null))
 
-  const initialAddress = normalizeBrowserUrl(stateUrl) || DEFAULT_BROWSER_URL
+  const rawBrowserState = useMemo(
+    () => ({
+      url: stateUrl,
+      ...(stateTabs !== undefined ? { tabs: stateTabs } : {}),
+      ...(stateActiveTabId !== undefined ? { activeTabId: stateActiveTabId } : {}),
+    }),
+    [stateUrl, stateTabs, stateActiveTabId],
+  )
+  const initialAddress = readBrowserState(rawBrowserState).url
   const [snapshot, setSnapshot] = useState<BrowserSnapshot>(() =>
-    EMPTY_SNAPSHOT(panel.workspaceId, panel.id, initialAddress),
+    EMPTY_SNAPSHOT(panel.workspaceId, panel.id, rawBrowserState),
   )
   const [draft, setDraft] = useState(() => initialAddress)
   const [editing, setEditing] = useState(false)
@@ -134,7 +162,8 @@ export function Browser({ panel }: ViewProps): ReactElement {
         modalOpen: document.querySelector('[aria-modal="true"]') !== null,
         overlays: collectOverlays(anchor),
       })
-    const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height},${visible},${stateUrl},${String(refreshedAt ?? '')}`
+    const stateSignature = JSON.stringify(rawBrowserState)
+    const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height},${visible},${stateSignature},${String(refreshedAt ?? '')}`
     if (lastSyncRef.current === key) return
     lastSyncRef.current = key
     window.app.browser.sync(panel.workspaceId, panel.id, bounds, visible).then(
@@ -146,7 +175,7 @@ export function Browser({ panel }: ViewProps): ReactElement {
           error: errorMessage(err),
         })),
     )
-  }, [tabActive, panel.workspaceId, panel.id, stateUrl, snapshot.url, refreshedAt, inputError])
+  }, [tabActive, panel.workspaceId, panel.id, rawBrowserState, stateUrl, snapshot.url, refreshedAt, inputError])
 
   const syncRef = useRef(syncBounds)
   syncRef.current = syncBounds

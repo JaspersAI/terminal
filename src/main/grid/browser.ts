@@ -44,7 +44,7 @@ import {
   type BrowserPageControl,
 } from '../../shared/grid/browser-interact'
 import { PANEL_TEXT_MAX, panelOf, stepZoom, tileZoom } from '../../shared/grid/grid'
-import { publishChecked, publishTextChecked, setPanelStateChecked } from '../actions'
+import { publishChecked, publishTextChecked, replacePanelStateChecked, setPanelStateChecked } from '../actions'
 import { getState, subscribe } from '../state'
 import {
   createBrowserLoadTracker,
@@ -1258,6 +1258,13 @@ function manager(): BrowserManager {
     createView: createNativeView,
     setPanelUrl: (workspaceId, panelId, url) => {
       setPanelStateChecked(workspaceId, panelId, ['url'], url)
+    },
+    setPanelState: (workspaceId, panelId, nextState, options) => {
+      try {
+        replacePanelStateChecked(workspaceId, panelId, { ...nextState }, options)
+      } catch {
+        // Panel was removed concurrently.
+      }
     },
     focusElement: (workspaceId, elementId) => {
       focus(workspaceId, elementId)

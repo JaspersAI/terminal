@@ -14,10 +14,16 @@ import {
   isBotChallengeText,
   isBotChallengeUrl,
   isBrowserUrl,
+  isGoogleAuthUrl,
   isVideoPageUrl,
+  nextBrowserTabSeq,
   normalizeBounds,
   normalizeBrowserUrl,
+  persistedBrowserState,
+  readBrowserPersistedTabs,
   readBrowserState,
+  sameBrowserPersistedTabs,
+  sameBrowserState,
   scaleBounds,
   shouldShowBrowser,
   unwrapBotChallengeUrl,
@@ -26,6 +32,7 @@ import {
   type BrowserEmulationOverride,
   type BrowserSnapshot,
   type BrowserStanding,
+  type BrowserState,
   type BrowserTab,
 } from '../../shared/grid/browser.ts'
 import type {
@@ -87,6 +94,7 @@ export interface BrowserManagerDeps {
   getWindow(windowNumber: number): ManagedWindow | null
   createView(events: BrowserViewEvents): ManagedBrowserView
   setPanelUrl(workspaceId: string, panelId: string, url: string): void
+  setPanelState?(workspaceId: string, panelId: string, state: BrowserState, options?: { touch?: boolean }): void
   focusElement(workspaceId: string, elementId: string): void
   zoomElement?(workspaceId: string, elementId: string, direction: 'in' | 'out' | 'reset'): void
   publishPanel?(workspaceId: string, panelId: string, snapshot: BrowserSnapshot): void
@@ -143,6 +151,7 @@ interface TabEntry {
   openerTabId: string | null
   view: ManagedBrowserView
   url: string
+  persistedUrl: string
   title: string
   loading: boolean
   theater: boolean
@@ -173,6 +182,8 @@ interface Entry {
   stateUrl: string
   /** The last `panel.state` reference seen on sync/sweep, so an explicit `set` to the same `state.url` after an in-page navigation still loads `state.url`. */
   stateRef: Record<string, unknown> | null
+  /** The last normalized `BrowserState` persisted or read from `panel.state`, used to distinguish `state.url` writes from `state.tabs` / `state.activeTabId` edits. */
+  lastPersistedState: BrowserState | null
   suppressStateLoad: boolean
   refreshedAt: number | null
   bounds: BrowserBounds | null
@@ -382,7 +393,9 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     if (!canSuspendTab(entry, tab)) return
     const liveUrl = tab.view.getURL()
     if (isBrowserUrl(liveUrl)) {
-      tab.url = unwrapBotChallengeUrl(liveUrl, tab.url || entry.stateUrl) ?? liveUrl
+      const unwrapped = unwrapBotChallengeUrl(liveUrl, tab.url || entry.stateUrl) ?? liveUrl
+      tab.url = unwrapped
+      if (!isGoogleAuthUrl(unwrapped)) tab.persistedUrl = unwrapped
     }
     const liveTitle = tab.view.getTitle()
     if (liveTitle && !isBotChallengeUrl(liveUrl) && !isBotChallengeText('', liveTitle)) {
@@ -409,10 +422,15 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     tab.backgrounded = false
     const savedTitle = tab.title
     const savedText = tab.text
+    const savedTheater = tab.theater
     const targetUrl = tab.url || entry.stateUrl
     tab.view = bindTabView(entry, tab, deps.createView)
     if (targetUrl) {
-      loadTabAddress(entry, tab, targetUrl, { preserveTitle: savedTitle, preserveText: savedText })
+      loadTabAddress(entry, tab, targetUrl, {
+        preserveTitle: savedTitle,
+        preserveText: savedText,
+        preserveTheater: savedTheater,
+      })
     }
   }
 
@@ -616,6 +634,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
           pushSnapshot(entry)
           return
         }
+        const prevUrl = tab.url
         const liveUrl = tab.view.getURL()
         if (isBotChallengeUrl(liveUrl)) {
           const retryTarget = unwrapBotChallengeUrl(liveUrl, tab.url || entry.stateUrl) || tab.url || entry.stateUrl
@@ -625,6 +644,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
             loadTabAddress(entry, tab, retryTarget, {
               preserveTitle: tab.title,
               preserveText: tab.text,
+              preserveTheater: tab.theater,
               keepChallengeRetry: true,
               clearBotCookies: true,
             })
@@ -632,6 +652,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
           }
         } else if (isBrowserUrl(liveUrl)) {
           tab.url = liveUrl
+          if (!isGoogleAuthUrl(liveUrl)) tab.persistedUrl = liveUrl
           tab.challengeRetriedUrl = null
         }
         tab.loading = false
@@ -641,8 +662,9 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (liveTitle && !isBotChallengeUrl(liveUrl) && !isBotChallengeText('', liveTitle)) {
           tab.title = liveTitle
         }
-        if (isVideoPageUrl(tab.url)) tab.theater = true
+        if (tab.url !== prevUrl && isVideoPageUrl(tab.url)) tab.theater = true
         tab.view.setTheaterMode?.(tab.theater, tab.url)
+        persistEntryState(entry, { touch: false })
         positionEntry(entry, deps.getState())
         pushSnapshot(entry)
         if (activeTab(entry) === tab) {
@@ -656,6 +678,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
           const unwrapped = unwrapBotChallengeUrl(url, tab.url || entry.stateUrl)
           if (unwrapped) {
             tab.url = unwrapped
+            if (!isGoogleAuthUrl(unwrapped)) tab.persistedUrl = unwrapped
             tab.error = null
             if (isVideoPageUrl(unwrapped)) tab.theater = true
             tab.view.setTheaterMode?.(tab.theater, unwrapped)
@@ -665,6 +688,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
             loadTabAddress(entry, tab, unwrapped, {
               preserveTitle: tab.title,
               preserveText: tab.text,
+              preserveTheater: tab.theater,
               keepChallengeRetry: true,
               clearBotCookies: true,
             })
@@ -676,14 +700,19 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         }
         const normalized = normalizeBrowserUrl(url)
         if (normalized) {
+          const prevUrl = tab.url
           tab.url = normalized
+          if (!isGoogleAuthUrl(normalized) || !tab.persistedUrl) {
+            tab.persistedUrl = normalized
+          }
           tab.challengeRetriedUrl = null
           tab.error = null
-          if (isVideoPageUrl(normalized)) tab.theater = true
+          if (normalized !== prevUrl && isVideoPageUrl(normalized)) tab.theater = true
           tab.view.setTheaterMode?.(tab.theater, normalized)
         }
         const liveTitle = tab.view.getTitle()
         if (liveTitle && !isBotChallengeText('', liveTitle)) tab.title = liveTitle
+        persistEntryState(entry, { touch: false })
         positionEntry(entry, deps.getState())
         pushSnapshot(entry)
         if (!tab.loading && !tab.view.isLoading() && tab.error === null && activeTab(entry) === tab) {
@@ -708,6 +737,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (!isCurrent()) return
         if (isBotChallengeUrl(tab.view.getURL()) || isBotChallengeText('', title)) return
         tab.title = title
+        persistEntryState(entry, { touch: false })
         pushSnapshot(entry)
       },
       onFocus() {
@@ -731,6 +761,9 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
           opened.loading = Boolean(normalized)
           entry.tabs.push(opened)
           entry.activeTabId = opened.id
+          if (normalized && !isGoogleAuthUrl(normalized)) {
+            persistEntryState(entry, { touch: true })
+          }
           positionEntry(entry, deps.getState())
           pushSnapshot(entry)
           return opened.view
@@ -740,6 +773,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         const opened = createTab(entry, normalized, deps.createView, tab.id)
         entry.tabs.push(opened)
         entry.activeTabId = opened.id
+        persistEntryState(entry, { touch: true })
         loadTabAddress(entry, opened, normalized)
         return opened.view
       },
@@ -756,16 +790,25 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     initialUrl: string,
     customCreateView: (events: BrowserViewEvents) => ManagedBrowserView = deps.createView,
     openerTabId: string | null = null,
+    options?: {
+      id?: string
+      title?: string
+      theater?: boolean
+      suspended?: boolean
+    },
   ): TabEntry {
-    const id = `t${++entry.nextTabSeq}`
+    const id = options?.id ?? `t${++entry.nextTabSeq}`
+    const suspended = options?.suspended === true
+    const persistedUrl = initialUrl && !isGoogleAuthUrl(initialUrl) ? initialUrl : ''
     const tab: TabEntry = {
       id,
       openerTabId,
       view: null as unknown as ManagedBrowserView,
       url: initialUrl,
-      title: '',
+      persistedUrl,
+      title: options?.title ?? '',
       loading: false,
-      theater: isVideoPageUrl(initialUrl),
+      theater: options?.theater ?? isVideoPageUrl(initialUrl),
       canGoBack: false,
       canGoForward: false,
       error: null,
@@ -776,23 +819,95 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       challengeRetriedUrl: null,
       hydrationTimers: [],
       loadWaiters: new Set(),
-      backgrounded: false,
-      suspended: false,
+      backgrounded: suspended,
+      suspended,
       suspendTimer: null,
       destroyed: false,
     }
-    tab.view = bindTabView(entry, tab, customCreateView)
+    if (!suspended) {
+      tab.view = bindTabView(entry, tab, customCreateView)
+    }
     return tab
   }
 
-  function updatePanelUrl(entry: Entry, target: string): void {
-    entry.stateUrl = target
+  function currentPanelOf(entry: Entry): Panel | null {
+    const grids = deps.getState().grids[entry.workspaceId]
+    for (const grid of Object.values(grids ?? {})) {
+      const found = grid.panels.find((p) => p.id === entry.panelId)
+      if (found) return found
+    }
+    return null
+  }
+
+  function tabPersistedUrl(entry: Entry, tab: TabEntry): string {
+    if (tab.openerTabId !== null) {
+      const candidate = tab.persistedUrl || tab.url
+      if (!isBrowserUrl(candidate) || isGoogleAuthUrl(candidate)) return ''
+    }
+    if (!tab.suspended && !tab.loading && tab.error === null) {
+      const liveUrl = tab.view.getURL()
+      if (isBrowserUrl(liveUrl) && !isBotChallengeUrl(liveUrl) && !isGoogleAuthUrl(liveUrl)) {
+        return liveUrl
+      }
+    }
+    return tab.persistedUrl || tab.url || (tab === activeTab(entry) ? entry.stateUrl : '')
+  }
+
+  function buildEntryBrowserState(entry: Entry): BrowserState | null {
+    const tabs: { id: string; url: string; title?: string; theater?: boolean }[] = []
+    for (const tab of entry.tabs) {
+      if (tab.destroyed) continue
+      const rawUrl = tabPersistedUrl(entry, tab)
+      const url = unwrapBotChallengeUrl(rawUrl)
+      if (!url) continue
+      const liveTitle =
+        !tab.suspended && !tab.loading && tab.error === null && !isBotChallengeUrl(tab.view.getURL())
+          ? tab.view.getTitle() || tab.title
+          : tab.title
+      tabs.push({
+        id: tab.id,
+        url,
+        ...(liveTitle ? { title: liveTitle } : {}),
+        theater: tab.theater,
+      })
+    }
+    if (tabs.length === 0) return null
+    return persistedBrowserState(tabs, entry.activeTabId, entry.stateUrl || DEFAULT_BROWSER_URL)
+  }
+
+  function panelStateMatches(rawState: Record<string, unknown>, target: BrowserState): boolean {
+    const parsed = readBrowserState(rawState)
+    if (!sameBrowserState(parsed, target)) return false
+    const hasRawTabs = Array.isArray(rawState['tabs']) || rawState['activeTabId'] !== undefined
+    const hasTargetTabs = target.tabs !== undefined || target.activeTabId !== undefined
+    if (hasRawTabs !== hasTargetTabs) return false
+    const rawUrl = typeof rawState['url'] === 'string' ? normalizeBrowserUrl(rawState['url']) : null
+    return rawUrl === target.url
+  }
+
+  function persistEntryState(entry: Entry, options?: { touch?: boolean }): void {
+    if (entry.destroyed) return
+    const nextState = buildEntryBrowserState(entry)
+    if (!nextState) return
+    entry.stateUrl = nextState.url
+    entry.lastPersistedState = nextState
+    const currentPanel = currentPanelOf(entry)
+    if (currentPanel && panelStateMatches(currentPanel.state, nextState)) {
+      entry.stateRef = currentPanel.state
+      return
+    }
     entry.suppressStateLoad = true
     try {
-      deps.setPanelUrl(entry.workspaceId, entry.panelId, target)
+      if (deps.setPanelState) {
+        deps.setPanelState(entry.workspaceId, entry.panelId, nextState, options)
+      } else {
+        deps.setPanelUrl(entry.workspaceId, entry.panelId, nextState.url)
+      }
     } finally {
       entry.suppressStateLoad = false
     }
+    const updatedPanel = currentPanelOf(entry)
+    if (updatedPanel) entry.stateRef = updatedPanel.state
   }
 
   function closeTabById(entry: Entry, targetId: string, replaceSingleTab: boolean): void {
@@ -802,11 +917,18 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       if (replaceSingleTab) {
         const [removed] = entry.tabs.splice(index, 1)
         if (removed) destroyTab(entry, removed)
-        const replacement = createTab(entry, DEFAULT_BROWSER_URL)
+        const replacement = createTab(entry, DEFAULT_BROWSER_URL, deps.createView, null, { id: 't1' })
+        entry.nextTabSeq = Math.max(entry.nextTabSeq, 1)
         entry.tabs.push(replacement)
         entry.activeTabId = replacement.id
+      } else {
+        const only = entry.tabs[0]!
+        only.url = DEFAULT_BROWSER_URL
+        only.persistedUrl = DEFAULT_BROWSER_URL
+        only.title = ''
+        only.theater = isVideoPageUrl(DEFAULT_BROWSER_URL)
       }
-      updatePanelUrl(entry, DEFAULT_BROWSER_URL)
+      persistEntryState(entry, { touch: true })
       loadTabAddress(entry, entry.tabs[0]!, DEFAULT_BROWSER_URL)
       return
     }
@@ -817,6 +939,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       const nextTab = opener ?? entry.tabs[Math.min(index, entry.tabs.length - 1)]!
       entry.activeTabId = nextTab.id
     }
+    persistEntryState(entry, { touch: true })
     positionEntry(entry, deps.getState())
     pushSnapshot(entry)
   }
@@ -825,6 +948,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     const key = entryKey(workspaceId, panel.id)
     const existing = entries.get(key)
     if (existing) return existing
+    const parsed = readBrowserState(panel.state)
     const entry: Entry = {
       key,
       workspaceId,
@@ -834,6 +958,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       nextTabSeq: 0,
       stateUrl: '',
       stateRef: null,
+      lastPersistedState: parsed,
       suppressStateLoad: false,
       refreshedAt: panel.refreshedAt,
       bounds: null,
@@ -844,9 +969,27 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       attachedView: null,
       destroyed: false,
     }
-    const first = createTab(entry, '')
-    entry.tabs.push(first)
-    entry.activeTabId = first.id
+    if (parsed.tabs && parsed.tabs.length > 0) {
+      entry.nextTabSeq = nextBrowserTabSeq(parsed.tabs)
+      const activeId =
+        parsed.activeTabId && parsed.tabs.some((t) => t.id === parsed.activeTabId)
+          ? parsed.activeTabId
+          : parsed.tabs[0]!.id
+      entry.activeTabId = activeId
+      for (const saved of parsed.tabs) {
+        const restored = createTab(entry, saved.url, deps.createView, null, {
+          id: saved.id,
+          title: saved.title ?? '',
+          theater: saved.theater ?? isVideoPageUrl(saved.url),
+          suspended: true,
+        })
+        entry.tabs.push(restored)
+      }
+    } else {
+      const first = createTab(entry, parsed.url, deps.createView, null, { suspended: true })
+      entry.tabs.push(first)
+      entry.activeTabId = first.id
+    }
     entries.set(key, entry)
     return entry
   }
@@ -858,6 +1001,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     options?: {
       preserveTitle?: string
       preserveText?: string | null
+      preserveTheater?: boolean
       keepChallengeRetry?: boolean
       clearBotCookies?: boolean
     },
@@ -875,13 +1019,16 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     }
     const loadId = ++tab.loadSeq
     tab.url = targetUrl
+    if (!isGoogleAuthUrl(targetUrl) || !tab.persistedUrl) {
+      tab.persistedUrl = targetUrl
+    }
     tab.title = options?.preserveTitle ?? ''
     tab.text = options?.preserveText ?? null
     tab.loadedAt = null
     tab.initialLoadText = null
     tab.error = null
     tab.loading = true
-    tab.theater = isVideoPageUrl(targetUrl)
+    tab.theater = options?.preserveTheater ?? isVideoPageUrl(targetUrl)
     tab.view.setTheaterMode?.(tab.theater, targetUrl)
     positionEntry(entry, deps.getState())
     pushSnapshot(entry)
@@ -930,12 +1077,17 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       loadTabAddress(entry, tab, targetUrl, {
         preserveTitle: tab.title,
         preserveText: tab.text,
+        preserveTheater: tab.theater,
         clearBotCookies: true,
       })
       return
     }
     if ((tab.error !== null || !isBrowserUrl(liveUrl) || liveUrl !== targetUrl) && targetUrl) {
-      loadTabAddress(entry, tab, targetUrl, { preserveTitle: tab.title, preserveText: tab.text })
+      loadTabAddress(entry, tab, targetUrl, {
+        preserveTitle: tab.title,
+        preserveText: tab.text,
+        preserveTheater: tab.theater,
+      })
       return
     }
     clearHydrationTimers(tab)
@@ -949,23 +1101,138 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     pushSnapshot(entry)
   }
 
-  function applyPanelState(entry: Entry, panel: Panel, stateUrl: string): void {
+  function reconcileEntryTabs(entry: Entry, nextState: BrowserState): void {
+    const desiredTabs =
+      nextState.tabs && nextState.tabs.length > 0
+        ? nextState.tabs
+        : [{ id: entry.tabs[0]?.id ?? 't1', url: nextState.url }]
+    const desiredIds = new Set(desiredTabs.map((t) => t.id))
+    for (const existing of entry.tabs) {
+      if (!desiredIds.has(existing.id)) destroyTab(entry, existing)
+    }
+    entry.nextTabSeq = Math.max(entry.nextTabSeq, nextBrowserTabSeq(desiredTabs))
+    const targetActiveId =
+      nextState.activeTabId && desiredIds.has(nextState.activeTabId) ? nextState.activeTabId : desiredTabs[0]!.id
+    const prevActiveId = entry.activeTabId
+    entry.activeTabId = targetActiveId
+
+    const nextTabs: TabEntry[] = []
+    for (const desired of desiredTabs) {
+      const existing = entry.tabs.find((t) => !t.destroyed && t.id === desired.id)
+      const desiredTheater = desired.theater ?? isVideoPageUrl(desired.url)
+      if (existing) {
+        existing.theater = desiredTheater
+        if (desired.title && !existing.title) existing.title = desired.title
+        const currentUrl = tabPersistedUrl(entry, existing)
+        if (desired.url !== currentUrl) {
+          if (desired.id === targetActiveId || !existing.suspended) {
+            loadTabAddress(entry, existing, desired.url, {
+              preserveTitle: desired.title ?? '',
+              preserveTheater: desiredTheater,
+            })
+          } else {
+            existing.url = desired.url
+            existing.persistedUrl = desired.url
+            existing.title = desired.title ?? ''
+          }
+        } else if (!existing.suspended) {
+          existing.view.setTheaterMode?.(existing.theater, existing.url || desired.url)
+        }
+        nextTabs.push(existing)
+      } else {
+        const isActive = desired.id === targetActiveId
+        const created = createTab(entry, desired.url, deps.createView, null, {
+          id: desired.id,
+          title: desired.title ?? '',
+          theater: desiredTheater,
+          suspended: !isActive,
+        })
+        nextTabs.push(created)
+        if (isActive) {
+          loadTabAddress(entry, created, desired.url, {
+            preserveTitle: desired.title ?? '',
+            preserveTheater: desiredTheater,
+          })
+        }
+      }
+    }
+    entry.tabs = nextTabs
+    const active = activeTab(entry)
+    if (active.suspended) {
+      wakeTab(entry, active)
+    } else if (prevActiveId !== targetActiveId) {
+      positionEntry(entry, deps.getState())
+      pushSnapshot(entry)
+      if (active.text === null && !active.loading && active.error === null) {
+        readTabText(entry, active)
+      }
+    }
+  }
+
+  function applyPanelState(entry: Entry, panel: Panel): void {
+    const parsed = readBrowserState(panel.state)
     if (entry.suppressStateLoad) {
       entry.stateRef = panel.state
+      entry.lastPersistedState = parsed
       return
     }
-    const active = activeTab(entry)
+    if (entry.stateRef === null && entry.stateUrl === '') {
+      entry.stateUrl = parsed.url
+      entry.stateRef = panel.state
+      entry.lastPersistedState = parsed
+      entry.refreshedAt = panel.refreshedAt
+      const active = activeTab(entry)
+      loadTabAddress(entry, active, parsed.url, {
+        preserveTitle: active.title,
+        preserveTheater: active.theater,
+      })
+      return
+    }
+    const prevPersisted = entry.lastPersistedState
     const explicitStateWrite = entry.stateRef !== null && panel.state !== entry.stateRef
     entry.stateRef = panel.state
-    if (stateUrl !== entry.stateUrl || explicitStateWrite) {
-      entry.stateUrl = stateUrl
+
+    if (explicitStateWrite) {
+      const rawTabs = Array.isArray(panel.state['tabs']) ? readBrowserPersistedTabs(panel.state['tabs']) : undefined
+      const rawActiveId =
+        typeof panel.state['activeTabId'] === 'string' && panel.state['activeTabId'].trim() !== ''
+          ? panel.state['activeTabId'].trim()
+          : undefined
+      const tabsEdited =
+        !sameBrowserPersistedTabs(rawTabs, prevPersisted?.tabs) ||
+        (rawActiveId ?? '') !== (prevPersisted?.activeTabId ?? '')
+
+      if (tabsEdited) {
+        entry.refreshedAt = panel.refreshedAt
+        reconcileEntryTabs(entry, parsed)
+        persistEntryState(entry, { touch: false })
+        return
+      }
+
+      const rawUrl = unwrapBotChallengeUrl(panel.state['url'], DEFAULT_BROWSER_URL) || DEFAULT_BROWSER_URL
+      entry.stateUrl = rawUrl
       entry.refreshedAt = panel.refreshedAt
-      loadTabAddress(entry, active, stateUrl)
+      const active = activeTab(entry)
+      active.url = rawUrl
+      active.persistedUrl = isGoogleAuthUrl(rawUrl) ? active.persistedUrl || rawUrl : rawUrl
+      active.title = ''
+      active.theater = isVideoPageUrl(rawUrl)
+      persistEntryState(entry, { touch: false })
+      loadTabAddress(entry, active, rawUrl)
       return
     }
+
+    if (parsed.url !== entry.stateUrl) {
+      entry.stateUrl = parsed.url
+      entry.lastPersistedState = parsed
+      entry.refreshedAt = panel.refreshedAt
+      loadTabAddress(entry, activeTab(entry), parsed.url)
+      return
+    }
+
     if (panel.refreshedAt !== null && panel.refreshedAt !== entry.refreshedAt) {
       entry.refreshedAt = panel.refreshedAt
-      reloadTab(entry, active)
+      reloadTab(entry, activeTab(entry))
     }
   }
 
@@ -1062,7 +1329,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       entry.boundsWindow = callerWindow
       entry.viewport = callerWindow !== null ? (deps.getWindow(callerWindow)?.viewport() ?? null) : null
       entry.rendererVisible = rendererVisible
-      applyPanelState(entry, panel, stateUrl)
+      applyPanelState(entry, panel)
       positionEntry(entry, state)
       return snapshotOf(entry)
     },
@@ -1079,16 +1346,34 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (normalized === null) throw new Error('Enter an https:// or http:// address.')
         const target = normalized || DEFAULT_BROWSER_URL
         const entry = ensureEntry(workspaceId, panel)
-        updatePanelUrl(entry, target)
-        loadTabAddress(entry, activeTab(entry), target)
+        entry.stateRef ??= panel.state
+        const active = activeTab(entry)
+        active.url = target
+        active.persistedUrl = isGoogleAuthUrl(target) ? active.persistedUrl || target : target
+        active.title = ''
+        active.theater = isVideoPageUrl(target)
+        persistEntryState(entry, { touch: true })
+        loadTabAddress(entry, active, target)
         return snapshotOf(entry)
       }
 
       const entry = ensureEntry(workspaceId, panel)
       if (!entry.stateUrl) {
-        const stateUrl = readBrowserState(panel.state).url
-        entry.stateUrl = stateUrl
-        loadTabAddress(entry, activeTab(entry), stateUrl)
+        const parsedState = readBrowserState(panel.state)
+        entry.stateUrl = parsedState.url
+        entry.stateRef = panel.state
+        entry.lastPersistedState = parsedState
+        if (action !== 'new-tab' && action !== 'select-tab' && action !== 'close-tab') {
+          const active = activeTab(entry)
+          if (!active.url) active.url = parsedState.url
+          loadTabAddress(entry, active, parsedState.url, {
+            preserveTitle: active.title,
+            preserveTheater: active.theater,
+          })
+        } else if (!activeTab(entry).url) {
+          activeTab(entry).url = parsedState.url
+          activeTab(entry).persistedUrl = parsedState.url
+        }
       }
 
       if (action === 'new-tab') {
@@ -1096,6 +1381,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         const opened = createTab(entry, target)
         entry.tabs.push(opened)
         entry.activeTabId = opened.id
+        persistEntryState(entry, { touch: true })
         loadTabAddress(entry, opened, target)
         return snapshotOf(entry)
       }
@@ -1105,6 +1391,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         const found = entry.tabs.find((one) => one.id === targetId)
         if (found) {
           entry.activeTabId = found.id
+          persistEntryState(entry, { touch: true })
           const wasSuspended = found.suspended
           if (wasSuspended) {
             wakeTab(entry, found)
@@ -1122,6 +1409,10 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       if (action === 'close-tab') {
         const targetId = typeof rawUrl === 'string' && rawUrl ? rawUrl : entry.activeTabId
         closeTabById(entry, targetId, false)
+        const next = activeTab(entry)
+        if (next.suspended) {
+          wakeTab(entry, next)
+        }
         return snapshotOf(entry)
       }
 
@@ -1131,6 +1422,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         if (!active.suspended) {
           active.view.setTheaterMode?.(active.theater, active.url || entry.stateUrl)
         }
+        persistEntryState(entry, { touch: true })
         pushSnapshot(entry)
         return snapshotOf(entry)
       }
@@ -1156,13 +1448,29 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
     async interact(rawWorkspaceId, rawPanelId, interaction, signal) {
       const { workspaceId, panel } = resolveBrowserPanel(null, rawWorkspaceId, rawPanelId, false)
       const entry = ensureEntry(workspaceId, panel)
-      const stateUrl = readBrowserState(panel.state).url
-      if (!entry.stateUrl && stateUrl) {
-        entry.stateUrl = stateUrl
+      const parsedState = readBrowserState(panel.state)
+      if (!entry.stateUrl && parsedState.url) {
+        entry.stateUrl = parsedState.url
         entry.stateRef = panel.state
-        loadTabAddress(entry, activeTab(entry), stateUrl)
-      } else if (stateUrl) {
-        applyPanelState(entry, panel, stateUrl)
+        entry.lastPersistedState = parsedState
+        if (
+          interaction.action !== 'navigate' &&
+          interaction.action !== 'new_tab' &&
+          interaction.action !== 'select_tab' &&
+          interaction.action !== 'close_tab'
+        ) {
+          const active = activeTab(entry)
+          if (!active.url) active.url = parsedState.url
+          loadTabAddress(entry, active, parsedState.url, {
+            preserveTitle: active.title,
+            preserveTheater: active.theater,
+          })
+        } else if (!activeTab(entry).url) {
+          activeTab(entry).url = parsedState.url
+          activeTab(entry).persistedUrl = parsedState.url
+        }
+      } else if (parsedState.url) {
+        applyPanelState(entry, panel)
       }
 
       const resetIdleTimer = (tab: TabEntry): void => {
@@ -1173,8 +1481,15 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       }
 
       if (interaction.action === 'navigate') {
-        updatePanelUrl(entry, interaction.url)
-        loadTabAddress(entry, activeTab(entry), interaction.url)
+        const active = activeTab(entry)
+        active.url = interaction.url
+        active.persistedUrl = isGoogleAuthUrl(interaction.url)
+          ? active.persistedUrl || interaction.url
+          : interaction.url
+        active.title = ''
+        active.theater = isVideoPageUrl(interaction.url)
+        persistEntryState(entry, { touch: true })
+        loadTabAddress(entry, active, interaction.url)
         await this.syncPanelText(workspaceId, panel.id, signal)
         const snap = snapshotOf(entry)
         return { action: 'navigate', detail: `Navigated to ${snap.url}.`, snapshot: snap }
@@ -1184,6 +1499,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
         const opened = createTab(entry, interaction.url)
         entry.tabs.push(opened)
         entry.activeTabId = opened.id
+        persistEntryState(entry, { touch: true })
         loadTabAddress(entry, opened, interaction.url)
         await this.syncPanelText(workspaceId, panel.id, signal)
         const snap = snapshotOf(entry)
@@ -1198,6 +1514,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
           )
         }
         entry.activeTabId = found.id
+        persistEntryState(entry, { touch: true })
         if (found.suspended) {
           wakeTab(entry, found)
           await this.syncPanelText(workspaceId, panel.id, signal)
@@ -1330,7 +1647,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       const entry = entries.get(entryKey(rawWorkspaceId, panel.id))
       if (!entry || entry.destroyed) return panel.text ?? null
       const stateUrl = readBrowserState(panel.state).url
-      if (stateUrl) applyPanelState(entry, panel, stateUrl)
+      if (stateUrl) applyPanelState(entry, panel)
 
       let tab = activeTab(entry)
       if (tab.destroyed || tab.suspended || entry.destroyed || signal?.aborted) return tab.text
@@ -1453,7 +1770,7 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
           destroyEntry(entry)
           continue
         }
-        applyPanelState(entry, panel, stateUrl)
+        applyPanelState(entry, panel)
         positionEntry(entry, state)
       }
     },
