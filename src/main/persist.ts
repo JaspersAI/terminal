@@ -26,7 +26,7 @@ import {
   type Loop,
   type Loops,
 } from '../shared/loops/loops'
-import { unifyTabRooms } from '../shared/loops/closed'
+import { allRoomIds, unifyTabRooms } from '../shared/loops/closed'
 import { findProvider, signsIn } from '../shared/llm/providers'
 import type { Workspace, Budgets } from '../shared/state'
 import { isTheme, type Theme } from '../shared/app/theme'
@@ -36,7 +36,7 @@ import { PRO_MODE_OFF, readProMode, type ProMode } from '../shared/app/pro-mode'
 import { EMPTY_COLLAB } from '../shared/collab/collab'
 import { readAllowedApps } from '../shared/plugins/apps'
 import { readSourceApprovals, type SourceApproval } from '../shared/plugins/approvals'
-import type { Task } from '../shared/tasks/tasks'
+import { resolveTaskRoomId, type Task } from '../shared/tasks/tasks'
 import { checkWindows, MAIN_WINDOW, restoreStoredGrids } from '../shared/grid/windows'
 import bundledTerms from '../../build/license.txt?raw'
 import type { MainState, StoredOAuth, StoredProvider } from './state'
@@ -213,7 +213,7 @@ export function load(): MainState {
   }
   const { grids, loops } = unified
   const tasksFile = readJson<Partial<TasksFile>>(tasksPath())
-  const tasks = loadTasks(Array.isArray(tasksFile?.tasks) ? tasksFile.tasks : [], state.workspaces)
+  const tasks = loadTasks(Array.isArray(tasksFile?.tasks) ? tasksFile.tasks : [], state.workspaces, loops)
   const eye = readEye(state.eye)
   // An install is told apart by an id made once. A file without one gets it now, and it is written with
   // the first change, as the workspace patches above are.
@@ -297,17 +297,21 @@ function checkIds(value: unknown): string[] {
  * the one it had, is a missed run when it has passed. A task of a workspace that is gone goes with it,
  * and one written before tasks kept their earlier runs starts with none.
  */
-function loadTasks(tasks: Task[], workspaces: Workspace[]): Task[] {
+function loadTasks(tasks: Task[], workspaces: Workspace[], loops: Record<string, Loops>): Task[] {
   const known = new Set(workspaces.map((w) => w.id))
+  const knownRooms = allRoomIds(loops)
   return tasks.flatMap((task) => {
     if (!known.has(task.workspaceId)) {
       console.warn(`tasks: dropping ${task.id}, its workspace is gone`)
       return []
     }
+    const resolvedRoomId = resolveTaskRoomId(task, knownRooms)
+    const roomId = task.roomId === null ? null : (resolvedRoomId ?? undefined)
     // A task written before clock rules has no `at`, and runs on its interval as it always did.
     return [
       {
         ...task,
+        ...(roomId !== undefined ? { roomId } : {}),
         at: task.at ?? null,
         model: task.model ?? null,
         running: false,

@@ -4,9 +4,14 @@ import { ORCHESTRATOR_TOOLS } from '../loops/loops.ts'
 import {
   afterRun,
   checkCommands,
+  checkRoomId,
   checkTaskInput,
+  explicitlyTargetsCentral,
+  inferRoomIdFromInstructions,
   missingInRun,
   needsShellInRun,
+  resolveTaskRoomId,
+  routeTaskOutput,
   SHELL_TOOL,
   TASK_EXCLUDED_TOOLS,
   TASK_MODEL_MAX,
@@ -821,4 +826,126 @@ test('formatAsOf and formatLocalStamp format timestamps as "as of YYYY-MM-DD <12
   assert.equal(formatLocalStamp(0, 'America/Los_Angeles'), '')
   assert.equal(formatAsOf(0, 'America/Los_Angeles'), '')
   assert.equal(formatAsOf(Number.NaN, 'America/Los_Angeles'), '')
+})
+
+test('checkRoomId, inferRoomIdFromInstructions, and resolveTaskRoomId normalize explicit room bindings and single-room instruction fallbacks', () => {
+  assert.equal(checkRoomId(undefined), undefined)
+  assert.equal(checkRoomId(null), null)
+  assert.equal(checkRoomId('  '), null)
+  assert.equal(checkRoomId('room_110'), 'f110')
+  assert.equal(checkRoomId(' @Room 73 '), 'f73')
+  assert.equal(checkRoomId('loop_91'), 'f91')
+  assert.equal(checkRoomId('f12'), 'f12')
+  assert.throws(() => checkRoomId('not-a-room'), /roomId must name a room/)
+
+  const ok = { toolExists: () => true }
+  const base = {
+    workspaceId: 'ws-1',
+    instructions: 'Scan competitive updates',
+    executeAt: T0,
+    every: 15 * MIN,
+    at: null,
+    speak: 'always' as const,
+    call: null,
+  }
+  assert.equal(checkTaskInput({ ...base, roomId: 'room_110' }, ok).roomId, 'f110')
+  assert.equal(checkTaskInput({ ...base, roomId: null }, ok).roomId, null)
+  assert.equal(checkTaskInput({ ...base, roomId: '' }, ok).roomId, null)
+  assert.equal('roomId' in checkTaskInput(base, ok), false)
+
+  // Single-room static analysis matches explicit room_N / loop_N references and ignores multi-room or unrelated tokens.
+  assert.equal(
+    inferRoomIdFromInstructions(
+      'Send an update to room_73 with update_room instructing it to refresh its browser view (e3).',
+    ),
+    'f73',
+  )
+  assert.equal(inferRoomIdFromInstructions('Refresh Room 110 and post the brief in room_110.'), 'f110')
+  assert.equal(
+    inferRoomIdFromInstructions('Call update_room on room_91 and update_room on room_92 every 15 minutes.'),
+    null,
+  )
+  assert.equal(inferRoomIdFromInstructions('Check Ford F150 sales and F1 race sponsors.'), null)
+  assert.equal(explicitlyTargetsCentral('Inspect room_73 and report to Central if down.'), true)
+  assert.equal(inferRoomIdFromInstructions('Inspect room_73 and report to Central if down.'), null)
+
+  const known = new Set(['f73', 'f110'])
+  assert.equal(resolveTaskRoomId({ roomId: 'room_110', instructions: 'Daily brief' }, known), 'f110')
+  // Explicit null unbinds to Central even when instructions mention a room.
+  assert.equal(resolveTaskRoomId({ roomId: null, instructions: 'Check room_73' }, known), null)
+  // Legacy tasks without roomId infer from instructions only when that room exists.
+  assert.equal(resolveTaskRoomId({ instructions: 'Send update to room_73' }, known), 'f73')
+  assert.equal(resolveTaskRoomId({ instructions: 'Send update to room_999' }, known), null)
+})
+
+test('routeTaskOutput routes affiliated room tasks exclusively to their room and unaffiliated tasks to Central', () => {
+  const known = new Set(['f73', 'f91', 'f92', 'f110'])
+
+  // 1. Explicit roomId binding: routes strictly to the room, never Central, and stays quiet on empty or failed runs.
+  const bound = task({ id: 't10', roomId: 'f110', call: null, instructions: 'Post daily intelligence brief' })
+  assert.deepEqual(routeTaskOutput('t10', bound, { ok: true, result: '### Morning Brief', changed: false }, known), {
+    kind: 'room',
+    roomId: 'f110',
+  })
+  assert.deepEqual(routeTaskOutput('t10', bound, { ok: true, result: '   ', changed: false }, known), {
+    kind: 'none',
+  })
+  assert.deepEqual(routeTaskOutput('t10', bound, { ok: false, result: 'timeout', changed: false }, known), {
+    kind: 'none',
+  })
+
+  // 2. Direct room run or multi-room update_room handoff (inRoom: true): already written in room tiles, zero Central output.
+  const multiRoom = task({
+    id: 't28',
+    call: null,
+    instructions: 'Call update_room on room_91 and update_room on room_92 every 15 minutes',
+  })
+  assert.deepEqual(
+    routeTaskOutput(
+      't28 on Media sentiment',
+      multiRoom,
+      { ok: true, result: '### LinkedIn Sentiment Update', changed: false, inRoom: true },
+      known,
+    ),
+    { kind: 'none' },
+  )
+
+  // 3. Legacy task without roomId naming a single room where orchestrator emitted text directly without update_room:
+  // fallback heuristic routes strictly to that room rather than polluting Central.
+  const legacySingleRoom = task({
+    id: 't27',
+    call: null,
+    instructions: 'Refresh room_73 market watch stories and summarize new leads',
+  })
+  assert.deepEqual(
+    routeTaskOutput(
+      't27 on Market Watch',
+      legacySingleRoom,
+      { ok: true, result: '### Newly Appearing Stories', changed: false },
+      known,
+    ),
+    { kind: 'room', roomId: 'f73' },
+  )
+
+  // 4. Watch task bound to a room: silent when unchanged, routes to room when changed.
+  const roomWatch = task({
+    id: 't30',
+    roomId: 'f110',
+    speak: 'changed',
+    call: { tool: 'run_source', input: { source: 'sec/filings' } },
+  })
+  assert.deepEqual(routeTaskOutput('t30', roomWatch, { ok: true, result: '[]', changed: false }, known), {
+    kind: 'none',
+  })
+  assert.deepEqual(routeTaskOutput('t30', roomWatch, { ok: true, result: 'New 8-K filed', changed: true }, known), {
+    kind: 'room',
+    roomId: 'f110',
+  })
+
+  // 5. Unaffiliated workspace-level task: continues routing to Central.
+  const centralTask = task({ id: 't31', call: null, instructions: 'Alert me if VIX crosses 30' })
+  assert.deepEqual(
+    routeTaskOutput('t31', centralTask, { ok: true, result: 'VIX is at 31.4.', changed: false }, known),
+    { kind: 'central', notice: 't31: VIX is at 31.4.' },
+  )
 })

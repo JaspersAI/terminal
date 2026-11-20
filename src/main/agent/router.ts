@@ -104,7 +104,10 @@ function asRoomArg(input: Record<string, unknown>): string {
 async function hand(context: ToolContext, loop: Loop, written: string | undefined, went: string): Promise<string> {
   const tabId = findRoomTab(getState(), loop.id) ?? context.workspaceId
   const handed = handedBy(context.asked, context.task, written)
-  if (context.task !== undefined) return sendToLoop(tabId, loop.id, handed)
+  if (context.task !== undefined) {
+    context.handedToRoom?.(loop.id)
+    return sendToLoop(tabId, loop.id, handed)
+  }
   handOver(tabId, loop.id, handed)
   return went
 }
@@ -129,7 +132,25 @@ const updateRoom: Tool = {
     },
   },
   async run(input, context) {
-    const loop = findLoop(toPublic(getState()), context.workspaceId, asRoomArg(input))
+    const wanted = asRoomArg(input)
+    const state = toPublic(getState())
+    let loop: Loop
+    try {
+      loop = findLoop(state, context.workspaceId, wanted)
+    } catch (err) {
+      if (context.task !== undefined) {
+        try {
+          const found = findAnyRoom(state, context.workspaceId, wanted)
+          if (!found.open) {
+            context.handedToRoom?.(found.loop.id)
+            return ''
+          }
+        } catch {
+          // Rethrow original error below when no closed room matches either.
+        }
+      }
+      throw err
+    }
     const desc = optional(input.desc, (value) => asWords(value, 'desc'))
     const brief = optional(input.brief, (value) => (typeof value === 'string' ? value.trim() : ''))
     const systemPrompt = optional(input.systemPrompt, (value) => (typeof value === 'string' ? value.trim() : ''))

@@ -1,3 +1,4 @@
+import { allRoomIds } from '../../shared/loops/closed'
 import {
   isWatch,
   afterRun,
@@ -8,8 +9,9 @@ import {
   isPending,
   isWakeLag,
   pruneFinished,
+  resolveTaskRoomId,
   resolveWakeGrace,
-  runNotice,
+  routeTaskOutput,
   shouldDeferTaskRun,
   STARTUP_GRACE_MS,
   TASKS_MAX,
@@ -24,7 +26,7 @@ import {
 } from '../../shared/tasks/tasks'
 import { delta, type Delta } from '../../shared/tasks/delta'
 import { TASK_COMMANDS_MAX } from '../../shared/app/pro-mode'
-import type { TaskRequest } from '../agent/orchestrator'
+import type { TaskAskResult, TaskRequest } from '../agent/orchestrator'
 import { addNotice } from '../app/notices'
 import { getState, subscribe, update } from '../state'
 import { watch } from '../data/store'
@@ -42,10 +44,10 @@ export interface SchedulerDeps {
   toolExists(name: string): boolean
   /** One tool call, the way the orchestrator would make it, on the task's workspace. Resolves with the tool's answer. */
   runCall(call: TaskCall, workspaceId: string): Promise<string>
-  /** The task's instructions as a request to the orchestrator. Resolves with its reply. */
-  runAsk(task: TaskRequest): Promise<string>
-  /** A reply, into the task's workspace's conversation. Resolves whether it went in. */
-  intoChat(workspaceId: string, task: string, reply: string): Promise<boolean>
+  /** The task's instructions as a request to the orchestrator or its affiliated room. Resolves with its reply. */
+  runAsk(task: TaskRequest): Promise<string | TaskAskResult>
+  /** A reply, into the affiliated room's conversation when `roomId` is set, else Central's. Resolves whether it went in. */
+  intoChat(workspaceId: string, task: string, reply: string, roomId?: string | null): Promise<boolean>
   /** Called when a timer fires late enough past its deadline that the machine woke before resume arrived. */
   onWake?: () => void
   /** Remaining milliseconds to hold off task execution while the machine or auth state is sleeping or waking (0 when ready, Infinity while sleeping). */
@@ -184,12 +186,14 @@ export function updateTask(id: string, patch: TaskPatch, at = now(), workspaceId
   const checked = checkTaskInput(
     {
       workspaceId: merged.workspaceId,
+      roomId: merged.roomId,
       instructions: merged.instructions,
       executeAt: merged.executeAt,
       every: merged.every,
       at: merged.at,
       speak: merged.speak,
       call: merged.call,
+      model: merged.model,
       commands: merged.commands,
     },
     CHECK,
@@ -326,18 +330,30 @@ async function execute(task: Task): Promise<void> {
   replace({ ...current, running: true })
   const seqAtStart = sleepWakeSeq
   const at = now()
+  const targetRoomId = resolveTaskRoomId(current, allRoomIds(getState().loops))
   let ok = true
   let result = ''
+  let askInRoom = false
+  let askRoomId: string | null | undefined = undefined
+  const unpackAsk = (raw: string | TaskAskResult): string => {
+    if (typeof raw === 'string') return raw
+    askInRoom = Boolean(raw.inRoom)
+    askRoomId = raw.roomId
+    return raw.text
+  }
   try {
     result = current.call
       ? await run.runCall(current.call, current.workspaceId)
-      : await run.runAsk({
-          id: current.id,
-          instructions: current.instructions,
-          workspaceId: current.workspaceId,
-          model: current.model,
-          commands: current.commands,
-        })
+      : unpackAsk(
+          await run.runAsk({
+            id: current.id,
+            instructions: current.instructions,
+            workspaceId: current.workspaceId,
+            roomId: targetRoomId,
+            model: current.model,
+            commands: current.commands,
+          }),
+        )
   } catch (err) {
     ok = false
     result = err instanceof Error ? err.message : String(err)
@@ -365,13 +381,16 @@ async function execute(task: Task): Promise<void> {
       console.log(`[tasks] ${current.id} watch: changed`)
       // Something moved, so the instructions get their turn, with the change in front of them.
       try {
-        result = await run.runAsk({
-          id: current.id,
-          instructions: `${current.instructions}\n\nWhat you are watching changed. This is the difference since last time:\n\n${found.text}`,
-          workspaceId: current.workspaceId,
-          model: current.model,
-          commands: current.commands,
-        })
+        result = unpackAsk(
+          await run.runAsk({
+            id: current.id,
+            instructions: `${current.instructions}\n\nWhat you are watching changed. This is the difference since last time:\n\n${found.text}`,
+            workspaceId: current.workspaceId,
+            roomId: targetRoomId,
+            model: current.model,
+            commands: current.commands,
+          }),
+        )
       } catch (err) {
         ok = false
         result = err instanceof Error ? err.message : String(err)
@@ -399,18 +418,34 @@ async function execute(task: Task): Promise<void> {
   const before = getState().tasks.find((t) => t.id === current.id)
   if (!before) return
   replace(afterRun(before, { at, ok, result, ms }))
-  const notice = runNotice(
+  const sink = routeTaskOutput(
     taskLabel(current),
-    { call: current.call, every: current.every, lastRun: before.lastRun, history: before.history },
-    { ok, result, changed: found?.changed ?? false },
+    {
+      roomId: current.roomId,
+      instructions: current.instructions,
+      call: current.call,
+      every: current.every,
+      lastRun: before.lastRun,
+      history: before.history,
+    },
+    {
+      ok,
+      result,
+      changed: found?.changed ?? false,
+      inRoom: askInRoom,
+      roomId: askRoomId ?? targetRoomId,
+    },
+    allRoomIds(getState().loops),
   )
-  if (!notice) return
-  // A run that went well and speaks is the assistant's reply, which joins the conversation, where
-  // the chat shows it and a follow-up can refer to it. A failure is the app's to say, so it stays a
-  // notice alone. The notice goes either way: the inbox keeps it, and the system shows it while the
-  // window is away.
+  if (sink.kind === 'none') return
+  // A task affiliated with a room posts strictly inside that room's tile and conversation transcript,
+  // never polluting Central's chat or command bar. Only unaffiliated workspace-level tasks route to Central.
+  if (sink.kind === 'room') {
+    if (ok) await run.intoChat(current.workspaceId, current.id, result.trim(), sink.roomId).catch(() => false)
+    return
+  }
   const inChat = ok && (await run.intoChat(current.workspaceId, current.id, result.trim()).catch(() => false))
-  addNotice('tasks', notice, inChat ? current.workspaceId : undefined)
+  addNotice('tasks', sink.notice, inChat ? current.workspaceId : undefined)
 }
 
 /**

@@ -28,6 +28,8 @@ export interface ToolContext {
   unread?: boolean
   /** Set when a teammate in a shared room asked the room's agent: viewer and write sources are refused. */
   fromTeammate?: boolean
+  /** Records a room id (`f3`) that a scheduled task run handed work to, so its reply is not also echoed to Central. */
+  handedToRoom?: (roomId: string) => void
 }
 
 /**

@@ -1,10 +1,19 @@
 import { JASPERS } from '../../../shared/llm/providers'
+import {
+  allRoomIds,
+  canAccessTask,
+  resolveScheduledTaskRoom,
+  resolveUpdatedTaskRoom,
+} from '../../../shared/loops/closed'
+import { loopName } from '../../../shared/loops/loops'
 import { parseSlash, skillUsable } from '../../../shared/skills/skills'
 import {
   checkCommands,
   formatLocal,
+  inferRoomIdFromInstructions,
   missingInRun,
   parseAt,
+  resolveTaskRoomId,
   scheduleText,
   SHELL_TOOL,
   TASK_PRO_MODE_OFF,
@@ -13,6 +22,7 @@ import {
   type TaskCall,
   type TaskPatch,
 } from '../../../shared/tasks/tasks'
+import { findRoomTab } from '../../loops/loops'
 import { getState } from '../../state'
 import { askUser } from '../../actions'
 import { extractConfirmTarget } from '../../../shared/plugins/approvals'
@@ -135,15 +145,31 @@ const TOOLS: Tool[] = [
           description:
             'The model to run the instructions on, on the same provider. Leave out for the one this conversation is on. A task that only has to notice something can name a cheaper one.',
         },
+        roomId: {
+          type: 'string',
+          description:
+            'Optional target room (like room_3) this task belongs to. Automatically populated with the current room when scheduled from inside a room. When affiliated with a room, each run executes and posts strictly inside that room rather than Central.',
+        },
+        room: {
+          type: 'string',
+          description: 'Alias for roomId, like room_3.',
+        },
       },
       required: ['instructions'],
     },
     async run(input, context) {
       // Everything about the task is read and checked before the user is asked anything, so a
       // script is never approved for a task that is then refused for its schedule.
+      const instructions = asTaskInstructions(input.instructions, context)
+      const { workspaceId, roomId } = resolveScheduledRoom(
+        input.roomId !== undefined ? input.roomId : input.room,
+        instructions,
+        context,
+      )
       const draft = {
-        workspaceId: context.workspaceId,
-        instructions: asTaskInstructions(input.instructions, context),
+        workspaceId,
+        ...(roomId !== undefined ? { roomId } : {}),
+        instructions,
         executeAt: whenOf(input.at, input.in, Date.now()),
         every: secondsOf(input.every),
         at: ruleOf(input.on),
@@ -170,12 +196,18 @@ const TOOLS: Tool[] = [
   {
     name: 'update_task',
     description:
-      "Change one of this workspace's tasks: its instructions, when it runs next (at or in), how often (every, in seconds; 0 for once), its call, or enabled false to pause it and true to resume it. Only what you give changes.",
+      "Change one of this workspace's tasks: its instructions, target room (roomId, or an empty string to unbind), when it runs next (at or in), how often (every, in seconds; 0 for once), its call, or enabled false to pause it and true to resume it. Only what you give changes.",
     parameters: {
       type: 'object',
       properties: {
         taskId: TASK_ID,
         instructions: { type: 'string' },
+        roomId: {
+          type: 'string',
+          description:
+            'Target room (like room_3) this task belongs to, or an empty string to unbind it from a room so it reports to Central.',
+        },
+        room: { type: 'string', description: 'Alias for roomId, like room_3.' },
         at: { type: 'string', description: 'An ISO 8601 date-time with an offset.' },
         in: { type: 'integer', minimum: 0, description: 'Seconds from now.' },
         every: { type: 'integer', minimum: 0, description: 'Seconds between runs; 0 for once.' },
@@ -193,8 +225,23 @@ const TOOLS: Tool[] = [
     },
     async run(input, context) {
       const now = Date.now()
+      const id = asTaskId(input.taskId)
+      const existing = accessibleTask(id, context)
       const patch: TaskPatch = {}
       if (given(input.instructions)) patch.instructions = asTaskInstructions(input.instructions, context)
+      if (input.roomId !== undefined || input.room !== undefined) {
+        const rawRoom = input.roomId !== undefined ? input.roomId : input.room
+        const updatedRoom = resolveUpdatedRoom(rawRoom, context)
+        patch.roomId = updatedRoom.roomId
+        if (updatedRoom.workspaceId) patch.workspaceId = updatedRoom.workspaceId
+      } else if (patch.instructions !== undefined && existing.roomId === undefined && context.loop === undefined) {
+        const inferred = inferRoomIdFromInstructions(patch.instructions)
+        const ownerTabId = inferred ? findRoomTab(getState(), inferred) : undefined
+        if (inferred && ownerTabId) {
+          patch.roomId = inferred
+          patch.workspaceId = ownerTabId
+        }
+      }
       if (given(input.at) || given(input.in)) patch.executeAt = whenOf(input.at, input.in, now)
       if (given(input.every)) patch.every = secondsOf(input.every)
       if (given(input.on)) patch.at = ruleOf(input.on)
@@ -203,11 +250,10 @@ const TOOLS: Tool[] = [
       if (given(input.model))
         patch.model = getState().llm?.providerId === JASPERS ? null : asPathString(input.model).trim() || null
       if (typeof input.enabled === 'boolean') patch.enabled = input.enabled
-      const id = asTaskId(input.taskId)
       if (input.commands !== undefined && input.commands !== null) {
         // The list given replaces the task's: one it already had stays allowed, a new one is asked about.
         const wanted = checkCommands(asCommands(input.commands), getState().proMode.enabled)
-        const had = getTask(id, context.workspaceId).commands
+        const had = existing.commands
         const added = await approveForTask(
           wanted.filter((command) => !had.includes(command)),
           context,
@@ -223,16 +269,17 @@ const TOOLS: Tool[] = [
           deps: defaultApprovalDeps(askUser),
         })
       }
-      return JSON.stringify(taskShown(updateTask(id, patch, Date.now(), context.workspaceId)))
+      return JSON.stringify(taskShown(updateTask(id, patch, Date.now(), existing.workspaceId)))
     },
   },
   {
     name: 'cancel_task',
     description: "Cancel one of this workspace's tasks: it never runs again, and it leaves the list.",
     parameters: { type: 'object', properties: { taskId: TASK_ID }, required: ['taskId'] },
-    async run(input, { workspaceId }) {
+    async run(input, context) {
       const id = asTaskId(input.taskId)
-      cancelTask(id, workspaceId)
+      const existing = accessibleTask(id, context)
+      cancelTask(id, existing.workspaceId)
       return JSON.stringify({ cancelled: id })
     },
   },
@@ -375,8 +422,10 @@ function asTaskId(value: unknown): string {
 
 function taskShown(task: Task): Record<string, unknown> {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const roomId = resolveTaskRoomId(task, allRoomIds(getState().loops))
   return {
     taskId: task.id,
+    roomId: roomId ? loopName(roomId) : null,
     status: taskStatus(task),
     nextAt: task.nextAt === null ? null : formatLocal(task.nextAt, timeZone),
     every: scheduleText(task),
@@ -386,4 +435,38 @@ function taskShown(task: Task): Record<string, unknown> {
     call: task.call,
     ...(task.commands.length ? { commands: task.commands } : {}),
   }
+}
+
+function resolveScheduledRoom(
+  rawRoom: unknown,
+  instructions: string,
+  context: ToolContext,
+): { workspaceId: string; roomId: string | null | undefined } {
+  const normalized = rawRoom === undefined ? undefined : rawRoom === null ? null : asPathString(rawRoom)
+  return resolveScheduledTaskRoom({
+    loopsByTab: getState().loops,
+    workspaceId: context.workspaceId,
+    currentLoopId: context.loop,
+    rawRoom: normalized,
+    instructions,
+  })
+}
+
+function resolveUpdatedRoom(rawRoom: unknown, context: ToolContext): { roomId: string | null; workspaceId?: string } {
+  return resolveUpdatedTaskRoom({
+    loopsByTab: getState().loops,
+    workspaceId: context.workspaceId,
+    currentLoopId: context.loop,
+    rawRoom: rawRoom === null ? null : asPathString(rawRoom),
+  })
+}
+
+function accessibleTask(id: string, context: ToolContext): Task {
+  const mainState = getState()
+  const task = getTask(id)
+  if (!canAccessTask(task, mainState.loops, context.workspaceId, context.loop)) {
+    if (context.loop !== undefined) throw new Error(`Unknown task ${id} in this room.`)
+    return getTask(id, context.workspaceId)
+  }
+  return task
 }

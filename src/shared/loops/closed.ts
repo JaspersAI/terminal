@@ -20,8 +20,15 @@ import {
   type GridSize,
   type Rect,
 } from '../grid/grid.ts'
-import { panelTargetOfCall, type Task, type TaskCall } from '../tasks/tasks.ts'
 import {
+  inferRoomIdFromInstructions,
+  panelTargetOfCall,
+  resolveTaskRoomId,
+  type Task,
+  type TaskCall,
+} from '../tasks/tasks.ts'
+import {
+  findAnyRoom,
   frameOf,
   loopChat,
   loopName,
@@ -630,6 +637,18 @@ function isReusedOnSource(id: string, room: ClosedLoop, sourceGrids?: Record<num
   )
 }
 
+/** Every room id (`f1`, `f2`, …) currently open or saved in memory across all tabs. */
+export function allRoomIds(
+  loopsByTab: Record<string, { list: readonly Loop[]; closed?: readonly ClosedLoop[] }>,
+): Set<string> {
+  const ids = new Set<string>()
+  for (const one of Object.values(loopsByTab)) {
+    for (const loop of one.list) ids.add(loop.id)
+    for (const shut of one.closed ?? []) ids.add(shut.loop.id)
+  }
+  return ids
+}
+
 /** Whether a scheduled task targets a room or its elements/panels on `sourceTabId`. */
 export function taskTargetsRoom(
   task: Task,
@@ -637,6 +656,7 @@ export function taskTargetsRoom(
   sourceTabId: string,
   sourceGrids?: Record<number, Grid>,
 ): boolean {
+  if (task.roomId !== undefined) return task.roomId === room.loop.id
   const elementIds = new Set(room.elements.map((e) => e.id))
   const panelIds = new Set(room.panels.flatMap((p) => [p.id, p.elementId]))
   const closedAt = [...(room.loop.log ?? [])].reverse().find((c) => c.change === 'closed')?.at
@@ -901,4 +921,116 @@ export function unifyTabRooms(
   }
 
   return changed ? { grids: nextGrids, loops: nextLoops } : { grids: gridsByTab, loops: loopsByTab }
+}
+
+function findRoomTabInLoops(loopsByTab: Record<string, Loops>, loopId: string): string | undefined {
+  for (const [tabId, loops] of Object.entries(loopsByTab)) {
+    if (loops.list.some((one) => one.id === loopId) || closedLoop(loops, loopId) !== undefined) {
+      return tabId
+    }
+  }
+  return undefined
+}
+
+function publicLoopsOf(loopsByTab: Record<string, Loops>): {
+  loops: Record<string, readonly Loop[]>
+  closedLoops: Record<string, readonly Loop[]>
+} {
+  const loops: Record<string, readonly Loop[]> = {}
+  const closedLoops: Record<string, readonly Loop[]> = {}
+  for (const [tabId, one] of Object.entries(loopsByTab)) {
+    loops[tabId] = one.list
+    if (one.closed && one.closed.length > 0) {
+      closedLoops[tabId] = one.closed.map((c) => c.loop)
+    }
+  }
+  return { loops, closedLoops }
+}
+
+/**
+ * Resolves `{ workspaceId, roomId }` for `schedule_task`:
+ * - When called from inside a room (`currentLoopId`), auto-populates `roomId = currentLoopId` and
+ *   refuses any attempt to target another room.
+ * - When called from Central with an explicit `rawRoom`, resolves open or closed rooms by name, id,
+ *   or custom title, or unbinds with `null` / `""`.
+ * - When called from Central without `rawRoom`, falls back to single-room instruction inference
+ *   against existing rooms across tabs.
+ */
+export function resolveScheduledTaskRoom(options: {
+  loopsByTab: Record<string, Loops>
+  workspaceId: string
+  currentLoopId?: string
+  rawRoom?: string | null
+  instructions: string
+}): { workspaceId: string; roomId: string | null | undefined } {
+  const { loopsByTab, workspaceId, currentLoopId, rawRoom, instructions } = options
+  if (currentLoopId !== undefined) {
+    if (rawRoom !== undefined && rawRoom !== null && rawRoom.trim() !== '') {
+      const ownerTab = findRoomTabInLoops(loopsByTab, currentLoopId) ?? workspaceId
+      const own =
+        loopsByTab[ownerTab]?.list.find((one) => one.id === currentLoopId) ??
+        closedLoop(loopsByTab[ownerTab] ?? NO_LOOPS, currentLoopId)?.loop
+      if (!own || !named([own], rawRoom)) {
+        throw new Error('A room can only schedule tasks for itself.')
+      }
+    }
+    const ownerTabId = findRoomTabInLoops(loopsByTab, currentLoopId) ?? workspaceId
+    return { workspaceId: ownerTabId, roomId: currentLoopId }
+  }
+  if (rawRoom === null || (typeof rawRoom === 'string' && rawRoom.trim() === '')) {
+    return { workspaceId, roomId: null }
+  }
+  if (typeof rawRoom === 'string' && rawRoom.trim() !== '') {
+    const found = findAnyRoom(publicLoopsOf(loopsByTab), workspaceId, rawRoom)
+    return { workspaceId: found.workspaceId, roomId: found.loop.id }
+  }
+  const inferred = inferRoomIdFromInstructions(instructions)
+  const ownerTabId = inferred ? findRoomTabInLoops(loopsByTab, inferred) : undefined
+  if (inferred && ownerTabId) {
+    return { workspaceId: ownerTabId, roomId: inferred }
+  }
+  return { workspaceId, roomId: undefined }
+}
+
+/** Resolves a `roomId` update for `update_task`, enforcing room isolation when invoked inside a room. */
+export function resolveUpdatedTaskRoom(options: {
+  loopsByTab: Record<string, Loops>
+  workspaceId: string
+  currentLoopId?: string
+  rawRoom: string | null
+}): { roomId: string | null; workspaceId?: string } {
+  const { loopsByTab, workspaceId, currentLoopId, rawRoom } = options
+  if (currentLoopId !== undefined) {
+    if (rawRoom === null || rawRoom.trim() === '') {
+      throw new Error('A room can only manage tasks for itself.')
+    }
+    const ownerTab = findRoomTabInLoops(loopsByTab, currentLoopId) ?? workspaceId
+    const own =
+      loopsByTab[ownerTab]?.list.find((one) => one.id === currentLoopId) ??
+      closedLoop(loopsByTab[ownerTab] ?? NO_LOOPS, currentLoopId)?.loop
+    if (!own || !named([own], rawRoom)) {
+      throw new Error('A room can only manage tasks for itself.')
+    }
+    return { roomId: currentLoopId, workspaceId: ownerTab }
+  }
+  if (rawRoom === null || rawRoom.trim() === '') {
+    return { roomId: null }
+  }
+  const found = findAnyRoom(publicLoopsOf(loopsByTab), workspaceId, rawRoom)
+  return { roomId: found.loop.id, workspaceId: found.workspaceId }
+}
+
+/** Whether a caller (`currentLoopId` inside a room, or Central on `workspaceId`) may update or cancel `task`. */
+export function canAccessTask(
+  task: Pick<Task, 'workspaceId' | 'roomId' | 'instructions'>,
+  loopsByTab: Record<string, Loops>,
+  workspaceId: string,
+  currentLoopId?: string,
+): boolean {
+  const knownRooms = allRoomIds(loopsByTab)
+  const affiliatedRoom = resolveTaskRoomId(task, knownRooms)
+  if (currentLoopId !== undefined) {
+    return affiliatedRoom === currentLoopId
+  }
+  return task.workspaceId === workspaceId || affiliatedRoom !== null
 }

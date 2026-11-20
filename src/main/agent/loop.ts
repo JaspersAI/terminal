@@ -11,10 +11,12 @@ import { getGrids } from '../grid/grid'
 import { expandSlash } from '../skills/skills'
 import { getState, subscribe } from '../state'
 import { NEW_THREAD, turnText, userRequest, type Added } from './request'
+import { waitForThreads } from './thread-file'
 import { loopTools } from './tools'
 import { loopPrompt, loopStateNow, taskPreface } from './utils/prompt'
 import { begin, ended, stopChat } from './utils/runs'
-import { exchanges, fileDirectExchange, forget } from './utils/thread'
+import { modelFor } from './utils/settings'
+import { citedBy, exchanges, file, fileDirectExchange, forget, keep, threadFor } from './utils/thread'
 import { createTurns } from './utils/turns'
 
 // A room's requests: a message sent in its frame's box, answered by its own agent. It is the same
@@ -102,6 +104,7 @@ export async function sendToLoop(workspaceId: string, loopId: string, handed: Ha
     written: handed.written,
     task: handed.task,
     fromTeammate: handed.fromTeammate,
+    model: handed.model,
   })
 }
 
@@ -117,6 +120,8 @@ interface Sent {
   task?: string
   /** Set when a teammate in a shared room asked the room's agent. */
   fromTeammate?: boolean
+  /** Optional model override when run on behalf of a scheduled task. */
+  model?: string | null
 }
 
 /** One request of a room's, shown in its frame: its own chat, prompt, and tools, in its turn. */
@@ -124,7 +129,7 @@ function runOn(
   workspaceId: string,
   loop: string,
   on: string,
-  { input, ask, written, task, fromTeammate }: Sent,
+  { input, ask, written, task, fromTeammate, model }: Sent,
 ): Promise<string> {
   const state = getState()
   const record = loopsOf(workspaceId).list.find((one) => one.id === loop)
@@ -185,13 +190,14 @@ function runOn(
       input,
       written,
       task,
+      model,
       ask,
       label: `${loop} `,
       // The whole of it goes on: a room's conversation is its memory of the work.
       goesOn: () => {},
       // Work a task's run started is told so, as the task's own run is: it answers only when there is
       // something to hear, and is given the scripts the user allowed that task.
-      prompt: loopPrompt(workspaceId, loop, task === undefined ? [] : [taskPreface(task, commandsOf(task))], {
+      prompt: loopPrompt(workspaceId, loop, task === undefined ? [] : [taskPreface(task, commandsOf(task), true)], {
         fromTeammate,
       }),
       tools: loopTools,
@@ -237,6 +243,34 @@ export function loopHistory(loop: string, limit: number, before?: number): Promi
   const record = openRecord ?? closedRecord
   if (!record) throw new Error(`Unknown work ${loop}.`)
   return exchanges(loopChat(ownerTabId, record), limit, before)
+}
+
+/**
+ * Appends a scheduled task's unasked reply strictly inside a room's conversation thread and log
+ * rather than Central, updating the room's activity timestamp and notifying shared-room teammates.
+ */
+export async function roomSaid(loopId: string, note: string, text: string): Promise<boolean> {
+  await waitForThreads()
+  const state = getState()
+  const ownerTabId = findRoomTab(state, loopId)
+  if (!ownerTabId) return false
+  const loops = loopsOf(ownerTabId)
+  const record = loops.list.find((one) => one.id === loopId) ?? closedLoop(loops, loopId)?.loop
+  if (!record) return false
+  const chat = loopChat(ownerTabId, record)
+  const config = modelFor(chat)
+  if (!config) return false
+  const history = threadFor(chat, config)
+  const citations = citedBy(text, history, ownerTabId)
+  history.push(
+    { role: 'user', text: note },
+    { role: 'assistant', text, toolCalls: [], raw: null, ...(citations.length > 0 ? { citations } : {}) },
+  )
+  keep(chat, config, history)
+  file(chat, history)
+  touchLoop(ownerTabId, loopId)
+  collab?.said(ownerTabId, loopId)
+  return true
 }
 
 /**

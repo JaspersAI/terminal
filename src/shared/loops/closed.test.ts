@@ -7,6 +7,7 @@ import {
   archiveTabRooms,
   archiveTabTasks,
   archiveTargetTabId,
+  canAccessTask,
   closedCallMessage,
   closedHolding,
   closedWithout,
@@ -16,6 +17,8 @@ import {
   reopenAcrossTabs,
   reopened,
   reopenRoomTasks,
+  resolveScheduledTaskRoom,
+  resolveUpdatedTaskRoom,
   roomCounts,
   searchRooms,
   unifyTabRooms,
@@ -763,5 +766,127 @@ test('archiveTargetTabId skips teammate replica tabs so archived rooms are never
       'own-only',
     ),
     null,
+  )
+})
+
+test('resolveScheduledTaskRoom, resolveUpdatedTaskRoom, canAccessTask, and room lifecycle helpers scope roomId tasks cleanly', () => {
+  const loopsByTab: Record<string, Loops> = {
+    t1: {
+      seq: 110,
+      list: [loop('f73', 'Market Watch'), loop('f110', 'Competitive intel', { title: 'Daily Intel Monitor' })],
+    },
+    t2: {
+      seq: 110,
+      list: [loop('f91', 'LinkedIn sentiment')],
+    },
+  }
+
+  // Invoking schedule_task inside room_110 auto-populates roomId = 'f110' even when instructions name no room.
+  assert.deepEqual(
+    resolveScheduledTaskRoom({
+      loopsByTab,
+      workspaceId: 't1',
+      currentLoopId: 'f110',
+      instructions: 'Scrape updates and post morning intelligence brief',
+    }),
+    { workspaceId: 't1', roomId: 'f110' },
+  )
+  // A room agent cannot schedule a task targeting a different room.
+  assert.throws(
+    () =>
+      resolveScheduledTaskRoom({
+        loopsByTab,
+        workspaceId: 't1',
+        currentLoopId: 'f110',
+        rawRoom: 'room_73',
+        instructions: 'Cross-room attempt',
+      }),
+    /only schedule tasks for itself/,
+  )
+
+  // From Central, explicit roomId resolves by room_N or custom title across tabs, and single-room instructions auto-infer.
+  assert.deepEqual(
+    resolveScheduledTaskRoom({
+      loopsByTab,
+      workspaceId: 't1',
+      rawRoom: 'room_91',
+      instructions: 'Refresh feed',
+    }),
+    { workspaceId: 't2', roomId: 'f91' },
+  )
+  assert.deepEqual(
+    resolveScheduledTaskRoom({
+      loopsByTab,
+      workspaceId: 't2',
+      rawRoom: 'Daily Intel Monitor',
+      instructions: 'Refresh brief',
+    }),
+    { workspaceId: 't1', roomId: 'f110' },
+  )
+  assert.deepEqual(
+    resolveScheduledTaskRoom({
+      loopsByTab,
+      workspaceId: 't1',
+      instructions: 'Refresh room_91 sentiment stories',
+    }),
+    { workspaceId: 't2', roomId: 'f91' },
+  )
+  assert.deepEqual(
+    resolveScheduledTaskRoom({
+      loopsByTab,
+      workspaceId: 't1',
+      instructions: 'Check SPY price at open',
+    }),
+    { workspaceId: 't1', roomId: undefined },
+  )
+
+  // update_task room binding and unbinding.
+  assert.deepEqual(resolveUpdatedTaskRoom({ loopsByTab, workspaceId: 't1', rawRoom: 'room_91' }), {
+    roomId: 'f91',
+    workspaceId: 't2',
+  })
+  assert.deepEqual(resolveUpdatedTaskRoom({ loopsByTab, workspaceId: 't1', rawRoom: '' }), { roomId: null })
+  assert.throws(
+    () => resolveUpdatedTaskRoom({ loopsByTab, workspaceId: 't1', currentLoopId: 'f110', rawRoom: '' }),
+    /only manage tasks for itself/,
+  )
+
+  // Room isolation on task access.
+  const room110Task = sampleTask('t1', 't1', { roomId: 'f110', instructions: 'Run morning brief' })
+  const centralTask = sampleTask('t2', 't1', { instructions: 'Check portfolio' })
+  assert.equal(canAccessTask(room110Task, loopsByTab, 't1', 'f110'), true)
+  assert.equal(canAccessTask(room110Task, loopsByTab, 't1', 'f73'), false)
+  assert.equal(canAccessTask(centralTask, loopsByTab, 't1', 'f110'), false)
+  assert.equal(canAccessTask(room110Task, loopsByTab, 't2', undefined), true)
+
+  // A task with explicit roomId moves with its room across tabs and is removed when its room is deleted,
+  // even when its instructions mention no room or element id.
+  const t1Grids: Record<number, Grid> = {
+    1: {
+      ...EMPTY_GRID,
+      elements: [element(1, { loop: 'f110', rect: { x: 0, y: 0, w: 8, h: 6 } })],
+      panels: [panel(1, frame)],
+      focus: ['e1'],
+      seq: 1,
+    },
+  }
+  const t2Grids: Record<number, Grid> = { 1: EMPTY_GRID }
+  const moved = reopenAcrossTabs(
+    { t1: t1Grids, t2: t2Grids },
+    { t1: { seq: 110, list: [loop('f110', 'Intel')] }, t2: { seq: 110, list: [] } },
+    't2',
+    'f110',
+    1,
+    90,
+    [room110Task, centralTask],
+  )
+  assert.equal(moved.tasks[0]!.workspaceId, 't2')
+  assert.equal(moved.tasks[0]!.roomId, 'f110')
+  assert.equal(moved.tasks[1]!.workspaceId, 't1')
+
+  const shut110 = closedWithout(moved.loops['t2']!, moved.grids['t2']!, t2Grids, 100).closed![0]!
+  assert.deepEqual(
+    withoutRoomTasks(moved.tasks, shut110, 't2').map((t) => t.id),
+    ['t2'],
   )
 })

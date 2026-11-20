@@ -1755,6 +1755,7 @@ function asTaskInput(value: unknown): TaskInput {
   ) {
     return {
       workspaceId: value.workspaceId,
+      ...(typeof value.roomId === 'string' ? { roomId: value.roomId } : value.roomId === null ? { roomId: null } : {}),
       instructions: value.instructions,
       executeAt: value.executeAt,
       every: value.every,

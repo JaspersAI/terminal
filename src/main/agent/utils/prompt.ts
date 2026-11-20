@@ -5,6 +5,7 @@ import {
   describeInstalledFor,
   describeInstalledToRoute,
   describeNow,
+  describeRoomTasks,
   describeRound,
   describeTiles,
   LOOP_PLACEMENT,
@@ -17,6 +18,8 @@ import {
 } from '../../../shared/agent/prompt'
 import { standingText } from '../../../shared/agent/standing'
 import { describeCollabState, fullName } from '../../../shared/collab/collab'
+import { allRoomIds } from '../../../shared/loops/closed'
+import { resolveTaskRoomId } from '../../../shared/tasks/tasks'
 import { sourcesSeen } from '../../data/store'
 import { loopsOf } from '../../loops/loops'
 import { loopName, showsChat } from '../../../shared/loops/loops'
@@ -135,18 +138,23 @@ export function loopPrompt(
 
 /** What is true right now for a room's agent: its own tile and views, the clock, and the sources filed (blind to other rooms). */
 export function loopStateNow(workspaceId: string, loopId: string): string {
-  const state = toPublic(getState())
+  const mainState = getState()
+  const state = toPublic(mainState)
   const loop = loopsOf(workspaceId).list.find((one) => one.id === loopId)
   const myFullName = fullName(state.collab)
   const userLine = myFullName ? `User: ${myFullName}.` : ''
+  const clock = defaultClock()
+  const knownRooms = allRoomIds(mainState.loops)
+  const roomTasks = state.tasks.filter((task) => resolveTaskRoomId(task, knownRooms) === loopId)
   return [
     ...(userLine ? [userLine] : []),
     ...(loop ? [describeTiles(state, workspaceId, loop, (id) => getView(id)?.instructions)] : []),
-    describeNow(defaultClock()),
+    describeNow(clock),
+    ...(roomTasks.length > 0 ? [describeRoomTasks(roomTasks, clock)] : []),
     describeFiled(sourcesSeen(), state.sources),
   ].join('\n')
 }
 
-export function taskPreface(id: string, commands: readonly string[] = []): string {
-  return buildTaskPreface(id, commands, getState().proMode.enabled)
+export function taskPreface(id: string, commands: readonly string[] = [], inRoom = false): string {
+  return buildTaskPreface(id, commands, getState().proMode.enabled, inRoom)
 }
