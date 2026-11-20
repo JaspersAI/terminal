@@ -25,9 +25,10 @@ interface Props {
 
 /**
  * A tile's menu, under its bar. First what may be done, so it is reached however long the rest is:
- * what the loop is doing stopped, the loop closed, which keeps it for View loops in Settings to
- * reopen, and the loop deleted for good, which asks once here rather than in a dialog. Then what the loop was
- * told of, with each connection and what it is doing, and the work's timeline, newest first, each
+ * what the loop is doing stopped, the room renamed or shared, the loop closed (which keeps it for
+ * Rooms to reopen), and the loop deleted for good, which asks once here rather than in a dialog.
+ * Then the room's standing instructions (editable here), who it is shared with, what plugins its
+ * agent was told of with each connection's status, and the work's timeline, newest first, each
  * request with the steps its run took and how it ended. It is drawn inside its
  * tile, like the tile's box, so it works in every window. It closes on Escape, on a press outside it,
  * when the window loses the keyboard, and with its tile.
@@ -65,6 +66,7 @@ export function LoopMenu({
   const [briefDraft, setBriefDraft] = useState(loop.brief)
   const [systemDraft, setSystemDraft] = useState(loop.systemPrompt ?? '')
   const root = useRef<HTMLDivElement>(null)
+  const briefInput = useRef<HTMLTextAreaElement>(null)
   const reading = useRef(0)
   const status = useLoopStatus(workspaceId, loop.id)
 
@@ -86,7 +88,10 @@ export function LoopMenu({
     setEditingInstructions(false)
     if (andRun) {
       const prompt = editedInstructionsPrompt(briefDraft, systemDraft)
-      if (prompt) sendToRoom({ workspaceId, on: elementId }, loop.id, prompt)
+      if (prompt) {
+        sendToRoom({ workspaceId, on: elementId }, loop.id, prompt)
+        onClose()
+      }
     }
   }
 
@@ -118,10 +123,15 @@ export function LoopMenu({
   }, [read])
 
   // The menu holds the keyboard while it is open, so Escape reaches it: on opening, and again when
-  // the button that was pressed goes (Delete becoming its question, or Keep taking that back).
+  // the button or field that held focus goes (Delete becoming its question, Keep taking that back,
+  // or instruction editing ending).
   useEffect(() => {
-    root.current?.focus()
-  }, [confirming])
+    if (!editingInstructions) root.current?.focus()
+  }, [confirming, editingInstructions])
+
+  useEffect(() => {
+    if (editingInstructions) briefInput.current?.focus()
+  }, [editingInstructions])
 
   /** Stops what the work is doing: every run of its in flight, and no other. */
   const stop = useCallback(() => {
@@ -257,24 +267,31 @@ export function LoopMenu({
         </div>
         {editingInstructions ? (
           <div className="flex flex-col gap-1.5">
-            <textarea
-              data-menu-brief-input
-              aria-label="Room instructions"
-              rows={3}
-              value={briefDraft}
-              placeholder="Instructions for what this room's agent should do…"
-              onChange={(event) => setBriefDraft(event.target.value)}
-              className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
-            />
-            <textarea
-              data-menu-system-prompt-input
-              aria-label="Room system prompt"
-              rows={2}
-              value={systemDraft}
-              placeholder="System prompt (optional)…"
-              onChange={(event) => setSystemDraft(event.target.value)}
-              className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
-            />
+            <label className="flex flex-col gap-0.5">
+              <span className="text-[11px] text-muted-foreground">Room brief</span>
+              <textarea
+                ref={briefInput}
+                data-menu-brief-input
+                aria-label="Room instructions"
+                rows={3}
+                value={briefDraft}
+                placeholder="Instructions for what this room's agent should do…"
+                onChange={(event) => setBriefDraft(event.target.value)}
+                className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
+              />
+            </label>
+            <label className="flex flex-col gap-0.5">
+              <span className="text-[11px] text-muted-foreground">System prompt (optional)</span>
+              <textarea
+                data-menu-system-prompt-input
+                aria-label="Room system prompt"
+                rows={2}
+                value={systemDraft}
+                placeholder="Role, methodology, or constraints for this room's agent…"
+                onChange={(event) => setSystemDraft(event.target.value)}
+                className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
+              />
+            </label>
             <div className="flex flex-wrap items-center gap-1">
               <button
                 type="button"
@@ -308,15 +325,19 @@ export function LoopMenu({
           </div>
         ) : menu.brief || menu.systemPrompt ? (
           <div className="space-y-1">
-            {menu.brief && <p className="whitespace-pre-wrap break-words">{menu.brief}</p>}
-            {menu.systemPrompt && menu.systemPrompt !== menu.brief && (
-              <p className="whitespace-pre-wrap break-words text-muted-foreground">
+            {menu.brief && (
+              <p data-menu-brief className="whitespace-pre-wrap break-words">
+                {menu.brief}
+              </p>
+            )}
+            {menu.systemPrompt && (
+              <p data-menu-system-prompt className="whitespace-pre-wrap break-words text-muted-foreground">
                 <span className="font-medium">System prompt:</span> {menu.systemPrompt}
               </p>
             )}
           </div>
         ) : (
-          <p className="text-muted-foreground">No instructions set</p>
+          <p className="text-muted-foreground">{replica ? "Kept on the owner's terminal" : 'No instructions set'}</p>
         )}
       </section>
       <section ref={shareSection} data-menu-share className="border-b border-border p-2">

@@ -23,7 +23,7 @@ import {
   roomSharing,
   type SharePerson,
 } from '../../../shared/collab/collab'
-import { editedInstructionsPrompt, type Loop } from '../../../shared/loops/loops'
+import type { Loop } from '../../../shared/loops/loops'
 import type { WaitingView } from '../../../shared/plugins/needs'
 import { errorMessage } from '../../lib/errors'
 import { get, subscribe as subscribeState, useAppState } from '../../lib/state'
@@ -55,7 +55,6 @@ import {
   type TileBox,
 } from './box'
 import { Need } from './Need'
-import { send } from './send'
 
 let boxes: ReadonlyMap<string, TileBox> = new Map()
 const listeners = new Set<() => void>()
@@ -143,7 +142,6 @@ interface Props {
   /** Sets that ask aside, which shows the view as it is. */
   onSkip: () => void
   zoom?: number
-  asOf?: string
 }
 
 /**
@@ -185,7 +183,6 @@ export function LoopBox({
   need,
   onSkip,
   zoom = 1,
-  asOf = '',
 }: Props): ReactElement {
   // This tile, as the place a run shows and asks: its workspace, and its element there.
   const place = useMemo(() => ({ workspaceId, on: elementId }), [workspaceId, elementId])
@@ -240,9 +237,6 @@ export function LoopBox({
   const [focused, setFocused] = useState(false)
   const [resizing, setResizing] = useState(false)
   const [barHeight, setBarHeight] = useState(24)
-  const [editingInstructions, setEditingInstructions] = useState(false)
-  const [briefDraft, setBriefDraft] = useState(loop.brief)
-  const [systemDraft, setSystemDraft] = useState(loop.systemPrompt ?? '')
   const question = useAppState((s) => askedIn(s.questions, place))
   const secret = useAppState((s) => askedIn(s.secretRequests, place))
   const box = useRef<HTMLDivElement>(null)
@@ -251,13 +245,6 @@ export function LoopBox({
   const readingOlder = useRef(false)
 
   useEffect(() => () => resizeCleanup.current?.(), [])
-
-  useEffect(() => {
-    if (!editingInstructions) {
-      setBriefDraft(loop.brief)
-      setSystemDraft(loop.systemPrompt ?? '')
-    }
-  }, [loop.brief, loop.systemPrompt, editingInstructions])
 
   const working = live.some((one) => one.working)
   const asked = question?.id ?? (secret ? `${secret.plugin}/${secret.key}` : (need?.name ?? null))
@@ -327,21 +314,6 @@ export function LoopBox({
     sendToRoom(place, loop.id, text)
   }
 
-  function saveInstructions(andRun: boolean): void {
-    send({
-      type: 'room.update',
-      workspaceId,
-      room: loop.id,
-      brief: briefDraft,
-      systemPrompt: systemDraft,
-    })
-    setEditingInstructions(false)
-    if (andRun) {
-      const prompt = editedInstructionsPrompt(briefDraft, systemDraft)
-      if (prompt) sendToRoom(place, loop.id, prompt)
-    }
-  }
-
   /** Stops one request by the name it was sent under: its run, or its wait for a turn, and no other. */
   const stop = useCallback((ask: string): void => {
     const row = now.current.find((one) => one.ask === ask)
@@ -387,12 +359,6 @@ export function LoopBox({
     // A question or a key field a run put up here hears its own Escape.
     if (event.key !== 'Escape' || question !== null || secret !== null) return
     event.stopPropagation()
-    if (editingInstructions) {
-      setEditingInstructions(false)
-      setBriefDraft(loop.brief)
-      setSystemDraft(loop.systemPrompt ?? '')
-      return
-    }
     if (need !== null) return onSkip()
     if (stopNewest()) return
     if (open) return updateTileBox(place, (b) => tileBoxExpanded(b, false))
@@ -648,98 +614,6 @@ export function LoopBox({
             collapsedSplit ? 'h-0 shrink-0' : fills || split !== null ? 'min-h-0 flex-1' : 'min-h-0 flex-auto'
           }`}
         >
-          <div data-room-instructions className="mt-1 shrink-0 border border-border bg-muted/20 px-2 py-1.5 text-xs">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-medium text-muted-foreground">Instructions{asOf ? ` · ${asOf}` : ''}</span>
-              {!editingInstructions && (
-                <button
-                  type="button"
-                  data-edit-instructions
-                  onClick={() => {
-                    setBriefDraft(loop.brief)
-                    setSystemDraft(loop.systemPrompt ?? '')
-                    setEditingInstructions(true)
-                  }}
-                  className="text-muted-foreground underline hover:text-foreground"
-                >
-                  {loop.brief || loop.systemPrompt ? 'Edit' : 'Add'}
-                </button>
-              )}
-            </div>
-            {editingInstructions ? (
-              <div className="mt-1.5 flex flex-col gap-1.5">
-                <label className="flex flex-col gap-0.5">
-                  <span className="text-[11px] text-muted-foreground">Room brief</span>
-                  <textarea
-                    data-brief-input
-                    aria-label="Room instructions"
-                    rows={3}
-                    value={briefDraft}
-                    placeholder="Instructions for what this room's agent should do…"
-                    onChange={(event) => setBriefDraft(event.target.value)}
-                    className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
-                  />
-                </label>
-                <label className="flex flex-col gap-0.5">
-                  <span className="text-[11px] text-muted-foreground">System prompt (optional)</span>
-                  <textarea
-                    data-system-prompt-input
-                    aria-label="Room system prompt"
-                    rows={2}
-                    value={systemDraft}
-                    placeholder="Role, methodology, or constraints for this room's agent…"
-                    onChange={(event) => setSystemDraft(event.target.value)}
-                    className="w-full resize-y border border-border bg-background px-1.5 py-1 text-xs leading-snug outline-none focus:border-foreground"
-                  />
-                </label>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    data-apply-instructions
-                    onClick={() => saveInstructions(true)}
-                    className="border border-primary bg-primary px-2 py-0.5 text-primary-foreground"
-                  >
-                    Save &amp; run
-                  </button>
-                  <button
-                    type="button"
-                    data-save-instructions
-                    onClick={() => saveInstructions(false)}
-                    className="border border-border bg-background px-2 py-0.5 hover:bg-muted"
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    data-cancel-instructions
-                    onClick={() => {
-                      setEditingInstructions(false)
-                      setBriefDraft(loop.brief)
-                      setSystemDraft(loop.systemPrompt ?? '')
-                    }}
-                    className="px-1.5 py-0.5 text-muted-foreground hover:text-foreground"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : loop.brief || loop.systemPrompt ? (
-              <div className="mt-1 max-h-24 space-y-1 overflow-y-auto">
-                {loop.brief && (
-                  <p data-room-brief className="whitespace-pre-wrap break-words text-foreground">
-                    {loop.brief}
-                  </p>
-                )}
-                {loop.systemPrompt && loop.systemPrompt !== loop.brief && (
-                  <p data-room-system-prompt className="whitespace-pre-wrap break-words text-muted-foreground">
-                    <span className="font-medium">System prompt:</span> {loop.systemPrompt}
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p className="mt-0.5 text-muted-foreground">No standing instructions set for {called}.</p>
-            )}
-          </div>
           {live.length > 0 || earlier.length > 0 ? (
             <Transcript
               named={false}

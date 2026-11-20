@@ -718,7 +718,6 @@ export function ElementFrame({
             need={need}
             onSkip={skipNeed}
             zoom={zoom}
-            asOf={roomAsOf}
           />
         )}
         {/* With no view yet, and the box above folded, where the views will go. */}

@@ -1,6 +1,6 @@
-// What a tile's menu says of the work it belongs to: the plugins its agent is told of, with the
-// connections each declares and what those are doing. Pure, so it is read in a test; the component
-// that draws it only draws.
+// What a tile's menu says of the work it belongs to: its standing instructions, and the plugins its
+// agent is told of with the connections each declares and what those are doing. Pure, so it is read
+// in a test; the component that draws it only draws.
 
 import type { AppState, ConnectionInfo } from '../state'
 
@@ -34,9 +34,11 @@ export function menuOf(
     })
     return { id, installed: plugin !== undefined, connections }
   })
+  const brief = loop.brief.trim()
+  const systemPrompt = loop.systemPrompt?.trim()
   return {
     plugins,
-    ...(loop.brief ? { brief: loop.brief } : {}),
-    ...(loop.systemPrompt ? { systemPrompt: loop.systemPrompt } : {}),
+    ...(brief ? { brief } : {}),
+    ...(systemPrompt && systemPrompt !== brief ? { systemPrompt } : {}),
   }
 }
