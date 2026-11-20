@@ -1,20 +1,24 @@
 import { useState, type FormEvent, type ReactElement } from 'react'
 import { accountLabel, fullName, personDetail, personName } from '../../../shared/collab/collab'
 import { errorMessage } from '../../lib/errors'
-import { dispatch, useAppState } from '../../lib/state'
+import { currentWorkspace, dispatch, useAppState } from '../../lib/state'
 import { useOwnName } from '../collab/own-name'
 import { TeammateBadge } from '../collab/TeammateBadge'
 import { BUTTON } from './Row'
 
+interface Props {
+  onClose?: () => void
+}
+
 /**
  * Settings, Team: who the user is to their teammates, and who they work with. Teammates are made
- * by invitation and acceptance; sharing a room or a tab with one is done from the room's or the
- * tab's menu, by dragging a teammate badge, or by asking Central.
+ * by invitation and acceptance; shared rooms and rooms shared with you live in the Rooms view.
  */
-export function TeamPane(): ReactElement {
+export function TeamPane({ onClose }: Props = {}): ReactElement {
   const jaspers = useAppState((s) => s.jaspers)
   const signedIn = jaspers.signedIn
   const collab = useAppState((s) => s.collab)
+  const currentTabId = useAppState((s) => currentWorkspace(s).id)
   const mine = useOwnName()
   const [profileSaved, setProfileSaved] = useState(false)
   const [emailDraft, setEmailDraft] = useState('')
@@ -60,6 +64,14 @@ export function TeamPane(): ReactElement {
     })
   }
 
+  function startChatWith(accountId: string): void {
+    if (busy) return
+    act(async () => {
+      await dispatch({ type: 'collab.startChat', accountId, workspaceId: currentTabId })
+      onClose?.()
+    })
+  }
+
   if (!signedIn) {
     return (
       <div data-team-pane className="max-w-xl space-y-4 text-sm">
@@ -83,8 +95,6 @@ export function TeamPane(): ReactElement {
     )
   }
 
-  const shared = collab.shares.filter((one) => one.role === 'owner')
-  const joined = collab.shares.filter((one) => one.role === 'member')
   const signedInAs = accountLabel(collab, jaspers.email)
 
   return (
@@ -92,16 +102,18 @@ export function TeamPane(): ReactElement {
       <div>
         <h3 className="text-base font-medium">Team</h3>
         <p className="mt-1 text-muted-foreground">
-          Set your name and invite teammates. Once they accept, share a room from its menu, right-click a tab, or tell
-          Central by name or <code>@name</code>. A shared room stays on its owner&rsquo;s terminal: teammates see it
-          live and can ask its agent, which runs there. In a shared room, a message that starts with <code>@name</code>{' '}
-          is for the people in it, and the agent is not asked.
+          Set your name, invite teammates, or open a direct chat room with a teammate. Share any room from its menu,
+          right-click a tab, or tell Central by name or <code>@name</code>; shared rooms appear in Rooms.
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
           {signedInAs ? `Signed in as ${signedInAs}. ` : ''}
           {collab.connected ? 'Connected.' : 'Not connected: nothing shared moves until it is.'}
         </p>
       </div>
+
+      {error && (
+        <p className="border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">{error}</p>
+      )}
 
       <section data-team-profile className="space-y-2 border-t border-border pt-4">
         <h4 className="text-xs font-medium text-muted-foreground">Your name</h4>
@@ -237,7 +249,6 @@ export function TeamPane(): ReactElement {
             </button>
           </div>
         </form>
-        {error && <p className="text-xs text-destructive">{error}</p>}
       </section>
 
       <section data-team-list className="space-y-2 border-t border-border pt-4">
@@ -248,6 +259,7 @@ export function TeamPane(): ReactElement {
           <ul className="divide-y divide-border border border-border">
             {collab.teammates.map((teammate) => {
               const named = fullName(teammate)
+              const label = personName(teammate)
               return (
                 <li
                   key={teammate.accountId}
@@ -267,17 +279,32 @@ export function TeamPane(): ReactElement {
                       {teammate.online ? 'here now' : 'away'}
                     </span>
                   </span>
-                  <button
-                    type="button"
-                    data-team-remove={teammate.accountId}
-                    disabled={busy}
-                    onClick={() =>
-                      act(() => dispatch({ type: 'collab.removeTeammate', accountId: teammate.accountId }))
-                    }
-                    className="text-xs text-destructive hover:underline"
-                  >
-                    Remove
-                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      data-team-chat={teammate.accountId}
+                      aria-label={`Chat with ${label}`}
+                      title={
+                        collab.connected ? `Start a chat room with ${label}` : 'Connect to Jaspers to start a chat room'
+                      }
+                      disabled={busy || !collab.connected}
+                      onClick={() => startChatWith(teammate.accountId)}
+                      className="flex h-7 w-7 items-center justify-center border border-border bg-background text-muted-foreground transition-colors hover:border-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                    >
+                      <ChatBubbleIcon />
+                    </button>
+                    <button
+                      type="button"
+                      data-team-remove={teammate.accountId}
+                      disabled={busy}
+                      onClick={() =>
+                        act(() => dispatch({ type: 'collab.removeTeammate', accountId: teammate.accountId }))
+                      }
+                      className="text-xs text-destructive hover:underline disabled:opacity-40"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </li>
               )
             })}
@@ -320,62 +347,15 @@ export function TeamPane(): ReactElement {
           </ul>
         </section>
       )}
-
-      {shared.length > 0 && (
-        <section data-team-shared className="space-y-2 border-t border-border pt-4">
-          <h4 className="text-xs font-medium text-muted-foreground">Shared by you</h4>
-          <ul className="divide-y divide-border border border-border">
-            {shared.map((share) => (
-              <li key={share.shareId} className="px-3 py-2 text-xs">
-                <p className="truncate font-medium">
-                  {share.title}{' '}
-                  <span className="font-normal text-muted-foreground">· {share.kind === 'room' ? 'room' : 'tab'}</span>
-                </p>
-                <p className="truncate text-muted-foreground">
-                  {[
-                    ...share.members.map((one) => personName(one)),
-                    ...share.pendingEmails.map((email) => {
-                      const inv = collab.outgoingInvites.find(
-                        (one) => one.inviteeEmail.toLowerCase() === email.toLowerCase(),
-                      )
-                      const label = personName({
-                        firstName: inv?.inviteeFirstName,
-                        lastName: inv?.inviteeLastName,
-                        email,
-                      })
-                      return `${label} (invited)`
-                    }),
-                  ].join(', ') || 'Nobody yet'}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {joined.length > 0 && (
-        <section data-team-joined className="space-y-2 border-t border-border pt-4">
-          <h4 className="text-xs font-medium text-muted-foreground">Shared with you</h4>
-          <ul className="divide-y divide-border border border-border">
-            {joined.map((share) => (
-              <li key={share.shareId} className="px-3 py-2 text-xs">
-                <p className="truncate font-medium">
-                  {share.title}{' '}
-                  <span className="font-normal text-muted-foreground">· {share.kind === 'room' ? 'room' : 'tab'}</span>
-                </p>
-                <p className="truncate text-muted-foreground">
-                  {personName({
-                    firstName: share.ownerFirstName,
-                    lastName: share.ownerLastName,
-                    email: share.ownerEmail,
-                  })}
-                  {share.ownerOnline ? ' · here now' : ' · away, so it is read-only'}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
+  )
+}
+
+function ChatBubbleIcon(): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden className="h-3.5 w-3.5 stroke-current stroke-[1.3]">
+      <path d="M2.25 3h11.5v7.5H7.25L4 13.25V10.5H2.25V3Z" strokeLinejoin="miter" />
+      <path d="M5 5.75h6M5 7.75h4" strokeLinecap="square" />
+    </svg>
   )
 }

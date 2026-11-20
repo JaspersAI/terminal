@@ -458,6 +458,10 @@ function terminal(
     get state() {
       return state
     },
+    mutate(fn: (s: CollabEngineState) => CollabEngineState): void {
+      state = fn(state)
+      engine.changed('ws')
+    },
     async connect(): Promise<void> {
       hangUp = server.connect(account, client, engine)
       await engine.connected()
@@ -1025,4 +1029,94 @@ test('an update_room handoff from Central or Orb injects the prompt into a share
       answer: 'Added Q4 revenue highlights.',
     },
   ])
+})
+
+test('team-chat messages sync both ways, stamp the authenticated sender, and prevent overwriting earlier messages', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const server = fakeAccount()
+  const made = withLoopAsked(NO_LOOPS, { desc: 'Direct chat', brief: '', plugins: ['team-chat'], skills: [] }, 1000)
+  const placed = placeFramed(
+    { ...EMPTY_GRID, size: DEFAULT_SIZE },
+    {
+      content: { kind: 'view', view: 'core/team-chat' },
+      state: {
+        messages: {
+          m1: { id: 'm1', senderEmail: 'alice@fund.com', senderFirstName: 'Alice', text: 'Hey Bob', at: 1000 },
+        },
+      },
+      loop: made.loop.id,
+    },
+  )
+  const alice = terminal(server, 'alice', 'alice@fund.com', {
+    grids: { ws: { 1: placed.grid } },
+    loops: { ws: made.loops },
+  })
+  const bob = terminal(server, 'bob', 'bob@fund.com', {
+    grids: { ws: { 1: { ...EMPTY_GRID, size: DEFAULT_SIZE } } },
+    loops: { ws: NO_LOOPS },
+  })
+  server.befriend('alice', 'bob')
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 12; i++) {
+      t.mock.timers.tick(300)
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+  }
+  await alice.connect()
+  await bob.connect()
+  await alice.engine.setProfile('Alice', 'Jones')
+  await bob.engine.setProfile('Bob', 'Smith')
+  await alice.engine.shareRoom('ws', made.loop.id, ['bob'])
+  await settle()
+
+  const bobReplica = roomOf(bob)!
+  const bobPanel = bobReplica.panels[0]!
+  const target = bob.engine.replica('ws', bobPanel.id)!
+
+  // Bob sends a new message; even if client JSON tries to spoof Alice's email, Alice's terminal stamps Bob's verified identity.
+  bob.engine.set(target, ['messages', 'm2'], {
+    id: 'm2',
+    senderEmail: 'alice@fund.com',
+    text: 'Replying from Bob',
+    at: 1000,
+  })
+  // Attempting to overwrite Alice's existing m1 is refused by Alice's terminal.
+  bob.engine.set(target, ['messages', 'm1'], {
+    id: 'm1',
+    senderEmail: 'bob@fund.com',
+    text: 'Tampered!',
+    at: 1000,
+  })
+  await settle()
+
+  const aliceMessages = (roomOf(alice)!.panels[0]!.state.messages ?? {}) as Record<string, Record<string, unknown>>
+  assert.equal(aliceMessages.m1?.text, 'Hey Bob')
+  assert.equal(aliceMessages.m2?.text, 'Replying from Bob')
+  assert.equal(aliceMessages.m2?.senderEmail, 'bob@fund.com')
+  assert.equal(aliceMessages.m2?.senderFirstName, 'Bob')
+  assert.equal(aliceMessages.m2?.senderLastName, 'Smith')
+
+  // Stopping sharing on a closed room also clears shareId on the closed record.
+  const shareId = alice.state.loops.ws!.list[0]!.shareId!
+  const frameEl = alice.state.grids.ws![1]!.elements.find((e) => e.loop === made.loop.id && e.parent === undefined)!
+  alice.mutate((s) => ({
+    ...s,
+    loops: {
+      ws: {
+        seq: s.loops.ws!.seq,
+        list: [],
+        closed: [
+          {
+            loop: s.loops.ws!.list[0]!,
+            window: 1,
+            elements: [frameEl],
+            panels: s.grids.ws![1]!.panels.filter((p) => p.elementId === frameEl.id),
+          },
+        ],
+      },
+    },
+  }))
+  await alice.engine.stopSharing(shareId)
+  await settle()
+  assert.equal(alice.state.loops.ws!.closed?.[0]?.loop.shareId, undefined)
 })

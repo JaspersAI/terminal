@@ -14,6 +14,7 @@
 //   query/<digest>   what one tile's SQL over the owner's store answered
 
 import type { Exchange } from '../agent/transcript.ts'
+import { TEAM_CHAT_VIEW } from './team-chat.ts'
 import {
   DEFAULT_SIZE,
   EMPTY_GRID,
@@ -130,7 +131,7 @@ export interface PendingSet {
  * The rest show this terminal itself (its plugins, tasks, inbox) or act on it (the browser, a
  * server's own page), and a teammate's room does neither here.
  */
-const REPLICA_CORE_VIEWS = new Set(['core/note', 'core/table', 'core/chart', 'core/metric'])
+const REPLICA_CORE_VIEWS = new Set(['core/note', 'core/table', 'core/chart', 'core/metric', TEAM_CHAT_VIEW])
 const NOTE_VIEW = 'core/note'
 
 /**

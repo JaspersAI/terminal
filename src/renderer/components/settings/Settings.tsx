@@ -163,7 +163,7 @@ export function Settings({ asked, onClose, onViewLoops }: Props): ReactElement {
               {pane === 'llm' ? (
                 <LlmPane />
               ) : pane === 'team' ? (
-                <TeamPane />
+                <TeamPane onClose={() => requestLeave(onClose)} />
               ) : pane === 'data' ? (
                 <DataPane />
               ) : pane === 'pro' ? (

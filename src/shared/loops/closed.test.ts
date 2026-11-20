@@ -6,14 +6,17 @@ import { gone, loopName, readLoops, showsChat, shut, type Loop, type Loops } fro
 import {
   archiveTabRooms,
   archiveTabTasks,
+  archiveTargetTabId,
   closedCallMessage,
   closedHolding,
   closedWithout,
   globalRoomLog,
   loopLog,
+  partitionRoomLog,
   reopenAcrossTabs,
   reopened,
   reopenRoomTasks,
+  roomCounts,
   searchRooms,
   unifyTabRooms,
   withoutLoop,
@@ -699,4 +702,66 @@ test('reopenAcrossTabs can move an open room from another tab onto the target ta
   // Its task moved to t2 with the new child element id e7.
   assert.deepEqual(moved.tasks[0]!.workspaceId, 't2')
   assert.deepEqual(moved.tasks[0]!.call, { tool: 'refresh_element', input: { elementId: 'e7' } })
+})
+
+test('roomCounts and partitionRoomLog count well past 100 rooms without a cap and separate own rooms from teammate replicas', () => {
+  const workspaces = [
+    { id: 't1', name: 'Screener' },
+    { id: 't2', name: 'Macro' },
+  ]
+  const openT1: Loop[] = Array.from({ length: 65 }, (_, idx) =>
+    loop(`f${idx + 1}`, `open ${idx + 1}`, { createdAt: idx + 1 }),
+  )
+  const closedT2: Loop[] = Array.from({ length: 80 }, (_, idx) =>
+    loop(`f${idx + 75}`, `saved ${idx + 75}`, { createdAt: idx + 100 }),
+  )
+  const replicasT1: Loop[] = [
+    loop('f158', 'Shared macro note', {
+      createdAt: 300,
+      shareId: 'sh-1',
+      replica: { room: 'f2', tiles: {} },
+    }),
+    loop('f160', 'Shared screener', {
+      createdAt: 310,
+      shareId: 'sh-2',
+      replica: { room: 'f5', tiles: {} },
+    }),
+  ]
+  const counts = roomCounts(workspaces, { t1: [...openT1, ...replicasT1], t2: [] }, { t1: [], t2: closedT2 })
+  assert.deepEqual(counts, {
+    own: 145,
+    sharedWithYou: 2,
+    total: 147,
+    highestNumber: 160,
+  })
+
+  const entries = globalRoomLog(workspaces, { t1: [...openT1, ...replicasT1], t2: [] }, { t1: [], t2: closedT2 })
+  const partitioned = partitionRoomLog(entries)
+  assert.equal(partitioned.own.length, 145)
+  assert.equal(partitioned.sharedWithYou.length, 2)
+  assert.deepEqual(
+    partitioned.sharedWithYou.map((e) => e.loop.id),
+    ['f160', 'f158'],
+  )
+})
+
+test('archiveTargetTabId skips teammate replica tabs so archived rooms are never dropped when a shared tab leaves', () => {
+  const tabs = [
+    { id: 'own-1', replica: false },
+    { id: 'own-2', replica: false },
+    { id: 'shared-tab', replica: true },
+  ]
+  // Closing own-2 skips shared-tab on its right and archives into own-1 on its left.
+  assert.equal(archiveTargetTabId(tabs, 'own-2'), 'own-1')
+  // Closing the last owned tab returns null even when a teammate's replica tab is open.
+  assert.equal(
+    archiveTargetTabId(
+      [
+        { id: 'own-only', replica: false },
+        { id: 'shared-tab', replica: true },
+      ],
+      'own-only',
+    ),
+    null,
+  )
 })

@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TerminalSession } from '../../../shared/agent/history'
 import type { Exchange } from '../../../shared/agent/transcript'
-import { CHANGE_TEXT, globalRoomLog, searchRooms, type GlobalLogEntry } from '../../../shared/loops/closed'
-import { loopTitle } from '../../../shared/loops/loops'
+import { peopleIn, personDetail, personName, roomSharing, type SharePerson } from '../../../shared/collab/collab'
+import {
+  CHANGE_TEXT,
+  globalRoomLog,
+  partitionRoomLog,
+  roomCounts,
+  searchRooms,
+  type GlobalLogEntry,
+} from '../../../shared/loops/closed'
+import { frameOf, loopTitle } from '../../../shared/loops/loops'
 import { formatAsOf } from '../../../shared/tasks/tasks'
 import { errorMessage } from '../../lib/errors'
 import { currentWorkspace, dispatch, useAppState } from '../../lib/state'
+import { TeammateBadge } from '../collab/TeammateBadge'
 import { useRequest } from '../composer/request'
 import { BUTTON } from './Row'
 
@@ -15,8 +24,9 @@ interface Props {
 
 /**
  * Rooms & Sessions log dialog, opened from the header bar ("Rooms") or Settings:
- * - "Rooms" view: every room across all tabs in the terminal, open and saved in memory, ordered
- *   chronologically by last activity, with keyword search, Jump to tab, Reopen, Close, and Delete.
+ * - "Rooms" view: your own rooms across all tabs (open and saved in memory) ordered chronologically
+ *   by last activity, with shared indicators and teammate circles, plus a separate "Shared with you"
+ *   log at the bottom for rooms shared with you by another owner.
  * - "Sessions" view: every Terminal Session from start to finish, with full scrollable conversation
  *   context and keyword search.
  */
@@ -26,8 +36,11 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
   const open = useAppState((s) => s.loops)
   const closed = useAppState((s) => s.closedLoops)
   const grids = useAppState((s) => s.grids)
+  const collab = useAppState((s) => s.collab)
   const request = useRequest()
   const allEntries = useMemo(() => globalRoomLog(workspaces, open, closed), [workspaces, open, closed])
+  const counts = useMemo(() => roomCounts(workspaces, open, closed), [workspaces, open, closed])
+  const workspaceById = useMemo(() => new Map(workspaces.map((w) => [w.id, w])), [workspaces])
   const [mode, setMode] = useState<'rooms' | 'sessions'>('rooms')
   const [query, setQuery] = useState('')
   const [exchangeText, setExchangeText] = useState<Record<string, string>>({})
@@ -121,12 +134,27 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
           if (p.text) panelLines.push(p.text.slice(0, 2000))
         }
       }
+      const sharing = roomSharing(collab, workspaceById.get(entry.workspaceId), entry.loop)
+      if (sharing) {
+        panelLines.push('shared')
+        if (sharing.share) {
+          for (const person of peopleIn(sharing.share, collab)) {
+            panelLines.push(personDetail(person))
+          }
+        }
+      }
       map[entry.loop.id] = [map[entry.loop.id] ?? '', ...panelLines].filter(Boolean).join('\n')
     }
     return map
-  }, [allEntries, grids, exchangeText])
+  }, [allEntries, grids, exchangeText, collab, workspaceById])
 
+  const { own: ownAllEntries, sharedWithYou: sharedAllEntries } = useMemo(
+    () => partitionRoomLog(allEntries),
+    [allEntries],
+  )
   const log = useMemo(() => searchRooms(allEntries, query, extraText), [allEntries, query, extraText])
+  const { own: ownLog, sharedWithYou: sharedLog } = useMemo(() => partitionRoomLog(log), [log])
+  const showSharedSection = sharedAllEntries.length > 0 || collab.teammates.length > 0
 
   const filteredSessions = useMemo(() => {
     const trimmed = query.trim().toLowerCase()
@@ -153,6 +181,17 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
   const act = (action: Parameters<typeof dispatch>[0]): void => {
     setFailed(null)
     dispatch(action).catch((err: unknown) => setFailed(errorMessage(err)))
+  }
+
+  function jumpToRoom(entry: GlobalLogEntry): void {
+    if (entry.workspaceId !== workspace.id) {
+      act({ type: 'tab.select', id: entry.workspaceId })
+    }
+    const frame = frameOf(grids[entry.workspaceId] ?? {}, entry.loop.id)
+    if (frame) {
+      act({ type: 'element.focus', workspaceId: entry.workspaceId, elementId: frame.element.id })
+    }
+    onClose()
   }
 
   return (
@@ -184,7 +223,23 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
         <div className="shrink-0 px-6 pt-5 pb-4">
           <div className="flex items-center justify-between gap-3 pr-8">
             <h2 id="loops-title" className="text-base font-semibold">
-              {mode === 'rooms' ? 'Rooms' : 'Sessions'}
+              {mode === 'rooms' ? (
+                <>
+                  Rooms
+                  {counts.total > 0 && (
+                    <span className="ml-1.5 font-normal tabular-nums text-muted-foreground">({counts.total})</span>
+                  )}
+                </>
+              ) : (
+                <>
+                  Sessions
+                  {mergedSessions.length > 0 && (
+                    <span className="ml-1.5 font-normal tabular-nums text-muted-foreground">
+                      ({mergedSessions.length})
+                    </span>
+                  )}
+                </>
+              )}
             </h2>
             <div role="group" aria-label="Log view" className="grid grid-cols-2 border border-border">
               <button
@@ -231,7 +286,7 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
               onChange={(event) => setQuery(event.target.value)}
               placeholder={
                 mode === 'rooms'
-                  ? 'Search rooms by keyword, plugin, description, or conversation…'
+                  ? 'Search rooms by keyword, teammate, plugin, description, or conversation…'
                   : 'Search terminal sessions by keyword or conversation…'
               }
               aria-label={mode === 'rooms' ? 'Search rooms' : 'Search sessions'}
@@ -241,33 +296,94 @@ export function LoopsDialog({ onClose }: Props): ReactElement {
           {failed && <p className="mt-2 text-sm text-destructive">{failed}</p>}
         </div>
         {mode === 'rooms' ? (
-          allEntries.length === 0 ? (
-            <p className="border-t border-border px-6 py-5 text-sm text-muted-foreground">
-              No rooms in memory yet. Ask Central to set one up.
-            </p>
-          ) : log.length === 0 ? (
-            <p className="border-t border-border px-6 py-5 text-sm text-muted-foreground">
-              No rooms match &ldquo;{query.trim()}&rdquo;.
-            </p>
-          ) : (
-            <ol id="loop-log" className="min-h-0 overflow-y-auto border-t border-border px-6">
-              {log.map((entry) => (
-                <LogRow
-                  key={entry.loop.id}
-                  entry={entry}
-                  currentTabId={workspace.id}
-                  when={(at) => formatAsOf(at, timeZone)}
-                  onJump={() => {
-                    act({ type: 'tab.select', id: entry.workspaceId })
-                    onClose()
-                  }}
-                  onClose={() => act({ type: 'room.close', workspaceId: entry.workspaceId, room: entry.loop.id })}
-                  onReopen={() => act({ type: 'room.reopen', workspaceId: workspace.id, room: entry.loop.id })}
-                  onDelete={() => act({ type: 'room.delete', workspaceId: entry.workspaceId, room: entry.loop.id })}
-                />
-              ))}
-            </ol>
-          )
+          <>
+            {ownAllEntries.length === 0 ? (
+              <p className="border-t border-border px-6 py-5 text-sm text-muted-foreground">
+                No rooms of your own in memory yet. Ask Central to set one up.
+              </p>
+            ) : ownLog.length === 0 ? (
+              <p className="border-t border-border px-6 py-4 text-sm text-muted-foreground">
+                No rooms of your own match &ldquo;{query.trim()}&rdquo;.
+              </p>
+            ) : (
+              <ol id="loop-log" className="min-h-0 flex-1 overflow-y-auto border-t border-border px-6">
+                {ownLog.map((entry) => {
+                  const tabWs = workspaceById.get(entry.workspaceId)
+                  const sharing = roomSharing(collab, tabWs, entry.loop)
+                  const people = sharing?.share ? peopleIn(sharing.share, collab).filter((one) => !one.me) : []
+                  return (
+                    <LogRow
+                      key={entry.loop.id}
+                      entry={entry}
+                      shared={sharing !== null}
+                      people={people}
+                      currentTabId={workspace.id}
+                      when={(at) => formatAsOf(at, timeZone)}
+                      onJump={() => jumpToRoom(entry)}
+                      onClose={() => act({ type: 'room.close', workspaceId: entry.workspaceId, room: entry.loop.id })}
+                      onReopen={() => act({ type: 'room.reopen', workspaceId: workspace.id, room: entry.loop.id })}
+                      onDelete={() => act({ type: 'room.delete', workspaceId: entry.workspaceId, room: entry.loop.id })}
+                    />
+                  )
+                })}
+              </ol>
+            )}
+            {showSharedSection && (
+              <section data-shared-with-you-section className="shrink-0 border-t border-border">
+                <div className="flex items-center justify-between gap-2 bg-muted/25 px-6 py-2">
+                  <h3 className="text-xs font-medium text-muted-foreground">
+                    Shared with you{sharedAllEntries.length > 0 ? ` (${sharedAllEntries.length})` : ''}
+                  </h3>
+                </div>
+                {sharedAllEntries.length === 0 ? (
+                  <p className="px-6 py-3 text-xs text-muted-foreground">No rooms shared with you right now.</p>
+                ) : sharedLog.length === 0 ? (
+                  <p className="px-6 py-3 text-xs text-muted-foreground">
+                    No shared rooms match &ldquo;{query.trim()}&rdquo;.
+                  </p>
+                ) : (
+                  <ol id="shared-loop-log" data-shared-loop-log className="max-h-48 overflow-y-auto px-6">
+                    {sharedLog.map((entry) => {
+                      const tabWs = workspaceById.get(entry.workspaceId)
+                      const sharing = roomSharing(collab, tabWs, entry.loop)
+                      const share = sharing?.share ?? null
+                      const people = share ? peopleIn(share, collab).filter((one) => !one.me) : []
+                      const mine = share ? share.ownerAccountId === collab.accountId : false
+                      const ownerLabel = share
+                        ? mine
+                          ? 'your other terminal'
+                          : personName({
+                              firstName: share.ownerFirstName,
+                              lastName: share.ownerLastName,
+                              email: share.ownerEmail,
+                            })
+                        : 'a teammate'
+                      const readOnly = !collab.connected || (share !== null && !share.ownerOnline)
+                      const inSharedTab = Boolean(tabWs?.replica)
+                      return (
+                        <SharedLogRow
+                          key={entry.loop.id}
+                          entry={entry}
+                          ownerLabel={ownerLabel}
+                          readOnly={readOnly}
+                          people={people}
+                          inSharedTab={inSharedTab}
+                          currentTabId={workspace.id}
+                          when={(at) => formatAsOf(at, timeZone)}
+                          onJump={() => jumpToRoom(entry)}
+                          onLeave={() =>
+                            inSharedTab
+                              ? act({ type: 'tab.unshare', id: entry.workspaceId })
+                              : act({ type: 'room.unshare', workspaceId: entry.workspaceId, room: entry.loop.id })
+                          }
+                        />
+                      )
+                    })}
+                  </ol>
+                )}
+              </section>
+            )}
+          </>
         ) : mergedSessions.length === 0 ? (
           <p className="border-t border-border px-6 py-5 text-sm text-muted-foreground">
             No terminal sessions recorded yet.
@@ -363,8 +479,39 @@ function SessionRow({ session, defaultExpanded, when }: SessionRowProps): ReactE
   )
 }
 
+function SharedPeopleBadges({ people }: { people: readonly SharePerson[] }): ReactElement | null {
+  if (people.length === 0) return null
+  return (
+    <span data-room-log-people className="mr-1 flex shrink-0 items-center gap-1">
+      {people.map((person) => (
+        <TeammateBadge
+          key={person.id}
+          email={person.email}
+          firstName={person.firstName}
+          lastName={person.lastName}
+          lit={person.online}
+          size={18}
+          title={[
+            personDetail(person),
+            person.role === 'owner'
+              ? `owner · ${person.online ? 'here now' : 'away'}`
+              : person.role === 'invited'
+                ? 'invited, not joined yet'
+                : person.online
+                  ? 'here now'
+                  : 'away',
+            'double-click or right-click for Team settings',
+          ].join(' · ')}
+        />
+      ))}
+    </span>
+  )
+}
+
 interface RowProps {
   entry: GlobalLogEntry
+  shared: boolean
+  people: readonly SharePerson[]
   currentTabId: string
   when: (at: number) => string
   onJump: () => void
@@ -373,8 +520,18 @@ interface RowProps {
   onDelete: () => void
 }
 
-/** One room in the global directory: its name, status/tab, description, activity history, and actions. */
-function LogRow({ entry, currentTabId, when, onJump, onClose, onReopen, onDelete }: RowProps): ReactElement {
+/** One owned room in the global directory: its name, status/tab, shared state, activity history, and actions. */
+function LogRow({
+  entry,
+  shared,
+  people,
+  currentTabId,
+  when,
+  onJump,
+  onClose,
+  onReopen,
+  onDelete,
+}: RowProps): ReactElement {
   const [confirming, setConfirming] = useState(false)
   const { loop, open, changes, workspaceId, workspaceName, lastActiveAt } = entry
   const [last, ...earlier] = changes
@@ -383,6 +540,7 @@ function LogRow({ entry, currentTabId, when, onJump, onClose, onReopen, onDelete
       data-loop={loop.id}
       data-room={loop.id}
       data-open={open}
+      data-shared={shared || undefined}
       className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 border-b border-border py-3 last:border-b-0"
     >
       <div className="min-w-0 flex-1 text-sm">
@@ -398,6 +556,11 @@ function LogRow({ entry, currentTabId, when, onJump, onClose, onReopen, onDelete
             {' · '}
             {open ? `Open in ${workspaceName}` : 'Saved in memory'}
           </span>
+          {shared && (
+            <span data-room-shared-indicator className="font-medium text-foreground">
+              {' · '}Shared
+            </span>
+          )}
           {loop.model && <span className="text-xs text-muted-foreground"> · {loop.model}</span>}
         </p>
         <p className="truncate text-muted-foreground">{loop.desc}</p>
@@ -418,6 +581,7 @@ function LogRow({ entry, currentTabId, when, onJump, onClose, onReopen, onDelete
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        {!confirming && <SharedPeopleBadges people={people} />}
         {confirming ? (
           <>
             <span className="text-xs text-muted-foreground">Permanently delete room and its conversation?</span>
@@ -449,6 +613,68 @@ function LogRow({ entry, currentTabId, when, onJump, onClose, onReopen, onDelete
             </button>
           </>
         )}
+      </div>
+    </li>
+  )
+}
+
+interface SharedRowProps {
+  entry: GlobalLogEntry
+  ownerLabel: string
+  readOnly: boolean
+  people: readonly SharePerson[]
+  inSharedTab: boolean
+  currentTabId: string
+  when: (at: number) => string
+  onJump: () => void
+  onLeave: () => void
+}
+
+/** One room shared with you by another owner, listed in the bottom "Shared with you" log. */
+function SharedLogRow({
+  entry,
+  ownerLabel,
+  readOnly,
+  people,
+  inSharedTab,
+  currentTabId,
+  when,
+  onJump,
+  onLeave,
+}: SharedRowProps): ReactElement {
+  const { loop, open, workspaceId, workspaceName, lastActiveAt } = entry
+  return (
+    <li
+      data-shared-room={loop.id}
+      data-room={loop.id}
+      data-open={open}
+      className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 border-b border-border py-2.5 last:border-b-0"
+    >
+      <div className="min-w-0 flex-1 text-sm">
+        <p className="truncate">
+          <span className="font-medium">{loopTitle(loop)}</span>
+          <span className="text-foreground">
+            {' · '}
+            {open ? `Open in ${workspaceName}` : 'Shared'}
+          </span>
+          <span data-room-shared-by className="text-muted-foreground">
+            {' · '}Shared by {ownerLabel}
+            {readOnly ? ' (read-only)' : ''}
+          </span>
+        </p>
+        {loop.desc && <p className="truncate text-muted-foreground">{loop.desc}</p>}
+        <p className="mt-0.5 text-xs text-muted-foreground">Last active {when(lastActiveAt)}</p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <SharedPeopleBadges people={people} />
+        {open && (
+          <button type="button" data-jump onClick={onJump} className={BUTTON}>
+            {workspaceId !== currentTabId ? 'Go to tab' : 'Focus'}
+          </button>
+        )}
+        <button type="button" data-leave onClick={onLeave} className={BUTTON}>
+          {inSharedTab ? 'Leave tab' : 'Leave'}
+        </button>
       </div>
     </li>
   )

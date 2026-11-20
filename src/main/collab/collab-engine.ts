@@ -11,6 +11,7 @@ import {
   type CollabShare,
   type CollabState,
 } from '../../shared/collab/collab.ts'
+import { stampIncomingTeamChatMessage, TEAM_CHAT_VIEW } from '../../shared/collab/team-chat.ts'
 import {
   bundleKey,
   chatKey,
@@ -613,16 +614,37 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         return {}
       }
       case 'set': {
-        const tiles = tilesOf(target)
         let refused = 0
         for (const one of Array.isArray(payload.sets) ? payload.sets : []) {
+          const tiles = tilesOf(target)
           const path = isRecord(one) && Array.isArray(one.path) ? one.path : null
-          if (!isRecord(one) || typeof one.tile !== 'string' || !tiles.has(one.tile) || !path) {
+          const tile = isRecord(one) && typeof one.tile === 'string' ? tiles.get(one.tile) : undefined
+          if (!isRecord(one) || typeof one.tile !== 'string' || !tile || !path) {
             refused += 1
             continue
           }
+          const stringPath = path.map(String)
+          let nextValue: unknown = one.value
+          if (tile.view === TEAM_CHAT_VIEW) {
+            const stamped = stampIncomingTeamChatMessage(
+              stringPath,
+              one.value,
+              tile.state,
+              {
+                email: command.senderEmail,
+                firstName: command.senderFirstName,
+                lastName: command.senderLastName,
+              },
+              deps.now(),
+            )
+            if (!stamped) {
+              refused += 1
+              continue
+            }
+            nextValue = stamped
+          }
           try {
-            deps.setPanelState(target.workspaceId, one.tile, path.map(String), one.value)
+            deps.setPanelState(target.workspaceId, one.tile, stringPath, nextValue)
           } catch {
             // The view's own schema refused it: the teammate's copy goes back to what the room holds.
             refused += 1
@@ -1085,16 +1107,31 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         Object.entries(state.loops).map(([tab, loops]) => {
           const stale = (shareId: string | undefined, replica: unknown): boolean =>
             shareId !== undefined && !replica && !mine.has(shareId)
-          if (!loops.list.some((one) => stale(one.shareId, one.replica))) return [tab, loops]
+          const hasStaleOpen = loops.list.some((one) => stale(one.shareId, one.replica))
+          const hasStaleClosed = (loops.closed ?? []).some((one) => stale(one.loop.shareId, one.loop.replica))
+          if (!hasStaleOpen && !hasStaleClosed) return [tab, loops]
           return [
             tab,
             {
               ...loops,
-              list: loops.list.map((one) => {
-                if (!stale(one.shareId, one.replica)) return one
-                const { shareId: _was, ...plain } = one
-                return plain
-              }),
+              ...(hasStaleOpen
+                ? {
+                    list: loops.list.map((one) => {
+                      if (!stale(one.shareId, one.replica)) return one
+                      const { shareId: _was, ...plain } = one
+                      return plain
+                    }),
+                  }
+                : {}),
+              ...(hasStaleClosed && loops.closed
+                ? {
+                    closed: loops.closed.map((one) => {
+                      if (!stale(one.loop.shareId, one.loop.replica)) return one
+                      const { shareId: _was, ...plain } = one.loop
+                      return { ...one, loop: plain }
+                    }),
+                  }
+                : {}),
             },
           ]
         }),
@@ -1218,19 +1255,35 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         return plain
       }),
       loops: Object.fromEntries(
-        Object.entries(state.loops).map(([tab, loops]) => [
-          tab,
-          loops.list.some((one) => one.shareId === shareId && !one.replica)
-            ? {
-                ...loops,
-                list: loops.list.map((one) => {
-                  if (one.shareId !== shareId || one.replica) return one
-                  const { shareId: _was, ...plain } = one
-                  return plain
-                }),
-              }
-            : loops,
-        ]),
+        Object.entries(state.loops).map(([tab, loops]) => {
+          const hasOpen = loops.list.some((one) => one.shareId === shareId && !one.replica)
+          const hasClosed = (loops.closed ?? []).some((one) => one.loop.shareId === shareId && !one.loop.replica)
+          if (!hasOpen && !hasClosed) return [tab, loops]
+          return [
+            tab,
+            {
+              ...loops,
+              ...(hasOpen
+                ? {
+                    list: loops.list.map((one) => {
+                      if (one.shareId !== shareId || one.replica) return one
+                      const { shareId: _was, ...plain } = one
+                      return plain
+                    }),
+                  }
+                : {}),
+              ...(hasClosed && loops.closed
+                ? {
+                    closed: loops.closed.map((one) => {
+                      if (one.loop.shareId !== shareId || one.loop.replica) return one
+                      const { shareId: _was, ...plain } = one.loop
+                      return { ...one, loop: plain }
+                    }),
+                  }
+                : {}),
+            },
+          ]
+        }),
       ),
     }))
     const memory = owned.get(shareId)

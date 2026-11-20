@@ -7,6 +7,14 @@ import {
   DEFAULT_BROWSER_URL,
   normalizeBrowserUrl,
 } from '../../shared/grid/browser'
+import {
+  summarizeTeamChat,
+  TEAM_CHAT_MESSAGE_MAX,
+  TEAM_CHAT_PLUGIN_DESCRIPTION,
+  TEAM_CHAT_PLUGIN_ID,
+  TEAM_CHAT_PLUGIN_TITLE,
+  TEAM_CHAT_VIEW,
+} from '../../shared/collab/team-chat'
 import { CHAT_VIEW } from '../../shared/grid/grid'
 import type { ConnectionInfo, PluginInfo, SourceInfo, ViewInfo } from '../../shared/state'
 import { prepareMcpArguments, readMcpCall } from '../../shared/data/arguments'
@@ -198,12 +206,13 @@ export function sourceInfos(): Record<string, SourceInfo> {
 /** The views and sources the app ships with. */
 export function registerBuiltins(): void {
   registerSources(null, { mcp: MCP_SOURCE })
-  registerViews(null, [NOTE, TABLE, METRIC, CHART, PLUGINS, TASKS, INBOX, CHAT, APP, BROWSER])
+  registerViews(null, [NOTE, TABLE, METRIC, CHART, PLUGINS, TASKS, INBOX, CHAT, TEAM_CHAT, APP, BROWSER])
   update((state) => ({
     ...state,
     plugins: {
       ...state.plugins,
       [BROWSER_PLUGIN_ID]: BUILT_IN_BROWSER_PLUGIN,
+      [TEAM_CHAT_PLUGIN_ID]: BUILT_IN_TEAM_CHAT_PLUGIN,
     },
   }))
   // An MCP source is described by its tool, which its connection only lists once it is up: the
@@ -476,6 +485,51 @@ const BROWSER: ViewDef = {
   }),
   instructions: `${BROWSER_PLUGIN_DESCRIPTION} A web browser on the grid, for Bloomberg, live streams, and sites that need a sign-in or refuse to be framed. Launch this view whenever the user asks for Bloomberg (use https://www.bloomberg.com/live for Bloomberg Television's live stream, or ${DEFAULT_BROWSER_URL} by default). Additional windows open as switchable tabs inside the same view, so reuse an existing core/browser view in your tile rather than placing a second one. Set state.url (or call use_browser with action "navigate") to navigate, including following any link URL listed in panels/<id>/text; refresh_element reloads the page. Call use_browser to act inside the page on the user's behalf with real browser input: click buttons, modals, tabs, or links (by control id like "c1" from Controls in panels/<id>/text, visible text like "Follow", CSS selector, or x and y coordinates), type into inputs (with optional clear and submit), press keys, scroll feeds or dialogs, go back or forward, or switch and close tabs — never ask the user to paste browser cookies or session tokens. output has the active url, title, loading, canGoBack, canGoForward, theater, tabCount, and error, and the visible page text, interactive Controls, and Links are published to panels/<id>/text.`,
   summarize: browserSummary,
+}
+
+const TEAM_CHAT_MESSAGE_SCHEMA = z.object({
+  id: z.string().min(1).max(80),
+  senderEmail: z.string().min(1).max(254),
+  senderFirstName: z.string().max(80).optional(),
+  senderLastName: z.string().max(80).optional(),
+  text: z.string().min(1).max(TEAM_CHAT_MESSAGE_MAX),
+  at: z.number(),
+})
+
+const TEAM_CHAT: ViewDef = {
+  id: TEAM_CHAT_VIEW,
+  plugin: null,
+  title: TEAM_CHAT_PLUGIN_TITLE,
+  state: z.object({
+    messages: z.record(z.string(), TEAM_CHAT_MESSAGE_SCHEMA).default({}),
+  }),
+  output: z.object({
+    messageCount: z.number(),
+    lastAt: z.number().nullable(),
+  }),
+  instructions: `${TEAM_CHAT_PLUGIN_DESCRIPTION} Place this view (core/team-chat) when the user asks for a direct chat room with teammates where people talk directly without triggering an AI agent.`,
+  summarize: summarizeTeamChat,
+}
+
+const BUILT_IN_TEAM_CHAT_PLUGIN: PluginInfo = {
+  id: TEAM_CHAT_PLUGIN_ID,
+  dir: 'built-in',
+  status: 'ready',
+  version: 1,
+  sources: [],
+  views: [TEAM_CHAT_VIEW],
+  errors: [],
+  capabilities: [],
+  frames: [],
+  secrets: [],
+  connections: [],
+  skills: [],
+  host: 'none',
+  jobs: [],
+  usage: { calls: 0, input: 0, output: 0 },
+  origin: 'local',
+  install: null,
+  built: { purpose: TEAM_CHAT_PLUGIN_DESCRIPTION, at: '' },
 }
 
 const BUILT_IN_BROWSER_PLUGIN: PluginInfo = {

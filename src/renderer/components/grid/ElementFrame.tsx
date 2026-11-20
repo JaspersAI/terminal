@@ -27,6 +27,7 @@ import {
 } from '../../../shared/grid/grid'
 import { waitingViews } from '../../../shared/plugins/needs'
 import { canDropPersonOnRoom, membersWithPerson, roomSharing } from '../../../shared/collab/collab'
+import { TEAM_CHAT_VIEW } from '../../../shared/collab/team-chat'
 import { noteZoom } from '../../lib/eye'
 import { useAppState } from '../../lib/state'
 import { RoomPeople, TeammateDrop, TeammateShield, useTeammateDrag } from '../collab/RoomPeople'
@@ -261,6 +262,11 @@ export function ElementFrame({
     () => (frame ? layoutOf(grid, element.id).panels : panel ? [panel] : []),
     [frame, grid, element.id, panel],
   )
+  const isDirectTeamChat =
+    frame &&
+    insidePanels.length === 1 &&
+    insidePanels[0]?.content.kind === 'view' &&
+    insidePanels[0].content.view === TEAM_CHAT_VIEW
   const roomStamp = useMemo(
     () => (loop ? roomUpdatedAt(loop, insidePanels, earlier, live) : null),
     [loop, insidePanels, earlier, live],
@@ -704,7 +710,7 @@ export function ElementFrame({
       {/* Under the bar. Minimized, it is all still here, cut off by the tile's own height and inert:
           nothing in it is seen, reached, or counted as drawn, and a view keeps what it holds. */}
       <div inert={minimized} className={`flex min-h-0 flex-1 flex-col ${minimized ? 'overflow-hidden' : ''}`}>
-        {loop && (
+        {loop && !isDirectTeamChat && (
           <LoopBox
             workspaceId={workspaceId}
             elementId={element.id}
