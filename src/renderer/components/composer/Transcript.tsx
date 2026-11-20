@@ -205,7 +205,12 @@ export function Transcript({
     >
       {earlier.map((exchange, index) => (
         // Its place in the log, which holds as pages join above; one not filed yet has only its place here.
-        <EarlierExchange key={exchange.id ?? `unfiled-${index}`} exchange={exchange} sharedRoom={sharedRoom} />
+        <EarlierExchange
+          key={exchange.id ?? `unfiled-${index}`}
+          exchange={exchange}
+          sharedRoom={sharedRoom}
+          compactAfter={children !== undefined && index === earlier.length - 1}
+        />
       ))}
       {children}
       {live.map((exchange, index) => (
@@ -302,14 +307,16 @@ const LiveRow = memo(function LiveRow({
 const EarlierExchange = memo(function EarlierExchange({
   exchange,
   sharedRoom,
+  compactAfter = false,
 }: {
   exchange: Exchange
   sharedRoom?: readonly SharePerson[]
+  compactAfter?: boolean
 }): ReactElement {
   const asOf = exchange.at !== undefined ? formatAsOf(exchange.at) : ''
   const humanOnly = sharedRoom !== undefined && isHumanExchange(exchange.answer)
   return (
-    <div data-earlier className="mb-5 last:mb-0">
+    <div data-earlier className={compactAfter ? 'mb-2 last:mb-0' : 'mb-5 last:mb-0'}>
       {exchange.task !== undefined ? (
         <AgentTurn shared={sharedRoom !== undefined}>
           <TaskReply task={exchange.task} text={exchange.answer} citations={exchange.citations} asOf={asOf} />

@@ -178,7 +178,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
         live={shown}
         onStop={stop}
         anchorTop={anchorTop}
-        className="min-h-0 flex-1 px-4 py-3"
+        className="min-h-0 flex-1 px-4 py-2.5"
       >
         {onboarding !== null && <OnboardingCard onboarding={onboarding} />}
       </Transcript>
@@ -296,7 +296,7 @@ export function Chat({ panel }: ViewProps): ReactElement {
           </div>
         </form>
       )}
-      {(earlier.length > 0 || shown.length > 0) && (
+      {onboarding === null && (earlier.length > 0 || shown.length > 0) && (
         <p className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-3 py-1 text-xs text-muted-foreground">
           <button
             type="button"

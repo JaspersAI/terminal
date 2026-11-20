@@ -1902,13 +1902,13 @@ test('fitGridSize and resolveStoredGridSize remember the user grid setting and a
 })
 
 test('topCentralChatRect, chatPlacementFor, and starterRoomPlacements center Central at the top of an empty pane and frame starter rooms cleanly around it', () => {
-  assert.deepEqual(topCentralChatRect(DEFAULT_SIZE), r(4, 0, 8, 8))
-  assert.equal(rangeName(topCentralChatRect(DEFAULT_SIZE)), 'E1:L8')
+  assert.deepEqual(topCentralChatRect(DEFAULT_SIZE), r(3, 0, 10, 8))
+  assert.equal(rangeName(topCentralChatRect(DEFAULT_SIZE)), 'D1:M8')
 
-  // Docking Central on an empty grid places it symmetrically at E1:L8; on an occupied grid it docks on the right edge.
+  // Docking Central on an empty grid places it symmetrically at D1:M8; on an occupied grid it docks on the right edge.
   const onEmpty = placeView(EMPTY_GRID, { ...chatPlacementFor(EMPTY_GRID), content: view(CHAT_VIEW) })
   assert.equal(onEmpty.resolved, 'exact')
-  assert.deepEqual(onEmpty.element.rect, r(4, 0, 8, 8))
+  assert.deepEqual(onEmpty.element.rect, r(3, 0, 10, 8))
 
   const occupied = build({ size: 'half', anchor: 'left' })
   const onOccupied = placeView(occupied, { ...chatPlacementFor(occupied), content: view(CHAT_VIEW) })
@@ -1923,13 +1923,13 @@ test('topCentralChatRect, chatPlacementFor, and starterRoomPlacements center Cen
     assert.equal(placed.resolved, 'exact')
     grid = placed.grid
   }
-  assert.deepEqual(chatElement(grid)?.rect, r(4, 0, 8, 8))
+  assert.deepEqual(chatElement(grid)?.rect, r(3, 0, 10, 8))
 
   // Valid at minimum and maximum grid sizes as well.
   for (const size of [SIZE_MIN, { cols: 24, rows: 18 }, { cols: 100, rows: 100 }]) {
     const chat = topCentralChatRect(size)
     assert.equal(rectProblem(chat, size), null)
     assert.equal(chat.y, 0)
-    assert.ok(starterRoomPlacements(size).length >= 3)
+    assert.ok(starterRoomPlacements(size).length >= 2)
   }
 })

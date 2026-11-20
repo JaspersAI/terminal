@@ -158,12 +158,12 @@ export const CHAT_VIEW = 'core/chat'
 export const CHAT_PLACEMENT: Placement = { size: 'tall', anchor: 'right' }
 
 /**
- * The top-central rectangle for Central on an empty pane: centered horizontally at row 0, taking half
- * the grid's columns and two-thirds of its rows (E1:L8 on 16 × 12) so both the welcome overview and
- * Question 1 fit in view at once while open cells frame it on both flanks and across the bottom.
+ * The top-central rectangle for Central on an empty pane: centered horizontally at row 0, taking 5/8
+ * of the grid's columns and 2/3 of its rows (D1:M8 on 16 × 12) so the welcome overview and full
+ * Question 1 card fit comfortably above the fold while open cells frame it on both flanks and below.
  */
 export function topCentralChatRect(size: GridSize): Rect {
-  const w = clamp(Math.round(size.cols / 2), MIN_CELLS, size.cols)
+  const w = clamp(Math.round((size.cols * 5) / 8), MIN_CELLS, size.cols)
   const h = clamp(Math.round((size.rows * 2) / 3), MIN_CELLS, size.rows)
   const x = Math.floor((size.cols - w) / 2)
   return { x, y: 0, w, h }

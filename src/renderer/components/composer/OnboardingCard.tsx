@@ -304,7 +304,7 @@ export function OnboardingCard({ onboarding }: Props): ReactElement {
       id="central-onboarding"
       data-onboarding-step={stepIndex}
       aria-label="Workspace onboarding questions"
-      className="mt-2.5 animate-appear border border-border bg-muted/30 p-3 text-xs"
+      className="mt-2 animate-appear border border-border bg-muted/30 p-2.5 text-xs"
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -328,12 +328,12 @@ export function OnboardingCard({ onboarding }: Props): ReactElement {
         </button>
       </div>
 
-      <h3 className="mt-2 text-sm font-semibold text-foreground">{currentQuestion.title}</h3>
-      <p className="mt-1 border-l-2 border-border pl-2.5 text-[11px] leading-relaxed text-muted-foreground">
+      <h3 className="mt-1.5 text-sm font-semibold text-foreground">{currentQuestion.title}</h3>
+      <p className="mt-1 border-l-2 border-border pl-2.5 text-[11px] leading-snug text-muted-foreground">
         {currentQuestion.highlight}
       </p>
 
-      <div role="group" aria-label={currentQuestion.title} className="mt-2.5 grid gap-2 sm:grid-cols-2">
+      <div role="group" aria-label={currentQuestion.title} className="mt-2 grid gap-1.5 sm:grid-cols-2">
         {currentQuestion.choices.map((choice) => {
           const active = selected.includes(choice.id)
           return (
@@ -344,7 +344,7 @@ export function OnboardingCard({ onboarding }: Props): ReactElement {
               aria-pressed={active}
               disabled={busy}
               onClick={() => toggleChoice(choice.id)}
-              className={`flex items-start gap-2 border p-2.5 text-left transition-colors disabled:opacity-50 ${
+              className={`flex items-start gap-2 border px-2.5 py-1.5 text-left transition-colors disabled:opacity-50 ${
                 active ? 'border-primary bg-muted ring-1 ring-primary' : 'border-border bg-background hover:bg-muted/60'
               }`}
             >
@@ -387,7 +387,7 @@ export function OnboardingCard({ onboarding }: Props): ReactElement {
 
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
         <div className="flex items-center gap-3">
           {stepIndex > 0 && (
             <button
