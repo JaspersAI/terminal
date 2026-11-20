@@ -26,8 +26,11 @@ import {
   arrange,
   cellName,
   chatElement,
+  chatPlacementFor,
   CHAT_VIEW,
   EMPTY_GRID,
+  starterRoomPlacements,
+  topCentralChatRect,
   parseRange,
   readRectInput,
   writeCells,
@@ -1896,4 +1899,37 @@ test('fitGridSize and resolveStoredGridSize remember the user grid setting and a
   // Detecting workspace grid size changes triggers immediate persistence even when state.gridSize was already custom.
   assert.equal(workspaceGridSizesChanged(resizedAll, beforeResize), true)
   assert.equal(workspaceGridSizesChanged(resizedAll, resizedAll), false)
+})
+
+test('topCentralChatRect, chatPlacementFor, and starterRoomPlacements center Central at the top of an empty pane and frame starter rooms cleanly around it', () => {
+  assert.deepEqual(topCentralChatRect(DEFAULT_SIZE), r(4, 0, 8, 7))
+  assert.equal(rangeName(topCentralChatRect(DEFAULT_SIZE)), 'E1:L7')
+
+  // Docking Central on an empty grid places it symmetrically at E1:L7; on an occupied grid it docks on the right edge.
+  const onEmpty = placeView(EMPTY_GRID, { ...chatPlacementFor(EMPTY_GRID), content: view(CHAT_VIEW) })
+  assert.equal(onEmpty.resolved, 'exact')
+  assert.deepEqual(onEmpty.element.rect, r(4, 0, 8, 7))
+
+  const occupied = build({ size: 'half', anchor: 'left' })
+  const onOccupied = placeView(occupied, { ...chatPlacementFor(occupied), content: view(CHAT_VIEW) })
+  assert.deepEqual(onOccupied.element.rect, r(12, 0, 4, 12))
+
+  // All four starter room slots around top-central Central fit cleanly with exact placement and zero overlap.
+  const slots = starterRoomPlacements(DEFAULT_SIZE)
+  assert.equal(slots.length, 4)
+  let grid = onEmpty.grid
+  for (const [index, slot] of slots.entries()) {
+    const placed = placeFramed(grid, { ...slot, content: view('core/note'), loop: `f${index + 1}` })
+    assert.equal(placed.resolved, 'exact')
+    grid = placed.grid
+  }
+  assert.deepEqual(chatElement(grid)?.rect, r(4, 0, 8, 7))
+
+  // Valid at minimum and maximum grid sizes as well.
+  for (const size of [SIZE_MIN, { cols: 24, rows: 18 }, { cols: 100, rows: 100 }]) {
+    const chat = topCentralChatRect(size)
+    assert.equal(rectProblem(chat, size), null)
+    assert.equal(chat.y, 0)
+    assert.ok(starterRoomPlacements(size).length >= 3)
+  }
 })

@@ -12,7 +12,7 @@ import type { InstallRequest, PrepareResult } from '../shared/plugins/install'
 import type { Memory } from '../shared/agent/memory'
 import type { SkillInstallRequest, SkillPrepareResult } from '../shared/skills/skill-install'
 import type { SkillFile } from '../shared/skills/skills'
-import type { Action, AppState } from '../shared/state'
+import type { Action, AppState, OnboardingAction } from '../shared/state'
 import type { QueryResult, StoreStats } from '../shared/data/store'
 import type { Exchange } from '../shared/agent/transcript'
 import type { Note } from '../shared/app/eye-events'
@@ -89,8 +89,10 @@ const api = {
     /** Records a direct assistant exchange (such as an attachment error response) in the conversation log. */
     logExchange: (question: string, answer: string, loop?: string): Promise<void> =>
       ipcRenderer.invoke('agent:log-exchange', question, answer, loop ?? null),
-    /** The welcome after setup, once the workspace is on screen: main says its messages into the chat on its own. */
+    /** Starts workspace onboarding once setup and first-run prompts are done: docks Central and opens profiling. */
     welcome: (): Promise<void> => ipcRenderer.invoke('agent:welcome'),
+    /** Advances, skips, dismisses, or launches a starter room in Central's workspace onboarding flow. */
+    onboarding: (action: OnboardingAction): Promise<void> => ipcRenderer.invoke('agent:onboarding', action),
     /** What a run is doing, as it does it. For showing only: the reply comes back from `run`. */
     onEvent: (listener: (event: AgentEvent) => void): (() => void) => on('agent:event', listener),
   },

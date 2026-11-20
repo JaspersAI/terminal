@@ -150,6 +150,18 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
       <header className="flex min-h-8 shrink-0 items-start gap-2 border-b border-border bg-background px-4 py-1">
         <Composer />
         <div className="flex h-6 shrink-0 items-center gap-1.5 self-start">
+          {!docked && app.welcome?.onboarding && (
+            <button
+              type="button"
+              id="reopen-onboarding-button"
+              onClick={() =>
+                dockChat(current.id, MAIN_WINDOW).catch((err: unknown) => console.error('[dock]', errorMessage(err)))
+              }
+              className="flex h-6 items-center justify-center border border-central bg-central px-2.5 text-xs leading-none font-medium text-central-foreground transition-opacity hover:opacity-90"
+            >
+              Onboarding
+            </button>
+          )}
           <button
             type="button"
             id="central-dock-toggle"

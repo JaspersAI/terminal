@@ -154,8 +154,48 @@ export const EMPTY_GRID: Grid = { size: DEFAULT_SIZE, elements: [], panels: [], 
 /** The built-in chat: the assistant's conversation and its command line, docked on the grid as an element. */
 export const CHAT_VIEW = 'core/chat'
 
-/** Where the chat lands when it is docked: a column down the right, moved and resized from there by hand. */
+/** Where the chat lands when it is docked alongside existing rooms: a column down the right, moved and resized from there by hand. */
 export const CHAT_PLACEMENT: Placement = { size: 'tall', anchor: 'right' }
+
+/**
+ * The top-central rectangle for Central on an empty pane: centered horizontally at row 0, taking half
+ * the grid's columns and slightly over half its rows (E1:L7 on 16 × 12) so open cells frame it on
+ * both flanks and across the bottom for starter rooms.
+ */
+export function topCentralChatRect(size: GridSize): Rect {
+  const w = clamp(Math.round(size.cols / 2), MIN_CELLS, size.cols)
+  const h = clamp(Math.ceil((size.rows * 7) / 12), MIN_CELLS, size.rows)
+  const x = Math.floor((size.cols - w) / 2)
+  return { x, y: 0, w, h }
+}
+
+/**
+ * Where Central lands when docked on `grid`: centered at the top of an empty pane (`topCentralChatRect`),
+ * or along the right edge (`CHAT_PLACEMENT`) when rooms already occupy the grid.
+ */
+export function chatPlacementFor(grid: Grid): Placement {
+  return layoutOf(grid).elements.length === 0 ? { rect: topCentralChatRect(grid.size) } : CHAT_PLACEMENT
+}
+
+/**
+ * Clean non-overlapping room placements around a top-central docked Central pane: first two wide
+ * slots side-by-side beneath Central, then the left and right flanking columns beside it.
+ */
+export function starterRoomPlacements(size: GridSize): Placement[] {
+  const chat = topCentralChatRect(size)
+  const bottomY = chat.y + chat.h
+  const bottomH = size.rows - bottomY
+  const halfW = Math.round(size.cols / 2)
+  const rightX = chat.x + chat.w
+  const rightW = size.cols - rightX
+  const slots: Rect[] = [
+    { x: 0, y: bottomY, w: halfW, h: bottomH },
+    { x: halfW, y: bottomY, w: size.cols - halfW, h: bottomH },
+    { x: 0, y: 0, w: chat.x, h: chat.h },
+    { x: rightX, y: 0, w: rightW, h: chat.h },
+  ]
+  return slots.filter((r) => rectProblem(r, size) === null).map((r) => ({ rect: r }))
+}
 
 /**
  * The element holding the docked chat in one window's grid, or null when that window has none. A

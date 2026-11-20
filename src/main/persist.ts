@@ -55,6 +55,7 @@ interface StateFile {
   acceptedTerms?: string | null
   termsText?: string
   onboardingComplete: boolean
+  workspaceOnboarded?: boolean
   llm: StoredProvider | null
   voice: StoredProvider | null
   search?: StoredProvider | null
@@ -108,6 +109,7 @@ const EMPTY: StateFile = {
   version: 1,
   termsAccepted: false,
   onboardingComplete: false,
+  workspaceOnboarded: false,
   llm: null,
   voice: null,
   search: null,
@@ -222,6 +224,7 @@ export function load(): MainState {
     acceptedTerms: terms.acceptedTerms,
     termsText: terms.termsText,
     onboardingComplete: state.onboardingComplete,
+    workspaceOnboarded: state.workspaceOnboarded === true,
     llm: state.llm,
     voice: state.voice,
     search: state.search ?? null,
@@ -397,6 +400,7 @@ export function save(next: MainState, prev: MainState): void {
     next.acceptedTerms !== prev.acceptedTerms ||
     next.termsText !== prev.termsText ||
     next.onboardingComplete !== prev.onboardingComplete ||
+    next.workspaceOnboarded !== prev.workspaceOnboarded ||
     next.llm !== prev.llm ||
     next.voice !== prev.voice ||
     next.search !== prev.search ||
@@ -446,6 +450,7 @@ export function flush(): void {
       acceptedTerms: latest.acceptedTerms,
       termsText: latest.termsText,
       onboardingComplete: latest.onboardingComplete,
+      workspaceOnboarded: latest.workspaceOnboarded,
       llm: latest.llm,
       voice: latest.voice,
       search: latest.search,

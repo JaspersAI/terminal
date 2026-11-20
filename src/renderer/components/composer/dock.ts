@@ -1,5 +1,5 @@
-import { CHAT_PLACEMENT, CHAT_VIEW, chatElement, EMPTY_GRID } from '../../../shared/grid/grid'
-import { dispatch, useAppState } from '../../lib/state'
+import { chatElement, chatPlacementFor, CHAT_VIEW, EMPTY_GRID } from '../../../shared/grid/grid'
+import { dispatch, get, useAppState } from '../../lib/state'
 
 // Docking the chat. The composer floating at the bottom of a window and the `core/chat` element on
 // that window's grid are the same conversation in two places: docking places the element, undocking
@@ -7,17 +7,18 @@ import { dispatch, useAppState } from '../../lib/state'
 // and persists it: a window that had the chat docked opens with it docked.
 
 /**
- * Puts the chat on one window's grid, which takes the overlay's place there. When the grid has no
- * free space, main shrinks the right-edge tiles to make room, or floats the chat over the right
- * edge when a tile there is already at minimum width.
+ * Puts the chat on one window's grid, which takes the overlay's place there: centered at the top of
+ * an empty pane, or along the right edge when rooms already occupy the grid (shrinking right-edge
+ * tiles in place when needed, or floating over the right edge when a tile is already at minimum width).
  */
 export function dockChat(workspaceId: string, window: number): Promise<void> {
+  const grid = get().grids[workspaceId]?.[window] ?? EMPTY_GRID
   return dispatch({
     type: 'element.place',
     workspaceId,
     window,
     content: { kind: 'view', view: CHAT_VIEW },
-    placement: CHAT_PLACEMENT,
+    placement: chatPlacementFor(grid),
   })
 }
 

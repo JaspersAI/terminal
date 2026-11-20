@@ -15,7 +15,7 @@ export function App(): ReactElement {
   const [setupStarted, setSetupStarted] = useState(false)
   const needsTerms = needsTermsAcceptance(app, window.app.windowNumber)
   const screen = app.onboardingComplete ? (
-    <Home welcome={setupStarted && window.app.windowNumber === MAIN_WINDOW} />
+    <Home welcome={window.app.windowNumber === MAIN_WINDOW} />
   ) : setupStarted && app.termsAccepted ? (
     <Onboarding />
   ) : (

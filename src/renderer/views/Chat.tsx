@@ -15,6 +15,7 @@ import { withAttachments } from '../../shared/agent/attachments'
 import { elementZoom } from '../../shared/grid/grid'
 import { AttachButton, useAttachments, useFileDrop } from '../components/composer/Attachments'
 import { useEarlier, useNoticeTimer } from '../components/composer/conversation'
+import { OnboardingCard } from '../components/composer/OnboardingCard'
 import { pasteLinks } from '../components/composer/paste'
 import { QuestionField } from '../components/composer/QuestionField'
 import { useRequest } from '../components/composer/request'
@@ -72,6 +73,9 @@ export function Chat({ panel }: ViewProps): ReactElement {
   const notice = notices.find((one) => one.chat !== workspaceId) ?? null
   const told = notices.find((one) => one.chat === workspaceId)?.id ?? null
   const welcome = useAppState((s) => (s.welcome?.workspaceId === workspaceId ? s.welcome.said : null))
+  const onboarding = useAppState((s) => s.welcome?.onboarding ?? null)
+  const anchorTop =
+    onboarding !== null && onboarding.step === 0 && shown.length === 0 && earlier.every((one) => one.welcome === true)
 
   const more = useEarlier({ request, workspaceId, when: tabActive, said: told, welcome })
   useNoticeTimer(tabActive ? (notice?.id ?? null) : null)
@@ -168,7 +172,16 @@ export function Chat({ panel }: ViewProps): ReactElement {
       onDrop={drop.onDrop}
       className="flex h-full flex-col"
     >
-      <Transcript earlier={earlier} onEarlier={more} live={shown} onStop={stop} className="min-h-0 flex-1 px-3 py-3" />
+      <Transcript
+        earlier={earlier}
+        onEarlier={more}
+        live={shown}
+        onStop={stop}
+        anchorTop={anchorTop}
+        className="min-h-0 flex-1 px-4 py-3"
+      >
+        {onboarding !== null && <OnboardingCard onboarding={onboarding} />}
+      </Transcript>
       {notice && (
         <div className="shrink-0 border-t border-border px-3 py-2">
           <p className="text-xs text-muted-foreground">{notice.plugin}</p>

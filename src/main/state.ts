@@ -47,6 +47,7 @@ export interface MainState {
   /** The latest Terms of Use text, pulled from the website or fallen back to the cached/bundled copy. */
   termsText: string
   onboardingComplete: boolean
+  workspaceOnboarded: boolean
   llm: StoredProvider | null
   voice: StoredProvider | null
   search: StoredProvider | null
