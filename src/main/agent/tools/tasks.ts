@@ -14,8 +14,13 @@ import {
   type TaskPatch,
 } from '../../../shared/tasks/tasks'
 import { getState } from '../../state'
+import { askUser } from '../../actions'
+import { extractConfirmTarget } from '../../../shared/plugins/approvals'
+import { approveDestinationsForTask, defaultApprovalDeps } from '../../plugins/approvals'
+import { allSources, getSource } from '../../plugins/registry'
 import { cancelTask, checkTask, getTask, scheduleTask, updateTask } from '../../tasks/tasks'
 import { parseClockRule, type ClockRule } from '../../../shared/tasks/clock-rule'
+import { askedBy } from '../utils/runs'
 import { approveForTask } from './shell'
 import type { Tool, ToolContext } from './types'
 import { optional, unstring, asPathString, isRecord } from './input'
@@ -42,19 +47,40 @@ const COMMANDS = {
     "The scripts a run will pass to run_shell, each whole, as it will be typed. The user is asked to allow them now, while they are here, and a run then runs them without asking, so give every one the instructions need; a script not given here asks at the run, when nobody may be there to answer. A run must pass a script unchanged, so write nothing into it that differs from run to run, and put a run's shell work in one script where you can. At most 5.",
 }
 
-/** The task tools as the model is offered them: with `commands` only while pro mode is on. */
-export function tasksTools(): Tool[] {
-  if (!getState().proMode.enabled) return TOOLS
-  return TOOLS.map((tool) => (tool.name === 'cancel_task' ? tool : withCommands(tool)))
+const DESTINATIONS = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      source: { type: 'string', description: 'Confirmed write source id, like slack/send.' },
+      destination: { type: 'string', description: 'Target destination id the scheduled task will post to.' },
+      label: { type: 'string', description: 'Optional human-readable label for the destination.' },
+    },
+    required: ['source', 'destination'],
+  },
+  description:
+    'Write destinations this scheduled task will post to through confirmed sources. The user is asked to approve each destination now so unattended runs can post without prompting.',
 }
 
-function withCommands(tool: Tool): Tool {
+/** The task tools as the model is offered them: with `commands` while pro mode is on, and `destinations` when confirmed sources exist. */
+export function tasksTools(): Tool[] {
+  const pro = getState().proMode.enabled
+  const hasConfirm = allSources().some((s) => !s.def.internal && s.def.confirm !== undefined)
+  if (!pro && !hasConfirm) return TOOLS
+  return TOOLS.map((tool) => (tool.name === 'cancel_task' ? tool : withTaskExtras(tool, pro, hasConfirm)))
+}
+
+function withTaskExtras(tool: Tool, pro: boolean, hasConfirm: boolean): Tool {
   const properties = tool.parameters['properties']
   return {
     ...tool,
     parameters: {
       ...tool.parameters,
-      properties: { ...(isRecord(properties) ? properties : {}), commands: COMMANDS },
+      properties: {
+        ...(isRecord(properties) ? properties : {}),
+        ...(pro ? { commands: COMMANDS } : {}),
+        ...(hasConfirm ? { destinations: DESTINATIONS } : {}),
+      },
     },
   }
 }
@@ -126,8 +152,15 @@ const TOOLS: Tool[] = [
         model: getState().llm?.providerId === JASPERS ? null : (optional(input.model, asPathString) ?? null),
       }
       const wanted = checkCommands(asCommands(input.commands), getState().proMode.enabled)
+      const destTargets = collectTaskDestinations(draft.call, input.destinations)
       checkTask({ ...draft, commands: wanted })
       const commands = await approveForTask(wanted, context)
+      await approveDestinationsForTask({
+        targets: destTargets,
+        signal: context.signal,
+        about: askedBy(context.runId),
+        deps: defaultApprovalDeps(askUser),
+      })
       // The wait for an answer can be minutes: "in 60" counts from the answer, not from the question.
       const now = Date.now()
       const task = scheduleTask({ ...draft, executeAt: whenOf(input.at, input.in, now), commands }, now)
@@ -181,6 +214,15 @@ const TOOLS: Tool[] = [
         )
         patch.commands = wanted.filter((command) => had.includes(command) || added.includes(command))
       }
+      const destTargets = collectTaskDestinations(patch.call ?? null, input.destinations)
+      if (destTargets.length > 0) {
+        await approveDestinationsForTask({
+          targets: destTargets,
+          signal: context.signal,
+          about: askedBy(context.runId),
+          deps: defaultApprovalDeps(askUser),
+        })
+      }
       return JSON.stringify(taskShown(updateTask(id, patch, Date.now(), context.workspaceId)))
     },
   },
@@ -198,6 +240,59 @@ const TOOLS: Tool[] = [
 
 function given(value: unknown): boolean {
   return value !== undefined && value !== null && value !== ''
+}
+
+function collectTaskDestinations(
+  call: TaskCall | null,
+  rawDestinations: unknown,
+): {
+  sourceId: string
+  plugin: string
+  confirm: NonNullable<ReturnType<typeof getSource>>['def']['confirm'] & object
+  destination: string
+  label?: string
+}[] {
+  const out: {
+    sourceId: string
+    plugin: string
+    confirm: NonNullable<ReturnType<typeof getSource>>['def']['confirm'] & object
+    destination: string
+    label?: string
+  }[] = []
+  if (call?.tool === 'run_source' && isRecord(call.input) && typeof call.input['source'] === 'string') {
+    const src = getSource(call.input['source'].trim())
+    if (src?.plugin && src.def.confirm) {
+      const inner = isRecord(call.input['input']) ? call.input['input'] : call.input
+      const extracted = extractConfirmTarget(src.def.confirm, inner)
+      if (extracted) {
+        out.push({
+          sourceId: src.id,
+          plugin: src.plugin,
+          confirm: src.def.confirm,
+          destination: extracted.destination,
+          ...(extracted.label ? { label: extracted.label } : {}),
+        })
+      }
+    }
+  }
+  const items = unstring(rawDestinations)
+  if (Array.isArray(items)) {
+    for (const item of items) {
+      if (!isRecord(item) || typeof item['source'] !== 'string' || typeof item['destination'] !== 'string') continue
+      const src = getSource(item['source'].trim())
+      const dest = item['destination'].trim()
+      if (!src?.plugin || !src.def.confirm || !dest) continue
+      const label = typeof item['label'] === 'string' && item['label'].trim() ? item['label'].trim() : undefined
+      out.push({
+        sourceId: src.id,
+        plugin: src.plugin,
+        confirm: src.def.confirm,
+        destination: dest,
+        ...(label ? { label } : {}),
+      })
+    }
+  }
+  return out
 }
 
 function whenOf(at: unknown, inSeconds: unknown, now: number): number {

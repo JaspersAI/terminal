@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { asRequest, describeSource, parseSource, type PrepareResult } from '../../shared/plugins/install'
+import { withoutPluginApprovals } from '../../shared/plugins/approvals'
 import { isPluginId } from '../../shared/plugins/id'
 import { withInstallLock } from './archive-fetch'
 import { addNotice } from '../app/notices'
@@ -144,8 +145,9 @@ export async function removeInstalled(id: string): Promise<void> {
     const allowedApps = Object.fromEntries(
       Object.entries(state.allowedApps).filter(([connection]) => !connection.startsWith(`${id}/`)),
     )
+    const sourceApprovals = withoutPluginApprovals(state.sourceApprovals, id)
     const disabledSkills = state.disabledSkills.filter((skill) => !skill.startsWith(`${id}:`))
-    return { ...state, secrets, oauth, allowedApps, disabledSkills }
+    return { ...state, secrets, oauth, allowedApps, sourceApprovals, disabledSkills }
   })
   await fsp.rm(path.dirname(bundlePath(id)), { recursive: true, force: true })
 }

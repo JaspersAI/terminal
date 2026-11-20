@@ -367,6 +367,10 @@ function terminal(
     workspaces: [{ id: 'ws', name: 'Main' }],
     currentWorkspaceId: 'ws',
     ...start,
+    sources: {
+      'core/prices': { plugin: null },
+      'custom/feed': { plugin: 'custom' },
+    },
     jaspers: { email },
     collab: EMPTY_COLLAB,
   }
@@ -455,6 +459,9 @@ function terminal(
     lives,
     keptLive,
     queried,
+    setSource(id: string, info: CollabEngineState['sources'][string]): void {
+      state = { ...state, sources: { ...state.sources, [id]: info } }
+    },
     get state() {
       return state
     },
@@ -918,6 +925,41 @@ test("a live value a replica's view reads is sent by the owner, and again as it 
   alice.engine.liveChanged('custom', 'chat/c1')
   await settle()
   assert.deepEqual(bob.keptLive.get('custom/chat/c1'), { messages: ['one', 'two'] })
+})
+
+test('viewer-scoped, noStore, and write sources are refused for teammates, and a plugin with no room-scoped source has no watchable live keys', async (t) => {
+  const { alice, bob, settle, room, note } = await pair(t)
+  alice.built.set('slack', {
+    plugin: 'slack',
+    bundleJs: 'export {}',
+    frames: [],
+    views: [],
+    viewerSources: ['slack/read-thread', 'slack/send'],
+  })
+  alice.setSource('slack/read-thread', { plugin: 'slack', scope: 'viewer', noStore: true })
+  alice.setSource('slack/send', { plugin: 'slack', scope: 'viewer', noStore: true, writes: true })
+  alice.setSource('slack/audit', { plugin: 'slack', noStore: true })
+  alice.show(note, 'slack/thread')
+  alice.lives.set('slack/secret', { messages: ['private'] })
+
+  await alice.engine.shareRoom('ws', room, ['bob'])
+  await settle()
+  const shareId = bob.state.collab.shares[0]!.shareId
+  const panel = bob.engine.replica('ws', roomOf(bob)!.panels[0]!.id)!
+
+  for (const blocked of ['slack/read-thread', 'slack/send', 'slack/audit']) {
+    const attempt = bob.engine.source('ws', panel, blocked, { channel: 'C1' })
+    const rejected = assert.rejects(attempt, /not part of this room/)
+    await settle()
+    await rejected
+  }
+  assert.deepEqual(alice.ran, [], 'no flagged source ever ran on the owner')
+  assert.equal(bob.datasets.size, 0, 'no share dataset part was created')
+
+  // slack has no room-scoped source in the room, so watch is refused even though slack/thread is shown.
+  bob.engine.watch(shareId, 'slack', 'secret')
+  await settle()
+  assert.equal(bob.keptLive.size, 0, 'no live key is watchable for a plugin without a room-scoped source')
 })
 
 test("a tile's statement over the store is run on the owner's store, and only the one the tile holds", async (t) => {

@@ -26,6 +26,8 @@ export interface ToolContext {
   signal?: AbortSignal
   /** No model reads the answer: a task's own call, which compares it with its last. A tool then answers as its source did, nothing rewritten for reading. */
   unread?: boolean
+  /** Set when a teammate in a shared room asked the room's agent: viewer and write sources are refused. */
+  fromTeammate?: boolean
 }
 
 /**
@@ -42,7 +44,7 @@ export interface Tool extends ToolDefinition {
    * Only reads: nothing on the grid, in the tree, or on screen is different for its having run, so
    * several asked for in one round run side by side. One without it runs alone, in the order asked.
    */
-  readsOnly?: boolean
+  readsOnly?: boolean | ((input: Record<string, unknown>) => boolean)
   /**
    * Its answer goes to the model whole, however long: it is the data that was asked for, and part of
    * it is not an answer. Any other tool's is cut where it is more than can be read at once.

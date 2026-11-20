@@ -292,6 +292,49 @@ test('internal is true or false', () => {
   )
 })
 
+test('source scope, noStore, writes, and confirm are validated', () => {
+  const valid = {
+    ...greet(),
+    scope: 'viewer',
+    noStore: true,
+    writes: true,
+    confirm: { destinationArg: 'channel', threadArg: 'threadTs', actionLabel: 'post to' },
+  }
+  assert.equal(
+    validatePluginDefinition({ kind: 'plugin', id: 'hello', sources: { post: valid } }, 'hello').sources['post'],
+    valid,
+  )
+  assert.throws(
+    () =>
+      validatePluginDefinition(
+        { kind: 'plugin', id: 'hello', sources: { post: { ...greet(), scope: 'global' } } },
+        'hello',
+      ),
+    /scope is 'room' or 'viewer'/,
+  )
+  assert.throws(
+    () =>
+      validatePluginDefinition(
+        { kind: 'plugin', id: 'hello', sources: { post: { ...greet(), noStore: 'yes' } } },
+        'hello',
+      ),
+    /noStore is true or false/,
+  )
+  assert.throws(
+    () =>
+      validatePluginDefinition({ kind: 'plugin', id: 'hello', sources: { post: { ...greet(), writes: 1 } } }, 'hello'),
+    /writes is true or false/,
+  )
+  assert.throws(
+    () =>
+      validatePluginDefinition(
+        { kind: 'plugin', id: 'hello', sources: { post: { ...greet(), confirm: {} } } },
+        'hello',
+      ),
+    /confirm needs \{ destinationArg \}/,
+  )
+})
+
 const SEC = {
   kind: 'connection',
   url: 'https://analyst-api.jsprai.com/mcp/open',

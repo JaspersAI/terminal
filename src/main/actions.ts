@@ -137,6 +137,7 @@ import {
   stopSharing,
 } from './collab/collab'
 import { allowApps } from './plugins/app-consent'
+import { removeSourceApproval } from './plugins/approvals'
 import { getLive } from './plugins/live'
 import { getView } from './plugins/registry'
 import { RESEARCH_PLUGIN, researchLiveText, researchRoomOf } from '../shared/plugins/live'
@@ -327,6 +328,7 @@ const HANDLERS: Record<Action['type'], Handler> = {
   },
   'plugin.setSecret': (raw) => setSecret(asString(raw.plugin), asString(raw.key), asString(raw.value)),
   'plugin.remove': (raw) => removeInstalled(asString(raw.id)),
+  'sourceApproval.remove': (raw) => removeSourceApproval(asString(raw.id)),
   'proMode.set': (raw) => setProMode(raw['proMode']),
   'eye.set': (raw) => setEye(raw['eye']),
   // A frame of every window and a file written, so it is waited for: the popover says when it is sent.

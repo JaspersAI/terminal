@@ -53,6 +53,10 @@ defineSource({
 - `ctx.fetch` reaches only the hosts in `hosts`.
 - An API that takes its key as HTTP Basic auth, like `curl -u KEY:`, gets it as the address's user: `ctx.fetch('https://${secret:apikey}:@api.example.com/v1/rates')` sends it as an `Authorization: Basic` header and the address without it.
 - `internal: true` keeps a source for the plugin's own views; the assistant is not offered it.
+- `scope: 'viewer'` runs a panel's call on the viewer's own terminal with their own credentials in a shared room (returning `PLUGIN_NOT_INSTALLED` locally if uninstalled) instead of forwarding to the room owner, and keeps it off teammate-triggered room prompts.
+- `noStore: true` skips caching, dataset retention, SQLite filing, shared-room part sync, and Eye frame capture while a view rendering it is visible.
+- `writes: true` marks a source with external side effects so calls serialize rather than batching as read-only, and get a 30-second execution cap in Central.
+- `confirm: { destinationArg, threadArg?, labelArg?, actionLabel? }` asks the user in the command bar before an LLM run writes to an unapproved destination (or destination + thread), remembers explicit approvals in Settings > Plugins, and fails closed when unattended.
 - Return an array of objects, or an object with the array under `rows`, `companies`, `items`, `results`, or `data`. Those become the rows and the rest becomes `meta`. Anything else comes back as text.
 - An object's `citations`, each `{ id, title, url?, quote? }`, are sources the assistant can cite in the chat as `[^id]`: see [Citations in the chat](connections-and-data.md#citations-in-the-chat).
 

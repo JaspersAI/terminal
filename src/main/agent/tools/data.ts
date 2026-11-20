@@ -1,18 +1,17 @@
-import { untilAborted } from '../../../shared/abort'
-import { sourceOutput } from '../../../shared/agent/history'
-import { readInput, readMcpCall } from '../../../shared/data/arguments'
 import { QUERY_LIMIT_DEFAULT, QUERY_LIMIT_MAX } from '../../../shared/data/store'
-import { findConnectionTool, resolveConnectionSource, sourceParameters } from '../../../shared/data/tool-parameters'
-import { MCP_SOURCE } from '../../../shared/plugins/apps'
+import { askUser } from '../../actions'
 import { appOf, showApp } from '../../plugins/apps'
+import { defaultApprovalDeps, type ApprovalDeps } from '../../plugins/approvals'
 import { hasPendingPluginRegistration, waitForPluginRegistration } from '../../plugins/plugins'
-import { allSources, getSource, type RegisteredSource } from '../../plugins/registry'
+import { allSources, getSource } from '../../plugins/registry'
 import { runSource } from '../../data/sources'
 import { getState } from '../../state'
 import { query } from '../../data/store'
 import { readAttachment } from '../attachments'
+import { askedBy } from '../utils/runs'
 import type { Tool } from './types'
 import { optional, asPathString, asOffset } from './input'
+import { createSourceTools } from './source-tools'
 
 export function storeTools(): Tool[] {
   return [
@@ -95,200 +94,21 @@ export function storeTools(): Tool[] {
  * assistant has the user asked for a key the plugin declares and lacks. The builder passes none: it
  * runs a source it is still writing, and there a missing key is an answer it reports.
  */
-export function sourceTools(ask?: (plugin: string) => Promise<void>): Tool[] {
-  /** Lists public sources and resolvable tools on ready connections using the latest application state. */
-  const named = (): string[] => {
-    const state = getState()
-    const sources = allSources()
-    const ids = new Set(
-      Object.values(state.sources)
-        .filter((one) => !one.internal)
-        .map((one) => one.id),
-    )
-    for (const conn of Object.values(state.connections)) {
-      if (conn.status !== 'ready') continue
-      for (const tool of conn.tools) {
-        const ref = `${conn.id}/${tool.name}`
-        if (resolveConnectionSource(ref, sources, state.connections)) ids.add(ref)
-      }
-    }
-    return [...ids]
-  }
-  /** Resolves a public source or throws with nearby source ids to help correct an unknown reference. */
-  const find = (id: string): RegisteredSource => {
-    const source = getSource(id)
-    if (!source || source.def.internal) {
-      const known = named()
-      throw new Error(
-        `No source called "${id}". The sources block of your instructions lists every one; the closest are ${nearest(id, known).join(', ') || 'none'}.`,
-      )
-    }
-    return source
-  }
-
-  return [
-    {
-      name: 'run_source',
-      // It files what it fetched, which nothing else in a round reads: five sources asked at once are five waits shared.
-      // A tool that has a view of its own also puts that view on the grid, each in one change of its own.
-      readsOnly: true,
-      whole: true,
-      description:
-        'Run one of the installed sources. Its id and what it takes are in the sources block of your instructions: pass the id as source and its arguments as input. Answers with everything the source returned, a long table of rows as its columns once and then the values of each row in that order. Use describe_source first only when the argument names there are not enough to call it.',
-      parameters: {
-        type: 'object',
-        properties: {
-          source: { type: 'string', description: 'A source id from the sources block: <plugin>/<name>.' },
-          input: {
-            type: 'object',
-            description: "The source's arguments, as its line in the sources block names them.",
-            properties: {
-              tables: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    title: { type: 'string' },
-                    columns: { type: 'array', items: { type: 'string' } },
-                    rows: {
-                      type: 'array',
-                      items: {
-                        anyOf: [{ type: 'array' }, { type: 'object', additionalProperties: true }],
-                      },
-                    },
-                  },
-                  required: ['title', 'columns', 'rows'],
-                },
-              },
-            },
-            additionalProperties: true,
-          },
-        },
-        required: ['source'],
-      },
-      /** Runs a source with normalized input, returning its text and dataset metadata and showing a loop app when available. */
-      async run(input, { workspaceId, signal, unread, loop }) {
-        const id = asPathString(input.source).trim()
-        if (!getSource(id) && hasPendingPluginRegistration()) {
-          await waitForPluginRegistration(signal)
-        }
-        const source = find(id)
-        const { plugin, connection } = source
-        const state = getState()
-        const { source: _source, input: rawInput, ...topLevel } = input
-        const parsedInput =
-          rawInput !== undefined
-            ? readInput(rawInput, source.id, state.connections)
-            : Object.keys(topLevel).length > 0
-              ? readInput(topLevel, source.id, state.connections)
-              : {}
-        const args =
-          rawInput !== undefined && Object.keys(topLevel).length > 0
-            ? readInput({ ...topLevel, ...parsedInput }, source.id, state.connections)
-            : parsedInput
-        if (source.id === MCP_SOURCE) {
-          const target = readMcpCall(args, state.connections).connection
-          if (state.connections[target]?.internal)
-            throw new Error(`${target} is its plugin's own server: use that plugin's views and sources instead.`)
-        }
-        // A plugin's own code fails without a key it declares, where a connection's call asks for its
-        // own. The wait ends with the run: no source is run for a run stopped while it was asking.
-        if (ask && plugin !== null && connection === null) await untilAborted(ask(plugin), signal)
-        // A connection's tool whose server has a page for it, called by a loop's agent: the call is
-        // made fresh, so there is a result of its own to show, and the page is put in the work's tiles
-        // with it. The orchestrator's call, and a task's own, answer in text and show nothing.
-        const page = source.id === MCP_SOURCE && loop !== undefined ? appOf(args) : null
-        // Central's direct source calls are capped at 5 seconds (fast chat queries); lasting work belongs in a room.
-        const fastCap = loop === undefined && !unread ? AbortSignal.timeout(5_000) : null
-        const callSignal = fastCap && signal ? AbortSignal.any([signal, fastCap]) : (fastCap ?? signal)
-        let answer: unknown
-        let result: Awaited<ReturnType<typeof runSource>>
-        try {
-          result = await runSource(source.id, args, {
-            workspaceId,
-            signal: callSignal,
-            ...(page || unread ? { fresh: true } : {}),
-            ...(page ? { raw: (raw: unknown) => (answer = raw) } : {}),
-          })
-        } catch (err) {
-          if (fastCap?.aborted && !signal?.aborted) {
-            throw new Error(
-              `${source.id} took longer than 5 seconds, exceeding Central's fast-lookup limit. Propose setting up a room with create_room for this work instead.`,
-            )
-          }
-          throw err
-        }
-        // Everything the source returned is already filed in SQLite by runSource; the inline
-        // text handed to the model is formatted as a compact table and capped so a multi-megabyte
-        // filing or bar series never crowds the context window, while keeping the dataset and app
-        // footers intact at the end.
-        const shown = page && loop !== undefined && answer !== undefined ? showApp(workspaceId, page, answer, loop) : ''
-        return sourceOutput(result, { unread, builder: !ask, shown })
-      },
-    },
-    {
-      name: 'describe_source',
-      readsOnly: true,
-      description:
-        'The whole schema of what one source takes, when the argument names in the sources block are not enough to call it.',
-      parameters: {
-        type: 'object',
-        properties: {
-          source: { type: 'string', description: 'A source id from the sources block: <plugin>/<name>.' },
-        },
-        required: ['source'],
-      },
-      /** Describes a source or a targeted generic MCP tool, including its full parameter schema. */
-      async run(input, { signal }) {
-        const id = asPathString(input.source).trim()
-        if (!getSource(id) && hasPendingPluginRegistration()) {
-          await waitForPluginRegistration(signal)
-        }
-        const state = getState()
-        const { def, connection } = find(id)
-        if (id === MCP_SOURCE) {
-          const { source: _source, input: rawInput, ...topLevel } = input
-          const mcpCall = readMcpCall(rawInput ?? topLevel, state.connections)
-          if (mcpCall.tool) {
-            const target = mcpCall.connection ? `${mcpCall.connection}/${mcpCall.tool}` : mcpCall.tool
-            const found = findConnectionTool(target, state.connections, allSources())
-            if (found) {
-              return JSON.stringify({
-                source: `${found.connection}/${found.tool.name}`,
-                description: found.tool.description,
-                parameters: found.tool.inputSchema,
-              })
-            }
-          }
-        }
-        const tool =
-          connection && 'mcp' in def
-            ? state.connections[connection]?.tools.find((one) => one.name === def.tool)
-            : undefined
-        const baseDescription = def.description ?? tool?.description ?? ''
-        const description =
-          id === 'excel-export/export-tables'
-            ? `${baseDescription} For multi-sheet workbooks, pass 1 or 2 tables per run_source call (one call per round) with the same filename; each call adds or updates sheets by title in that workbook.`
-            : baseDescription
-        return JSON.stringify({
-          source: id,
-          description,
-          parameters: sourceParameters(def, tool),
-        })
-      },
-    },
-  ]
-}
-
-function nearest(wanted: string, known: string[]): string[] {
-  const word = wanted.toLowerCase()
-  const tail = word.slice(word.indexOf('/') + 1)
-  return known
-    .filter((id) => {
-      const low = id.toLowerCase()
-      return (
-        low.includes(tail) || tail.includes(low.slice(low.indexOf('/') + 1)) || low.startsWith(word.split('/')[0] ?? '')
-      )
-    })
-    .slice(0, 5)
+export function sourceTools(
+  ask?: (plugin: string) => Promise<void>,
+  approvalDeps: ApprovalDeps = defaultApprovalDeps(askUser),
+): Tool[] {
+  return createSourceTools({
+    ask,
+    approvalDeps,
+    hasPendingPluginRegistration,
+    waitForPluginRegistration,
+    getSource,
+    allSources,
+    state: getState,
+    runSource,
+    appOf,
+    showApp,
+    askedBy,
+  })
 }

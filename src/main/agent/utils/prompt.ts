@@ -13,6 +13,7 @@ import {
   ROUTER_RULES,
   taskPreface as buildTaskPreface,
   tilePrimer,
+  withoutOwnerPrivateSources,
 } from '../../../shared/agent/prompt'
 import { standingText } from '../../../shared/agent/standing'
 import { describeCollabState, fullName } from '../../../shared/collab/collab'
@@ -102,12 +103,18 @@ function loopSystem(id: string, desc: string, brief: string, systemPrompt?: stri
  * A room's agent's prompt: what it is and its rules, then what is installed; and each round, its
  * tile alone (blind to other rooms). `preface` goes after what it is, as a task's does for the orchestrator.
  */
-export function loopPrompt(workspaceId: string, loopId: string, preface: string[]): RunPrompt {
+export function loopPrompt(
+  workspaceId: string,
+  loopId: string,
+  preface: string[],
+  options: { fromTeammate?: boolean } = {},
+): RunPrompt {
   return {
     system: () => {
       const loop = loopsOf(workspaceId).list.find((one) => one.id === loopId)
       const standing = standingText(standingFor(workspaceId))
       const primer = tilePrimer(gridSizeOf(workspaceId))
+      const pub = options.fromTeammate ? withoutOwnerPrivateSources(toPublic(getState())) : toPublic(getState())
       return [
         [
           loopSystem(loopId, loop?.desc ?? '', loop?.brief ?? '', loop?.systemPrompt, loop?.title),
@@ -119,12 +126,7 @@ export function loopPrompt(workspaceId: string, loopId: string, preface: string[
           ...(standing ? [standing] : []),
         ].join('\n\n'),
         // Its own plugins' and the built-ins in full, and the rest by name: it asks for one with use_plugin.
-        describeInstalledFor(
-          toPublic(getState()),
-          loop?.plugins ?? [],
-          loop?.skills ?? [],
-          (id) => getView(id)?.instructions,
-        ),
+        describeInstalledFor(pub, loop?.plugins ?? [], loop?.skills ?? [], (id) => getView(id)?.instructions),
       ]
     },
     round: () => loopStateNow(workspaceId, loopId),

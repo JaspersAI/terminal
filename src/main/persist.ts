@@ -34,6 +34,7 @@ import { SIGNED_OUT, loadTermsState, readStoredJaspers, type StoredJaspers } fro
 import { PRO_MODE_OFF, readProMode, type ProMode } from '../shared/app/pro-mode'
 import { EMPTY_COLLAB } from '../shared/collab/collab'
 import { readAllowedApps } from '../shared/plugins/apps'
+import { readSourceApprovals, type SourceApproval } from '../shared/plugins/approvals'
 import type { Task } from '../shared/tasks/tasks'
 import { checkWindows, MAIN_WINDOW, restoreStoredGrids } from '../shared/grid/windows'
 import bundledTerms from '../../build/license.txt?raw'
@@ -70,6 +71,8 @@ interface StateFile {
   jaspers?: StoredJaspers
   /** The connections that may show their own pages, by id, with where each pointed. Files from before those have none. */
   allowedApps?: Record<string, string>
+  /** Approved write destinations and bound threads for `confirm` sources. */
+  sourceApprovals?: SourceApproval[]
   /** Skills the user turned off, by id. Files from before skills have none. */
   disabledSkills: string[]
   /** What the app may spend on work that runs on its own. Files from before budgets have none. */
@@ -267,6 +270,7 @@ export function load(): MainState {
     jaspers: readStoredJaspers(state.jaspers),
     collab: EMPTY_COLLAB,
     allowedApps: readAllowedApps(state.allowedApps),
+    sourceApprovals: readSourceApprovals(state.sourceApprovals),
   }
   latest = loaded
   if (raw !== null && (stateDirty || dirtyWorkspaces.size > 0)) {
@@ -404,6 +408,7 @@ export function save(next: MainState, prev: MainState): void {
     next.oauth !== prev.oauth ||
     next.jaspers !== prev.jaspers ||
     next.allowedApps !== prev.allowedApps ||
+    next.sourceApprovals !== prev.sourceApprovals ||
     next.disabledSkills !== prev.disabledSkills ||
     next.budgets !== prev.budgets ||
     next.theme !== prev.theme ||
@@ -452,6 +457,7 @@ export function flush(): void {
       oauth: latest.oauth,
       jaspers: latest.jaspers,
       allowedApps: latest.allowedApps,
+      sourceApprovals: latest.sourceApprovals,
       disabledSkills: latest.disabledSkills,
       budgets: latest.budgets,
       theme: latest.theme,

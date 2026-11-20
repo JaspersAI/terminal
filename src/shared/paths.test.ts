@@ -104,6 +104,7 @@ function fixture(): AppState {
     eye: EYE_OFF,
     jaspers: { signedIn: false, email: null, reason: null },
     collab: EMPTY_COLLAB,
+    sourceApprovals: [],
   }
 }
 

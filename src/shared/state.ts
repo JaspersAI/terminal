@@ -4,7 +4,7 @@ export type { Loop } from './loops/loops'
 
 // Shared by main, preload, and renderer. Keep this file free of Node and DOM imports.
 
-import type { Capability } from '@jaspers-ai/sdk/define'
+import type { Capability, SourceScope } from '@jaspers-ai/sdk/define'
 import type { Place } from './agent/asking'
 import type { ElementMode, Grid, GridSize, PanelContent, Placement, Rect } from './grid/grid'
 import type { Loop } from './loops/loops'
@@ -13,9 +13,11 @@ import type { Theme } from './app/theme'
 import type { Eye } from './app/eye'
 import type { JaspersSignIn } from './app/jaspers'
 import type { ProMode } from './app/pro-mode'
+import type { SourceApproval } from './plugins/approvals'
 import type { UpdateInfo } from './app/updates'
 import type { CollabState } from './collab/collab'
 export type { CollabShare, CollabState, ShareMember, Teammate, TeammateInvite } from './collab/collab'
+export type { SourceApproval } from './plugins/approvals'
 
 export type ProviderKind = 'llm' | 'voice' | 'search'
 
@@ -59,6 +61,8 @@ export interface ViewInfo {
   renders: string[]
   /** JSON Schema of the view's state, what the orchestrator may set. */
   stateSchema: Record<string, unknown>
+  /** True when the view renders a `noStore` source, so Eye never captures a window showing it. */
+  noStore?: boolean
 }
 
 /** One tool an MCP server offers, as the server described it. */
@@ -107,6 +111,12 @@ export interface SourceInfo {
   parameterNames: string
   /** True when a function source's plugin declares the `tools` capability and may call peer MCP connections. */
   usesTools?: boolean
+  /** Whose terminal runs it in a shared room: `'room'` (default) or `'viewer'`. */
+  scope?: SourceScope
+  /** Never cached, filed in SQLite, synced as share parts, or captured in Eye frames. */
+  noStore?: boolean
+  /** Has external side effects: not read-only. */
+  writes?: boolean
 }
 
 /**
@@ -292,6 +302,8 @@ export interface AppState {
   jaspers: JaspersSignIn
   /** Teammates, invitations, and live shared rooms and workspace tabs. */
   collab: CollabState
+  /** Approved write destinations and bound threads, listed per plugin in Settings so the user can remove them. */
+  sourceApprovals: SourceApproval[]
 }
 
 /**
@@ -426,6 +438,8 @@ export type Action =
   | { type: 'plugin.setSecret'; plugin: string; key: string; value: string }
   /** Only for a plugin installed from a source: the folder goes to the trash. */
   | { type: 'plugin.remove'; id: string }
+  /** Revokes a saved destination or thread approval for a write source. */
+  | { type: 'sourceApproval.remove'; id: string }
   /** Turns pro mode on or off, or changes one of its limits. Only the user's own act reaches this. */
   | { type: 'proMode.set'; proMode: Partial<ProMode> }
   /** Eye's own settings: recording, the interval, where it sends, and that the first-run question was answered. */

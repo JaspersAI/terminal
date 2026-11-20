@@ -49,7 +49,8 @@ import { stableStringify } from '../../shared/data/hash.ts'
 import { layoutOf, type Grid, type GridSize } from '../../shared/grid/grid.ts'
 import { globalSeq } from '../../shared/loops/closed.ts'
 import { frameOf, loopChat, loopTitle, NO_LOOPS, viewPlugin, type Loops } from '../../shared/loops/loops.ts'
-import type { Workspace } from '../../shared/state.ts'
+import { hasRoomScopedSource, isOwnerPrivateSource } from '../../shared/plugins/approvals.ts'
+import type { SourceInfo, Workspace } from '../../shared/state.ts'
 import { CollabError, type CollabApi, type WireCommand, type WireEvent, type WireState } from './wire.ts'
 
 // The sync engine. A shared room has one writer, the terminal that holds it:
@@ -69,6 +70,7 @@ export interface CollabEngineState {
   gridSize?: GridSize
   grids: Record<string, Record<number, Grid>>
   loops: Record<string, Loops>
+  sources: Record<string, Pick<SourceInfo, 'plugin' | 'scope' | 'noStore' | 'writes'>>
   jaspers: { email: string | null }
   collab: CollabState
 }
@@ -570,14 +572,19 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
 
   /**
    * Whether a teammate's view may have this source run: one of a plugin the room shows or was told
-   * of, or a built-in one that a tile of the room names as what it draws. A room is shared, not the
-   * terminal: a source no tile of it uses is not run for a teammate.
+   * of, or a built-in one that a tile of the room names as what it draws, and never a viewer-scoped,
+   * non-stored, or write source. A room is shared, not the terminal.
    */
   function mayRun(target: OwnedTarget, source: string): boolean {
+    const state = deps.getState()
+    const info = state.sources[source]
+    if (isOwnerPrivateSource(info)) return false
     const plugin = viewPlugin(source)
     const tiles = [...tilesOf(target).values()]
     if (plugin === null) return tiles.some((tile) => tile.state['source'] === source)
-    const told = (deps.getState().loops[target.workspaceId] ?? NO_LOOPS).list
+    // A plugin source not registered here (or registered as private above) never runs for a teammate.
+    if (!info) return false
+    const told = (state.loops[target.workspaceId] ?? NO_LOOPS).list
       .filter((loop) => target.rooms.includes(loop.id))
       .flatMap((loop) => loop.plugins)
     return told.includes(plugin) || tiles.some((tile) => viewPlugin(tile.view) === plugin)
@@ -688,8 +695,12 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
       case 'watch': {
         const plugin = typeof payload.plugin === 'string' ? payload.plugin : ''
         const name = typeof payload.key === 'string' ? payload.key : ''
+        const state = deps.getState()
         const shown = [...tilesOf(target).values()].some((tile) => viewPlugin(tile.view) === plugin)
-        if (!plugin || !name || !shown) throw new Error('That is not part of this room.')
+        // A plugin with no room-scoped source in the room has no watchable live keys.
+        if (!plugin || !name || !hasRoomScopedSource(plugin, shown, state.sources)) {
+          throw new Error('That is not part of this room.')
+        }
         keep(memory, memory.live, liveKey(deps.digest(stableStringify([plugin, name]))), { plugin, key: name })
         await push(command.shareId)
         return {}

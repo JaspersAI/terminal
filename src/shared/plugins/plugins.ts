@@ -243,6 +243,23 @@ function source(value: unknown, id: string, plugin: string, connections: Record<
   if (mcp) checkMcpRef(def['mcp'] as string, id, plugin, connections)
   if (def['internal'] !== undefined && typeof def['internal'] !== 'boolean')
     throw new Error(`Source ${id}: internal is true or false.`)
+  if (def['scope'] !== undefined && def['scope'] !== 'room' && def['scope'] !== 'viewer')
+    throw new Error(`Source ${id}: scope is 'room' or 'viewer'.`)
+  if (def['noStore'] !== undefined && typeof def['noStore'] !== 'boolean')
+    throw new Error(`Source ${id}: noStore is true or false.`)
+  if (def['writes'] !== undefined && typeof def['writes'] !== 'boolean')
+    throw new Error(`Source ${id}: writes is true or false.`)
+  if (def['confirm'] !== undefined) {
+    const confirm = asRecord(def['confirm'])
+    if (!confirm || typeof confirm['destinationArg'] !== 'string' || !confirm['destinationArg'].trim()) {
+      throw new Error(`Source ${id}: confirm needs { destinationArg }.`)
+    }
+    for (const opt of ['threadArg', 'labelArg', 'actionLabel'] as const) {
+      if (confirm[opt] !== undefined && (typeof confirm[opt] !== 'string' || !confirm[opt].trim())) {
+        throw new Error(`Source ${id}: confirm.${opt} has to be a non-empty string.`)
+      }
+    }
+  }
   return def as unknown as SourceDef
 }
 

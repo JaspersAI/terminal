@@ -27,16 +27,48 @@ export type { SkillEntry, SkillFilePart, Skills } from './skills'
 // different halves of the job. Main reads the schemas; the host runs `run` and `start` with a
 // context whose every capability is a call back into main; the renderer mounts the component.
 
-/** One tool on one connection. Its parameters are the connection's own schema. */
-export interface McpSourceSpec {
-  /** A connection: one of this plugin's by name, or another plugin's as <plugin>/<name>. */
-  mcp: string
-  tool: string
-  description?: string
+/** How an agent's call to a write source is approved before it runs. */
+export interface SourceConfirmSpec {
+  /** Argument naming the target destination, such as a channel id. */
+  destinationArg: string
+  /** Optional argument naming a thread or sub-target inside the destination. */
+  threadArg?: string
+  /** Optional argument carrying a human-readable label for the destination, when the id is opaque. */
+  labelArg?: string
+  /** Short verb phrase for the prompt, such as "post to". */
+  actionLabel?: string
+}
+
+export type SourceScope = 'room' | 'viewer'
+
+/** Common safety and execution flags shared by MCP and function sources. */
+export interface SourcePolicySpec {
   /** How long a run's rows stay good for, so two views asking the same thing share one call. */
   ttlMs?: number
   /** Views may run it; the orchestrator is never offered it as a tool. */
   internal?: boolean
+  /**
+   * Whose terminal and credentials run this source in a shared room: 'room' (default, the room owner's)
+   * or 'viewer' (the terminal of the person looking at the view, never forwarded to the owner).
+   */
+  scope?: SourceScope
+  /**
+   * Never cache, keep rows or text in memory, file in SQLite, sync as share parts, log outputs in Eye,
+   * or capture Eye frames while a view rendering it is visible.
+   */
+  noStore?: boolean
+  /** Has external side effects: never batched as read-only or shared in flight, and runs with a write timeout. */
+  writes?: boolean
+  /** Asks the user before an agent run calls this source on an unapproved destination (or destination + thread). */
+  confirm?: SourceConfirmSpec
+}
+
+/** One tool on one connection. Its parameters are the connection's own schema. */
+export interface McpSourceSpec extends SourcePolicySpec {
+  /** A connection: one of this plugin's by name, or another plugin's as <plugin>/<name>. */
+  mcp: string
+  tool: string
+  description?: string
 }
 
 /**
@@ -46,14 +78,11 @@ export interface McpSourceSpec {
  * rather than casting an `unknown`. The default keeps the type usable where the schema is not known,
  * as in main, which holds a source without knowing which one.
  */
-export interface FunctionSourceSpec<Input extends ZodType = ZodType> {
+export interface FunctionSourceSpec<Input extends ZodType = ZodType> extends SourcePolicySpec {
   description: string
   input: Input
   output?: ZodType
   hosts?: string[]
-  ttlMs?: number
-  /** Views may run it; the orchestrator is never offered it as a tool. */
-  internal?: boolean
   run: (args: Infer<Input>, ctx: BackendContext) => Promise<unknown>
 }
 

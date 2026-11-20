@@ -97,7 +97,12 @@ export async function sendToLoop(workspaceId: string, loopId: string, handed: Ha
   if (!frame) throw new Error(`Unknown work ${loopId}.`)
   const input = handed.typed ?? ''
   if (!input && !handed.written) throw new Error('Nothing to hand over.')
-  return runOn(workspaceId, loopId, frame.element.id, { input, written: handed.written, task: handed.task })
+  return runOn(workspaceId, loopId, frame.element.id, {
+    input,
+    written: handed.written,
+    task: handed.task,
+    fromTeammate: handed.fromTeammate,
+  })
 }
 
 /** What one request of a loop's is sent with. */
@@ -110,10 +115,17 @@ interface Sent {
   written?: string
   /** The scheduled task whose run handed it over. */
   task?: string
+  /** Set when a teammate in a shared room asked the room's agent. */
+  fromTeammate?: boolean
 }
 
 /** One request of a room's, shown in its frame: its own chat, prompt, and tools, in its turn. */
-function runOn(workspaceId: string, loop: string, on: string, { input, ask, written, task }: Sent): Promise<string> {
+function runOn(
+  workspaceId: string,
+  loop: string,
+  on: string,
+  { input, ask, written, task, fromTeammate }: Sent,
+): Promise<string> {
   const state = getState()
   const record = loopsOf(workspaceId).list.find((one) => one.id === loop)
   const chat = loopChat(workspaceId, record ?? loop)
@@ -179,24 +191,29 @@ function runOn(workspaceId: string, loop: string, on: string, { input, ask, writ
       goesOn: () => {},
       // Work a task's run started is told so, as the task's own run is: it answers only when there is
       // something to hear, and is given the scripts the user allowed that task.
-      prompt: loopPrompt(workspaceId, loop, task === undefined ? [] : [taskPreface(task, commandsOf(task))]),
+      prompt: loopPrompt(workspaceId, loop, task === undefined ? [] : [taskPreface(task, commandsOf(task))], {
+        fromTeammate,
+      }),
       tools: loopTools,
       state: () => loopStateNow(workspaceId, loop),
       tile: { loop, place },
-      // What is sent to this room while the run is at work joins it. A run on a task's limits takes
-      // nothing: what the user sends then waits, and runs as theirs.
-      added: task === undefined ? () => turns.takeWaiting<Added>(chat) : undefined,
+      ...(fromTeammate ? { fromTeammate: true } : {}),
+      // What is sent to this room while the run is at work joins it. A run on a task's limits or a
+      // teammate's prompt takes nothing: what the user sends then waits, and runs as theirs.
+      added: task === undefined && !fromTeammate ? () => turns.takeWaiting<Added>(chat) : undefined,
     }).finally(() => {
       collab?.said(workspaceId, loop)
     })
   }
   // /new does not wait: it starts the conversation over under whatever is still working, as it does
   // in the global box.
-  if (expandSlash(input) === null && NEW_THREAD.test(input)) return request()
+  if (!fromTeammate && expandSlash(input) === null && NEW_THREAD.test(input)) return request()
   // Waiting its turn, it says what it is, so the run at work can take it rather than leave it to run
-  // after. A task's handoff says nothing: it is never taken into another run, and runs on its own limits.
+  // after. A task's handoff or a teammate's prompt says nothing: it is never taken into another run.
   const says: Added | undefined =
-    task === undefined ? { text: turnText(input, written), shown: shownQuestion(written ?? input), ask } : undefined
+    task === undefined && !fromTeammate
+      ? { text: turnText(input, written), shown: shownQuestion(written ?? input), ask }
+      : undefined
   return turns.take(chat, ask, request, '', says)
 }
 

@@ -79,6 +79,8 @@ export interface Asked {
   label?: string
   /** The room the request is for and the tile it shows on, when it was sent for a tile. */
   tile?: { loop: string; place: Place }
+  /** Set when a teammate in a shared room asked the room's agent: private/write sources are hidden and refused. */
+  fromTeammate?: boolean
 }
 
 /** A message the user added to a run at work: what its turn holds, what the tile shows of it, and the name its window gave it. */
@@ -119,6 +121,7 @@ export async function userRequest({
   state,
   label = '',
   tile,
+  fromTeammate,
 }: Asked): Promise<string> {
   if (chat === CENTRAL_CHAT) await waitForThreads()
   const config = configuredFor(chat)
@@ -160,6 +163,7 @@ export async function userRequest({
     asked: input,
     ...(tile ? { loop: tile.loop } : {}),
     ...(task === undefined ? {} : { task }),
+    ...(fromTeammate ? { fromTeammate: true } : {}),
   }
   const asked: Turn = { role: 'user', text: turnText(input, written), context: state() }
   // The thread is kept as the run goes, from the user's own message on.

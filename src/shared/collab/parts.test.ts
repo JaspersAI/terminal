@@ -301,3 +301,18 @@ test('built-in core/team-chat crosses intact to a replica and takes edits back t
   })
   assert.equal(replicaPanel(drawn.grids, drawn.loops, inner.panels[0]!.id)?.tile, tile)
 })
+
+test('readBundlePart preserves viewerSources scoped to the plugin and ViewInfo.noStore', () => {
+  const bundle = readBundlePart({
+    plugin: 'slack',
+    bundleJs: 'export default {}',
+    frames: [],
+    views: [
+      { id: 'slack/thread', title: 'Slack thread', renders: ['slack/read-thread'], stateSchema: {}, noStore: true },
+    ],
+    viewerSources: ['slack/read-thread', 'slack/send', 'other/evil'],
+  })
+  assert.ok(bundle)
+  assert.deepEqual(bundle.viewerSources, ['slack/read-thread', 'slack/send'])
+  assert.equal(bundle.views[0]?.noStore, true)
+})

@@ -320,6 +320,24 @@ export function describePlugin(
   ].join('\n')
 }
 
+/**
+ * A copy of `state` with owner-private sources (`scope: 'viewer'`, `noStore`, or `writes`) stripped,
+ * so a room agent running on a teammate's prompt never sees them in its prompt or through `use_plugin`.
+ */
+export function withoutOwnerPrivateSources(state: AppState): AppState {
+  const allowedSources = Object.fromEntries(
+    Object.entries(state.sources).filter(([, s]) => s.scope !== 'viewer' && !s.noStore && !s.writes),
+  )
+  if (Object.keys(allowedSources).length === Object.keys(state.sources).length) return state
+  const plugins = Object.fromEntries(
+    Object.entries(state.plugins).map(([id, info]) => [
+      id,
+      { ...info, sources: info.sources.filter((src) => Object.hasOwn(allowedSources, src)) },
+    ]),
+  )
+  return { ...state, sources: allowedSources, plugins }
+}
+
 /** What is installed, as a loop's agent is told: its own plugins' and the built-ins in full, the rest by name. */
 export function describeInstalledFor(
   state: AppState,

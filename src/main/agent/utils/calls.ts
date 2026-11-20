@@ -7,6 +7,7 @@ import { batches, callLine, DEFERRED_FOR_ADDED } from '../../../shared/agent/rou
 import { messageOf } from '../../../shared/rpc'
 import { isSleepWakeError } from '../../../shared/tasks/tasks'
 import type { ToolCall, ToolResult, Turn } from '../../llm/llm'
+import { getSource } from '../../plugins/registry'
 import type { Tool, ToolContext } from '../tools/types'
 import { noteToolEnd, noteToolStart } from './record'
 import { emit, type Live } from './runs'
@@ -27,7 +28,10 @@ export async function runCalls(
   history: Turn[] = [],
   deferNonReads = false,
 ): Promise<ToolResult[]> {
-  const readsOnly = (call: ToolCall): boolean => tools.find((t) => t.name === call.name)?.readsOnly === true
+  const readsOnly = (call: ToolCall): boolean => {
+    const flag = tools.find((t) => t.name === call.name)?.readsOnly
+    return typeof flag === 'function' ? flag(call.input) : flag === true
+  }
   const results: ToolResult[] = []
   for (const batch of batches(calls, readsOnly)) {
     results.push(
@@ -66,8 +70,17 @@ async function execute(
   // refused, and the answer is the truth: it did not finish.
   const stopped: ToolResult = { callId: call.id, output: STOPPED_CALL, isError: true }
   if (signal.aborted) return stopped
-  // A pasted credential travels in set_secret's value; the log never repeats it.
-  const shown = call.name === 'set_secret' && 'value' in call.input ? { ...call.input, value: '[secret]' } : call.input
+  // A pasted credential travels in set_secret's value; the log never repeats it. Non-stored sources keep their inputs and outputs out of Eye too.
+  const noStoreRun =
+    call.name === 'run_source' &&
+    typeof call.input['source'] === 'string' &&
+    getSource(call.input['source'].trim())?.def.noStore === true
+  const shown =
+    call.name === 'set_secret' && 'value' in call.input
+      ? { ...call.input, value: '[secret]' }
+      : noStoreRun
+        ? { source: call.input['source'], input: '[noStore]' }
+        : call.input
   log(`tool ${call.name} ${JSON.stringify(shown)}`)
   emit({ kind: 'tool', runId: entry.runId, name: call.name, summary: callLine(call.name, shown) })
   const began = Date.now()
@@ -77,7 +90,8 @@ async function execute(
   const span = noteToolStart(entry.runId, { id: call.id, name: call.name, input: JSON.stringify(shown) })
   const finish = (ok: boolean, answer: string): ToolResult => {
     const ms = Date.now() - began
-    noteToolEnd(entry.runId, span, call.name, ok ? { ms, ok, output: answer } : { ms, ok, error: answer })
+    const recorded = noStoreRun ? '[noStore]' : answer
+    noteToolEnd(entry.runId, span, call.name, ok ? { ms, ok, output: recorded } : { ms, ok, error: recorded })
     return { callId: call.id, output: answer, isError: !ok }
   }
   try {

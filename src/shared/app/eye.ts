@@ -254,17 +254,122 @@ export function readInstall(value: unknown): string {
 /**
  * Why a frame is not taken now, or null when it may be. A key field and a question are the two
  * places the user types something private into the app itself — a provider's API key, an answer to
- * the assistant, the exact command a Pro mode approval shows — and a frame of the window while one
- * is up would record it. Those moments are skipped, not queued: the next frame comes at the next
- * tick, and nothing of that screen is kept.
+ * the assistant, the exact command a Pro mode approval shows — and a view that renders a `noStore`
+ * source holds external text the app must never persist or capture. Those moments are skipped, not
+ * queued: the next frame comes at the next tick, and nothing of that screen is kept.
  */
 export function captureBlocked(state: {
   secretRequests?: readonly unknown[]
   questions?: readonly unknown[]
+  currentWorkspaceId?: string
+  windows?: readonly number[]
+  workspaces?: readonly { id: string; window?: number }[]
+  grids?: Record<
+    string,
+    Record<
+      number,
+      {
+        elements: readonly { id: string; panelId: string; mode: string; parent?: string }[]
+        panels: readonly {
+          id: string
+          content: { kind: 'view'; view: string } | { kind: 'frame' }
+          state?: Record<string, unknown>
+        }[]
+      }
+    >
+  >
+  views?: Record<string, { renders?: readonly string[]; noStore?: boolean }>
+  sources?: Record<string, { noStore?: boolean }>
 }): string | null {
   if ((state.secretRequests ?? []).length > 0) return 'a key field is open'
   if ((state.questions ?? []).length > 0) return 'the assistant is waiting on an answer'
+  if (hasVisibleNoStoreView(state)) return 'a non-stored view is visible'
   return null
+}
+
+function hasVisibleNoStoreView(state: {
+  currentWorkspaceId?: string
+  windows?: readonly number[]
+  workspaces?: readonly { id: string; window?: number }[]
+  grids?: Record<
+    string,
+    Record<
+      number,
+      {
+        elements: readonly { id: string; panelId: string; mode: string; parent?: string }[]
+        panels: readonly {
+          id: string
+          content: { kind: 'view'; view: string } | { kind: 'frame' }
+          state?: Record<string, unknown>
+        }[]
+      }
+    >
+  >
+  views?: Record<string, { renders?: readonly string[]; noStore?: boolean }>
+  sources?: Record<string, { noStore?: boolean }>
+}): boolean {
+  const grids = state.grids
+  if (!grids) return false
+  const isNoStorePanel = (panel: {
+    content: { kind: 'view'; view: string } | { kind: 'frame' }
+    state?: Record<string, unknown>
+  }): boolean => {
+    if (panel.content.kind !== 'view') return false
+    const view = state.views?.[panel.content.view]
+    if (view?.noStore === true) return true
+    if ((view?.renders ?? []).some((id) => state.sources?.[id]?.noStore === true)) return true
+    const directSource = panel.state?.['source']
+    return typeof directSource === 'string' && state.sources?.[directSource]?.noStore === true
+  }
+
+  const gridShowsNoStore = (grid: {
+    elements: readonly { id: string; panelId: string; mode: string; parent?: string }[]
+    panels: readonly {
+      id: string
+      content: { kind: 'view'; view: string } | { kind: 'frame' }
+      state?: Record<string, unknown>
+    }[]
+  }): boolean => {
+    const panelById = new Map(grid.panels.map((p) => [p.id, p]))
+    const visibleIn = (parent: string | undefined) => {
+      const siblings = grid.elements.filter((el) => el.parent === parent)
+      const maximized = siblings.filter((el) => el.mode === 'maximized')
+      return maximized.length > 0 ? maximized : siblings.filter((el) => el.mode !== 'minimized')
+    }
+    for (const top of visibleIn(undefined)) {
+      const topPanel = panelById.get(top.panelId)
+      if (!topPanel) continue
+      if (isNoStorePanel(topPanel)) return true
+      if (topPanel.content.kind === 'frame') {
+        for (const child of visibleIn(top.id)) {
+          const childPanel = panelById.get(child.panelId)
+          if (childPanel && isNoStorePanel(childPanel)) return true
+        }
+      }
+    }
+    return false
+  }
+
+  const openWins = [1, ...(state.windows ?? []).filter((n) => n > 1)]
+  for (const win of openWins) {
+    if (win === 1) {
+      const g = state.currentWorkspaceId ? grids[state.currentWorkspaceId]?.[1] : undefined
+      if (g && gridShowsNoStore(g)) return true
+      continue
+    }
+    const detached = (state.workspaces ?? []).filter((w) => w.window === win)
+    if (detached.length > 0) {
+      for (const ws of detached) {
+        const gWin = grids[ws.id]?.[win]
+        const gMain = grids[ws.id]?.[1]
+        if ((gWin && gridShowsNoStore(gWin)) || (gMain && gridShowsNoStore(gMain))) return true
+      }
+    } else if (state.currentWorkspaceId) {
+      const g = grids[state.currentWorkspaceId]?.[win]
+      if (g && gridShowsNoStore(g)) return true
+    }
+  }
+  return false
 }
 
 /**

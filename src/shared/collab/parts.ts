@@ -115,6 +115,8 @@ export interface SyncedBundle {
   bundleCss?: string
   frames: string[]
   views: ViewInfo[]
+  /** Source ids of this plugin declared `scope: 'viewer'`, so an uninstalled viewer fails locally without asking the owner. */
+  viewerSources?: string[]
 }
 
 /** One edit a teammate made to a tile's state that the owner has not confirmed yet. */
@@ -370,15 +372,20 @@ export function readBundlePart(raw: unknown): SyncedBundle | null {
         title: typeof one.title === 'string' ? one.title : one.id,
         renders: Array.isArray(one.renders) ? one.renders.filter((r): r is string => typeof r === 'string') : [],
         stateSchema: isRecord(one.stateSchema) ? one.stateSchema : {},
+        ...(one.noStore === true ? { noStore: true } : {}),
       },
     ]
   })
+  const viewerSources = Array.isArray(raw.viewerSources)
+    ? raw.viewerSources.filter((s): s is string => typeof s === 'string' && s.startsWith(`${plugin}/`))
+    : undefined
   return {
     plugin,
     bundleJs: raw.bundleJs,
     ...(css !== undefined ? { bundleCss: css } : {}),
     frames: Array.isArray(raw.frames) ? raw.frames.filter(isHttpsOrigin) : [],
     views,
+    ...(viewerSources && viewerSources.length > 0 ? { viewerSources } : {}),
   }
 }
 
