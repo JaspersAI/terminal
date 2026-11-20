@@ -44,13 +44,11 @@ export function welcomeIntroFor(firstName?: string | null): string {
   const clean = typeof firstName === 'string' ? firstName.trim() : ''
   const heading = clean ? `**Welcome to Jaspers Terminal, ${clean}.**` : '**Welcome to Jaspers Terminal.**'
   return [
-    heading,
+    `${heading} I’m **Jaspers**, your central orchestrator across tabs and rooms—talk via **Orb** / mic, or type here or in the top command line (\`Dock\` toggles this pane).`,
     '',
-    'I’m **Jaspers**, your central orchestrator across every tab and room. Speak with the mic / **Orb** (hold the orb while talking), or type right here or in the top command line (`Dock` toggles this pane anytime). Here is how the terminal is built to work:',
-    '',
-    '- **100×100 Grid & Isolated Rooms (`room_1`, `room_2`, …):** Central routes fast here while delegating deeper work to numbered **Rooms** on the grid—each with an isolated thinking agent, live `Table`, `Chart`, `Metric`, `Browser`, or `MCP App` views, and searchable history in `Rooms`, alongside live spreadsheet formulas (`=`, `NPV`, `IRR`) in empty cells.',
-    '- **Local SQLite Data Plane (`~/Jaspers/data/jaspers.db`):** Payloads, time series, and SEC filings land off-prompt in a local SQLite + FTS5 database on your machine—keys sealed in your OS keychain, queryable via SQL, with verified citations.',
-    '- **MCP Hub, Coding Agent & Market Watches:** Install reviewed plugins from **Jaspers Hub**, ask me to generate custom `@jaspers-ai/sdk` TypeScript plugins on demand (`build_plugin`), and automate `/skills`, NYSE market-calendar schedules, or SQLite delta watches (`speak: "changed"`).',
+    '- **100×100 Grid & Isolated Rooms (`room_1`, `room_2`, …):** Numbered tiles with isolated thinking agents, live `Table` / `Chart` / `Metric` / `Browser` views, searchable `Rooms` history, and cell formulas (`=`, `NPV`, `IRR`).',
+    '- **Local SQLite Data Plane (`~/Jaspers/data/jaspers.db`):** Payloads and filings stay off-prompt in local SQLite + FTS5 with OS-keychain secrets, direct SQL, and cited quotes.',
+    '- **MCP Hub, Coding Agent & Market Watches:** Add plugins from **Jaspers Hub**, generate custom `@jaspers-ai/sdk` plugins (`build_plugin`), and run `/skills` or NYSE delta watches (`speak: "changed"`).',
   ].join('\n')
 }
 

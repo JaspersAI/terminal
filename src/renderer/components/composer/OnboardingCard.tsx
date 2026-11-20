@@ -145,7 +145,7 @@ export function OnboardingCard({ onboarding }: Props): ReactElement {
         id="central-onboarding"
         data-onboarding-step="recommendations"
         aria-label="Tailored workspace setup"
-        className="mt-4 animate-appear border border-border bg-muted/30 p-3.5 text-xs"
+        className="mt-2.5 animate-appear border border-border bg-muted/30 p-3 text-xs"
       >
         <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border pb-2.5">
           <div className="min-w-0 flex-1">
@@ -304,7 +304,7 @@ export function OnboardingCard({ onboarding }: Props): ReactElement {
       id="central-onboarding"
       data-onboarding-step={stepIndex}
       aria-label="Workspace onboarding questions"
-      className="mt-4 animate-appear border border-border bg-muted/30 p-3.5 text-xs"
+      className="mt-2.5 animate-appear border border-border bg-muted/30 p-3 text-xs"
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
