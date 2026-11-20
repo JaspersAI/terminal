@@ -206,6 +206,7 @@ export function TeamChat({ panel }: ViewProps): ReactElement {
         <div className="flex items-end gap-1.5 border border-border bg-background px-2 py-1 focus-within:border-foreground">
           <textarea
             ref={inputRef}
+            name="prompt"
             data-team-chat-input
             aria-label={recipientNames ? `Message ${recipientNames}` : 'Message teammates'}
             rows={1}
