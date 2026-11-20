@@ -141,6 +141,20 @@ export function defineConnection(spec: ConnectionSpec): ConnectionDef {
   return { kind: 'connection', ...spec }
 }
 
+/** Public-client PKCE OAuth 2.0 flow that signs in via the browser and seals the token locally. */
+export interface SecretOAuthSpec {
+  /** Public OAuth 2.0 client_id (may be omitted when the user supplies their own app's client_id). */
+  clientId?: string
+  /** Authorization page URL (https://), such as 'https://slack.com/oauth/v2/authorize'. */
+  authorizeUrl: string
+  /** Token exchange and refresh URL (https://), such as 'https://slack.com/api/oauth.v2.access'. */
+  tokenUrl: string
+  /** Loopback port registered in redirect URLs (`http://localhost:<port>/callback`, 1024–65535). */
+  loopbackPort: number
+  /** Extra query parameters added to `authorizeUrl`, such as `{ scope: '', user_scope: '...' }`. */
+  authorizeParams?: Record<string, string>
+}
+
 /** What the user is asked for once, under the plugin, and sealed. Connections refer to it as ${secret:KEY}. */
 export interface SecretSpec {
   label: string
@@ -149,6 +163,8 @@ export interface SecretSpec {
    * it before every source runs; a call that fills it in while it is unset fails and names set_secret.
    */
   optional?: boolean
+  /** Optional local PKCE browser sign-in that populates and refreshes this secret in the OS keychain. */
+  oauth?: SecretOAuthSpec
 }
 
 export interface ViewSpec<State extends ZodType = ZodType, Output extends ZodType = ZodType> {

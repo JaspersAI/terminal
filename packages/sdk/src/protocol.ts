@@ -14,6 +14,7 @@ export type BridgeMethod =
   | 'dataset.rows'
   | 'link.open'
   | 'clipboard.write'
+  | 'secret.authorize'
   | 'voice.start'
   | 'voice.stop'
   | 'voice.cancel'

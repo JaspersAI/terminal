@@ -261,6 +261,13 @@ export function createIframeBridge(): Bridge {
       await call('clipboard.write', { text })
     },
 
+    async authorizeSecret(key: string, options?: { clientId?: string }) {
+      await call('secret.authorize', {
+        key,
+        ...(options?.clientId ? { clientId: options.clientId } : {}),
+      })
+    },
+
     async startDictation() {
       await call('voice.start', {})
     },

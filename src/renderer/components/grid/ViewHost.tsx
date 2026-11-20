@@ -7,7 +7,7 @@ import { viewSandbox } from '../../../shared/plugins/plugins'
 import { hostBridgeFor, runSourceIn } from '../../lib/bridge'
 import { replicaShare } from '../../lib/replica'
 import { subscribeLive } from '../../lib/live'
-import { useAppState } from '../../lib/state'
+import { dispatch, useAppState } from '../../lib/state'
 import { BUILT_IN_VIEWS } from '../../views'
 import { Recorder } from '../composer/recorder'
 import { send } from './send'
@@ -68,6 +68,7 @@ export function ViewHost({
         name={view.slice(plugin.length + 1)}
         version={plugins[plugin]?.version ?? 0}
         sandbox={sandbox}
+        installed={plugins[plugin] !== undefined}
         microphone={plugins[plugin]?.capabilities.includes('microphone') ?? false}
         title={views[view]?.title ?? view}
         active={active}
@@ -99,6 +100,8 @@ interface FrameProps {
   name: string
   version: number
   sandbox: string
+  /** True when the plugin is installed locally on this terminal (as opposed to a synced bundle). */
+  installed: boolean
   /** Whether the plugin declared `microphone`, which its views' dictation needs. */
   microphone: boolean
   title: string
@@ -122,6 +125,7 @@ function PluginView({
   name,
   version,
   sandbox,
+  installed,
   microphone,
   title,
   active,
@@ -319,6 +323,14 @@ function PluginView({
           return bridge.openLink(String(params['url']))
         case 'clipboard.write':
           return bridge.copyText(params['text'] as string)
+        case 'secret.authorize': {
+          if (!installed) {
+            throw new Error(`PLUGIN_NOT_INSTALLED: Install the ${plugin} plugin on this terminal to sign in.`)
+          }
+          const key = String(params['key'] ?? '')
+          const clientId = typeof params['clientId'] === 'string' ? params['clientId'] : undefined
+          return dispatch({ type: 'plugin.authorizeSecret', plugin, key, ...(clientId ? { clientId } : {}) })
+        }
         case 'voice.start':
           if (!microphone) throw new Error(`Declare "microphone" in ${plugin}'s capabilities to listen.`)
           if (!(await window.app.voice.requestMicrophone())) {

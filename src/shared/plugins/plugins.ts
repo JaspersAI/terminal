@@ -11,6 +11,7 @@ import { untilAborted } from '../abort.ts'
 import { messageOf } from '../rpc.ts'
 import { checkConnection, secretRefs, type Connection } from './connections.ts'
 import { RESERVED_PLUGIN_NAMES } from './id.ts'
+import { checkSecretOAuthSpec } from './secret-oauth.ts'
 
 /** A plugin id, a folder name, a source name, a view name: all the same shape. */
 const NAME = /^[a-z0-9][a-z0-9-]*$/
@@ -210,7 +211,12 @@ function secretList(value: unknown, id: string): Record<string, SecretSpec> {
     const optional = entry['optional']
     if (optional !== undefined && typeof optional !== 'boolean')
       throw new Error(`Plugin ${id}: secret ${key} has optional as true or false; ${show(optional)} is neither.`)
-    out[key] = optional ? { label: entry['label'], optional: true } : { label: entry['label'] }
+    const oauth = entry['oauth'] !== undefined ? checkSecretOAuthSpec(entry['oauth'], id, key) : undefined
+    out[key] = {
+      label: entry['label'],
+      ...(optional ? { optional: true } : {}),
+      ...(oauth ? { oauth } : {}),
+    }
   }
   return out
 }

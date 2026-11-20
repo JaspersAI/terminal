@@ -40,6 +40,11 @@ export interface Bridge {
   /** Puts text on the system clipboard. A sandboxed frame has no clipboard of its own. */
   copyText(text: string): Promise<void>
   /**
+   * Runs the local PKCE browser sign-in declared on one of this plugin's own secrets, sealing the
+   * resulting token in the OS keychain. Resolves once the browser flow finishes.
+   */
+  authorizeSecret?(key: string, options?: { clientId?: string }): Promise<void>
+  /**
    * Dictation, for a plugin that declares `microphone`: the app opens the microphone and records,
    * then transcribes with the user's voice provider, so the view gets the words and never the audio.
    * Only a plugin view's relay carries these; the app's own views have the composer's microphone.

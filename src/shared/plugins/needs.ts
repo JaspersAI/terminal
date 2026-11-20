@@ -10,7 +10,7 @@ import { unsetRequiredSecret } from './plugins.ts'
 
 export type PluginNeed =
   /** A key the plugin declares and has no value for, with the label its author gave it. */
-  | { kind: 'key'; key: string; label: string }
+  | { kind: 'key'; key: string; label: string; oauth?: { hasClientId: boolean } }
   /** A connection of the plugin's that the user has to sign in to. */
   | { kind: 'authorization'; connection: string }
 
@@ -21,7 +21,14 @@ export function pluginNeed(
 ): PluginNeed | null {
   if (!plugin) return null
   const unset = unsetRequiredSecret(plugin.secrets)
-  if (unset) return { kind: 'key', key: unset.key, label: unset.label }
+  if (unset) {
+    return {
+      kind: 'key',
+      key: unset.key,
+      label: unset.label,
+      ...(unset.oauth ? { oauth: unset.oauth } : {}),
+    }
+  }
   const unsigned = plugin.connections.find((id) => connections[id]?.status === 'needs-auth')
   return unsigned ? { kind: 'authorization', connection: unsigned } : null
 }

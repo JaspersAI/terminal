@@ -139,7 +139,7 @@ export interface PluginInfo {
   /** The https origins its views may frame, as the definition declares. Its view frames get an origin of their own when there are any. */
   frames: string[]
   /** What the plugin asks the user for, and whether each is set. The value never crosses. */
-  secrets: { key: string; label: string; set: boolean; optional?: boolean }[]
+  secrets: { key: string; label: string; set: boolean; optional?: boolean; oauth?: { hasClientId: boolean } }[]
   /** Its connections' ids, <plugin>/<name>. */
   connections: string[]
   /** Its skills' ids, <plugin>:<name>, from its skills/ folder. */
@@ -436,6 +436,10 @@ export type Action =
   | { type: 'panel.refresh'; workspaceId: string; panelId: string }
   /** The value is sealed in main under the plugin and never comes back out; only `set` does. */
   | { type: 'plugin.setSecret'; plugin: string; key: string; value: string }
+  /** Runs the local PKCE browser sign-in declared on a plugin secret, sealing the token in the OS keychain. */
+  | { type: 'plugin.authorizeSecret'; plugin: string; key: string; clientId?: string }
+  /** Clears a saved plugin secret from the OS keychain. */
+  | { type: 'plugin.clearSecret'; plugin: string; key: string }
   /** Only for a plugin installed from a source: the folder goes to the trash. */
   | { type: 'plugin.remove'; id: string }
   /** Revokes a saved destination or thread approval for a write source. */

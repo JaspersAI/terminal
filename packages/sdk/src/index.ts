@@ -31,6 +31,7 @@ export {
   type Tools,
   type McpSourceSpec,
   type PluginDefinition,
+  type SecretOAuthSpec,
   type SecretSpec,
   type SourceConfirmSpec,
   type SourceContext,

@@ -138,6 +138,7 @@ import {
 } from './collab/collab'
 import { allowApps } from './plugins/app-consent'
 import { removeSourceApproval } from './plugins/approvals'
+import { authorizePluginSecret, clearPluginSecret } from './plugins/secret-oauth-service'
 import { getLive } from './plugins/live'
 import { getView } from './plugins/registry'
 import { RESEARCH_PLUGIN, researchLiveText, researchRoomOf } from '../shared/plugins/live'
@@ -327,6 +328,13 @@ const HANDLERS: Record<Action['type'], Handler> = {
     refreshChecked(workspaceId, panelId)
   },
   'plugin.setSecret': (raw) => setSecret(asString(raw.plugin), asString(raw.key), asString(raw.value)),
+  'plugin.authorizeSecret': (raw) =>
+    authorizePluginSecret(
+      asString(raw.plugin),
+      asString(raw.key),
+      typeof raw.clientId === 'string' ? raw.clientId : undefined,
+    ),
+  'plugin.clearSecret': (raw) => clearPluginSecret(asString(raw.plugin), asString(raw.key)),
   'plugin.remove': (raw) => removeInstalled(asString(raw.id)),
   'sourceApproval.remove': (raw) => removeSourceApproval(asString(raw.id)),
   'proMode.set': (raw) => setProMode(raw['proMode']),

@@ -473,6 +473,8 @@ interface SecretProps {
 
 function SecretRow({ plugin, secret, onFail }: SecretProps): ReactElement {
   const [value, setValue] = useState('')
+  const [clientId, setClientId] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
   const field = useId()
 
   function save(event: FormEvent<HTMLFormElement>): void {
@@ -487,23 +489,72 @@ function SecretRow({ plugin, secret, onFail }: SecretProps): ReactElement {
     )
   }
 
+  function signIn(): void {
+    if (signingIn) return
+    onFail(null)
+    setSigningIn(true)
+    dispatch({
+      type: 'plugin.authorizeSecret',
+      plugin,
+      key: secret.key,
+      ...(clientId.trim() ? { clientId: clientId.trim() } : {}),
+    })
+      .catch((err: unknown) => onFail(errorMessage(err)))
+      .finally(() => setSigningIn(false))
+  }
+
+  function clear(): void {
+    onFail(null)
+    dispatch({ type: 'plugin.clearSecret', plugin, key: secret.key }).catch((err: unknown) => onFail(errorMessage(err)))
+  }
+
   return (
-    <Row label={secret.label} htmlFor={field} hint={secret.set ? 'Saved' : 'Not set'}>
-      <form onSubmit={save} className="flex gap-2">
-        <input
-          id={field}
-          name={secret.key}
-          type="password"
-          value={value}
-          autoComplete="off"
-          placeholder={secret.set ? 'Paste to replace' : 'Paste the value'}
-          onChange={(event) => setValue(event.target.value)}
-          className={`${FIELD} min-w-0 flex-1 font-mono`}
-        />
-        <button type="submit" className={BUTTON}>
-          Save
-        </button>
-      </form>
+    <Row label={secret.label} htmlFor={field} hint={secret.set ? 'Saved in system keychain' : 'Not set'}>
+      <div className="flex flex-col items-end gap-2">
+        {secret.oauth && (
+          <div className="flex w-full flex-wrap items-center justify-end gap-2">
+            {!secret.oauth.hasClientId && (
+              <input
+                type="text"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                placeholder="OAuth Client ID"
+                className={`${FIELD} min-w-0 flex-1 font-mono`}
+              />
+            )}
+            <button
+              type="button"
+              disabled={signingIn || (!secret.oauth.hasClientId && !clientId.trim())}
+              onClick={signIn}
+              className={PRIMARY}
+            >
+              {signingIn ? 'Waiting for browser…' : secret.set ? 'Reconnect' : 'Sign in'}
+            </button>
+            {secret.set && (
+              <button type="button" onClick={clear} className={BUTTON}>
+                Disconnect
+              </button>
+            )}
+          </div>
+        )}
+        <form onSubmit={save} className="flex w-full gap-2">
+          <input
+            id={field}
+            name={secret.key}
+            type="password"
+            value={value}
+            autoComplete="off"
+            placeholder={
+              secret.set ? 'Paste token to replace' : secret.oauth ? 'Or paste token directly' : 'Paste the value'
+            }
+            onChange={(event) => setValue(event.target.value)}
+            className={`${FIELD} min-w-0 flex-1 font-mono`}
+          />
+          <button type="submit" className={BUTTON}>
+            Save
+          </button>
+        </form>
+      </div>
     </Row>
   )
 }

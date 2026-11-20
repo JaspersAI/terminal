@@ -53,6 +53,17 @@ export function Need({ waiting, on, onSkip, active = true }: Props): ReactElemen
     })
   }
 
+  function authorizeSecret(): void {
+    if (need.kind !== 'key' || !need.oauth?.hasClientId || busy) return
+    setBusy(true)
+    setError(null)
+    dispatch({ type: 'plugin.authorizeSecret', plugin, key: need.key })
+      .catch((err: unknown) => {
+        setError(errorMessage(err))
+      })
+      .finally(() => setBusy(false))
+  }
+
   return (
     <div data-need={need.kind} className="relative shrink-0 bg-background">
       {need.kind === 'key' ? (
@@ -61,6 +72,18 @@ export function Need({ waiting, on, onSkip, active = true }: Props): ReactElemen
             <span className="font-medium">{need.label}</span>
             <span className="text-muted-foreground"> for {title}</span>
           </label>
+          {need.oauth?.hasClientId && (
+            <div className="mt-1.5">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={authorizeSecret}
+                className="bg-primary px-3 py-1 text-sm font-medium text-primary-foreground disabled:opacity-50"
+              >
+                {busy ? 'Waiting for browser…' : 'Sign in in browser'}
+              </button>
+            </div>
+          )}
           <div className="mt-1.5 flex gap-2">
             <input
               id={inputId}
