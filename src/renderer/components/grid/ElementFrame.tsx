@@ -710,63 +710,67 @@ export function ElementFrame({
       {/* Under the bar. Minimized, it is all still here, cut off by the tile's own height and inert:
           nothing in it is seen, reached, or counted as drawn, and a view keeps what it holds. */}
       <div inert={minimized} className={`flex min-h-0 flex-1 flex-col ${minimized ? 'overflow-hidden' : ''}`}>
-        {loop && !isDirectTeamChat && (
-          <LoopBox
-            workspaceId={workspaceId}
-            elementId={element.id}
-            loop={loop}
-            label={label}
-            called={called}
-            chat={chat}
-            active={active}
-            covered={covered || minimized}
-            fills={empty}
-            need={need}
-            onSkip={skipNeed}
-            zoom={zoom}
-          />
-        )}
-        {/* With no view yet, and the box above folded, where the views will go. */}
-        {empty && !expanded && (
-          <p className="m-auto px-2 text-center text-xs text-muted-foreground">What {called} shows goes here.</p>
-        )}
-        {frame ? (
-          <Board
-            workspaceId={workspaceId}
-            windowNumber={windowNumber}
-            grid={grid}
-            frame={element}
-            active={active}
-            focused={focused}
-            working={working}
-            waiting={undrawn}
-            zoom={zoom}
-            onZoomGesture={
-              focused && selected && !minimized && !covered
-                ? (dir) => {
-                    applyZoomStep(dir)
-                  }
-                : undefined
-            }
-          />
-        ) : (
-          <Held
-            workspaceId={workspaceId}
-            elementId={element.id}
-            panel={panel}
-            active={active}
-            focused={focused}
-            working={working}
-            zoom={zoom}
-            onZoomGesture={
-              zoomable && focused && selected && !minimized && !covered
-                ? (dir) => {
-                    applyZoomStep(dir)
-                  }
-                : undefined
-            }
-          />
-        )}
+        {/* The box and the views share the body above a shared room's foot, so resizing the box to 100%
+            scales the views to zero while leaving the room's people in place. */}
+        <div data-room-body className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {loop && !isDirectTeamChat && (
+            <LoopBox
+              workspaceId={workspaceId}
+              elementId={element.id}
+              loop={loop}
+              label={label}
+              called={called}
+              chat={chat}
+              active={active}
+              covered={covered || minimized}
+              fills={empty}
+              need={need}
+              onSkip={skipNeed}
+              zoom={zoom}
+            />
+          )}
+          {/* With no view yet, and the box above folded, where the views will go. */}
+          {empty && !expanded && (
+            <p className="m-auto px-2 text-center text-xs text-muted-foreground">What {called} shows goes here.</p>
+          )}
+          {frame ? (
+            <Board
+              workspaceId={workspaceId}
+              windowNumber={windowNumber}
+              grid={grid}
+              frame={element}
+              active={active}
+              focused={focused}
+              working={working}
+              waiting={undrawn}
+              zoom={zoom}
+              onZoomGesture={
+                focused && selected && !minimized && !covered
+                  ? (dir) => {
+                      applyZoomStep(dir)
+                    }
+                  : undefined
+              }
+            />
+          ) : (
+            <Held
+              workspaceId={workspaceId}
+              elementId={element.id}
+              panel={panel}
+              active={active}
+              focused={focused}
+              working={working}
+              zoom={zoom}
+              onZoomGesture={
+                zoomable && focused && selected && !minimized && !covered
+                  ? (dir) => {
+                      applyZoomStep(dir)
+                    }
+                  : undefined
+              }
+            />
+          )}
+        </div>
         {frame && loop && sharing && (
           <RoomPeople workspaceId={workspaceId} loop={loop} sharing={sharing} lit={Boolean(focused && active)} />
         )}
