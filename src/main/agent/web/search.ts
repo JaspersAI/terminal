@@ -7,6 +7,8 @@ import {
   searchErrorDetail,
   type SearchResult,
 } from '../../../shared/agent/web/search'
+import { classifyFetchFailure, formatFetchFailure } from '../../../shared/llm/connectivity'
+import { isLlmOnline } from '../../llm/http'
 import { getProviderConfig, hasCredential, type ProviderConfig } from '../../secrets'
 
 // Web search, for the orchestrator and the builder: the user's own Brave key, Jaspers' service on
@@ -40,9 +42,28 @@ export async function searchWeb(query: string, signal?: AbortSignal): Promise<Se
   }
 }
 
+async function sendSearch(
+  config: ProviderConfig<'search'>,
+  label: string,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await config.fetch(url, init)
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new Error(`${label} timed out.`)
+    }
+    if (classifyFetchFailure(err, url, isLlmOnline()) !== null) {
+      throw new Error(formatFetchFailure(label, err, url, isLlmOnline()))
+    }
+    throw err
+  }
+}
+
 async function brave(config: ProviderConfig<'search'>, query: string, signal?: AbortSignal) {
   const url = `${config.baseUrl}/web/search?${new URLSearchParams({ q: query, count: String(SEARCH_COUNT) })}`
-  const response = await config.fetch(url, {
+  const response = await sendSearch(config, 'Brave Search', url, {
     headers: { accept: 'application/json', 'x-subscription-token': config.token ?? '' },
     signal: withTimeout(signal, SEARCH_TIMEOUT_MS),
   })
@@ -53,7 +74,7 @@ async function brave(config: ProviderConfig<'search'>, query: string, signal?: A
 async function jaspers(config: ProviderConfig<'search'>, query: string, signal?: AbortSignal) {
   const url = `${config.baseUrl}/search?${new URLSearchParams({ q: query, count: String(SEARCH_COUNT) })}`
   // Sent as the account: the sign-in is the credential, and the request goes out with it.
-  const response = await config.fetch(url, {
+  const response = await sendSearch(config, 'Jaspers search', url, {
     headers: { accept: 'application/json' },
     signal: withTimeout(signal, JASPERS_SEARCH_TIMEOUT_MS),
   })
@@ -64,7 +85,8 @@ async function jaspers(config: ProviderConfig<'search'>, query: string, signal?:
 
 /** A key whose IAM identity may not search is refused with a 401 that says so, which is passed on in Bedrock's words. */
 async function bedrock(config: ProviderConfig<'search'>, query: string, signal?: AbortSignal) {
-  const response = await config.fetch(`${config.baseUrl}/responses`, {
+  const url = `${config.baseUrl}/responses`
+  const response = await sendSearch(config, 'Amazon Bedrock', url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${config.token ?? ''}` },
     body: JSON.stringify(bedrockSearch(config.model, query)),

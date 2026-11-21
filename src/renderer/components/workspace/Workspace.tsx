@@ -24,6 +24,7 @@ import { dockChat, useDockedChat } from '../composer/dock'
 import { FloatingOrb } from '../composer/Orb'
 import { toggleOrbOpen, useOrbOpen } from '../composer/request'
 import { GridLayer } from '../grid/GridLayer'
+import { ConnectivityBanner } from './ConnectivityBanner'
 import { EyeDot } from './EyeDot'
 import { ProfileBanner } from './ProfileBanner'
 import { TabBar } from './TabBar'
@@ -192,6 +193,7 @@ export function Workspace({ onOpenRooms }: Props): ReactElement {
           <EyeDot />
         </div>
       </header>
+      <ConnectivityBanner />
       <ProfileBanner />
       <div className="relative min-h-0 flex-1">
         {/* Keep visited tabs mounted in stable order so switching tabs preserves live view state. */}

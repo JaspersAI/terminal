@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  CONNECTIVITY_RETRIES_MAX,
   createLimiter,
   isOverflow,
   isRetryable,
@@ -285,4 +286,50 @@ test('a failure that is waited out is said with what the provider said and how l
     retryLine('OpenAI returned 429: slow down', 61_000),
     'OpenAI returned 429: slow down. Trying again in 1 min 1 s',
   )
+  const connectivityMsg =
+    "No internet connection — couldn't reach Jaspers. Check your network connection and try again; your workspace is safe."
+  assert.equal(retryLine(connectivityMsg, 1500), "No internet connection — couldn't reach Jaspers. Trying again in 2 s")
+  assert.equal(isRetryable(connectivityMsg), true)
+  assert.equal(isTurnTimeout(connectivityMsg, 120_000), false)
+  assert.equal(
+    isRetryable('Could not connect to local server for Ollama (localhost:11434) — make sure Ollama is running.'),
+    false,
+  )
+  // A refusing server gets the same few quick tries, and a retry line short enough for the command bar.
+  const serverRefusedMsg =
+    "Couldn't connect to Custom (192.168.1.20:8080) — the server refused the connection. The service may be down; try again shortly."
+  assert.equal(isRetryable(serverRefusedMsg), true)
+  assert.equal(
+    retryLine(serverRefusedMsg, 1500),
+    "Couldn't connect to Custom (192.168.1.20:8080) — the server refused the connection. Trying again in 2 s",
+  )
+  assert.equal(
+    shouldRetryRoundError({ message: serverRefusedMsg, attempt: 1, retryAfterMs: null, elapsedMs: 20 }, () => 0.5)
+      .action,
+    'retry',
+  )
+  assert.equal(
+    shouldRetryRoundError({
+      message: serverRefusedMsg,
+      attempt: CONNECTIVITY_RETRIES_MAX,
+      retryAfterMs: null,
+      elapsedMs: 20,
+    }).action,
+    'throw',
+  )
+  assert.equal(CONNECTIVITY_RETRIES_MAX, 2)
+  assert.equal(
+    shouldRetryRoundError({ message: connectivityMsg, attempt: 0, retryAfterMs: null, elapsedMs: 20 }, () => 0.5)
+      .action,
+    'retry',
+  )
+  assert.equal(
+    shouldRetryRoundError({ message: connectivityMsg, attempt: 1, retryAfterMs: null, elapsedMs: 20 }, () => 0.5)
+      .action,
+    'retry',
+  )
+  assert.deepEqual(shouldRetryRoundError({ message: connectivityMsg, attempt: 2, retryAfterMs: null, elapsedMs: 20 }), {
+    action: 'throw',
+    sleepInterrupted: false,
+  })
 })
