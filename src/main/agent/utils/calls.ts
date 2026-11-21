@@ -7,8 +7,8 @@ import { batches, callLine, DEFERRED_FOR_ADDED } from '../../../shared/agent/rou
 import { messageOf } from '../../../shared/rpc'
 import { isSleepWakeError } from '../../../shared/tasks/tasks'
 import type { ToolCall, ToolResult, Turn } from '../../llm/llm'
-import { getSource } from '../../plugins/registry'
 import type { Tool, ToolContext } from '../tools/types'
+import { keepsNothing } from './private-calls'
 import { noteToolEnd, noteToolStart } from './record'
 import { emit, type Live } from './runs'
 
@@ -71,10 +71,7 @@ async function execute(
   const stopped: ToolResult = { callId: call.id, output: STOPPED_CALL, isError: true }
   if (signal.aborted) return stopped
   // A pasted credential travels in set_secret's value; the log never repeats it. Non-stored sources keep their inputs and outputs out of Eye too.
-  const noStoreRun =
-    call.name === 'run_source' &&
-    typeof call.input['source'] === 'string' &&
-    getSource(call.input['source'].trim())?.def.noStore === true
+  const noStoreRun = keepsNothing(call)
   const shown =
     call.name === 'set_secret' && 'value' in call.input
       ? { ...call.input, value: '[secret]' }

@@ -1,5 +1,5 @@
 import { shownQuestion, splitAttachments } from '../../shared/agent/attachments'
-import { forkOf } from '../../shared/agent/fork'
+import { forkOf, forkReading } from '../../shared/agent/fork'
 import { CENTRAL_CHAT, closeOff } from '../../shared/agent/history'
 import { failedNote, mask, STOPPED_NOTE } from '../../shared/agent/transcript'
 import { handedTurn } from '../../shared/agent/typed'
@@ -15,6 +15,7 @@ import { agentLoop, type Request, type RunPrompt, type UserTurn } from './agent'
 import { startTerminalSession, waitForThreads } from './thread-file'
 import { forgetApprovals } from './tools/shell'
 import type { Tool, ToolContext } from './tools/types'
+import { asTeammateReads } from './utils/private-calls'
 import { begin, emit, end, isStopped, stepsOf } from './utils/runs'
 import { configuredFor, knownSecrets } from './utils/settings'
 import {
@@ -152,7 +153,9 @@ export async function userRequest({
   )
   goesOn(thread)
   const era = eraOf(thread)
-  const fork = forkOf(thread)
+  // A teammate's prompt reads the room's conversation without what the owner's private sources
+  // answered, the earlier read_again included; what it adds still joins the thread as usual.
+  const fork = fromTeammate ? forkReading(thread, asTeammateReads) : forkOf(thread)
   const turns = fork.turns
   const context: ToolContext = {
     runId: entry.runId,

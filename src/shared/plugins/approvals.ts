@@ -42,17 +42,18 @@ export function isOwnerPrivateSource(
 }
 
 /**
- * Exact watch rule: a plugin with no room-scoped source in the room has no watchable live keys.
- * A room-scoped source is one whose `scope` is `'room'` (the default) and that neither sets `noStore`
- * nor `writes`.
+ * Whether a teammate's view may watch a plugin's live values in a room: only a plugin the room shows,
+ * and not one whose every source is private (viewer-scoped, non-stored, or writing), since what such a
+ * plugin keeps live comes from the owner's own account. A plugin with no sources keeps its live values.
  */
-export function hasRoomScopedSource(
+export function mayWatchLive(
   plugin: string,
   roomShownOrTold: boolean,
   sources: Record<string, { plugin: string | null; scope?: SourceScope; noStore?: boolean; writes?: boolean }>,
 ): boolean {
   if (!plugin || !roomShownOrTold) return false
-  return Object.values(sources).some((s) => s.plugin === plugin && !isOwnerPrivateSource(s))
+  const own = Object.values(sources).filter((s) => s.plugin === plugin)
+  return own.length === 0 || own.some((s) => !isOwnerPrivateSource(s))
 }
 
 export type PanelSourceRoute =
@@ -60,20 +61,24 @@ export type PanelSourceRoute =
 
 /**
  * How a panel's `'source:run'` call is routed. In a replica of a shared room, a `scope: 'viewer'`
- * source never goes to the owner: it runs on the viewer's own terminal when the plugin is installed
- * locally, and fails locally with `PLUGIN_NOT_INSTALLED` when it is not.
+ * source of the tile's own plugin never goes to the owner: it runs on the viewer's own terminal when
+ * the plugin is installed locally (whose views are then drawn from this terminal's own code), and
+ * fails locally with `PLUGIN_NOT_INSTALLED` when it is not. Everything else a replica's view asks for
+ * goes to the owner, routed by the tile: a view never runs another plugin's source on this terminal.
  */
 export function routePanelSourceCall(options: {
   sourceId: string
   isReplica: boolean
+  /** The plugin of the view the replica tile draws; null for a built-in view or a frame. */
+  tilePlugin: string | null
   localPluginInstalled: boolean
   localSourceScope?: SourceScope
   syncedViewerSources?: readonly string[]
 }): PanelSourceRoute {
-  const { sourceId, isReplica, localPluginInstalled, localSourceScope, syncedViewerSources } = options
+  const { sourceId, isReplica, tilePlugin, localPluginInstalled, localSourceScope, syncedViewerSources } = options
   if (!isReplica) return { kind: 'local' }
   const plugin = viewPlugin(sourceId)
-  if (plugin === null) return { kind: 'replica-owner' }
+  if (plugin === null || plugin !== tilePlugin) return { kind: 'replica-owner' }
   if (localPluginInstalled) {
     return localSourceScope === 'viewer' ? { kind: 'local' } : { kind: 'replica-owner' }
   }

@@ -613,6 +613,8 @@ export interface ReplicaPanel {
   panelId: string
   /** The owner's element id; null for a tile drawn here in a view's place, which the owner is not asked about. */
   tile: string | null
+  /** The view the tile draws, or null for a frame. */
+  view: string | null
 }
 
 /** The replica tile a panel or element id names on a tab, or null when that tile is the tab's own. */
@@ -629,6 +631,7 @@ export function replicaPanel(grids: Record<number, Grid>, loops: Loops, id: stri
       room: loop.replica.room,
       panelId: panel.id,
       tile: loop.replica.tiles[element.id] ?? null,
+      view: panel.content.kind === 'view' ? panel.content.view : null,
     }
   }
   return null

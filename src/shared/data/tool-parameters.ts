@@ -1,6 +1,9 @@
 import { z } from 'zod'
 import type { SourceDef } from '@jaspers-ai/sdk/define'
 import type { ConnectionInfo, ConnectionTool } from '../state'
+import { isOwnerPrivateSource } from '../plugins/approvals.ts'
+import { MCP_SOURCE } from '../plugins/apps.ts'
+import { readMcpCall } from './arguments.ts'
 
 // What the model is told a source takes. An MCP source takes what its server says the tool takes; a
 // function source takes its own zod input, written out as JSON Schema for the input side, so a field
@@ -291,7 +294,7 @@ export function resolveConnectionSource(
   }
 
   const found = findConnectionTool(clean, connections, list)
-  if (!found) return undefined
+  if (!found || isPrivateConnection(found.connection, list)) return undefined
   return {
     id: clean,
     plugin: found.plugin,
@@ -303,6 +306,44 @@ export function resolveConnectionSource(
       ...(found.tool.description ? { description: found.tool.description } : {}),
     },
   }
+}
+
+/**
+ * The source a call goes through: the one it names, or, for a core/mcp call on a tool a plugin
+ * declared a source over, that source, whose policy (who may run it, approval, storage) the call keeps to.
+ */
+export function callSource(
+  id: string,
+  args: unknown,
+  sources: Iterable<SourceEntry>,
+  connections: Record<string, ConnectionInfo> = {},
+): SourceEntry | undefined {
+  const list = [...sources]
+  const asked = list.find((one) => one.id === id) ?? resolveConnectionSource(id, list, connections)
+  if (asked?.id !== MCP_SOURCE) return asked
+  const call = readMcpCall(args, connections)
+  return declaredTool(call.connection, call.tool, list) ?? asked
+}
+
+/** The source a plugin declared over one tool of a connection, which a call on that tool goes through. */
+export function declaredTool(
+  connection: string,
+  tool: string,
+  sources: Iterable<SourceEntry>,
+): SourceEntry | undefined {
+  for (const one of sources) {
+    if (one.connection === connection && 'mcp' in one.def && one.def.tool === tool && !one.def.internal) return one
+  }
+  return undefined
+}
+
+/**
+ * Whether a connection carries a private source (viewer-scoped, non-stored, or writing). Its other
+ * tools reach the same account, so they are reached only through the sources its plugin declares.
+ */
+export function isPrivateConnection(connection: string, sources: Iterable<SourceEntry>): boolean {
+  for (const one of sources) if (one.connection === connection && isOwnerPrivateSource(one.def)) return true
+  return false
 }
 
 /** Collects internal source ids and their connection and plugin tool aliases so lookup can exclude them. */

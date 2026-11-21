@@ -209,6 +209,7 @@ app.whenReady().then(async () => {
     const route = routePanelSourceCall({
       sourceId: source,
       isReplica: replica !== null,
+      tilePlugin: replica?.view ? viewPlugin(replica.view) : null,
       localPluginInstalled,
       localSourceScope: registered?.def.scope,
       syncedViewerSources,

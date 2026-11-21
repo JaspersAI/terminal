@@ -15,9 +15,11 @@ import {
   mergeWorkbookTables,
   parseArguments,
   prepareMcpArguments,
+  readMcpCall,
   type WorkbookTable,
 } from '../../shared/data/arguments.ts'
-import { withParameters } from '../../shared/data/tool-parameters.ts'
+import { declaredTool, isPrivateConnection, withParameters } from '../../shared/data/tool-parameters.ts'
+import { MCP_SOURCE } from '../../shared/plugins/apps.ts'
 import { guardedFetch } from '../../shared/plugins/guarded-fetch.ts'
 import { messageOf } from '../../shared/rpc.ts'
 import type { ConnectionInfo, ConnectionTool } from '../../shared/state.ts'
@@ -54,6 +56,7 @@ export interface SourceRunnerDeps {
   hasPendingPluginRegistration(): boolean
   waitForPluginRegistration(signal?: AbortSignal): Promise<void>
   getSource(id: string): RunnerSource | undefined
+  allSources(): RunnerSource[]
   connections(): Record<string, ConnectionInfo>
   callMcp(
     connection: string,
@@ -68,31 +71,60 @@ export interface SourceRunnerDeps {
   workspaceRefreshedAt(workspaceId: string | null): number | null
 }
 
+// Running a source and holding what came back, and filing it in the store on the way past. A run answers twice over: the text the server wrote,
+// which is what the model reads, and the rows behind it, which stay here as a dataset the view asks
+// for by id. Two views asking the same source the same thing inside its TTL share one call, so a
+// grid of panels on one dataset is one round trip. A fresh run skips that and takes its place. What
+// is stored goes a while after its TTL, so runs on a timer cannot pile results up in main. A result
+// that brings citations has them kept for the workspace that asked (`citations.ts`), here because
+// this is the one place every run passes, the orchestrator's and a view's alike. A source that keeps
+// nothing (`noStore`) is answered and forgotten: no dataset, no filing, no citations, no share.
+
 const DEFAULT_TTL_MS = 60_000
+/** How long a result stays readable past its TTL: a view reads its rows right after the run, so this is a margin, not a cache. */
 const KEEP_MS = 5 * 60_000
 
 export function createSourceRunner(deps: SourceRunnerDeps) {
   const datasets = new Map<string, Dataset>()
   const texts = new Map<string, string>()
+  /** source and arguments → the dataset that answered them, while it is still good. */
   const cache = new Map<string, string>()
+  /** Every stored result by id, and when it may go. */
   const expires = new Map<string, number>()
+  /** Accumulated sheets per `(workspaceId, filename)` so multi-sheet workbooks can be exported across calls. */
   const workbooks = new Map<string, WorkbookTable[]>()
   const inFlight = createInFlightMap<{ result: RunResult & { text: string }; citations: unknown }>()
   const ranListeners = new Set<RanListener>()
   let seq = 0
 
+  /** Hears every run that answered, with the arguments as whoever asked gave them: a served dataset is one too. */
   function onSourceRan(listener: RanListener): void {
     ranListeners.add(listener)
   }
 
+  /** Runs one source by registry id. Throws with the server's own words when it refuses. */
   async function runSource(id: string, args: unknown, options: RunOptions = {}): Promise<RunResult & { text: string }> {
-    const source = deps.getSource(id)
-    const noStore = source?.def.noStore === true
     const result = await run(id, args, options)
-    if (!noStore) {
+    // Read once the run is over: before it, a plugin still registering has no source to read. One
+    // gone by now is taken as keeping nothing.
+    const source = deps.getSource(id)
+    if (source && !policyOf(source, args).noStore) {
       for (const listener of ranListeners) listener(id, args, options.workspaceId ?? null, result)
     }
     return result
+  }
+
+  // What a run may keep and share: its source's own policy, or, for a call on a connection's tool
+  // through core/mcp, that of the source its plugin declared over the tool. A private connection's
+  // other tools reach the same account, so they keep nothing either.
+  function policyOf(source: RunnerSource, args: unknown): { noStore: boolean; writes: boolean } {
+    if (source.id !== MCP_SOURCE) return { noStore: source.def.noStore === true, writes: source.def.writes === true }
+    const call = readMcpCall(args, deps.connections())
+    const all = deps.allSources()
+    const declared = declaredTool(call.connection, call.tool, all)
+    if (declared) return { noStore: declared.def.noStore === true, writes: declared.def.writes === true }
+    const kept = !isPrivateConnection(call.connection, all)
+    return { noStore: !kept, writes: !kept }
   }
 
   async function run(id: string, args: unknown, options: RunOptions): Promise<RunResult & { text: string }> {
@@ -102,8 +134,7 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
     const source = deps.getSource(id)
     if (!source) throw new Error(`Unknown source ${id}.`)
     const def = source.def
-    const noStore = def.noStore === true
-    const writes = def.writes === true
+    const { noStore, writes } = policyOf(source, args)
     const workspaceId = options.workspaceId ?? null
     const declared = (): ConnectionTool | undefined =>
       source.connection && isMcpSource(def)
@@ -117,9 +148,11 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
       : null
     const preparedArgs: unknown =
       mcpArgs ?? (source.id === 'excel-export/export-tables' ? mergeWorkbookTables(workbooks, workspaceId, args) : args)
+    // A server answers the same whoever asks; a plugin's code may answer each workspace its own way.
     const key = stableStringify(isMcpSource(def) ? [source.id, mcpArgs] : [source.id, preparedArgs, workspaceId])
     const cached = noStore || writes || options.fresh ? null : stillGood(key, workspaceId)
     if (cached) {
+      // A server's answer is shared between workspaces, and its citations sit in what was around the rows.
       deps.keepCitations(workspaceId, cached.meta)
       return {
         kind: 'dataset',
@@ -150,6 +183,7 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
         const rawMessage = messageOf(error)
         const message = isMcpSource(def) ? withParameters(rawMessage, declared()) : rawMessage
         if (!isSleepWakeError(message)) {
+          // A run that failed is worth keeping: what a source stopped answering is half of what changed.
           if (!noStore) {
             file(source.id, preparedArgs, key, workspaceId, {
               rows: null,
@@ -225,6 +259,10 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
     return result
   }
 
+  /**
+   * Hands one run to the store and carries on. The store keeps every run, so nothing here reads it
+   * back: a view is still served from the map above, and a store that is down costs the record only.
+   */
   function file(
     source: string,
     args: unknown,
@@ -235,6 +273,11 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
     deps.recordRun({ source, args: stableStringify(args), argsHash: key, workspace, fetchedAt: Date.now(), ...answer })
   }
 
+  /**
+   * Rows a teammate's room sent, kept for the views of its replica here (main/collab/). They are read
+   * by id like any dataset, are filed under no arguments, so no run of this terminal's own is ever
+   * answered from them, and stay until their share goes.
+   */
   function keepReplicaDataset(
     id: string,
     dataset: Pick<Dataset, 'source' | 'args' | 'rows' | 'meta'>,
@@ -246,6 +289,7 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
     expires.set(id, Number.MAX_SAFE_INTEGER)
   }
 
+  /** What a replica dataset holds, for the answer a view's run is given. */
   function replicaDataset(id: string): { dataset: Dataset; text: string } | null {
     const dataset = datasets.get(id)
     return dataset ? { dataset, text: texts.get(id) ?? '' } : null
@@ -260,6 +304,7 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
     }
   }
 
+  /** The rows of one run. They live as long as the dataset does, which is its source's TTL. */
   function datasetRows(datasetId: string): Record<string, unknown>[] {
     const dataset = datasets.get(datasetId)
     if (!dataset) throw new Error(`Unknown dataset ${datasetId}.`)
@@ -272,6 +317,10 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
     return text
   }
 
+  /**
+   * A source that runs code. A plugin's runs in the plugin's host, on the arguments as its schema read
+   * them here; the app's built-in ones run in main. Either way the result is read the same.
+   */
   async function runFunction(
     source: RunnerSource,
     args: unknown,
@@ -283,6 +332,7 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
     const value: unknown = source.plugin
       ? await deps.runInHost(source.plugin, source.id.slice(source.plugin.length + 1), input, workspaceId)
       : await def.run(input, builtInContext(def.hosts ?? [], workspaceId))
+    // A source that forwarded an MCP call hands back the server's own result; read it as one.
     if (isToolResult(value)) return mapped(value, raw)
     const checked: unknown = def.output ? def.output.parse(value) : value
     return { value: checked, text: typeof checked === 'string' ? checked : JSON.stringify(checked) }
@@ -292,11 +342,16 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
     const id = cache.get(key)
     const dataset = id ? datasets.get(id) : undefined
     if (!dataset) return null
+    // Expired or older than a panel refresh on this workspace: nothing new is served from it.
     if (isDatasetStillGood(dataset, Date.now(), deps.workspaceRefreshedAt(workspaceId))) return dataset
     cache.delete(key)
     return null
   }
 
+  /**
+   * Drops what is past its time: a dataset a while after its TTL, a text result a while after it came.
+   * Run on every store rather than on a timer, so an idle app holds what it held.
+   */
   function sweep(now: number): void {
     for (const [id, until] of expires) {
       if (until > now) continue
@@ -319,6 +374,7 @@ export function createSourceRunner(deps: SourceRunnerDeps) {
   }
 }
 
+/** An MCP result: what came back, and whether the server was answering or complaining. `raw` sees it first, a complaint included. */
 function mapped(
   result: unknown,
   raw?: (result: unknown) => void,
@@ -331,6 +387,7 @@ function mapped(
   return { value, text }
 }
 
+/** What a built-in source may reach: fetch, to its hosts. Folders, live values, and notices belong to plugins. */
 function builtInContext(hosts: string[], workspace: string | null): BackendContext {
   const none = (): never => {
     throw new Error('Built-in sources have no plugin folder, live values, or notices.')

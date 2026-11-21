@@ -3,7 +3,7 @@ import type { ConnectionInfo } from '../../shared/state'
 import { call } from '../plugins/mcp'
 import { runInHost } from '../plugins/plugin-host'
 import { hasPendingPluginRegistration, waitForPluginRegistration } from '../plugins/plugins'
-import { getSource } from '../plugins/registry'
+import { allSources, getSource } from '../plugins/registry'
 import { getState } from '../state'
 import { record as recordEye } from '../eye/eye'
 import { keepCitations } from './citations'
@@ -16,6 +16,7 @@ const runner = createSourceRunner({
   hasPendingPluginRegistration,
   waitForPluginRegistration,
   getSource,
+  allSources,
   connections: currentConnections,
   callMcp: call,
   runInHost,
@@ -51,6 +52,7 @@ function workspaceRefreshedAt(workspaceId: string | null): number | null {
   }
 }
 
+/** Reads current connections, returning an empty map before application state is available. */
 function currentConnections(): Record<string, ConnectionInfo> {
   try {
     return getState().connections

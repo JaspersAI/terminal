@@ -3,10 +3,19 @@ import { FLOW_TIMEOUT_MS, openLoopback } from '../app/loopback'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { seal, unseal } from '../secrets'
 import { getState, update } from '../state'
-import { connect } from './mcp'
+import { connect, onSecretRefresh } from './mcp'
 import { connectionsOf } from './connections'
 import { secretRefs } from '../../shared/plugins/connections'
 import { createSecretOAuthManager } from './secret-oauth'
+
+/** Connects again every connection of a plugin that sends this key, so it goes on with what the key is now. */
+function reconnectUsing(plugin: string, key: string): void {
+  for (const { id } of connectionsOf(plugin).filter(
+    ({ spec }) => secretRefs(spec).includes(key) || (key === 'token' && spec.auth === 'oauth'),
+  )) {
+    void connect(id).catch(() => undefined)
+  }
+}
 
 function writeSealedToState(plugin: string, key: string, sealed: string): void {
   update((state) => {
@@ -23,11 +32,7 @@ function writeSealedToState(plugin: string, key: string, sealed: string): void {
       secretRequests: state.secretRequests.filter((one) => one.plugin !== plugin || one.key !== key),
     }
   })
-  for (const { id } of connectionsOf(plugin).filter(
-    ({ spec }) => secretRefs(spec).includes(key) || (key === 'token' && spec.auth === 'oauth'),
-  )) {
-    void connect(id).catch(() => undefined)
-  }
+  reconnectUsing(plugin, key)
 }
 
 export function clearPluginSecret(plugin: string, key: string): void {
@@ -50,6 +55,7 @@ export function clearPluginSecret(plugin: string, key: string): void {
         : state.plugins,
     }
   })
+  reconnectUsing(plugin, key)
 }
 
 const manager = createSecretOAuthManager({
@@ -69,3 +75,5 @@ export const registerPluginSecretOAuth = manager.registerPluginSecretOAuth
 export const unregisterPluginSecretOAuth = manager.unregisterPluginSecretOAuth
 export const authorizePluginSecret = manager.authorizePluginSecret
 export const freshSecretValues = manager.freshSecretValues
+
+onSecretRefresh(manager.refreshPluginSecrets)

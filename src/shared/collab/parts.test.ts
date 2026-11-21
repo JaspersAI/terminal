@@ -155,6 +155,7 @@ test("a replica lands on free cells with ids of its own, and its tiles are told 
     room: 'f1',
     panelId: inner.panels[0]!.id,
     tile,
+    view: 'core/note',
   })
 })
 

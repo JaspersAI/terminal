@@ -75,6 +75,7 @@ test('a noStore source leaves zero SQLite rows on success or failure, zero datas
     hasPendingPluginRegistration: () => false,
     waitForPluginRegistration: async () => undefined,
     getSource: (id) => sources.get(id),
+    allSources: () => [...sources.values()],
     connections: () => ({}),
     callMcp: async () => ({}),
     runInHost: async (_plugin, sourceName, input, workspaceId) => {
@@ -249,4 +250,139 @@ test('run_source and describe_source refuse flagged sources on teammate prompts,
     'ok',
   )
   assert.equal(executed.length, 3)
+})
+
+test('a noStore result reaches no share listener when its plugin was still registering as it was asked', async () => {
+  const db = tempStore()
+  const readDef = defineSource({
+    description: 'Read a private thread',
+    input: z.object({ channel: z.string() }),
+    noStore: true,
+    run: async () => 'private thread text',
+  })
+  let registered = false
+  const shared: string[] = []
+  const runner = createSourceRunner({
+    hasPendingPluginRegistration: () => !registered,
+    waitForPluginRegistration: async () => {
+      registered = true
+    },
+    getSource: (id) =>
+      registered && id === 'slack/read' ? { id, plugin: null, def: readDef, connection: null } : undefined,
+    allSources: () => [],
+    connections: () => ({}),
+    callMcp: async () => ({}),
+    runInHost: async () => undefined,
+    recordRun: (rec) => db.record(rec),
+    recordEye: () => undefined,
+    keepCitations: () => undefined,
+    workspaceRefreshedAt: () => null,
+  })
+  runner.onSourceRan((id) => shared.push(id))
+
+  const result = await runner.runSource('slack/read', { channel: 'C1' }, { workspaceId: 'ws-1' })
+  assert.match(result.text, /private thread text/)
+  assert.deepEqual(shared, [])
+  assert.equal(db.query({ sql: 'select count(*) from runs' }).rows[0]![0], 0)
+  db.close()
+})
+
+test("core/mcp on a declared tool keeps to that source's policy, and a private connection's other tools keep nothing", async () => {
+  const db = tempStore()
+  const coreMcp = defineSource({
+    description: 'Any tool on any connection',
+    input: z
+      .object({ connection: z.string(), tool: z.string(), args: z.record(z.string(), z.unknown()) })
+      .passthrough(),
+    run: async () => 'private messages',
+  })
+  const read = defineSource({ mcp: 'slack/api', tool: 'conversations.replies', noStore: true })
+  const quotes = defineSource({ mcp: 'market/api', tool: 'quotes' })
+  const sources = new Map<string, RunnerSource>([
+    ['core/mcp', { id: 'core/mcp', plugin: null, def: coreMcp, connection: null }],
+    ['slack/read', { id: 'slack/read', plugin: 'slack', def: read, connection: 'slack/api' }],
+    ['market/quotes', { id: 'market/quotes', plugin: 'market', def: quotes, connection: 'market/api' }],
+  ])
+  const shared: string[] = []
+  const runner = createSourceRunner({
+    hasPendingPluginRegistration: () => false,
+    waitForPluginRegistration: async () => undefined,
+    getSource: (id) => sources.get(id),
+    allSources: () => [...sources.values()],
+    connections: () => ({}),
+    callMcp: async () => ({}),
+    runInHost: async () => undefined,
+    recordRun: (rec) => db.record(rec),
+    recordEye: () => undefined,
+    keepCitations: () => undefined,
+    workspaceRefreshedAt: () => null,
+  })
+  runner.onSourceRan((id) => shared.push(id))
+
+  await runner.runSource('core/mcp', { connection: 'slack/api', tool: 'conversations.replies', args: {} })
+  await runner.runSource('core/mcp', { connection: 'slack/api', tool: 'users.list', args: {} })
+  assert.deepEqual(shared, [])
+  assert.equal(db.query({ sql: 'select count(*) from runs' }).rows[0]![0], 0)
+
+  await runner.runSource('core/mcp', { connection: 'market/api', tool: 'quotes', args: {} })
+  assert.deepEqual(shared, ['core/mcp'])
+  assert.equal(db.query({ sql: 'select count(*) from runs' }).rows[0]![0], 1)
+  db.close()
+})
+
+test("run_source holds a core/mcp call to the source declared over its tool, and refuses a private connection's other tools", async () => {
+  const coreMcp = defineSource({
+    description: 'Any tool on any connection',
+    input: z
+      .object({ connection: z.string(), tool: z.string(), args: z.record(z.string(), z.unknown()) })
+      .passthrough(),
+    run: async () => 'ok',
+  })
+  const post = defineSource({
+    mcp: 'slack/api',
+    tool: 'chat.postMessage',
+    scope: 'viewer',
+    writes: true,
+    confirm: { destinationArg: 'channel' },
+  })
+  const registry = new Map<string, RunnerSource>([
+    ['core/mcp', { id: 'core/mcp', plugin: null, def: coreMcp, connection: null }],
+    ['slack/post', { id: 'slack/post', plugin: 'slack', def: post, connection: 'slack/api' }],
+  ])
+  const executed: string[] = []
+  const tools = createSourceTools({
+    ask: async () => undefined,
+    approvalDeps: { read: () => [], write: () => undefined, now: () => 0, ask: async () => CANCEL_APPROVAL },
+    hasPendingPluginRegistration: () => false,
+    waitForPluginRegistration: async () => undefined,
+    getSource: (id) => registry.get(id),
+    allSources: () => [...registry.values()],
+    state: () => ({ sources: {}, connections: {} }),
+    runSource: async (id) => {
+      executed.push(id)
+      return { kind: 'text', resultId: '', text: 'ok' }
+    },
+  })
+  const runTool = tools.find((t) => t.name === 'run_source')!
+  const posting = { connection: 'slack/api', tool: 'chat.postMessage', args: { channel: 'C1', text: 'hi' } }
+
+  if (typeof runTool.readsOnly === 'function') {
+    assert.equal(runTool.readsOnly({ source: 'core/mcp', input: posting }), false)
+  }
+  await assert.rejects(
+    runTool.run({ source: 'core/mcp', input: posting }, baseContext({ fromTeammate: true })),
+    /cannot be run for a teammate/,
+  )
+  await assert.rejects(
+    runTool.run({ source: 'core/mcp', input: posting }, baseContext({ task: 't1' })),
+    /cannot run unattended/,
+  )
+  await assert.rejects(
+    runTool.run(
+      { source: 'core/mcp', input: { connection: 'slack/api', tool: 'users.list', args: {} } },
+      baseContext(),
+    ),
+    /reached only through its plugin's sources/,
+  )
+  assert.deepEqual(executed, [])
 })

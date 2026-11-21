@@ -54,7 +54,8 @@ export interface SourcePolicySpec {
   scope?: SourceScope
   /**
    * Never cache, keep rows or text in memory, file in SQLite, sync as share parts, log outputs in Eye,
-   * or capture Eye frames while a view rendering it is visible.
+   * or capture Eye frames while a view rendering it is visible. The assistant reads an answer in the
+   * run that asked for it; its saved conversation keeps a note in the answer's place.
    */
   noStore?: boolean
   /** Has external side effects: never batched as read-only or shared in flight, and runs with a write timeout. */

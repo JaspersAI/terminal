@@ -13,6 +13,11 @@ import {
 import { parseOAuthTokenResponse } from '../../shared/plugins/secret-oauth.ts'
 import type { Loopback } from '../app/loopback.ts'
 
+/** How long a token refresh may take before the call goes on with the token it has. */
+const REFRESH_TIMEOUT_MS = 15_000
+/** What a provider says when a refresh token is no good any more, so the sign-in is over. */
+const REVOKED = /invalid_refresh_token|invalid_grant|token_revoked/i
+
 export interface SecretOAuthManagerDeps {
   readSealed(plugin: string): Record<string, string>
   writeSealed(plugin: string, key: string, sealed: string): void
@@ -126,26 +131,31 @@ export function createSecretOAuthManager(deps: SecretOAuthManagerDeps) {
         client_id: decoded.clientId,
         refresh_token: decoded.refreshToken,
       })
-      const res = await deps.fetchImpl(spec.tokenUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8' },
-        body: form.toString(),
-      })
-      const json: unknown = await res.json().catch(() => null)
-      if (res.status === 400 || res.status === 401) {
-        deps.deleteSealed(plugin, key)
-        return null
-      }
-      if (!res.ok && json === null) {
+      // A refresh that cannot be made now (no network, a server that does not answer or answers
+      // wrong) leaves the sign-in as it is and sends the token it has; only the provider saying the
+      // refresh token is no good any more ends the sign-in.
+      let res: Response
+      let json: unknown
+      try {
+        res = await deps.fetchImpl(spec.tokenUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8' },
+          body: form.toString(),
+          signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+        })
+        json = await res.json().catch(() => null)
+      } catch {
         return decoded.accessToken
       }
       try {
         const next = parseOAuthTokenResponse(json, decoded.clientId, deps.now(), decoded.refreshToken)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
         deps.writeSealed(plugin, key, deps.seal(encodeOAuthSecret(next)))
         return next.accessToken
       } catch (err) {
+        const said = isRecord(json) && typeof json['error'] === 'string' ? json['error'] : ''
         const msg = err instanceof Error ? err.message : ''
-        if (/invalid_refresh_token|invalid_grant|token_revoked/i.test(msg)) {
+        if (REVOKED.test(said) || REVOKED.test(msg)) {
           deps.deleteSealed(plugin, key)
           return null
         }
@@ -176,10 +186,23 @@ export function createSecretOAuthManager(deps: SecretOAuthManagerDeps) {
     return out
   }
 
+  /** Refreshes only a plugin's browser sign-ins that are near expiry, for a caller that reads the keys itself. */
+  async function refreshPluginSecrets(plugin: string): Promise<void> {
+    const pluginSpecs = specs.get(plugin)
+    if (!pluginSpecs) return
+    const sealedMap = deps.readSealed(plugin)
+    for (const [key, spec] of pluginSpecs) if (sealedMap[key]) await refreshOne(plugin, key, spec)
+  }
+
   return {
     registerPluginSecretOAuth,
+    refreshPluginSecrets,
     unregisterPluginSecretOAuth,
     authorizePluginSecret,
     freshSecretValues,
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

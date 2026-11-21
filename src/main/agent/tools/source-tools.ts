@@ -2,7 +2,13 @@ import { untilAborted } from '../../../shared/abort.ts'
 import { sourceOutput } from '../../../shared/agent/history.ts'
 import { readInput, readMcpCall } from '../../../shared/data/arguments.ts'
 import type { RunResult } from '../../../shared/data/datasets.ts'
-import { findConnectionTool, resolveConnectionSource, sourceParameters } from '../../../shared/data/tool-parameters.ts'
+import {
+  declaredTool,
+  findConnectionTool,
+  isPrivateConnection,
+  resolveConnectionSource,
+  sourceParameters,
+} from '../../../shared/data/tool-parameters.ts'
 import { MCP_SOURCE } from '../../../shared/plugins/apps.ts'
 import {
   ensureAgentDestinationApproved,
@@ -39,6 +45,7 @@ export interface SourceToolsDeps {
 export function createSourceTools(deps: SourceToolsDeps): Tool[] {
   const { ask, approvalDeps } = deps
 
+  /** Lists public sources and resolvable tools on ready connections using the latest application state. */
   const named = (fromTeammate?: boolean): string[] => {
     const state = deps.state()
     const sources = deps.allSources()
@@ -58,6 +65,7 @@ export function createSourceTools(deps: SourceToolsDeps): Tool[] {
     return [...ids]
   }
 
+  /** Resolves a public source or throws with nearby source ids to help correct an unknown reference. */
   const find = (id: string, fromTeammate?: boolean): RunnerSource => {
     const source = deps.getSource(id)
     if (fromTeammate && source && isOwnerPrivateSource(source.def)) {
@@ -72,12 +80,22 @@ export function createSourceTools(deps: SourceToolsDeps): Tool[] {
     return source
   }
 
+  // The declared source a core/mcp call's tool goes through, read from the tool call as the model wrote it.
+  const throughConnection = (input: Record<string, unknown>): RunnerSource | undefined => {
+    const { source: _source, input: rawInput, ...topLevel } = input
+    const call = readMcpCall(rawInput ?? topLevel, deps.state().connections)
+    return declaredTool(call.connection, call.tool, deps.allSources())
+  }
+
   return [
     {
       name: 'run_source',
+      // It files what it fetched, which nothing else in a round reads: five sources asked at once are
+      // five waits shared. A write, or a call that asks before it writes, runs alone, in the order asked.
       readsOnly: (input) => {
         const raw = typeof input['source'] === 'string' ? input['source'].trim() : ''
-        const found = raw ? deps.getSource(raw) : undefined
+        const asked = raw ? deps.getSource(raw) : undefined
+        const found = asked?.id === MCP_SOURCE ? (throughConnection(input) ?? asked) : asked
         return !(found?.def.writes || found?.def.confirm)
       },
       whole: true,
@@ -120,25 +138,44 @@ export function createSourceTools(deps: SourceToolsDeps): Tool[] {
         if (!deps.getSource(id) && deps.hasPendingPluginRegistration()) {
           await deps.waitForPluginRegistration(signal)
         }
-        const source = find(id, fromTeammate)
-        const { plugin, connection } = source
+        const asked = find(id, fromTeammate)
         const state = deps.state()
         const { source: _source, input: rawInput, ...topLevel } = input
         const parsedInput =
           rawInput !== undefined
-            ? readInput(rawInput, source.id, state.connections)
+            ? readInput(rawInput, asked.id, state.connections)
             : Object.keys(topLevel).length > 0
-              ? readInput(topLevel, source.id, state.connections)
+              ? readInput(topLevel, asked.id, state.connections)
               : {}
-        const args =
+        const askedArgs =
           rawInput !== undefined && Object.keys(topLevel).length > 0
-            ? readInput({ ...topLevel, ...parsedInput }, source.id, state.connections)
+            ? readInput({ ...topLevel, ...parsedInput }, asked.id, state.connections)
             : parsedInput
-        if (source.id === MCP_SOURCE) {
-          const target = readMcpCall(args, state.connections).connection
-          if (state.connections[target]?.internal)
-            throw new Error(`${target} is its plugin's own server: use that plugin's views and sources instead.`)
+        // A connection's tool whose server has a page for it, called by a loop's agent: the call is
+        // made fresh, so there is a result of its own to show, and the page is put in the work's tiles
+        // with it. The orchestrator's call, and a task's own, answer in text and show nothing.
+        const page = asked.id === MCP_SOURCE && loop !== undefined ? (deps.appOf?.(askedArgs) ?? null) : null
+        // A call on a connection's tool goes through the source its plugin declared over that tool, so
+        // the call is held to that source's policy (who may run it, approval, storage) whichever way it was asked.
+        let source = asked
+        let args = askedArgs
+        if (asked.id === MCP_SOURCE) {
+          const call = readMcpCall(askedArgs, state.connections)
+          if (state.connections[call.connection]?.internal)
+            throw new Error(
+              `${call.connection} is its plugin's own server: use that plugin's views and sources instead.`,
+            )
+          const declared = declaredTool(call.connection, call.tool, deps.allSources())
+          if (declared) {
+            source = find(declared.id, fromTeammate)
+            args = call.args
+          } else if (isPrivateConnection(call.connection, deps.allSources())) {
+            throw new Error(`${call.connection} is reached only through its plugin's sources: use those instead.`)
+          }
         }
+        const { plugin, connection } = source
+        // A plugin's own code fails without a key it declares, where a connection's call asks for its
+        // own. The wait ends with the run: no source is run for a run stopped while it was asking.
         if (ask && plugin !== null && connection === null) await untilAborted(ask(plugin), signal)
         if (source.def.confirm) {
           await ensureAgentDestinationApproved({
@@ -152,7 +189,6 @@ export function createSourceTools(deps: SourceToolsDeps): Tool[] {
             deps: approvalDeps,
           })
         }
-        const page = source.id === MCP_SOURCE && loop !== undefined ? (deps.appOf?.(args) ?? null) : null
         // Central's direct read calls are capped at 5 seconds; confirmed writes and multi-step uploads get 30 seconds.
         const isWrite = Boolean(source.def.writes || source.def.confirm)
         const capMs = loop === undefined && !unread ? (isWrite ? 30_000 : 5_000) : null
@@ -242,7 +278,7 @@ function nearest(wanted: string, known: string[]): string[] {
     .filter((id) => {
       const low = id.toLowerCase()
       return (
-        low.includes(tail) || low.includes(low.slice(low.indexOf('/') + 1)) || low.startsWith(word.split('/')[0] ?? '')
+        low.includes(tail) || tail.includes(low.slice(low.indexOf('/') + 1)) || low.startsWith(word.split('/')[0] ?? '')
       )
     })
     .slice(0, 5)

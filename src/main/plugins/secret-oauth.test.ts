@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { openLoopback } from '../app/loopback.ts'
-import { checkSecretOAuthSpec, openSecretAccessToken } from '../../shared/plugins/secret-oauth.ts'
+import { checkSecretOAuthSpec, encodeOAuthSecret, openSecretAccessToken } from '../../shared/plugins/secret-oauth.ts'
 import { createSecretOAuthManager } from './secret-oauth.ts'
 
 test('PKCE secret OAuth runs loopback browser sign-in, verifies S256 challenge, seals Slack authed_user token, and refreshes automatically before expiry', async () => {
@@ -155,4 +155,50 @@ test('checkSecretOAuthSpec validates https endpoints and loopback port range', (
       ),
     /1024 to 65535/,
   )
+})
+
+test('a refresh that cannot be made keeps the sign-in and its token; only a refused refresh token ends it', async () => {
+  const sealed = new Map<string, string>()
+  let answer: () => Promise<Response> = async () => new Response('{}')
+  const manager = createSecretOAuthManager({
+    readSealed: () => Object.fromEntries(sealed),
+    writeSealed: (_plugin, key, value) => void sealed.set(key, value),
+    deleteSealed: (_plugin, key) => void sealed.delete(key),
+    seal: (plain) => plain,
+    unseal: (value) => value,
+    openBrowser: () => undefined,
+    openLoopback: () => openLoopback(5_000, { port: 0, host: 'localhost' }),
+    fetchImpl: () => answer(),
+    now: () => 10_000,
+    wakeDelayMs: () => 0,
+  })
+  manager.registerPluginSecretOAuth('slack', {
+    token: {
+      label: 'Slack',
+      oauth: {
+        clientId: 'c',
+        authorizeUrl: 'https://slack.com/oauth/v2/authorize',
+        tokenUrl: 'https://slack.com/api/oauth.v2.access',
+        loopbackPort: 45821,
+      },
+    },
+    key: { label: 'Other key' },
+  })
+  const signIn = encodeOAuthSecret({ accessToken: 'old', refreshToken: 'r', expiresAt: 10_500, clientId: 'c' })
+  sealed.set('token', signIn)
+  sealed.set('key', 'plain-key')
+
+  answer = async () => {
+    throw new TypeError('fetch failed')
+  }
+  assert.deepEqual(await manager.freshSecretValues('slack'), { token: 'old', key: 'plain-key' })
+
+  answer = async () => new Response(JSON.stringify({ error: 'invalid_request' }), { status: 400 })
+  assert.deepEqual(await manager.freshSecretValues('slack'), { token: 'old', key: 'plain-key' })
+  assert.equal(sealed.get('token'), signIn)
+
+  answer = async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })
+  await manager.refreshPluginSecrets('slack')
+  assert.equal(sealed.has('token'), false)
+  assert.equal(sealed.get('key'), 'plain-key')
 })

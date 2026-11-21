@@ -1,6 +1,6 @@
 import type { Exchange } from './transcript.ts'
 import { asTable } from '../data/datasets.ts'
-import type { Turn } from '../llm/llm'
+import type { ToolCall, Turn } from '../llm/llm'
 
 // A thread's turns as a run leaves them and the next request takes them up: how much of a thread goes
 // on from one request to the next (`recent`), what of a turn can no longer be replayed once the
@@ -32,6 +32,35 @@ export function withoutThinking(turns: Turn[]): Turn[] {
  */
 export function portable(turns: Turn[]): Turn[] {
   return turns.map((turn) => (turn.role === 'assistant' && turn.raw !== null ? { ...turn, raw: null } : turn))
+}
+
+/**
+ * The turns with the answers of some calls left out: each answer `hide` picks becomes `note(call)`.
+ * The call itself and every other turn stay as they were, the same objects, so a provider takes the
+ * thread as before. For a source that keeps nothing of what it reads (written to disk) and for a
+ * source private to this terminal's owner (read on a teammate's prompt).
+ */
+export function withoutAnswers(
+  turns: Turn[],
+  hide: (call: ToolCall) => boolean,
+  note: (call: ToolCall) => string,
+): Turn[] {
+  const hidden = new Map<string, ToolCall>()
+  for (const turn of turns) {
+    if (turn.role !== 'assistant') continue
+    for (const call of turn.toolCalls) if (hide(call)) hidden.set(call.id, call)
+  }
+  if (hidden.size === 0) return turns
+  return turns.map((turn) => {
+    if (turn.role !== 'tool' || !turn.results.some((one) => hidden.has(one.callId))) return turn
+    return {
+      ...turn,
+      results: turn.results.map((one) => {
+        const call = hidden.get(one.callId)
+        return call ? { ...one, output: note(call) } : one
+      }),
+    }
+  })
 }
 
 function isThinking(block: unknown): boolean {

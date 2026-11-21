@@ -7,7 +7,7 @@ import {
   approveDestinationsForTask,
   CANCEL_APPROVAL,
   ensureAgentDestinationApproved,
-  hasRoomScopedSource,
+  mayWatchLive,
   PLUGIN_NOT_INSTALLED,
   readSourceApprovals,
   recordPanelThreadApprovalWith,
@@ -47,6 +47,7 @@ test('replica panel calls run locally for viewer-scoped sources when installed a
     routePanelSourceCall({
       sourceId: 'slack/read-thread',
       isReplica: false,
+      tilePlugin: null,
       localPluginInstalled: true,
       localSourceScope: 'viewer',
     }),
@@ -58,6 +59,7 @@ test('replica panel calls run locally for viewer-scoped sources when installed a
     routePanelSourceCall({
       sourceId: 'slack/read-thread',
       isReplica: true,
+      tilePlugin: 'slack',
       localPluginInstalled: true,
       localSourceScope: 'viewer',
       syncedViewerSources: ['slack/read-thread'],
@@ -69,6 +71,7 @@ test('replica panel calls run locally for viewer-scoped sources when installed a
   const missing = routePanelSourceCall({
     sourceId: 'slack/read-thread',
     isReplica: true,
+    tilePlugin: 'slack',
     localPluginInstalled: false,
     syncedViewerSources: ['slack/read-thread'],
   })
@@ -80,8 +83,31 @@ test('replica panel calls run locally for viewer-scoped sources when installed a
     routePanelSourceCall({
       sourceId: 'yfinance/quotes',
       isReplica: true,
+      tilePlugin: 'yfinance',
       localPluginInstalled: true,
       localSourceScope: 'room',
+    }),
+    { kind: 'replica-owner' },
+  )
+
+  // A teammate's view of another plugin never runs this terminal's viewer-scoped source: it goes to the owner.
+  assert.deepEqual(
+    routePanelSourceCall({
+      sourceId: 'slack/send',
+      isReplica: true,
+      tilePlugin: 'x',
+      localPluginInstalled: true,
+      localSourceScope: 'viewer',
+    }),
+    { kind: 'replica-owner' },
+  )
+  assert.deepEqual(
+    routePanelSourceCall({
+      sourceId: 'slack/send',
+      isReplica: true,
+      tilePlugin: null,
+      localPluginInstalled: false,
+      syncedViewerSources: ['slack/send'],
     }),
     { kind: 'replica-owner' },
   )
@@ -93,10 +119,10 @@ test('a plugin with no room-scoped source in the room has no watchable live keys
     'slack/send': { plugin: 'slack', scope: 'viewer' as const, noStore: true, writes: true },
     'custom/feed': { plugin: 'custom' },
   }
-  assert.equal(hasRoomScopedSource('slack', true, sources), false)
-  assert.equal(hasRoomScopedSource('custom', true, sources), true)
-  assert.equal(hasRoomScopedSource('custom', false, sources), false)
-  assert.equal(hasRoomScopedSource('empty', true, sources), false)
+  assert.equal(mayWatchLive('slack', true, sources), false)
+  assert.equal(mayWatchLive('custom', true, sources), true)
+  assert.equal(mayWatchLive('custom', false, sources), false)
+  assert.equal(mayWatchLive('empty', true, sources), true)
 })
 
 test('binding a twin from the tile approves that thread only, never the whole channel', async () => {

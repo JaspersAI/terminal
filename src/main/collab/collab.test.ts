@@ -369,7 +369,6 @@ function terminal(
     ...start,
     sources: {
       'core/prices': { plugin: null },
-      'custom/feed': { plugin: 'custom' },
     },
     jaspers: { email },
     collab: EMPTY_COLLAB,
@@ -956,7 +955,7 @@ test('viewer-scoped, noStore, and write sources are refused for teammates, and a
   assert.deepEqual(alice.ran, [], 'no flagged source ever ran on the owner')
   assert.equal(bob.datasets.size, 0, 'no share dataset part was created')
 
-  // slack has no room-scoped source in the room, so watch is refused even though slack/thread is shown.
+  // Every slack source is private, so watch is refused even though slack/thread is shown.
   bob.engine.watch(shareId, 'slack', 'secret')
   await settle()
   assert.equal(bob.keptLive.size, 0, 'no live key is watchable for a plugin without a room-scoped source')

@@ -49,7 +49,7 @@ import { stableStringify } from '../../shared/data/hash.ts'
 import { layoutOf, type Grid, type GridSize } from '../../shared/grid/grid.ts'
 import { globalSeq } from '../../shared/loops/closed.ts'
 import { frameOf, loopChat, loopTitle, NO_LOOPS, viewPlugin, type Loops } from '../../shared/loops/loops.ts'
-import { hasRoomScopedSource, isOwnerPrivateSource } from '../../shared/plugins/approvals.ts'
+import { mayWatchLive, isOwnerPrivateSource } from '../../shared/plugins/approvals.ts'
 import type { SourceInfo, Workspace } from '../../shared/state.ts'
 import { CollabError, type CollabApi, type WireCommand, type WireEvent, type WireState } from './wire.ts'
 
@@ -697,8 +697,7 @@ export function createCollabEngine<S extends CollabEngineState>(deps: CollabEngi
         const name = typeof payload.key === 'string' ? payload.key : ''
         const state = deps.getState()
         const shown = [...tilesOf(target).values()].some((tile) => viewPlugin(tile.view) === plugin)
-        // A plugin with no room-scoped source in the room has no watchable live keys.
-        if (!plugin || !name || !hasRoomScopedSource(plugin, shown, state.sources)) {
+        if (!name || !mayWatchLive(plugin, shown, state.sources)) {
           throw new Error('That is not part of this room.')
         }
         keep(memory, memory.live, liveKey(deps.digest(stableStringify([plugin, name]))), { plugin, key: name })
