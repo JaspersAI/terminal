@@ -14,11 +14,23 @@ export const BROWSER_PLUGIN_TITLE = 'Browser'
 export const BROWSER_PLUGIN_DESCRIPTION =
   'Opens Bloomberg Television\u2019s live stream; unaffiliated with Bloomberg L.P.'
 
+export const MAX_PERSISTED_BROWSER_TABS = 24
+export const MAX_PERSISTED_TAB_TITLE = 120
+
 export type BrowserAction =
   'load' | 'back' | 'forward' | 'reload' | 'new-tab' | 'select-tab' | 'close-tab' | 'toggle-theater'
 
+export interface BrowserPersistedTab {
+  id: string
+  url: string
+  title?: string
+  theater?: boolean
+}
+
 export interface BrowserState {
   url: string
+  tabs?: BrowserPersistedTab[]
+  activeTabId?: string
 }
 
 export interface BrowserTab {
@@ -779,11 +791,132 @@ export function browserRequestHeaders(
   return requestHeaders
 }
 
-/** Reads a `core/browser` panel's state, normalizing its URL and falling back to `DEFAULT_BROWSER_URL` when unset or invalid. */
+/** Normalizes a list of persisted browser tabs, keeping valid `http(s)` addresses, unique ids, trimmed titles, and custom theater overrides. */
+export function readBrowserPersistedTabs(rawTabs: unknown): BrowserPersistedTab[] {
+  if (!Array.isArray(rawTabs)) return []
+  const usedIds = new Set<string>()
+  let nextSeq = 0
+  const tabs: BrowserPersistedTab[] = []
+
+  for (const item of rawTabs) {
+    if (tabs.length >= MAX_PERSISTED_BROWSER_TABS) break
+    if (!isRecord(item)) continue
+    const tabUrl = unwrapBotChallengeUrl(item['url'], DEFAULT_BROWSER_URL)
+    if (!tabUrl) continue
+
+    const rawId = typeof item['id'] === 'string' ? item['id'].trim() : ''
+    let id = ''
+    if (rawId !== '' && !usedIds.has(rawId)) {
+      id = rawId
+      const match = /^t(\d+)$/.exec(id)
+      if (match) nextSeq = Math.max(nextSeq, Number(match[1]) || 0)
+    } else {
+      do {
+        nextSeq += 1
+        id = `t${nextSeq}`
+      } while (usedIds.has(id))
+    }
+    usedIds.add(id)
+
+    const rawTitle = typeof item['title'] === 'string' ? item['title'].trim() : ''
+    const title = rawTitle && !isBotChallengeText('', rawTitle) ? rawTitle.slice(0, MAX_PERSISTED_TAB_TITLE) : undefined
+    const theater =
+      typeof item['theater'] === 'boolean' && item['theater'] !== isVideoPageUrl(tabUrl) ? item['theater'] : undefined
+
+    tabs.push({
+      id,
+      url: tabUrl,
+      ...(title ? { title } : {}),
+      ...(theater !== undefined ? { theater } : {}),
+    })
+  }
+
+  return tabs
+}
+
+/** Reads a `core/browser` panel's state, normalizing its URL and persisted tabs and falling back to `DEFAULT_BROWSER_URL` when unset or invalid. */
 export function readBrowserState(state: unknown): BrowserState {
   if (!isRecord(state)) return { url: DEFAULT_BROWSER_URL }
-  const normalized = unwrapBotChallengeUrl(state['url'], DEFAULT_BROWSER_URL)
-  return { url: normalized || DEFAULT_BROWSER_URL }
+  const explicitUrl = unwrapBotChallengeUrl(state['url'], DEFAULT_BROWSER_URL)
+  const fallbackUrl = explicitUrl || DEFAULT_BROWSER_URL
+  if (!Array.isArray(state['tabs'])) return { url: fallbackUrl }
+
+  const tabs = readBrowserPersistedTabs(state['tabs'])
+  if (tabs.length === 0) return { url: fallbackUrl }
+
+  const rawActiveId = typeof state['activeTabId'] === 'string' ? state['activeTabId'].trim() : ''
+  const foundIndex = tabs.findIndex((t) => t.id === rawActiveId)
+  const activeIndex = foundIndex >= 0 ? foundIndex : 0
+
+  if (explicitUrl && explicitUrl !== tabs[activeIndex]!.url) {
+    tabs[activeIndex] = { id: tabs[activeIndex]!.id, url: explicitUrl }
+  }
+
+  const activeTab = tabs[activeIndex]!
+  return {
+    url: activeTab.url,
+    tabs,
+    activeTabId: activeTab.id,
+  }
+}
+
+/** Builds the compact persisted `BrowserState` for a panel's open tabs, omitting `tabs` when a single default `t1` tab is open. */
+export function persistedBrowserState(
+  tabs: readonly { id: string; url: string; title?: string; theater?: boolean }[],
+  activeTabId: string,
+  fallbackUrl = DEFAULT_BROWSER_URL,
+): BrowserState {
+  const normalized = readBrowserPersistedTabs(tabs)
+  if (normalized.length === 0) {
+    return { url: unwrapBotChallengeUrl(fallbackUrl, DEFAULT_BROWSER_URL) || DEFAULT_BROWSER_URL }
+  }
+  const active = normalized.find((t) => t.id === activeTabId) ?? normalized[0]!
+  if (normalized.length === 1 && active.id === 't1' && active.theater === undefined) {
+    return { url: active.url }
+  }
+  return {
+    url: active.url,
+    activeTabId: active.id,
+    tabs: normalized,
+  }
+}
+
+/** True when two persisted browser tab arrays carry identical entries in order. */
+export function sameBrowserPersistedTabs(
+  a: readonly BrowserPersistedTab[] | undefined,
+  b: readonly BrowserPersistedTab[] | undefined,
+): boolean {
+  const left = a ?? []
+  const right = b ?? []
+  if (left.length !== right.length) return false
+  for (let i = 0; i < left.length; i++) {
+    const x = left[i]!
+    const y = right[i]!
+    if (
+      x.id !== y.id ||
+      x.url !== y.url ||
+      (x.title ?? '') !== (y.title ?? '') ||
+      (x.theater ?? isVideoPageUrl(x.url)) !== (y.theater ?? isVideoPageUrl(y.url))
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+/** True when two `BrowserState` values carry the same active URL, active tab id, and persisted tabs. */
+export function sameBrowserState(a: BrowserState, b: BrowserState): boolean {
+  return a.url === b.url && (a.activeTabId ?? '') === (b.activeTabId ?? '') && sameBrowserPersistedTabs(a.tabs, b.tabs)
+}
+
+/** Returns the highest numeric `t<N>` sequence across `tabs` so newly opened tabs never collide with restored ids. */
+export function nextBrowserTabSeq(tabs: readonly { id: string }[]): number {
+  let seq = tabs.length
+  for (const tab of tabs) {
+    const match = /^t(\d+)$/.exec(tab.id)
+    if (match) seq = Math.max(seq, Number(match[1]) || 0)
+  }
+  return seq
 }
 
 /** Rounds finite bounds to integer pixels and clamps negative dimensions to 0; null for malformed input. */
@@ -885,24 +1018,29 @@ export function shouldShowBrowser(options: {
 
 /** One line about a `core/browser` panel, for the model's grid map. */
 export function browserSummary(state: unknown, output: unknown): string {
+  const stateTabs = isRecord(state) && Array.isArray(state['tabs']) ? readBrowserPersistedTabs(state['tabs']) : []
   const rawStateUrl = isRecord(state) ? unwrapBotChallengeUrl(state['url']) : null
-  const stateUrl = rawStateUrl ?? ''
+  const stateUrl = rawStateUrl || stateTabs[0]?.url || ''
   const out = isRecord(output) ? output : {}
   const outUrl = typeof out['url'] === 'string' ? (unwrapBotChallengeUrl(out['url'], stateUrl) ?? '') : ''
   const url = outUrl || stateUrl
   if (!url) return 'nothing yet'
+  const outTabs =
+    typeof out['tabCount'] === 'number' && Number.isFinite(out['tabCount']) ? Math.floor(out['tabCount']) : 0
+  const tabCount = outTabs > 0 ? outTabs : stateTabs.length
+  const tabSuffix = tabCount > 1 ? `, ${tabCount} tabs` : ''
   const short = shortAddress(url)
-  if (typeof out['error'] === 'string' && out['error'].trim() !== '') return `${short}, failed`
-  if (out['loading'] === true) return `${short}, loading`
+  if (typeof out['error'] === 'string' && out['error'].trim() !== '') return `${short}, failed${tabSuffix}`
+  if (out['loading'] === true) return `${short}, loading${tabSuffix}`
   const title = typeof out['title'] === 'string' ? out['title'].trim() : ''
   if (title) {
     try {
-      return `${title} (${new URL(url).host})`
+      return `${title} (${new URL(url).host})${tabSuffix}`
     } catch {
-      return title
+      return `${title}${tabSuffix}`
     }
   }
-  return short
+  return `${short}${tabSuffix}`
 }
 
 export function shortAddress(url: string): string {

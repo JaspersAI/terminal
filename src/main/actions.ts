@@ -15,6 +15,7 @@ import {
   publishText,
   refreshPanel,
   removeElement,
+  replacePanelState,
   restored,
   editIn,
   setIn,
@@ -1401,6 +1402,34 @@ export function setPanelStateChecked(
   const updated = changeGridOf(workspaceId, panel.id, (grid) => setPanelState(grid, panel.id, path, value, at)).panel
   const owner = tileLoop(workspaceId, panel.elementId)
   if (owner) touchLoop(workspaceId, owner, at)
+  if (panel.error) syncPluginViewErrors()
+  return updated
+}
+
+/**
+ * Replaces a panel's whole state object once it passes the view's schema, omitting stale keys when
+ * a view collapses optional fields (such as browser multi-tab state returning to a single tab).
+ */
+export function replacePanelStateChecked(
+  workspaceId: string,
+  panelId: string,
+  state: Record<string, unknown>,
+  options?: { touch?: boolean; at?: number },
+): Panel {
+  const { grid } = findElement(workspaceId, panelId)
+  const panel = panelOf(grid, panelId)
+  if (panel.content.kind === 'frame') {
+    const inside = layoutOf(grid, panel.elementId).elements.map((e) => e.id)
+    throw new Error(
+      `${panel.elementId} is a piece of work's tile, which holds no view of its own: set the state of a view inside it (${inside.join(', ') || 'none yet'}).`,
+    )
+  }
+  checkState(panel.content, state)
+  const updated = changeGridOf(workspaceId, panel.id, (g) => replacePanelState(g, panel.id, state)).panel
+  if (options?.touch !== false && updated !== panel) {
+    const owner = tileLoop(workspaceId, panel.elementId)
+    if (owner) touchLoop(workspaceId, owner, options?.at ?? Date.now())
+  }
   if (panel.error) syncPluginViewErrors()
   return updated
 }

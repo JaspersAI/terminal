@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   BROWSER_VIEW,
   googleAuthUserAgent,
+  readBrowserState,
   type BrowserBounds,
   type BrowserSnapshot,
 } from '../../shared/grid/browser.ts'
@@ -11,15 +12,19 @@ import {
   EMPTY_GRID,
   layoutOf,
   moveAcross,
+  panelOf,
   placeFramed,
   refreshPanel,
   removeElement,
+  replacePanelState,
   setMode,
   setPanelState,
   setZoom,
   withLayout,
   type Grid,
 } from '../../shared/grid/grid.ts'
+import { closedWithout, reopenAcrossTabs, reopened } from '../../shared/loops/closed.ts'
+import type { Loops } from '../../shared/loops/loops.ts'
 import {
   createBrowserLoadTracker,
   createBrowserManager,
@@ -60,6 +65,7 @@ function createHarness(
     hydrationWindowMs?: number
     hydrationPollMs?: number
     postActionDelayMs?: number
+    initialState?: BrowserManagerState
   } = {},
 ) {
   const placed = placeFramed(EMPTY_GRID, {
@@ -68,7 +74,7 @@ function createHarness(
     rect: { x: 0, y: 0, w: 8, h: 6 },
     loop: 'f1',
   })
-  let state: BrowserManagerState = {
+  let state: BrowserManagerState = options.initialState ?? {
     currentWorkspaceId: 'ws-1',
     workspaces: [{ id: 'ws-1' }, { id: 'ws-2' }],
     grids: {
@@ -205,11 +211,37 @@ function createHarness(
       published.push({ workspaceId, panelId, snapshot })
     },
     setPanelUrl: (workspaceId, panelId, url) => {
-      const grid = state.grids[workspaceId]![1]!
-      const updated = setPanelState(grid, panelId, ['url'], url).grid
-      state = { ...state, grids: { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], 1: updated } } }
-      // Mirror main's synchronous state.ts:update subscriber notification.
-      manager.sweep(state)
+      for (const [winKey, grid] of Object.entries(state.grids[workspaceId] ?? {})) {
+        if (!grid.panels.some((p) => p.id === panelId || p.elementId === panelId)) continue
+        const updated = setPanelState(grid, panelId, ['url'], url).grid
+        state = {
+          ...state,
+          grids: { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], [Number(winKey)]: updated } },
+        }
+        manager.sweep(state)
+        return
+      }
+    },
+    setPanelState: (workspaceId, panelId, nextState) => {
+      for (const [winKey, grid] of Object.entries(state.grids[workspaceId] ?? {})) {
+        if (!grid.panels.some((p) => p.id === panelId || p.elementId === panelId)) continue
+        const updated = replacePanelState(grid, panelId, { ...nextState }).grid
+        if (updated === grid) return
+        const write = (): void => {
+          state = {
+            ...state,
+            grids: { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], [Number(winKey)]: updated } },
+          }
+        }
+        // Inside `dispatchGrid`, as in main's state.ts:update, a write made while subscribers are being
+        // told of a change lands after them, with the grid it computed now. Elsewhere it lands at once.
+        if (notifying) pending.push(write)
+        else {
+          write()
+          manager.sweep(state)
+        }
+        return
+      }
     },
     focusElement: (workspaceId, elementId) => {
       focused.push({ workspaceId, elementId })
@@ -221,6 +253,26 @@ function createHarness(
 
   const updateGrid = (workspaceId: string, nextGrid: Grid): void => {
     state = { ...state, grids: { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], 1: nextGrid } } }
+  }
+
+  // Main's state.ts:update: subscribers (the sweep) hear of one change at a time, and a write a
+  // subscriber makes meanwhile is queued and applied after them.
+  let notifying = false
+  const pending: (() => void)[] = []
+  const dispatchGrid = (workspaceId: string, nextGrid: Grid): void => {
+    notifying = true
+    try {
+      let step: (() => void) | undefined = () => updateGrid(workspaceId, nextGrid)
+      for (let steps = 0; step; steps++) {
+        if (steps === 100) throw new Error('The sweep kept writing panel state: a write loop.')
+        step()
+        manager.sweep(state)
+        step = pending.shift()
+      }
+    } finally {
+      pending.length = 0
+      notifying = false
+    }
   }
 
   return {
@@ -239,6 +291,7 @@ function createHarness(
       state = next
     },
     updateGrid,
+    dispatchGrid,
   }
 }
 
@@ -1043,4 +1096,277 @@ test('interact drives navigate, click, type, press, scroll, tabs, history, and w
   assert.equal(woken.interactions.at(-1)?.action, 'scroll')
 
   manager.closeAll()
+})
+
+test('persists multi-tab browser state across app restarts, wakes restored background tabs on demand, and preserves extra tabs on state.url updates', async () => {
+  const firstRun = createHarness({
+    hydrationDelaysMs: [],
+    hydrationWindowMs: 0,
+    postActionDelayMs: 0,
+  })
+  const { manager, placed, views, getState } = firstRun
+  const panelId = placed.panel.id
+
+  await manager.interact('ws-1', panelId, { action: 'navigate', url: 'https://x.com/home' })
+  views[0]!.title = 'Home / X'
+  views[0]!.events.onPageTitleUpdated('Home / X')
+
+  await manager.interact('ws-1', panelId, {
+    action: 'new_tab',
+    url: 'https://www.linkedin.com/search/results/content/?keywords=AI',
+  })
+  views[1]!.title = 'Search | LinkedIn'
+  views[1]!.events.onPageTitleUpdated('Search | LinkedIn')
+
+  await manager.interact('ws-1', panelId, { action: 'new_tab', url: 'https://www.bloomberg.com/' })
+  views[2]!.title = 'Bloomberg - Business News'
+  views[2]!.events.onPageTitleUpdated('Bloomberg - Business News')
+
+  // Open a fourth tab at x.com/home and simulate typing/submitting a search that navigates in-page to f=live.
+  await manager.interact('ws-1', panelId, { action: 'new_tab', url: 'https://x.com/home' })
+  const t4View = views[3]!
+  t4View.history.push('https://x.com/search?q=Rogo%20OR%20Hebbia&f=live')
+  t4View.index = t4View.history.length - 1
+  t4View.title = 'Rogo OR Hebbia - Search / X'
+  t4View.pageText = 'Live tweets about Rogo and Hebbia'
+  t4View.events.onDidNavigate('https://x.com/search?q=Rogo%20OR%20Hebbia&f=live')
+
+  // Switch active focus back to t1 before restart, just like a periodic scan task does.
+  const beforeQuit = await manager.interact('ws-1', panelId, { action: 'select_tab', tabId: 't1' })
+  assert.equal(beforeQuit.snapshot.tabCount, 4)
+  assert.equal(beforeQuit.snapshot.activeTabId, 't1')
+
+  const savedPanel = panelOf(getState().grids['ws-1']![1]!, panelId)
+  assert.deepEqual(savedPanel.state, {
+    url: 'https://x.com/home',
+    activeTabId: 't1',
+    tabs: [
+      { id: 't1', url: 'https://x.com/home', title: 'Home / X' },
+      { id: 't2', url: 'https://www.linkedin.com/search/results/content/?keywords=AI', title: 'Search | LinkedIn' },
+      { id: 't3', url: 'https://www.bloomberg.com/', title: 'Bloomberg - Business News' },
+      { id: 't4', url: 'https://x.com/search?q=Rogo%20OR%20Hebbia&f=live', title: 'Rogo OR Hebbia - Search / X' },
+    ],
+  })
+
+  // Simulate app restart by serializing workspace state to JSON and starting a fresh BrowserManager.
+  const persistedState = JSON.parse(JSON.stringify(getState())) as BrowserManagerState
+  manager.closeAll()
+
+  const restarted = createHarness({
+    hydrationDelaysMs: [],
+    hydrationWindowMs: 0,
+    postActionDelayMs: 0,
+    initialState: persistedState,
+  })
+  const restoredSnap = await restarted.manager.sync(1, 'ws-1', panelId, { x: 16, y: 60, width: 680, height: 420 }, true)
+
+  // Only the active tab allocates a WebContentsView at startup; all 4 tabs and their titles are restored immediately.
+  assert.equal(restarted.views.length, 1)
+  assert.equal(restoredSnap.tabCount, 4)
+  assert.equal(restoredSnap.activeTabId, 't1')
+  assert.equal(restoredSnap.url, 'https://x.com/home')
+  assert.deepEqual(
+    restoredSnap.tabs?.map((t) => ({ id: t.id, url: t.url, title: t.title })),
+    [
+      { id: 't1', url: 'https://x.com/home', title: 'Home / X' },
+      { id: 't2', url: 'https://www.linkedin.com/search/results/content/?keywords=AI', title: 'Search | LinkedIn' },
+      { id: 't3', url: 'https://www.bloomberg.com/', title: 'Bloomberg - Business News' },
+      { id: 't4', url: 'https://x.com/search?q=Rogo%20OR%20Hebbia&f=live', title: 'Rogo OR Hebbia - Search / X' },
+    ],
+  )
+  assert.equal(restarted.published.at(-1)?.snapshot.tabCount, 4)
+
+  // Selecting suspended background tab t4 wakes it on demand at its persisted search URL.
+  const switchedToT4 = await restarted.manager.interact('ws-1', panelId, { action: 'select_tab', tabId: 't4' })
+  assert.equal(restarted.views.length, 2)
+  assert.equal(switchedToT4.snapshot.activeTabId, 't4')
+  assert.equal(switchedToT4.snapshot.url, 'https://x.com/search?q=Rogo%20OR%20Hebbia&f=live')
+  assert.equal(restarted.views[1]!.getURL(), 'https://x.com/search?q=Rogo%20OR%20Hebbia&f=live')
+
+  // Assistant writes state.url while multiple tabs are open: navigates the active tab (t4) without dropping t1..t3.
+  const gridBeforeSet = restarted.getState().grids['ws-1']![1]!
+  restarted.updateGrid('ws-1', setPanelState(gridBeforeSet, panelId, ['url'], 'https://www.sec.gov').grid)
+  restarted.manager.sweep()
+  assert.equal(restarted.views[1]!.getURL(), 'https://www.sec.gov/')
+  const afterSetSnap = await restarted.manager.sync(1, 'ws-1', panelId, { x: 16, y: 60, width: 680, height: 420 }, true)
+  assert.equal(afterSetSnap.tabCount, 4)
+  assert.equal(afterSetSnap.activeTabId, 't4')
+  assert.equal(afterSetSnap.tabs?.[3]?.url, 'https://www.sec.gov/')
+  assert.equal(afterSetSnap.tabs?.[0]?.url, 'https://x.com/home')
+
+  restarted.manager.closeAll()
+})
+
+test('preserves multi-tab state across room close, reopen, cross-tab move, non-contiguous tab ids, and collapse back to one tab', async () => {
+  const { manager, placed, views, getState, setState } = createHarness({
+    hydrationDelaysMs: [],
+    hydrationWindowMs: 0,
+    postActionDelayMs: 0,
+  })
+  const panelId = placed.panel.id
+  let loopsByTab: Record<string, Loops> = {
+    'ws-1': {
+      seq: 1,
+      list: [{ id: 'f1', desc: 'Monitor', brief: '', plugins: [], skills: [], createdAt: 1000 }],
+    },
+    'ws-2': { seq: 0, list: [] },
+  }
+
+  await manager.sync(1, 'ws-1', panelId, { x: 16, y: 60, width: 680, height: 420 }, true)
+  await manager.navigate(1, 'ws-1', panelId, 'new-tab', 'https://example.com/two')
+  await manager.navigate(1, 'ws-1', panelId, 'new-tab', 'https://example.com/three')
+  await manager.navigate(1, 'ws-1', panelId, 'new-tab', 'https://example.com/four')
+
+  // Close t2 so open tabs have non-contiguous ids [t1, t3, t4], and toggle theater off on t1.
+  await manager.navigate(1, 'ws-1', panelId, 'close-tab', 't2')
+  await manager.navigate(1, 'ws-1', panelId, 'select-tab', 't1')
+  await manager.navigate(1, 'ws-1', panelId, 'toggle-theater')
+
+  // Ephemeral OAuth popup at about:blank -> accounts.google.com does not get persisted into state.tabs.
+  let popupEvents!: BrowserViewEvents
+  const popupView: ManagedBrowserView = {
+    loadURL: async () => {},
+    reload: () => {},
+    canGoBack: () => false,
+    canGoForward: () => false,
+    goBack: () => {},
+    goForward: () => {},
+    getURL: () => 'https://accounts.google.com/v3/signin/identifier',
+    getTitle: () => 'Sign in - Google Accounts',
+    isLoading: () => false,
+    setBounds: () => {},
+    setVisible: () => {},
+    readPageText: async () => 'Sign in',
+    destroy: () => {},
+  }
+  views[0]!.events.onOpenWindow?.('about:blank', (ev) => {
+    popupEvents = ev
+    return popupView
+  })
+  popupEvents.onDidNavigate('https://accounts.google.com/v3/signin/identifier')
+  const stateDuringOAuth = panelOf(getState().grids['ws-1']![1]!, panelId).state
+  assert.deepEqual(
+    (stateDuringOAuth['tabs'] as { id: string }[]).map((t) => t.id),
+    ['t1', 't3', 't4'],
+  )
+  popupEvents.onClose?.()
+
+  // Close the room on ws-1 (destroying all live views), then reopen it onto ws-2 via reopenAcrossTabs.
+  const beforeClose = getState().grids['ws-1']!
+  const afterCloseWin = withLayout(
+    beforeClose[1]!,
+    undefined,
+    removeElement(layoutOf(beforeClose[1]!), placed.frame.id).grid,
+  )
+  const afterCloseGrids = { 1: afterCloseWin }
+  loopsByTab = {
+    ...loopsByTab,
+    'ws-1': closedWithout(loopsByTab['ws-1']!, beforeClose, afterCloseGrids, 2000),
+  }
+  setState({
+    ...getState(),
+    grids: { ...getState().grids, 'ws-1': afterCloseGrids },
+  })
+  manager.sweep()
+  assert.equal(
+    views.every((v) => v.destroyed),
+    true,
+  )
+
+  const movedAcross = reopenAcrossTabs(getState().grids, loopsByTab, 'ws-2', 'f1', 1, 3000)
+  loopsByTab = movedAcross.loops
+  setState({
+    ...getState(),
+    currentWorkspaceId: 'ws-2',
+    grids: movedAcross.grids,
+  })
+  manager.sweep()
+
+  const reopenedSnap = await manager.sync(1, 'ws-2', panelId, { x: 16, y: 60, width: 680, height: 420 }, true)
+  assert.equal(reopenedSnap.tabCount, 3)
+  assert.equal(reopenedSnap.activeTabId, 't1')
+  assert.equal(reopenedSnap.theater, false)
+  assert.deepEqual(
+    reopenedSnap.tabs?.map((t) => [t.id, t.url]),
+    [
+      ['t1', 'https://www.bloomberg.com/live'],
+      ['t3', 'https://example.com/three'],
+      ['t4', 'https://example.com/four'],
+    ],
+  )
+
+  // Opening another tab after restoring [t1, t3, t4] mints t5 without colliding with t4.
+  const withFifth = await manager.navigate(1, 'ws-2', panelId, 'new-tab', 'https://example.com/five')
+  assert.equal(withFifth.activeTabId, 't5')
+  assert.deepEqual(
+    withFifth.tabs?.map((t) => t.id),
+    ['t1', 't3', 't4', 't5'],
+  )
+
+  // Also verify same-tab reopened() and collapsing back to a single default t1 tab removes state.tabs.
+  await manager.navigate(1, 'ws-2', panelId, 'close-tab', 't3')
+  await manager.navigate(1, 'ws-2', panelId, 'close-tab', 't4')
+  await manager.navigate(1, 'ws-2', panelId, 'close-tab', 't5')
+  await manager.navigate(1, 'ws-2', panelId, 'toggle-theater')
+  const collapsedState = panelOf(getState().grids['ws-2']![1]!, panelId).state
+  assert.deepEqual(collapsedState, { url: 'https://www.bloomberg.com/live' })
+
+  // Same-tab close and reopened() helper also works cleanly.
+  const ws2Before = getState().grids['ws-2']!
+  const ws2ClosedWin = withLayout(
+    ws2Before[1]!,
+    undefined,
+    removeElement(layoutOf(ws2Before[1]!), movedAcross.frame.id).grid,
+  )
+  const ws2Closed = closedWithout(loopsByTab['ws-2']!, ws2Before, { 1: ws2ClosedWin }, 4000)
+  const ws2Reopened = reopened({ 1: ws2ClosedWin }, ws2Closed, 'f1', 1, 5000)
+  assert.deepEqual(panelOf(ws2Reopened.grids[1]!, panelId).state, { url: 'https://www.bloomberg.com/live' })
+
+  manager.closeAll()
+})
+
+test('a state.url write navigates the active tab and is kept, not overwritten by the page still showing, while other tabs stay', async () => {
+  const { manager, placed, views, getState, dispatchGrid } = createHarness({
+    hydrationDelaysMs: [],
+    hydrationWindowMs: 0,
+    postActionDelayMs: 0,
+  })
+  const panelId = placed.panel.id
+  const panelState = () => getState().grids['ws-1']![1]!.panels.find((p) => p.id === panelId)!.state
+
+  // One tab, settled on its page: the assistant sets state.url.
+  await manager.sync(1, 'ws-1', panelId, { x: 16, y: 60, width: 680, height: 420 }, true)
+  assert.equal(views[0]!.getURL(), 'https://www.bloomberg.com/live')
+  dispatchGrid('ws-1', setPanelState(getState().grids['ws-1']![1]!, panelId, ['url'], 'https://www.sec.gov').grid)
+  assert.equal(views[0]!.getURL(), 'https://www.sec.gov/')
+  assert.equal(readBrowserState(panelState()).url, 'https://www.sec.gov/')
+  assert.equal(panelState()['tabs'], undefined)
+
+  // Two tabs, the second active and settled: the write navigates it and keeps the first.
+  await manager.navigate(1, 'ws-1', panelId, 'new-tab', 'https://www.bloomberg.com/')
+  assert.equal(views[1]!.getURL(), 'https://www.bloomberg.com/')
+  dispatchGrid('ws-1', setPanelState(getState().grids['ws-1']![1]!, panelId, ['url'], 'https://x.com/home').grid)
+  assert.equal(views[1]!.getURL(), 'https://x.com/home')
+  assert.equal(views[0]!.getURL(), 'https://www.sec.gov/')
+  const persisted = readBrowserState(panelState())
+  assert.equal(persisted.url, 'https://x.com/home')
+  assert.equal(persisted.activeTabId, 't2')
+  assert.deepEqual(
+    persisted.tabs?.map((t) => [t.id, t.url]),
+    [
+      ['t1', 'https://www.sec.gov/'],
+      ['t2', 'https://x.com/home'],
+    ],
+  )
+
+  // The address another tab already shows is still the active tab's to load.
+  dispatchGrid('ws-1', setPanelState(getState().grids['ws-1']![1]!, panelId, ['url'], 'https://www.sec.gov/').grid)
+  assert.equal(views[1]!.getURL(), 'https://www.sec.gov/')
+  assert.deepEqual(
+    readBrowserState(panelState()).tabs?.map((t) => [t.id, t.url]),
+    [
+      ['t1', 'https://www.sec.gov/'],
+      ['t2', 'https://www.sec.gov/'],
+    ],
+  )
 })
