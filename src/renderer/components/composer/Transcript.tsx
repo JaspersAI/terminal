@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   type ReactElement,
+  type ReactNode,
   type UIEvent as ReactUIEvent,
   type WheelEvent as ReactWheelEvent,
 } from 'react'
@@ -53,6 +54,10 @@ interface Props {
   scrollTop?: number | null
   /** Reports when the reader scrolls up to a position or returns to following the bottom (`null`). */
   onScrollTopChange?: (scrollTop: number | null) => void
+  /** Keeps initial scroll anchored at the top rather than the bottom (used when welcome overview + Question 1 open). */
+  anchorTop?: boolean
+  /** Optional interactive content rendered inside the transcript scroller right after `earlier` exchanges. */
+  children?: ReactNode
   /** What the scroller is: the floating box caps its height, the docked chat fills what it is given. */
   className: string
 }
@@ -93,11 +98,13 @@ export function Transcript({
   sharedRoom,
   scrollTop: savedScrollTop = null,
   onScrollTopChange,
+  anchorTop = false,
+  children,
   className,
 }: Props): ReactElement {
   const scroller = useRef<HTMLDivElement>(null)
   // Whether the end is kept in view: until the reader scrolls up from it, and again once they are back.
-  const follow = useRef(savedScrollTop === null)
+  const follow = useRef(savedScrollTop === null && !anchorTop)
   // The requests drawn last, by name: one not among them has just been sent.
   const drawn = useRef<string[]>(savedScrollTop === null ? [] : live.map((one) => one.ask))
   const restored = useRef(savedScrollTop === null)
@@ -114,6 +121,8 @@ export function Transcript({
       follow.current = true
       restored.current = true
       onScrollTopChange?.(null)
+    } else if (anchorTop && asks.length === 0) {
+      follow.current = false
     }
     drawn.current = asks
     const el = scroller.current
@@ -135,7 +144,7 @@ export function Transcript({
     reached(el)
     // Every change to a request still on screen: a step landing over what its run has written, its
     // reply growing, or Stop coming and going, moves what is under it.
-  }, [earlier, live, text, savedScrollTop, onScrollTopChange])
+  }, [earlier, live, text, anchorTop, savedScrollTop, onScrollTopChange])
 
   // What holds it may change its height under the same words: a question taking room above it, its
   // tile resized. Its end stays in view through that too, unless the reader has it.
@@ -196,8 +205,14 @@ export function Transcript({
     >
       {earlier.map((exchange, index) => (
         // Its place in the log, which holds as pages join above; one not filed yet has only its place here.
-        <EarlierExchange key={exchange.id ?? `unfiled-${index}`} exchange={exchange} sharedRoom={sharedRoom} />
+        <EarlierExchange
+          key={exchange.id ?? `unfiled-${index}`}
+          exchange={exchange}
+          sharedRoom={sharedRoom}
+          compactAfter={children !== undefined && index === earlier.length - 1}
+        />
       ))}
+      {children}
       {live.map((exchange, index) => (
         <LiveRow
           key={exchange.ask}
@@ -292,14 +307,16 @@ const LiveRow = memo(function LiveRow({
 const EarlierExchange = memo(function EarlierExchange({
   exchange,
   sharedRoom,
+  compactAfter = false,
 }: {
   exchange: Exchange
   sharedRoom?: readonly SharePerson[]
+  compactAfter?: boolean
 }): ReactElement {
   const asOf = exchange.at !== undefined ? formatAsOf(exchange.at) : ''
   const humanOnly = sharedRoom !== undefined && isHumanExchange(exchange.answer)
   return (
-    <div data-earlier className="mb-5 last:mb-0">
+    <div data-earlier className={compactAfter ? 'mb-2 last:mb-0' : 'mb-5 last:mb-0'}>
       {exchange.task !== undefined ? (
         <AgentTurn shared={sharedRoom !== undefined}>
           <TaskReply task={exchange.task} text={exchange.answer} citations={exchange.citations} asOf={asOf} />

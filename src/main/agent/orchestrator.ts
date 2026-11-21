@@ -3,7 +3,6 @@ import { askedIn, matchChoice } from '../../shared/agent/asking'
 import { shownQuestion } from '../../shared/agent/attachments'
 import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { taskNote } from '../../shared/agent/transcript'
-import { WELCOME_PREFACE } from '../../shared/agent/welcome'
 import { EXCHANGES_MAX } from '../../shared/data/store'
 import { closedCallMessage } from '../../shared/loops/closed'
 import { addressed, LOOP_ID, loopName } from '../../shared/loops/loops'
@@ -13,7 +12,7 @@ import { answerQuestion, withoutSecretPrompts } from '../actions'
 import { readOnly } from '../collab/collab'
 import { recordRun } from '../data/store'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
-import { getState } from '../state'
+import { getState, update } from '../state'
 import { expandSlash } from '../skills/skills'
 import { agentLoop } from './agent'
 import { parseAttachment } from './attachments'
@@ -24,8 +23,8 @@ import { findTool, orchestratorTools } from './tools'
 import type { Tool, ToolContext } from './tools/types'
 import { inBackground } from './utils/lanes'
 import { orchestratorPrompt, stateNow, taskPreface } from './utils/prompt'
-import { begin, ended, running, stop, stopAsked, Stopped } from './utils/runs'
-import { configured, configuredFor, modelFor } from './utils/settings'
+import { begin, ended, running, stop, stopAsked } from './utils/runs'
+import { configured, modelFor } from './utils/settings'
 import {
   centralGoesOn,
   citedBy,
@@ -227,41 +226,6 @@ function closedTarget(call: TaskCall, workspaceId: string): string | null {
 }
 
 /**
- * One reply the assistant gives on its own, with no tools and no conversation before it: what it says
- * to `ask` about the workspace, for the welcome after setup. A thread of its own, kept nowhere; what it
- * says joins the workspace's conversation through `said`, as a task's reply does. `signal` stops the
- * run the way the user would: the welcome goes on without the example after a while.
- */
-export function runWelcome(workspaceId: string, ask: string, signal: AbortSignal): Promise<string> {
-  return inBackground(() => {
-    const config = configuredFor(CENTRAL_CHAT)
-    const history: Turn[] = [{ role: 'user', text: ask, context: stateNow(workspaceId) }]
-    const entry = begin('welcome', workspaceId, 'welcome', ask)
-    signal.addEventListener('abort', () => entry.controller.abort(new Stopped()), { once: true })
-    const context: ToolContext = {
-      runId: entry.runId,
-      workspaceId,
-      conversationId: `welcome ${entry.runId}`,
-      signal: entry.controller.signal,
-      ...threadReads([]),
-    }
-    return ended(
-      entry,
-      agentLoop({
-        run: entry,
-        label: 'welcome ',
-        config,
-        history,
-        context,
-        prompt: orchestratorPrompt(workspaceId, [WELCOME_PREFACE]),
-        tools: () => [],
-        quiet: false,
-      }),
-    )
-  })
-}
-
-/**
  * Something said unasked, into a workspace's thread: a note saying what it is, in the user's place,
  * then the words as the assistant's own turn. It is an exchange like one the user asked for, so it
  * goes in the chat's log, the chat shows it where it was said, and the next request there knows it.
@@ -319,6 +283,7 @@ export function registerAgentIpc(): void {
     turns.clear(CENTRAL_CHAT)
     const open = askedIn(getState().questions)
     if (open) answerQuestion(open.id, '')
+    update((state) => (state.welcome === null ? state : { ...state, workspaceOnboarded: true, welcome: null }))
     clearChat(CENTRAL_CHAT)
   })
   ipcMain.handle('agent:sessions', () => terminalSessions())

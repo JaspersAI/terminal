@@ -226,6 +226,7 @@ export function ElementFrame({
   const title = content?.kind === 'view' ? (views[content.view]?.title ?? content.view) : ''
   // The docked chat, the workspace's own conversation: its bar is red, apart from every loop's.
   const central = !loop && content?.kind === 'view' && content.view === CHAT_VIEW
+  const centralOnboarding = useAppState((s) => (central ? (s.welcome?.onboarding ?? null) : null))
   const zoomable = Boolean(loop || central)
   // A piece of work's tile holds no view itself: its views are the elements inside it, and what it is, is the work.
   const frame = content?.kind === 'frame'
@@ -422,7 +423,7 @@ export function ElementFrame({
       }
       className={`relative isolate flex min-h-0 min-w-0 flex-col outline-none ${hangs ? 'overflow-visible' : 'overflow-hidden'} bg-background ring-1 select-none ${
         focused ? 'ring-primary' : 'ring-foreground/25'
-      } ${element.mode === 'floating' ? 'shadow-lg' : ''} ${covered ? 'invisible' : ''} ${away ? 'opacity-40' : ''} ${
+      } ${element.mode === 'floating' ? 'shadow-lg' : central ? 'shadow-md' : ''} ${covered ? 'invisible' : ''} ${away ? 'opacity-40' : ''} ${
         // As tall as its bar, at the top of the row it keeps.
         minimized ? 'h-6 self-start' : ''
       }`}
@@ -558,6 +559,13 @@ export function ElementFrame({
             }`}
           >
             {title}
+            {central && centralOnboarding && (
+              <span className="font-normal text-central-foreground/80">
+                {centralOnboarding.step === 'recommendations'
+                  ? ' · Starter Setup'
+                  : ` · Onboarding ${centralOnboarding.step + 1}/3`}
+              </span>
+            )}
           </span>
         )}
         {/* How the loop stands, said to a screen reader as it changes, without each step it takes. */}

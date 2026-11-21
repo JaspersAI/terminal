@@ -6,6 +6,8 @@ export type { Loop } from './loops/loops'
 
 import type { Capability, SourceScope } from '@jaspers-ai/sdk/define'
 import type { Place } from './agent/asking'
+import type { WelcomeOnboarding } from './agent/welcome'
+export type { OnboardingAction, WelcomeOnboarding } from './agent/welcome'
 import type { ElementMode, Grid, GridSize, PanelContent, Placement, Rect } from './grid/grid'
 import type { Loop } from './loops/loops'
 import type { Task, TaskInput } from './tasks/tasks'
@@ -307,12 +309,13 @@ export interface AppState {
 }
 
 /**
- * The welcome the assistant says on its own after setup, while it does: whose workspace's chat it is
- * in, and how many of its messages are there so far, which the chat reads the thread again on.
+ * The welcome and interactive onboarding flow in Central after setup: whose workspace's chat it is
+ * in, how many welcome messages have been filed, and the active skippable profiling flow.
  */
 export interface Welcome {
   workspaceId: string
   said: number
+  onboarding?: WelcomeOnboarding | null
 }
 
 /** One thing the assistant is asking the user, while it waits for the answer. */

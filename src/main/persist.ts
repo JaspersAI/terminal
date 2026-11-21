@@ -1,4 +1,5 @@
 import { DAILY_TOKENS_DEFAULT, readBudget } from '../shared/agent/budget'
+import { readSavedOnboarding, savedOnboarding, type SavedOnboarding } from '../shared/agent/welcome'
 import { app } from 'electron'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
@@ -55,6 +56,9 @@ interface StateFile {
   acceptedTerms?: string | null
   termsText?: string
   onboardingComplete: boolean
+  workspaceOnboarded?: boolean
+  /** Onboarding begun and not yet finished or skipped. Files from before onboarding have none. */
+  onboarding?: SavedOnboarding
   llm: StoredProvider | null
   voice: StoredProvider | null
   search?: StoredProvider | null
@@ -108,6 +112,7 @@ const EMPTY: StateFile = {
   version: 1,
   termsAccepted: false,
   onboardingComplete: false,
+  workspaceOnboarded: false,
   llm: null,
   voice: null,
   search: null,
@@ -222,6 +227,7 @@ export function load(): MainState {
     acceptedTerms: terms.acceptedTerms,
     termsText: terms.termsText,
     onboardingComplete: state.onboardingComplete,
+    workspaceOnboarded: state.workspaceOnboarded === true,
     llm: state.llm,
     voice: state.voice,
     search: state.search ?? null,
@@ -246,8 +252,8 @@ export function load(): MainState {
     secretRequests: [],
     // Nobody is waiting on an answer across a restart.
     questions: [],
-    // A welcome is said once, in the session setup finished in.
-    welcome: null,
+    // Onboarding left partway is picked up again; its messages are said anew when it is.
+    welcome: resumable(state),
     notices: [],
     // Counted from the store once it is open; the tree only carries the number.
     unread: 0,
@@ -386,6 +392,15 @@ function patchGrid(stored: Grid): Grid {
   return fitGridSize({ ...grid, cells, size: baseSize, elements, panels }, baseSize)
 }
 
+/** The onboarding a launch picks up: one begun and neither finished nor skipped. */
+function resumable(state: StateFile): MainState['welcome'] {
+  if (state.workspaceOnboarded === true) return null
+  const saved = readSavedOnboarding(state.onboarding)
+  if (!saved) return null
+  const { workspaceId, step, answers, startedRooms } = saved
+  return { workspaceId, said: 0, onboarding: { step, answers, startedRooms, profile: null } }
+}
+
 /** The store's subscriber. Notes what changed, by reference, and arms the write. */
 export function save(next: MainState, prev: MainState): void {
   latest = next
@@ -397,6 +412,9 @@ export function save(next: MainState, prev: MainState): void {
     next.acceptedTerms !== prev.acceptedTerms ||
     next.termsText !== prev.termsText ||
     next.onboardingComplete !== prev.onboardingComplete ||
+    next.workspaceOnboarded !== prev.workspaceOnboarded ||
+    next.welcome?.workspaceId !== prev.welcome?.workspaceId ||
+    next.welcome?.onboarding !== prev.welcome?.onboarding ||
     next.llm !== prev.llm ||
     next.voice !== prev.voice ||
     next.search !== prev.search ||
@@ -446,6 +464,10 @@ export function flush(): void {
       acceptedTerms: latest.acceptedTerms,
       termsText: latest.termsText,
       onboardingComplete: latest.onboardingComplete,
+      workspaceOnboarded: latest.workspaceOnboarded,
+      ...(latest.welcome?.onboarding
+        ? { onboarding: savedOnboarding(latest.welcome.workspaceId, latest.welcome.onboarding) }
+        : {}),
       llm: latest.llm,
       voice: latest.voice,
       search: latest.search,

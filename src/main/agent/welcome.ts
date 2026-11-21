@@ -1,92 +1,274 @@
 import { ipcMain } from 'electron'
-import { sleep } from '../../shared/abort'
 import { CENTRAL_CHAT } from '../../shared/agent/history'
-import { EXAMPLE_ASK, EXAMPLE_FALLBACK, EXPLANATION, greetingFor, WELCOME_NOTE } from '../../shared/agent/welcome'
+import {
+  buildOnboardingProfile,
+  EMPTY_ONBOARDING_ANSWERS,
+  profileReplyFor,
+  readOnboardingAction,
+  WELCOME_NOTE,
+  welcomeIntroFor,
+  type OnboardingAnswers,
+  type OnboardingProfile,
+  type WelcomeOnboarding,
+} from '../../shared/agent/welcome'
+import { BROWSER_VIEW } from '../../shared/grid/browser'
+import {
+  CHAT_VIEW,
+  chatElement,
+  chatPlacementFor,
+  layoutOf,
+  resolvePlacement,
+  starterRoomPlacements,
+  type Placement,
+} from '../../shared/grid/grid'
+import { MAIN_WINDOW } from '../../shared/grid/windows'
+import { loopTitle } from '../../shared/loops/loops'
+import { createLoop, placeChecked, renameLoop, selectWorkspace } from '../actions'
+import { getGrid } from '../grid/grid'
+import { signedIn } from '../jaspers/jaspers'
 import { getState, update } from '../state'
-import { runWelcome, said } from './orchestrator'
+import { handOver } from './loop'
+import { writeMemory } from './memory'
+import { said } from './orchestrator'
+import { waitForThreads } from './thread-file'
 import { modelFor } from './utils/settings'
 import { threadFor } from './utils/thread'
 
-// The welcome after setup: three messages the assistant says on its own once the workspace is on
-// screen, a few seconds apart, so a new user is spoken to before they have to think of what to say.
-// The renderer says when the screen is theirs (Home, after the Eye question); main says the messages
-// into the workspace's thread, as a task's reply goes, and keeps the tree's `welcome` up while it
-// does, which is what holds the composer open with its field showing. It is asked for over IPC, as a
-// run is, rather than as an action: actions.ts is what the agent imports for unattended work, and a
-// handler there for something that runs the agent would close the circle.
-
-/** A beat before the first message: the composer is still rising. */
-const FIRST_MS = 1200
-/** A beat between messages, about what the one before takes to read. */
-const BEAT_MS = 4000
-/** How long the model gets for the example, from the start; then the fallback is said and the run stopped. */
-const EXAMPLE_MAX_MS = 20_000
-/** How long after the last message the composer stays up on its own, so it can be read and answered. */
-const HOLD_MS = 20_000
+// Workspace onboarding in Central once setup finishes and the main screen is the user's:
+// 1. Docks Central (`core/chat`) at the top-central space of the main window's grid.
+// 2. Files a short welcome into Central's conversation: rooms, the local data, plugins.
+// 3. Drives the skippable 3-question profiling flow, persists `user-profile` to ~/Jaspers/memory/,
+//    and launches tailored starter rooms around Central on demand.
+// It lasts until the user finishes or skips it: a launch before then picks it up at the step it was
+// on (persist.ts keeps it), and says the welcome again, since each launch starts Central's chat anew.
 
 let welcomed = false
+let profileNoteFiled = false
+
+function hasExistingWorkspaceActivity(): boolean {
+  const state = getState()
+  for (const loops of Object.values(state.loops)) {
+    if (loops.list.length > 0 || (loops.closed?.length ?? 0) > 0) return true
+  }
+  for (const windows of Object.values(state.grids)) {
+    for (const grid of Object.values(windows)) {
+      if (grid.elements.some((e) => e.loop !== undefined) || Object.keys(grid.cells).length > 0) return true
+    }
+  }
+  return false
+}
 
 /**
- * Starts the welcome, once a session: on the workspace on screen, and only into a conversation with
- * nothing in it yet, so a window asking twice, or asking for a user who has already talked, changes
- * nothing. The messages follow on their own; this returns as soon as it is under way.
+ * Starts workspace onboarding, or picks up the one a quit left partway: docks Central at the
+ * top-center of the active tab's grid, files the opening overview, and opens the step it is on.
  */
 function startWelcome(): void {
   const state = getState()
   if (!state.onboardingComplete) throw new Error('Finish setup first.')
-  if (welcomed) return
-  const config = modelFor(CENTRAL_CHAT)
-  const workspaceId = state.currentWorkspaceId
-  if (!config || threadFor(CENTRAL_CHAT, config).length > 0) return
+  if (welcomed || state.workspaceOnboarded) return
   welcomed = true
-  void welcome(workspaceId).catch((err: unknown) => {
+  void beginOnboarding().catch((err: unknown) => {
+    welcomed = false
     console.error('[welcome]', err instanceof Error ? err.message : String(err))
   })
 }
 
-async function welcome(workspaceId: string): Promise<void> {
-  update((state) => ({ ...state, welcome: { workspaceId, said: 0 } }))
-  const control = new AbortController()
-  try {
-    // Asked for now, so the model's time passes while the first two are read. A model that cannot be
-    // reached is asked again a few times, which could outlast the reading; the wait is capped, and the
-    // run stopped then, so the third message comes either way.
-    const example = runWelcome(workspaceId, EXAMPLE_ASK, control.signal).then(
-      (text) => text.trim() || EXAMPLE_FALLBACK,
-      (err: unknown) => {
-        console.error('[welcome] example:', err instanceof Error ? err.message : String(err))
-        return EXAMPLE_FALLBACK
-      },
+async function beginOnboarding(): Promise<void> {
+  await waitForThreads()
+  const state = getState()
+  if (state.workspaceOnboarded) return
+  const config = modelFor(CENTRAL_CHAT)
+  if (!config) return
+  const resumed = state.welcome?.onboarding ?? null
+  // Someone who used the terminal before onboarding existed is not new to it.
+  if (!resumed && (threadFor(CENTRAL_CHAT, config).length > 0 || hasExistingWorkspaceActivity())) {
+    update((s) => (s.workspaceOnboarded ? s : { ...s, workspaceOnboarded: true }))
+    return
+  }
+  const workspaceId = state.currentWorkspaceId
+  const grid = getGrid(workspaceId, MAIN_WINDOW)
+  if (!chatElement(grid)) {
+    placeChecked(workspaceId, MAIN_WINDOW, { kind: 'view', view: CHAT_VIEW }, undefined, chatPlacementFor(grid))
+  }
+  const onboarding: WelcomeOnboarding = resumed
+    ? {
+        ...resumed,
+        profile:
+          resumed.step === 'recommendations' ? (resumed.profile ?? profileFor(resumed.answers)) : resumed.profile,
+      }
+    : { step: 0, answers: { ...EMPTY_ONBOARDING_ANSWERS }, profile: null, startedRooms: {} }
+  update((s) => ({
+    ...s,
+    welcome: { workspaceId, said: 0, onboarding },
+  }))
+  await say(workspaceId, welcomeIntroFor(getState().collab.firstName))
+}
+
+async function handleOnboarding(raw: unknown): Promise<void> {
+  const action = readOnboardingAction(raw)
+  if (action.kind === 'skip-all' || action.kind === 'dismiss') {
+    update((state) =>
+      state.welcome === null && state.workspaceOnboarded
+        ? state
+        : { ...state, workspaceOnboarded: true, welcome: null },
     )
-    const late = sleep(EXAMPLE_MAX_MS).then(() => null)
-    await sleep(FIRST_MS)
-    await say(workspaceId, greetingFor(getState().collab.firstName))
-    await sleep(BEAT_MS)
-    await say(workspaceId, EXPLANATION)
-    const [, third] = await Promise.all([sleep(BEAT_MS), Promise.race([example, late])])
-    if (third === null) {
-      console.log('[welcome] the example took too long: saying the fallback')
-      control.abort()
+    return
+  }
+
+  const state = getState()
+  const current = state.welcome?.onboarding
+  if (!state.welcome || !current) return
+  const { workspaceId } = state.welcome
+
+  if (action.kind === 'back') {
+    const prevStep =
+      current.step === 'recommendations' ? 2 : current.step === 2 ? 1 : current.step === 1 ? 0 : current.step
+    setOnboarding({ ...current, step: prevStep })
+    return
+  }
+
+  if (action.kind === 'show-recommendations') {
+    await finalizeProfile(workspaceId, current.answers, current.startedRooms)
+    return
+  }
+
+  if (action.kind === 'answer' || action.kind === 'skip-question') {
+    const nextAnswers: OnboardingAnswers = {
+      ...current.answers,
+      ...(action.focusText !== undefined ? { focusText: action.focusText.trim() } : {}),
     }
-    await say(workspaceId, third ?? EXAMPLE_FALLBACK)
-    await sleep(HOLD_MS)
-  } finally {
-    control.abort()
-    update((state) => (state.welcome === null ? state : { ...state, welcome: null }))
+    if (action.kind === 'answer') {
+      if (action.step === 0) nextAnswers.style = action.selected
+      else if (action.step === 1) nextAnswers.coverage = action.selected
+      else nextAnswers.workflows = action.selected
+    }
+    if (action.step < 2) {
+      const nextStep = (action.step + 1) as 0 | 1 | 2
+      setOnboarding({ ...current, step: nextStep, answers: nextAnswers })
+      return
+    }
+    await finalizeProfile(workspaceId, nextAnswers, current.startedRooms)
+    return
+  }
+
+  if (action.kind === 'start-room') {
+    const profile = current.profile ?? profileFor(current.answers)
+    const room = profile.rooms.find((one) => one.id === action.roomId)
+    if (!room) throw new Error('Unknown starter room.')
+    if (current.startedRooms[room.id]) return
+
+    const targetTab =
+      state.workspaces.find((w) => w.id === state.currentWorkspaceId && !w.replica) ??
+      state.workspaces.find((w) => w.id === workspaceId && !w.replica) ??
+      state.workspaces.find((w) => !w.replica)
+    if (!targetTab) throw new Error('No owned tab is open for a starter room.')
+    if (state.currentWorkspaceId !== targetTab.id) selectWorkspace(targetTab.id)
+
+    const grid = getGrid(targetTab.id, MAIN_WINDOW)
+    const placement = nextStarterPlacement(targetTab.id)
+    const latestState = getState()
+    const equippedPlugins = room.preferredPlugins.filter((id) => Boolean(latestState.plugins[id]))
+    const { loop } = createLoop(
+      targetTab.id,
+      MAIN_WINDOW,
+      {
+        desc: room.desc,
+        brief: room.brief,
+        systemPrompt: room.systemPrompt,
+        plugins: equippedPlugins,
+        skills: [],
+      },
+      placement ?? { size: layoutOf(grid).elements.length === 0 ? 'quarter' : undefined },
+    )
+    renameLoop(targetTab.id, loop.id, room.title, room.desc)
+
+    if (room.initialBrowserUrl) {
+      placeChecked(
+        targetTab.id,
+        MAIN_WINDOW,
+        { kind: 'view', view: BROWSER_VIEW },
+        { url: room.initialBrowserUrl },
+        { size: 'full' },
+        loop.id,
+      )
+    }
+
+    if (room.prompt.trim()) {
+      handOver(targetTab.id, loop.id, { typed: room.prompt, written: room.brief })
+    }
+
+    const label = `${loopTitle(loop.id)}`
+    update((s) => {
+      if (!s.welcome?.onboarding) return s
+      return {
+        ...s,
+        welcome: {
+          ...s.welcome,
+          onboarding: {
+            ...s.welcome.onboarding,
+            profile,
+            startedRooms: { ...s.welcome.onboarding.startedRooms, [room.id]: label },
+          },
+        },
+      }
+    })
   }
 }
 
-/** One message into the thread, then the count on the tree, which is what the chat reads the thread again on. */
+function nextStarterPlacement(workspaceId: string): Placement | null {
+  const grid = getGrid(workspaceId, MAIN_WINDOW)
+  const elements = layoutOf(grid).elements
+  for (const candidate of starterRoomPlacements(grid.size)) {
+    const resolved = resolvePlacement(elements, grid.size, candidate)
+    if (resolved?.resolved === 'exact') return candidate
+  }
+  return null
+}
+
+async function finalizeProfile(
+  workspaceId: string,
+  answers: OnboardingAnswers,
+  startedRooms: Record<string, string>,
+): Promise<void> {
+  const profile = profileFor(answers)
+  if (profile.memory) {
+    const refusal = await writeMemory(profile.memory.name, profile.memory.about, profile.memory.body)
+    if (refusal) console.warn('[welcome] memory:', refusal)
+  }
+  setOnboarding({
+    step: 'recommendations',
+    answers,
+    profile,
+    startedRooms,
+  })
+  if (!profileNoteFiled) {
+    profileNoteFiled = true
+    await say(workspaceId, profileReplyFor(profile))
+  }
+}
+
+/** The suggestions for these answers, with what this terminal has now: the sign-in and the plugins in. */
+function profileFor(answers: OnboardingAnswers): OnboardingProfile {
+  const state = getState()
+  return buildOnboardingProfile(answers, {
+    signedIn: signedIn(),
+    installedPlugins: Object.keys(state.plugins),
+    firstName: state.collab.firstName,
+  })
+}
+
+function setOnboarding(onboarding: WelcomeOnboarding): void {
+  update((state) => (state.welcome === null ? state : { ...state, welcome: { ...state.welcome, onboarding } }))
+}
+
+/** One message into Central's thread, bumping `said` so open chat surfaces re-read history. */
 async function say(workspaceId: string, text: string): Promise<void> {
-  if (!(await said(workspaceId, WELCOME_NOTE, text))) throw new Error('No conversation to welcome into.')
-  console.log(`[welcome] ${text}`)
-  update((state) =>
-    state.welcome?.workspaceId === workspaceId
-      ? { ...state, welcome: { workspaceId, said: state.welcome.said + 1 } }
-      : state,
-  )
+  if (!(await said(workspaceId, WELCOME_NOTE, text))) return
+  console.log(`[welcome] ${text.split('\n')[0] ?? text}`)
+  update((state) => (state.welcome ? { ...state, welcome: { ...state.welcome, said: state.welcome.said + 1 } } : state))
 }
 
 export function registerWelcomeIpc(): void {
   ipcMain.handle('agent:welcome', () => startWelcome())
+  ipcMain.handle('agent:onboarding', (_event, raw: unknown) => handleOnboarding(raw))
 }
