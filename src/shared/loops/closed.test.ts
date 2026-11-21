@@ -781,64 +781,28 @@ test('resolveScheduledTaskRoom, resolveUpdatedTaskRoom, canAccessTask, and room 
     },
   }
 
-  // Invoking schedule_task inside room_110 auto-populates roomId = 'f110' even when instructions name no room.
-  assert.deepEqual(
-    resolveScheduledTaskRoom({
-      loopsByTab,
-      workspaceId: 't1',
-      currentLoopId: 'f110',
-      instructions: 'Scrape updates and post morning intelligence brief',
-    }),
-    { workspaceId: 't1', roomId: 'f110' },
-  )
-  // A room agent cannot schedule a task targeting a different room.
+  // Made in room_110, a task is room_110's.
+  assert.deepEqual(resolveScheduledTaskRoom({ loopsByTab, workspaceId: 't1', currentLoopId: 'f110' }), {
+    workspaceId: 't1',
+    roomId: 'f110',
+  })
+  // A room's agent names no other room.
   assert.throws(
-    () =>
-      resolveScheduledTaskRoom({
-        loopsByTab,
-        workspaceId: 't1',
-        currentLoopId: 'f110',
-        rawRoom: 'room_73',
-        instructions: 'Cross-room attempt',
-      }),
+    () => resolveScheduledTaskRoom({ loopsByTab, workspaceId: 't1', currentLoopId: 'f110', rawRoom: 'room_73' }),
     /only schedule tasks for itself/,
   )
 
-  // From Central, explicit roomId resolves by room_N or custom title across tabs, and single-room instructions auto-infer.
-  assert.deepEqual(
-    resolveScheduledTaskRoom({
-      loopsByTab,
-      workspaceId: 't1',
-      rawRoom: 'room_91',
-      instructions: 'Refresh feed',
-    }),
-    { workspaceId: 't2', roomId: 'f91' },
-  )
-  assert.deepEqual(
-    resolveScheduledTaskRoom({
-      loopsByTab,
-      workspaceId: 't2',
-      rawRoom: 'Daily Intel Monitor',
-      instructions: 'Refresh brief',
-    }),
-    { workspaceId: 't1', roomId: 'f110' },
-  )
-  assert.deepEqual(
-    resolveScheduledTaskRoom({
-      loopsByTab,
-      workspaceId: 't1',
-      instructions: 'Refresh room_91 sentiment stories',
-    }),
-    { workspaceId: 't2', roomId: 'f91' },
-  )
-  assert.deepEqual(
-    resolveScheduledTaskRoom({
-      loopsByTab,
-      workspaceId: 't1',
-      instructions: 'Check SPY price at open',
-    }),
-    { workspaceId: 't1', roomId: undefined },
-  )
+  // Made in Central, a task is the room it names, by room_N or title, on any tab, or Central's when it names none.
+  assert.deepEqual(resolveScheduledTaskRoom({ loopsByTab, workspaceId: 't1', rawRoom: 'room_91' }), {
+    workspaceId: 't2',
+    roomId: 'f91',
+  })
+  assert.deepEqual(resolveScheduledTaskRoom({ loopsByTab, workspaceId: 't2', rawRoom: 'Daily Intel Monitor' }), {
+    workspaceId: 't1',
+    roomId: 'f110',
+  })
+  assert.deepEqual(resolveScheduledTaskRoom({ loopsByTab, workspaceId: 't1' }), { workspaceId: 't1' })
+  assert.deepEqual(resolveScheduledTaskRoom({ loopsByTab, workspaceId: 't1', rawRoom: ' ' }), { workspaceId: 't1' })
 
   // update_task room binding and unbinding.
   assert.deepEqual(resolveUpdatedTaskRoom({ loopsByTab, workspaceId: 't1', rawRoom: 'room_91' }), {
@@ -854,10 +818,10 @@ test('resolveScheduledTaskRoom, resolveUpdatedTaskRoom, canAccessTask, and room 
   // Room isolation on task access.
   const room110Task = sampleTask('t1', 't1', { roomId: 'f110', instructions: 'Run morning brief' })
   const centralTask = sampleTask('t2', 't1', { instructions: 'Check portfolio' })
-  assert.equal(canAccessTask(room110Task, loopsByTab, 't1', 'f110'), true)
-  assert.equal(canAccessTask(room110Task, loopsByTab, 't1', 'f73'), false)
-  assert.equal(canAccessTask(centralTask, loopsByTab, 't1', 'f110'), false)
-  assert.equal(canAccessTask(room110Task, loopsByTab, 't2', undefined), true)
+  assert.equal(canAccessTask(room110Task, 't1', 'f110'), true)
+  assert.equal(canAccessTask(room110Task, 't1', 'f73'), false)
+  assert.equal(canAccessTask(centralTask, 't1', 'f110'), false)
+  assert.equal(canAccessTask(room110Task, 't2', undefined), true)
 
   // A task with explicit roomId moves with its room across tabs and is removed when its room is deleted,
   // even when its instructions mention no room or element id.

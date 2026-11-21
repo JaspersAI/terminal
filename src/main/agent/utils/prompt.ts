@@ -18,8 +18,6 @@ import {
 } from '../../../shared/agent/prompt'
 import { standingText } from '../../../shared/agent/standing'
 import { describeCollabState, fullName } from '../../../shared/collab/collab'
-import { allRoomIds } from '../../../shared/loops/closed'
-import { resolveTaskRoomId } from '../../../shared/tasks/tasks'
 import { sourcesSeen } from '../../data/store'
 import { loopsOf } from '../../loops/loops'
 import { loopName, showsChat } from '../../../shared/loops/loops'
@@ -138,14 +136,12 @@ export function loopPrompt(
 
 /** What is true right now for a room's agent: its own tile and views, the clock, and the sources filed (blind to other rooms). */
 export function loopStateNow(workspaceId: string, loopId: string): string {
-  const mainState = getState()
-  const state = toPublic(mainState)
+  const state = toPublic(getState())
   const loop = loopsOf(workspaceId).list.find((one) => one.id === loopId)
   const myFullName = fullName(state.collab)
   const userLine = myFullName ? `User: ${myFullName}.` : ''
   const clock = defaultClock()
-  const knownRooms = allRoomIds(mainState.loops)
-  const roomTasks = state.tasks.filter((task) => resolveTaskRoomId(task, knownRooms) === loopId)
+  const roomTasks = state.tasks.filter((task) => task.roomId === loopId)
   return [
     ...(userLine ? [userLine] : []),
     ...(loop ? [describeTiles(state, workspaceId, loop, (id) => getView(id)?.instructions)] : []),

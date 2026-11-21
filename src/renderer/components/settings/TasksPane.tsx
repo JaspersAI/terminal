@@ -1,15 +1,7 @@
 import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { loopName } from '../../../shared/loops/loops'
 import type { Action } from '../../../shared/state'
-import {
-  everyText,
-  isFinished,
-  resolveTaskRoomId,
-  shortLocal,
-  taskStatus,
-  type Task,
-  type TaskStatus,
-} from '../../../shared/tasks/tasks'
+import { everyText, isFinished, shortLocal, taskStatus, type Task, type TaskStatus } from '../../../shared/tasks/tasks'
 import { errorMessage } from '../../lib/errors'
 import { currentWorkspace, dispatch, useAppState } from '../../lib/state'
 import { BUTTON } from './Row'
@@ -131,7 +123,7 @@ export function TaskList({ tasks, about }: ListProps): ReactElement {
             <ul>
               {newest.map((task) => {
                 const { status, when, alert } = taskLine(task, now, timeZone)
-                const room = resolveTaskRoomId(task)
+                const room = task.roomId
                 return (
                   <Entry
                     key={task.id}
@@ -173,8 +165,7 @@ function TaskDetail({ task, now, timeZone }: { task: Task; now: number; timeZone
   }
 
   const parts = [task.id, task.every === null ? `once at ${when(task.executeAt)}` : `every ${everyText(task.every)}`]
-  const room = resolveTaskRoomId(task)
-  if (room) parts.push(loopName(room))
+  if (task.roomId) parts.push(loopName(task.roomId))
   if (task.model) parts.push(`on ${task.model}`)
   if (task.enabled && task.nextAt !== null) parts.push(`next ${when(task.nextAt)}`)
   if (task.lastRun) parts.push(`last ${when(task.lastRun.at)} ${task.lastRun.ok ? 'ok' : 'failed'}`)

@@ -4,15 +4,10 @@ import { shownQuestion } from '../../shared/agent/attachments'
 import { CENTRAL_CHAT } from '../../shared/agent/history'
 import { taskNote } from '../../shared/agent/transcript'
 import { EXCHANGES_MAX } from '../../shared/data/store'
-import { allRoomIds, closedCallMessage, closedLoop } from '../../shared/loops/closed'
+import { closedCallMessage, closedLoop } from '../../shared/loops/closed'
 import { addressed, LOOP_ID, loopName, NO_LOOPS } from '../../shared/loops/loops'
 import type { Turn } from '../../shared/llm/llm'
-import {
-  explicitlyTargetsCentral,
-  resolveTaskRoomId,
-  TASK_EXCLUDED_TOOLS,
-  type TaskCall,
-} from '../../shared/tasks/tasks'
+import { TASK_EXCLUDED_TOOLS, type TaskCall } from '../../shared/tasks/tasks'
 import { answerQuestion, withoutSecretPrompts } from '../actions'
 import { readOnly } from '../collab/collab'
 import { recordRun } from '../data/store'
@@ -142,66 +137,54 @@ export interface TaskRequest {
   id: string
   instructions: string
   workspaceId: string
-  /** Explicit or inferred target room (`f3`), or `null` when workspace-level. */
-  roomId?: string | null
+  /** The room the task belongs to (`f3`), whose agent runs it; none for the orchestrator. */
+  roomId?: string
   /** A model on the configured provider, or null for whatever the app is set to. */
   model?: string | null
   /** The scripts the user allowed this task, which the run is told so it can pass one to the letter. */
   commands?: readonly string[]
 }
 
+/** What a task's run said, and whether a room's conversation already has it. */
 export interface TaskAskResult {
   text: string
-  /** True when the run's output was already written inside room tile(s) (direct room run or room handoff). */
-  inRoom?: boolean
-  /** Target room id when affiliated with a specific room. */
-  roomId?: string | null
+  /** The run was a room's, or handed its work to rooms: what it said is in their conversations already. */
+  inRoom: boolean
 }
 
-const ORCHESTRATOR_ROUTER_RE = /\b(?:update_room|create_room|close_room|reopen_room|detach_tab)\b/
-
 /**
- * A scheduled task's instructions, as a request: when affiliated with a room (and not calling Central's
- * room-routing tools), runs directly inside that room's tile and conversation; otherwise runs on a fresh
- * orchestrator thread with none of the tools a task may not have. Handoffs to rooms stay inside those
- * rooms' tiles rather than echoing back into Central.
+ * A scheduled task's instructions, as a request. A room's task is its room's agent's, in its tile and
+ * its conversation; a room that is closed skips the run. Any other is a fresh orchestrator thread, the
+ * task's workspace as the grid, and none of the tools a task may not have. It routes as the user's
+ * does, and work it starts or sends to runs on this task's limits (`request.ts`). A call under it on a
+ * connection missing its key fails rather than opening the key field. Resolves with the reply, which
+ * the scheduler puts in the chat unless rooms have it already.
  */
 export function runTask(task: TaskRequest): Promise<TaskAskResult> {
   return inBackground(async () => {
     if (jaspersWakeDelayMs() > 0) {
       throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
     }
-    const initialState = getState()
-    const targetRoomId = resolveTaskRoomId(
-      { roomId: task.roomId, instructions: task.instructions },
-      allRoomIds(initialState.loops),
-    )
     // A /name in the instructions is the skill's own text by the time a model reads it, in this run
     // and in work this run hands on.
     const said = expandSlash(task.instructions) ?? task.instructions
-    if (targetRoomId && !ORCHESTRATOR_ROUTER_RE.test(task.instructions)) {
-      const ownerTabId = findRoomTab(initialState, targetRoomId)
-      if (!ownerTabId) throw new Error(`Unknown room ${loopName(targetRoomId)}.`)
-      const loops = initialState.loops[ownerTabId] ?? NO_LOOPS
-      if (loops.list.some((one) => one.id === targetRoomId)) {
-        const text = await sendToLoop(ownerTabId, targetRoomId, {
-          written: said,
-          task: task.id,
-          model: task.model,
-        })
-        return { text, inRoom: true, roomId: targetRoomId }
+    if (task.roomId) {
+      const room = task.roomId
+      const ownerTabId = findRoomTab(getState(), room)
+      const loops = ownerTabId ? (getState().loops[ownerTabId] ?? NO_LOOPS) : NO_LOOPS
+      if (ownerTabId && loops.list.some((one) => one.id === room)) {
+        const text = await sendToLoop(ownerTabId, room, { written: said, task: task.id, model: task.model })
+        return { text, inRoom: true }
       }
-      if (closedLoop(loops, targetRoomId)) {
-        return { text: '', inRoom: true, roomId: targetRoomId }
-      }
-      throw new Error(`Unknown room ${loopName(targetRoomId)}.`)
+      if (closedLoop(loops, room)) return { text: '', inRoom: true }
+      throw new Error(`Unknown room ${loopName(room)}.`)
     }
     // The provider stays the app's, since its key and base URL are what main holds; only the model
     // changes, so a watch can run on a cheap one, unless the provider is Jaspers, which picks its own.
     const config = configured(task.model)
     const history: Turn[] = [{ role: 'user', text: said, context: stateNow(task.workspaceId) }]
     const entry = begin('task', task.workspaceId, `task ${task.id}`, task.instructions)
-    const handedRooms = new Set<string>()
+    let handed = false
     const context: ToolContext = {
       runId: entry.runId,
       workspaceId: task.workspaceId,
@@ -214,8 +197,8 @@ export function runTask(task: TaskRequest): Promise<TaskAskResult> {
       ...threadReads(history),
       // The instructions sit in a user's turn, and nobody typed them.
       userSaid: () => false,
-      handedToRoom: (roomId: string) => {
-        handedRooms.add(roomId)
+      handedToRoom: () => {
+        handed = true
       },
     }
     const text = await ended(
@@ -235,8 +218,7 @@ export function runTask(task: TaskRequest): Promise<TaskAskResult> {
         }),
       ),
     )
-    const inRoom = handedRooms.size > 0 && !explicitlyTargetsCentral(task.instructions)
-    return { text, inRoom, roomId: targetRoomId }
+    return { text, inRoom: handed }
   })
 }
 
@@ -296,7 +278,7 @@ export async function said(workspaceId: string, note: string, text: string): Pro
 }
 
 /** A task's reply, into its affiliated room's thread when `roomId` is set, else Central's. */
-export function taskSaid(workspaceId: string, task: string, text: string, roomId?: string | null): Promise<boolean> {
+export function taskSaid(workspaceId: string, task: string, text: string, roomId?: string): Promise<boolean> {
   if (roomId) return roomSaid(roomId, taskNote(task), text)
   return said(workspaceId, taskNote(task), text)
 }

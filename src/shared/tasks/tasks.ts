@@ -109,11 +109,8 @@ export interface Task {
   /** t1, t2, … from a persisted counter; never reused. */
   id: string
   workspaceId: string
-  /**
-   * Explicit target room binding (`f1`, `f110`, …); `null` when explicitly unbound to Central;
-   * `undefined` when not explicitly set (eligible for single-room instruction fallback).
-   */
-  roomId?: string | null
+  /** The room (`f3`) the task belongs to: it runs there and says what it found there. None: Central's. */
+  roomId?: string
   /** What the task does, in words: the request an ask run starts from, the label of a call. */
   instructions: string
   /** Set: the scheduler runs this tool. Null: the orchestrator runs the instructions. */
@@ -161,7 +158,7 @@ export type TaskStatus = 'running' | 'paused' | 'scheduled' | 'done' | 'failed'
 /** What a task is made from. */
 export interface TaskInput {
   workspaceId: string
-  /** Optional explicit room binding (`f3` or `room_3`), or `null` to unbind to Central. */
+  /** The room it belongs to (`f3` or `room_3`); nothing, null, or empty for Central. */
   roomId?: string | null
   instructions: string
   executeAt: number
@@ -177,25 +174,16 @@ export interface TaskInput {
   commands?: string[]
 }
 
+/** What update_task changes. A `roomId` of null takes the task out of its room. */
 export type TaskPatch = Partial<
   Pick<
     Task,
-    | 'workspaceId'
-    | 'roomId'
-    | 'instructions'
-    | 'executeAt'
-    | 'every'
-    | 'at'
-    | 'speak'
-    | 'enabled'
-    | 'call'
-    | 'model'
-    | 'commands'
+    'workspaceId' | 'instructions' | 'executeAt' | 'every' | 'at' | 'speak' | 'enabled' | 'call' | 'model' | 'commands'
   >
->
+> & { roomId?: string | null }
 
 /** What checkTaskInput answers with: an input whose model and commands have been settled, one way or the other. */
-export type CheckedTaskInput = TaskInput & { model: string | null; commands: string[] }
+export type CheckedTaskInput = Omit<TaskInput, 'roomId'> & { roomId?: string; model: string | null; commands: string[] }
 
 export interface CheckOptions {
   /** Whether the orchestrator has a tool by this name now. */
@@ -498,7 +486,7 @@ export function checkTaskInput(input: TaskInput, options: CheckOptions): Checked
   const roomId = checkRoomId(input.roomId)
   return {
     workspaceId: input.workspaceId,
-    ...(roomId !== undefined ? { roomId } : {}),
+    ...(roomId ? { roomId } : {}),
     instructions,
     executeAt: Math.floor(input.executeAt),
     every,
@@ -510,64 +498,13 @@ export function checkTaskInput(input: TaskInput, options: CheckOptions): Checked
   }
 }
 
-/** Normalizes an explicit room binding (`room_3`, `loop_3`, `f3`) to canonical `f<n>`, `null` when cleared, or `undefined` when omitted. */
-export function checkRoomId(roomId: string | null | undefined): string | null | undefined {
-  if (roomId === undefined) return undefined
-  if (roomId === null) return null
-  const trimmed = String(roomId).trim()
-  if (!trimmed) return null
+/** A room as a task names it (`room_3`, `loop_3`, `f3`), as it is kept (`f3`). Nothing, null, or empty: no room. */
+export function checkRoomId(roomId: string | null | undefined): string | undefined {
+  const trimmed = String(roomId ?? '').trim()
+  if (!trimmed) return undefined
   const number = /^@?(?:(?:room|loop)[\s_#-]*|f)([1-9]\d*)$/i.exec(trimmed)?.[1]
   if (number !== undefined) return `f${number}`
   throw new Error('roomId must name a room like room_3.')
-}
-
-const EXPLICIT_CENTRAL_RE =
-  /\b(?:post|send|report|reply|write|alert|output|notify|surface)(?:\s+\w+){0,4}\s+(?:in|to|into)\s+central\b|\b(?:in|to|into)\s+central\s+(?:chat|command\s+bar)\b/i
-const INSTRUCTION_ROOM_RE = /\b(?:room|loop)[_ #-]?([1-9]\d*)\b/gi
-
-/** Whether task instructions explicitly ask to deliver output in Central rather than staying inside a room. */
-export function explicitlyTargetsCentral(instructions: string): boolean {
-  return EXPLICIT_CENTRAL_RE.test(instructions)
-}
-
-/**
- * Fallback static analysis for tasks without an explicit `roomId`: if `instructions` clearly name a
- * single room (`room_110`, `Room 73`, `loop_3`) and do not ask to report to Central, returns its
- * canonical id (`f110`, `f73`, `f3`); otherwise returns `null`.
- */
-export function inferRoomIdFromInstructions(instructions: string): string | null {
-  if (!instructions || explicitlyTargetsCentral(instructions)) return null
-  const found = new Set<string>()
-  for (const match of instructions.matchAll(INSTRUCTION_ROOM_RE)) {
-    found.add(`f${Number(match[1])}`)
-    if (found.size > 1) return null
-  }
-  return found.size === 1 ? [...found][0]! : null
-}
-
-/**
- * Resolves the target room id for a task:
- * - An explicit `task.roomId` string (`f110` / `room_110`) binds to that room.
- * - An explicit `null` means the task was unbound to Central.
- * - When `task.roomId` is `undefined`, falls back to `inferRoomIdFromInstructions`, checked against
- *   `knownRoomIds` when provided so nonexistent room numbers do not misroute.
- */
-export function resolveTaskRoomId(
-  task: Pick<Task, 'roomId' | 'instructions'>,
-  knownRoomIds?: ReadonlySet<string>,
-): string | null {
-  if (task.roomId !== undefined) {
-    if (task.roomId === null) return null
-    try {
-      return checkRoomId(task.roomId) ?? null
-    } catch {
-      return null
-    }
-  }
-  const inferred = inferRoomIdFromInstructions(task.instructions)
-  if (!inferred) return null
-  if (knownRoomIds && !knownRoomIds.has(inferred)) return null
-  return inferred
 }
 
 /** The scripts as they are kept and compared: trimmed, each once, in the order given. Nothing here allows one. */
@@ -684,28 +621,21 @@ export function runNotice(
 export type TaskOutputSink = { kind: 'none' } | { kind: 'room'; roomId: string } | { kind: 'central'; notice: string }
 
 /**
- * Decides where a finished task run's output routes:
- * - `{ kind: 'none' }` when output was already delivered inside room tile(s) (`inRoom`), when an
- *   affiliated room task stayed silent or failed, or when an unaffiliated task has nothing to say.
- * - `{ kind: 'room', roomId }` when a task is affiliated with a room (via `task.roomId`, `run.roomId`,
- *   or single-room instruction analysis) and emitted assistant text not yet written to that room.
- * - `{ kind: 'central', notice }` strictly for unaffiliated workspace-level tasks.
+ * Where a finished run's words go. A task of a room says what it found in that room's conversation
+ * and nowhere else, and says nothing more when the run already did (`inRoom`: it ran there, or handed
+ * the work to rooms). A task of Central's says it in Central's, with a notice. A failure is the app's
+ * to say, so it is a notice wherever the task belongs.
  */
 export function routeTaskOutput(
   label: string,
-  task: Pick<Task, 'roomId' | 'instructions' | 'call' | 'lastRun' | 'history' | 'every'>,
-  run: Pick<TaskRun, 'ok' | 'result'> & { changed: boolean; inRoom?: boolean; roomId?: string | null },
-  knownRoomIds?: ReadonlySet<string>,
+  task: Pick<Task, 'roomId' | 'call' | 'lastRun' | 'history' | 'every'>,
+  run: Pick<TaskRun, 'ok' | 'result'> & { changed: boolean; inRoom?: boolean },
 ): TaskOutputSink {
-  if (run.inRoom) return { kind: 'none' }
-  const targetRoomId = run.roomId ?? resolveTaskRoomId(task, knownRoomIds)
-  if (targetRoomId) {
-    if (!run.ok) return { kind: 'none' }
-    const said = run.result.trim()
-    return said && (!task.call || run.changed) ? { kind: 'room', roomId: targetRoomId } : { kind: 'none' }
-  }
   const notice = runNotice(label, task, run)
-  return notice ? { kind: 'central', notice } : { kind: 'none' }
+  if (!notice) return { kind: 'none' }
+  if (!run.ok) return { kind: 'central', notice }
+  if (run.inRoom) return { kind: 'none' }
+  return task.roomId ? { kind: 'room', roomId: task.roomId } : { kind: 'central', notice }
 }
 
 /** How often a task runs, however it was said. */

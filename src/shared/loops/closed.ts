@@ -20,13 +20,7 @@ import {
   type GridSize,
   type Rect,
 } from '../grid/grid.ts'
-import {
-  inferRoomIdFromInstructions,
-  panelTargetOfCall,
-  resolveTaskRoomId,
-  type Task,
-  type TaskCall,
-} from '../tasks/tasks.ts'
+import { panelTargetOfCall, type Task, type TaskCall } from '../tasks/tasks.ts'
 import {
   findAnyRoom,
   frameOf,
@@ -637,18 +631,6 @@ function isReusedOnSource(id: string, room: ClosedLoop, sourceGrids?: Record<num
   )
 }
 
-/** Every room id (`f1`, `f2`, …) currently open or saved in memory across all tabs. */
-export function allRoomIds(
-  loopsByTab: Record<string, { list: readonly Loop[]; closed?: readonly ClosedLoop[] }>,
-): Set<string> {
-  const ids = new Set<string>()
-  for (const one of Object.values(loopsByTab)) {
-    for (const loop of one.list) ids.add(loop.id)
-    for (const shut of one.closed ?? []) ids.add(shut.loop.id)
-  }
-  return ids
-}
-
 /** Whether a scheduled task targets a room or its elements/panels on `sourceTabId`. */
 export function taskTargetsRoom(
   task: Task,
@@ -948,89 +930,68 @@ function publicLoopsOf(loopsByTab: Record<string, Loops>): {
 }
 
 /**
- * Resolves `{ workspaceId, roomId }` for `schedule_task`:
- * - When called from inside a room (`currentLoopId`), auto-populates `roomId = currentLoopId` and
- *   refuses any attempt to target another room.
- * - When called from Central with an explicit `rawRoom`, resolves open or closed rooms by name, id,
- *   or custom title, or unbinds with `null` / `""`.
- * - When called from Central without `rawRoom`, falls back to single-room instruction inference
- *   against existing rooms across tabs.
+ * Where a task schedule_task makes belongs. One made in a room is that room's, and a room names no
+ * other. One made in Central is the room it names (open or closed, on any tab, by name or title), or
+ * Central's when it names none.
  */
 export function resolveScheduledTaskRoom(options: {
   loopsByTab: Record<string, Loops>
   workspaceId: string
   currentLoopId?: string
-  rawRoom?: string | null
-  instructions: string
-}): { workspaceId: string; roomId: string | null | undefined } {
-  const { loopsByTab, workspaceId, currentLoopId, rawRoom, instructions } = options
+  rawRoom?: string
+}): { workspaceId: string; roomId?: string } {
+  const { loopsByTab, workspaceId, currentLoopId } = options
+  const rawRoom = options.rawRoom?.trim() || undefined
   if (currentLoopId !== undefined) {
-    if (rawRoom !== undefined && rawRoom !== null && rawRoom.trim() !== '') {
-      const ownerTab = findRoomTabInLoops(loopsByTab, currentLoopId) ?? workspaceId
-      const own =
-        loopsByTab[ownerTab]?.list.find((one) => one.id === currentLoopId) ??
-        closedLoop(loopsByTab[ownerTab] ?? NO_LOOPS, currentLoopId)?.loop
-      if (!own || !named([own], rawRoom)) {
-        throw new Error('A room can only schedule tasks for itself.')
-      }
-    }
-    const ownerTabId = findRoomTabInLoops(loopsByTab, currentLoopId) ?? workspaceId
-    return { workspaceId: ownerTabId, roomId: currentLoopId }
+    return ownRoom(loopsByTab, workspaceId, currentLoopId, rawRoom, 'A room can only schedule tasks for itself.')
   }
-  if (rawRoom === null || (typeof rawRoom === 'string' && rawRoom.trim() === '')) {
-    return { workspaceId, roomId: null }
-  }
-  if (typeof rawRoom === 'string' && rawRoom.trim() !== '') {
-    const found = findAnyRoom(publicLoopsOf(loopsByTab), workspaceId, rawRoom)
-    return { workspaceId: found.workspaceId, roomId: found.loop.id }
-  }
-  const inferred = inferRoomIdFromInstructions(instructions)
-  const ownerTabId = inferred ? findRoomTabInLoops(loopsByTab, inferred) : undefined
-  if (inferred && ownerTabId) {
-    return { workspaceId: ownerTabId, roomId: inferred }
-  }
-  return { workspaceId, roomId: undefined }
+  if (rawRoom === undefined) return { workspaceId }
+  const found = findAnyRoom(publicLoopsOf(loopsByTab), workspaceId, rawRoom)
+  return { workspaceId: found.workspaceId, roomId: found.loop.id }
 }
 
-/** Resolves a `roomId` update for `update_task`, enforcing room isolation when invoked inside a room. */
+/** The room update_task moves a task to; an empty name (null) takes it out of its room, which a room cannot. */
 export function resolveUpdatedTaskRoom(options: {
   loopsByTab: Record<string, Loops>
   workspaceId: string
   currentLoopId?: string
-  rawRoom: string | null
+  rawRoom: string
 }): { roomId: string | null; workspaceId?: string } {
-  const { loopsByTab, workspaceId, currentLoopId, rawRoom } = options
+  const { loopsByTab, workspaceId, currentLoopId } = options
+  const rawRoom = options.rawRoom.trim()
+  const refusal = 'A room can only manage tasks for itself.'
   if (currentLoopId !== undefined) {
-    if (rawRoom === null || rawRoom.trim() === '') {
-      throw new Error('A room can only manage tasks for itself.')
-    }
-    const ownerTab = findRoomTabInLoops(loopsByTab, currentLoopId) ?? workspaceId
-    const own =
-      loopsByTab[ownerTab]?.list.find((one) => one.id === currentLoopId) ??
-      closedLoop(loopsByTab[ownerTab] ?? NO_LOOPS, currentLoopId)?.loop
-    if (!own || !named([own], rawRoom)) {
-      throw new Error('A room can only manage tasks for itself.')
-    }
-    return { roomId: currentLoopId, workspaceId: ownerTab }
+    if (!rawRoom) throw new Error(refusal)
+    return ownRoom(loopsByTab, workspaceId, currentLoopId, rawRoom, refusal)
   }
-  if (rawRoom === null || rawRoom.trim() === '') {
-    return { roomId: null }
-  }
+  if (!rawRoom) return { roomId: null }
   const found = findAnyRoom(publicLoopsOf(loopsByTab), workspaceId, rawRoom)
   return { roomId: found.loop.id, workspaceId: found.workspaceId }
 }
 
-/** Whether a caller (`currentLoopId` inside a room, or Central on `workspaceId`) may update or cancel `task`. */
-export function canAccessTask(
-  task: Pick<Task, 'workspaceId' | 'roomId' | 'instructions'>,
+/** A room's own tasks are on the tab that holds it; a room named that is not this one is refused. */
+function ownRoom(
   loopsByTab: Record<string, Loops>,
+  workspaceId: string,
+  currentLoopId: string,
+  rawRoom: string | undefined,
+  refusal: string,
+): { workspaceId: string; roomId: string } {
+  const ownerTab = findRoomTabInLoops(loopsByTab, currentLoopId) ?? workspaceId
+  if (rawRoom !== undefined) {
+    const loops = loopsByTab[ownerTab] ?? NO_LOOPS
+    const own = loops.list.find((one) => one.id === currentLoopId) ?? closedLoop(loops, currentLoopId)?.loop
+    if (!own || !named([own], rawRoom)) throw new Error(refusal)
+  }
+  return { workspaceId: ownerTab, roomId: currentLoopId }
+}
+
+/** Whether a room's agent (`currentLoopId`) or Central on `workspaceId` may change or cancel `task`: a room only its own, Central its tab's and any room's. */
+export function canAccessTask(
+  task: Pick<Task, 'workspaceId' | 'roomId'>,
   workspaceId: string,
   currentLoopId?: string,
 ): boolean {
-  const knownRooms = allRoomIds(loopsByTab)
-  const affiliatedRoom = resolveTaskRoomId(task, knownRooms)
-  if (currentLoopId !== undefined) {
-    return affiliatedRoom === currentLoopId
-  }
-  return task.workspaceId === workspaceId || affiliatedRoom !== null
+  if (currentLoopId !== undefined) return task.roomId === currentLoopId
+  return task.workspaceId === workspaceId || task.roomId !== undefined
 }
