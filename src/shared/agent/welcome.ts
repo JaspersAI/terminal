@@ -13,42 +13,19 @@ import { ABOUT_MAX, BODY_MAX } from './memory.ts'
 export const WELCOME_NOTE =
   '(The reply below is one of the messages the assistant says on its own to welcome the user after setup, not an answer to anything the user typed.)'
 
-export const GREETING = 'Hi, I’m Jaspers, the assistant in this terminal. Welcome.'
-
-export function greetingFor(firstName?: string | null): string {
-  const clean = typeof firstName === 'string' ? firstName.trim() : ''
-  return clean ? `Hi ${clean}, I’m Jaspers, the assistant in this terminal. Welcome.` : GREETING
-}
-
-/** Concise one-paragraph summary of how to talk to the terminal and navigate tabs, rooms, Orb, and Dock. */
-export const EXPLANATION = [
-  'This is an open-inference terminal for public-market research: tabs along the bottom, isolated numbered rooms on a 100×100 spreadsheet grid, a local SQLite data plane, and MCP plugins.',
-  'To talk, tap the microphone or press Orb to open the voice orb (or hold the orb while you speak).',
-  'Typing in Central or the top command line works any time, and Dock toggles Central on the active tab.',
-].join(' ')
-
-export const EXAMPLE_ASK =
-  '(The user has just finished setting up Jaspers Terminal and is looking at an empty workspace. Give them one concise example of something they could ask you for with what is installed, in quotes.)'
-
-export const EXAMPLE_FALLBACK =
-  'Try me with something small: "put a note on the grid with my watchlist". Settings > Plugins adds more to ask for.'
-
-export const WELCOME_PREFACE =
-  'This one request is the app welcoming a new user, not the user typing, and it comes with no tools: answer in text alone.'
-
 /**
- * The opening Markdown message filed into Central's conversation on first launch: greets the user and
- * highlights the core architectural pillars of Jaspers Terminal from the README.
+ * The opening Markdown message filed into Central's conversation when onboarding starts: greets the
+ * user and says, in plain words, what the terminal is made of.
  */
 export function welcomeIntroFor(firstName?: string | null): string {
   const clean = typeof firstName === 'string' ? firstName.trim() : ''
   const heading = clean ? `**Welcome to Jaspers Terminal, ${clean}.**` : '**Welcome to Jaspers Terminal.**'
   return [
-    `${heading} I’m **Jaspers**, your central orchestrator across tabs and rooms—talk via **Orb** / mic, or type here or in the top command line (\`Dock\` toggles this pane).`,
+    `${heading} I’m Jaspers, the assistant here. Type to me in this pane or the box at the top, or press **Orb** and talk. **Dock** shows or hides this pane.`,
     '',
-    '- **100×100 Grid & Isolated Rooms (`room_1`, `room_2`, …):** Numbered tiles with isolated thinking agents, live `Table` / `Chart` / `Metric` / `Browser` views, searchable `Rooms` history, and cell formulas (`=`, `NPV`, `IRR`).',
-    '- **Local SQLite Data Plane (`~/Jaspers/data/jaspers.db`):** Payloads and filings stay off-prompt in local SQLite + FTS5 with OS-keychain secrets, direct SQL, and cited quotes.',
-    '- **MCP Hub, Coding Agent & Market Watches:** Add plugins from **Jaspers Hub**, generate custom `@jaspers-ai/sdk` plugins (`build_plugin`), and run `/skills` or NYSE delta watches (`speak: "changed"`).',
+    '- **Rooms:** each piece of work gets a room on the grid with its own agent and its own tiles, such as tables, charts, and a browser. Every room is kept in **Rooms**.',
+    '- **Your data:** what your sources fetch is saved in a database on this computer, so I can query it later instead of holding all of it in the conversation.',
+    '- **Plugins:** add data sources from **Jaspers Hub**, or ask me to build one. Scheduled checks can run on market hours and speak up only when something changed.',
   ].join('\n')
 }
 
@@ -74,7 +51,7 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
     id: 'style',
     title: 'How do you work the markets?',
     highlight:
-      'Two-tier model routing lets Central answer quick questions fast while spinning up isolated Grid Rooms on your thinking model—each room blind to other rooms and saved chronologically in memory.',
+      'Central answers quick questions on a fast model. Bigger work goes to a room of its own, on your thinking model, that sees only its own work.',
     choices: [
       {
         id: 'fundamental',
@@ -89,7 +66,7 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
       {
         id: 'quant',
         label: 'Quant & Systematic',
-        detail: 'Factor screens, SQL time-series queries over jaspers.db & scripts',
+        detail: 'Factor screens, SQL over your saved data, and scripts',
       },
       {
         id: 'trading',
@@ -102,7 +79,7 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
     id: 'coverage',
     title: 'What markets, data, or tickers are on your radar?',
     highlight:
-      'Context offloading stores every source call in ~/Jaspers/data/jaspers.db (runs, run_rows, and FTS5 docs) so models query bounded SQL slices without overflowing context windows.',
+      'What your sources fetch is saved on this computer, so the assistant can query it later instead of holding all of it in the conversation.',
     choices: [
       {
         id: 'us-equities',
@@ -131,7 +108,7 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
     id: 'workflows',
     title: 'Which terminal capabilities do you want in play first?',
     highlight:
-      'Beyond Jaspers Hub plugins and live Browser tiles, build_plugin writes custom @jaspers-ai/sdk plugins with security-envelope approval, /skills store playbooks, NYSE delta watches poll SQLite, and Pro mode runs sandboxed scripts in ~/Jaspers/shell.',
+      'Add plugins from Jaspers Hub or have the assistant build one, save repeatable steps as skills, schedule checks on market hours, and run scripts in Pro mode.',
     choices: [
       {
         id: 'filings-screen',
@@ -141,17 +118,17 @@ export const ONBOARDING_QUESTIONS: readonly OnboardingQuestion[] = [
       {
         id: 'charts-browser',
         label: 'Live Charts, Feeds & Browser',
-        detail: 'Interactive grid charts, market feeds & live web/Bloomberg rooms',
+        detail: 'Interactive charts, market feeds, and a built-in browser',
       },
       {
         id: 'watches-skills',
-        label: 'NYSE Delta Watches & /skills',
-        detail: 'Market-calendar schedules (speak: "changed") & SKILL.md workflows',
+        label: 'Scheduled Checks & Skills',
+        detail: 'Checks on market hours that speak up on changes, and saved skills',
       },
       {
         id: 'builder-shell',
-        label: 'Plugin Coding Agent & Pro Mode',
-        detail: 'On-demand @jaspers-ai/sdk plugin builds & sandboxed Python/R/shell',
+        label: 'Plugin Builder & Pro Mode',
+        detail: 'Have the assistant build plugins, and run scripts in Pro mode',
       },
     ],
   },
@@ -218,6 +195,52 @@ export interface WelcomeOnboarding {
   startedRooms: Record<string, string>
 }
 
+/**
+ * What state.json keeps of onboarding until the user finishes or skips it, so the next launch picks it
+ * up at the same step. The suggestions are worked out again from the answers when it does.
+ */
+export interface SavedOnboarding {
+  workspaceId: string
+  step: OnboardingStep
+  answers: OnboardingAnswers
+  startedRooms: Record<string, string>
+}
+
+export function savedOnboarding(
+  workspaceId: string,
+  { step, answers, startedRooms }: WelcomeOnboarding,
+): SavedOnboarding {
+  return { workspaceId, step, answers, startedRooms }
+}
+
+const strings = (value: unknown): string[] | null =>
+  Array.isArray(value) && value.every((one) => typeof one === 'string') ? value : null
+
+/** Onboarding read back off state.json. A file edited by hand or written by another version may hold anything: what is not this shape is nothing to resume. */
+export function readSavedOnboarding(raw: unknown): SavedOnboarding | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const record = raw as Record<string, unknown>
+  const { workspaceId, step, answers, startedRooms } = record
+  if (typeof workspaceId !== 'string' || !workspaceId) return null
+  if (step !== 0 && step !== 1 && step !== 2 && step !== 'recommendations') return null
+  if (typeof answers !== 'object' || answers === null) return null
+  const given = answers as Record<string, unknown>
+  const style = strings(given['style'])
+  const coverage = strings(given['coverage'])
+  const workflows = strings(given['workflows'])
+  const focusText = given['focusText']
+  if (!style || !coverage || !workflows || typeof focusText !== 'string') return null
+  if (typeof startedRooms !== 'object' || startedRooms === null || Array.isArray(startedRooms)) return null
+  const rooms = Object.entries(startedRooms)
+  if (!rooms.every(([, title]) => typeof title === 'string')) return null
+  return {
+    workspaceId,
+    step,
+    answers: sanitizeAnswers({ style, coverage, workflows, focusText }),
+    startedRooms: Object.fromEntries(rooms) as Record<string, string>,
+  }
+}
+
 export type OnboardingAction =
   | { kind: 'answer'; step: 0 | 1 | 2; selected: string[]; focusText?: string }
   | { kind: 'skip-question'; step: 0 | 1 | 2; focusText?: string }
@@ -278,29 +301,28 @@ const NON_TICKER_WORDS = new Set([
   'BANKS',
 ])
 
-/** Extracts clean uppercase ticker symbols from free-form focus text, preserving user order. */
+/**
+ * The ticker symbols in free-form focus text, in the user's order. An item of a list (between commas,
+ * semicolons, or slashes) that is one word is read as a symbol whatever its case, so "nvda, msft"
+ * counts. Inside a phrase only a word written as a symbol does: `$`-prefixed, or two or more capitals,
+ * so "TSM and the CPI print" gives TSM and "I like big tech" gives nothing.
+ */
 export function parseWatchlistTickers(focusText: string): string[] {
-  const rawTokens = focusText
-    .split(/[\s,;/|]+/)
-    .map((t) => t.trim())
-    .filter(Boolean)
-  const hasProseWord = rawTokens.some((t) => !t.startsWith('$') && t === t.toLowerCase() && t.length > 5)
   const seen = new Set<string>()
   const out: string[] = []
-  for (const raw of rawTokens) {
-    const prefixed = raw.startsWith('$')
-    const token = raw.replace(/^\$/, '')
-    if (!token) continue
-    const upper = token.toUpperCase()
-    const isExplicitUpper = token === upper && /[A-Z]/.test(token)
-    const isShortTickerListItem = !hasProseWord && token.length <= 5
-    if (!prefixed && !isExplicitUpper && !isShortTickerListItem) continue
-    if (!TICKER_TOKEN.test(upper) || NON_TICKER_WORDS.has(upper)) continue
-    if (!seen.has(upper)) {
+  for (const item of focusText.split(/[,;/|]+/)) {
+    const words = item.trim().split(/\s+/).filter(Boolean)
+    for (const word of words) {
+      const prefixed = word.startsWith('$')
+      const token = word.replace(/^\$/, '')
+      const upper = token.toUpperCase()
+      const writtenAsSymbol = prefixed || (token === upper && /[A-Z].*[A-Z]/.test(token))
+      if (words.length > 1 && !writtenAsSymbol) continue
+      if (!TICKER_TOKEN.test(upper) || NON_TICKER_WORDS.has(upper) || seen.has(upper)) continue
       seen.add(upper)
       out.push(upper)
+      if (out.length >= 6) return out
     }
-    if (out.length >= 6) break
   }
   return out
 }
@@ -332,7 +354,7 @@ const PLUGIN_CATALOG: readonly CatalogPlugin[] = [
       },
       quant: {
         weight: 7,
-        why: 'Feeds historical price, fundamentals, and options rows straight into jaspers.db for SQL.',
+        why: 'Saves price history, fundamentals, and options rows on this computer for SQL.',
       },
       trading: { weight: 8, why: 'Live quotes, options chains, price history, and market movers with no API key.' },
       'us-equities': { weight: 7, why: 'Broad equity coverage for quotes, comps, holders, and price history.' },
@@ -356,7 +378,10 @@ const PLUGIN_CATALOG: readonly CatalogPlugin[] = [
         weight: 9,
         why: 'Covers all US SEC registrants with filings, XBRL facts, and Form 4 insider forms.',
       },
-      'filings-screen': { weight: 8, why: 'Indexes filing passages locally into jaspers.db FTS5 for cited retrieval.' },
+      'filings-screen': {
+        weight: 8,
+        why: 'Keeps filing passages searchable on this computer, so answers can quote them.',
+      },
       quant: { weight: 5, why: 'Structured XBRL company facts for multi-period financial ratio SQL.' },
     },
   },
@@ -433,7 +458,7 @@ const PLUGIN_CATALOG: readonly CatalogPlugin[] = [
         weight: 11,
         why: 'Official Federal Reserve H.15 constant-maturity yields with zero key setup.',
       },
-      quant: { weight: 5, why: 'Clean risk-free rate and curve slope series stored locally in jaspers.db.' },
+      quant: { weight: 5, why: 'Clean risk-free rate and curve slope series saved on this computer.' },
     },
   },
   {
@@ -447,7 +472,7 @@ const PLUGIN_CATALOG: readonly CatalogPlugin[] = [
     reasons: {
       macro: { weight: 9, why: 'Tracks CPI components, payrolls, and unemployment releases straight from BLS.' },
       'rates-fiscal': { weight: 9, why: 'Pairs inflation and labor releases with your Fed and Treasury rate views.' },
-      'watches-skills': { weight: 4, why: 'Ideal for scheduled macro release checks and SQLite delta watches.' },
+      'watches-skills': { weight: 4, why: 'Good for scheduled checks on macro releases.' },
     },
   },
   {
@@ -555,7 +580,7 @@ const PLUGIN_CATALOG: readonly CatalogPlugin[] = [
     defaultWhy: 'Brings earnings call transcripts and upcoming calendar dates into filing research.',
     reasons: {
       fundamental: { weight: 6, why: 'Pairs management Q&A transcripts with 10-K/10-Q filing research.' },
-      'filings-screen': { weight: 5, why: 'Adds earnings call commentary to local FTS5 transcript search.' },
+      'filings-screen': { weight: 5, why: 'Makes earnings call commentary searchable alongside filings.' },
     },
   },
   {
@@ -646,30 +671,38 @@ interface RoomCandidate {
   room: SuggestedRoom
 }
 
+/**
+ * The starter rooms that fit the profile, best first. A room about particular companies names only
+ * the tickers the user gave: one on a single name is offered only when there is one, and the rest ask
+ * which companies to start from when there are none.
+ */
 function buildStarterRooms(tags: ReadonlySet<string>, tickers: readonly string[], focusText: string): SuggestedRoom[] {
-  const primary = tickers[0] ?? 'NVDA'
-  const peerList = tickers.length >= 2 ? tickers.join(', ') : `${primary}, MSFT, AAPL`
+  const primary = tickers[0]
+  const names = tickers.join(', ')
+  const forNames = names ? ` for ${names}` : ''
   const focusClause = focusText ? ` (with attention to ${focusText})` : ''
 
-  const candidates: RoomCandidate[] = [
-    {
-      score:
-        4 +
-        (tags.has('fundamental') ? 10 : 0) +
-        (tags.has('us-equities') ? 7 : 0) +
-        (tags.has('filings-screen') ? 8 : 0),
-      room: {
-        id: 'filing-deep-dive',
-        title: `${primary} Filing & Fundamentals`,
-        desc: `Single-name SEC filing and fundamentals research on ${primary}`,
-        summary: `Pulls ${primary} key financials, recent filing disclosures, and risk factors into an isolated research room.`,
-        brief: `Research ${primary}${focusClause}. Use installed SEC/research/market plugins when available (such as agents, research, sec, or yfinance), or search_web and built-in core/table and core/metric views otherwise. Surface key revenue/margin trends and notable 10-K/10-Q disclosures with concise citations.`,
-        systemPrompt:
-          'Operate as a disciplined fundamental equity analyst. Ground every claim in primary filings or fetched market data, keep tables compact, and highlight material business drivers and risks.',
-        prompt: `Set up a fundamental & SEC filing overview for ${primary}${focusClause}: place a clean summary view of key financials and summarize the most important recent filing takeaways.`,
-        preferredPlugins: ['agents', 'research', 'sec', 'yfinance', 'markdown'],
-      },
-    },
+  const candidates: (RoomCandidate | null)[] = [
+    primary
+      ? {
+          score:
+            4 +
+            (tags.has('fundamental') ? 10 : 0) +
+            (tags.has('us-equities') ? 7 : 0) +
+            (tags.has('filings-screen') ? 8 : 0),
+          room: {
+            id: 'filing-deep-dive',
+            title: `${primary} Filing & Fundamentals`,
+            desc: `Single-name SEC filing and fundamentals research on ${primary}`,
+            summary: `Pulls ${primary} key financials, recent filing disclosures, and risk factors into an isolated research room.`,
+            brief: `Research ${primary}${focusClause}. Use installed SEC/research/market plugins when available (such as agents, research, sec, or yfinance), or search_web and built-in core/table and core/metric views otherwise. Surface key revenue/margin trends and notable 10-K/10-Q disclosures with concise citations.`,
+            systemPrompt:
+              'Operate as a disciplined fundamental equity analyst. Ground every claim in primary filings or fetched market data, keep tables compact, and highlight material business drivers and risks.',
+            prompt: `Set up a fundamental & SEC filing overview for ${primary}${focusClause}: place a clean summary view of key financials and summarize the most important recent filing takeaways.`,
+            preferredPlugins: ['agents', 'research', 'sec', 'yfinance', 'markdown'],
+          },
+        }
+      : null,
     {
       score:
         2 +
@@ -680,12 +713,18 @@ function buildStarterRooms(tags: ReadonlySet<string>, tickers: readonly string[]
       room: {
         id: 'equity-screener',
         title: 'Equity Screen & Comps',
-        desc: `Comparative fundamentals and filing screen across ${peerList}`,
-        summary: `Builds a sortable peer valuation & operating table (${peerList}) backed by local SQLite rows.`,
-        brief: `Build a comparative screen and peer valuation table starting with ${peerList}${focusClause}. If screener-mcp is installed and ready, drive screener-mcp/screener; otherwise fetch fundamentals via yfinance/sec (or web data) and render a sortable core/table comparing valuation, growth, and margins.`,
+        desc: names
+          ? `Comparative fundamentals and filing screen across ${names}`
+          : 'Comparative fundamentals and filing screen',
+        summary: names
+          ? `Builds a sortable peer valuation and operating table for ${names}.`
+          : 'Builds a sortable peer valuation and operating table for the companies you name.',
+        brief: `Build a comparative screen and peer valuation table${names ? ` starting with ${names}` : ' for the companies the user names'}${focusClause}. If screener-mcp is installed and ready, drive screener-mcp/screener; otherwise fetch fundamentals via yfinance/sec (or web data) and render a sortable core/table comparing valuation, growth, and margins.`,
         systemPrompt:
           'Focus on clean, comparable metrics across companies. Normalize units clearly and store fetched rows cleanly so follow-up SQL queries over jaspers.db are effortless.',
-        prompt: `Create a peer comparison screen on the grid for ${peerList}${focusClause} with key valuation and operating metrics.`,
+        prompt: names
+          ? `Create a peer comparison screen on the grid for ${names}${focusClause} with key valuation and operating metrics.`
+          : `Ask me which companies to compare, then create a peer comparison screen on the grid${focusClause} with key valuation and operating metrics.`,
         preferredPlugins: ['screener-mcp', 'yfinance', 'sec'],
       },
     },
@@ -705,33 +744,39 @@ function buildStarterRooms(tags: ReadonlySet<string>, tickers: readonly string[]
         preferredPlugins: ['fed', 'treasury', 'bls', 'ecb', 'imf', 'oecd'],
       },
     },
-    {
-      score:
-        3 + (tags.has('trading') ? 11 : 0) + (tags.has('positioning') ? 10 : 0) + (tags.has('charts-browser') ? 8 : 0),
-      room: {
-        id: 'trading-flow-desk',
-        title: `${primary} Chart & Positioning`,
-        desc: `Price chart, catalysts, and positioning monitor for ${peerList}`,
-        summary: `Opens an interactive price chart and positioning/short-flow view for ${peerList}.`,
-        brief: `Set up an active market & positioning room for ${peerList}${focusClause}. Place tradingview/chart if tradingview is installed (otherwise fetch price history via yfinance or available sources into core/chart), check short interest or CFTC positioning when finra/cftc are installed, and note key levels.`,
-        systemPrompt:
-          'Operate as a market-structure and trading desk analyst. Keep commentary concise around price structure, volume, positioning, and upcoming catalysts.',
-        prompt: `Open a chart and market flow view for ${primary} (tracking ${peerList})${focusClause} and summarize current price structure and positioning.`,
-        preferredPlugins: ['tradingview', 'yfinance', 'finra', 'cftc'],
-      },
-    },
+    primary
+      ? {
+          score:
+            3 +
+            (tags.has('trading') ? 11 : 0) +
+            (tags.has('positioning') ? 10 : 0) +
+            (tags.has('charts-browser') ? 8 : 0),
+          room: {
+            id: 'trading-flow-desk',
+            title: `${primary} Chart & Positioning`,
+            desc: `Price chart, catalysts, and positioning monitor for ${names}`,
+            summary: `Opens an interactive price chart and positioning view for ${names}.`,
+            brief: `Set up an active market & positioning room for ${names}${focusClause}. Place tradingview/chart if tradingview is installed (otherwise fetch price history via yfinance or available sources into core/chart), check short interest or CFTC positioning when finra/cftc are installed, and note key levels.`,
+            systemPrompt:
+              'Operate as a market-structure and trading desk analyst. Keep commentary concise around price structure, volume, positioning, and upcoming catalysts.',
+            prompt: `Open a chart and market flow view for ${primary}${tickers.length > 1 ? ` (tracking ${names})` : ''}${focusClause} and summarize current price structure and positioning.`,
+            preferredPlugins: ['tradingview', 'yfinance', 'finra', 'cftc'],
+          },
+        }
+      : null,
     {
       score:
         2 + (tags.has('quant') ? 10 : 0) + (tags.has('watches-skills') ? 10 : 0) + (tags.has('builder-shell') ? 6 : 0),
       room: {
         id: 'sqlite-watch-lab',
-        title: 'SQLite Factor & Watch Lab',
-        desc: 'Local SQLite SQL analytics and NYSE calendar delta-watch setup',
-        summary: 'Queries jaspers.db into a live SQL Table/Chart and prepares recurring market-hours delta watches.',
-        brief: `Set up a quantitative SQLite & watch room for ${peerList}${focusClause}. Pull initial market or macro rows from installed sources so runs and run_rows populate jaspers.db, place a SQL-backed core/table or core/chart over run_rows, and outline an NYSE market-calendar delta watch the user can schedule.`,
+        title: 'Factor & Watch Lab',
+        desc: 'SQL over your saved data, and a scheduled check on market hours',
+        summary:
+          'Puts a SQL-backed table or chart over your saved data on the grid and drafts a check that runs on market hours.',
+        brief: `Set up a quantitative SQLite & watch room${forNames}${focusClause}. Pull initial market or macro rows from installed sources so runs and run_rows populate jaspers.db, place a SQL-backed core/table or core/chart over run_rows, and outline an NYSE market-calendar delta watch the user can schedule.`,
         systemPrompt:
           'Operate as a quantitative research engineer. Write clean, readable SQLite queries against runs and run_rows and favor reproducible metrics.',
-        prompt: `Initialize a SQLite data & watch lab for ${peerList}${focusClause}: fetch baseline rows, place a SQL-backed table on the grid, and propose a market-hours delta watch.`,
+        prompt: `Initialize a SQLite data & watch lab${forNames}${focusClause}: fetch baseline rows, place a SQL-backed table on the grid, and propose a market-hours delta watch.`,
         preferredPlugins: ['yfinance', 'sec', 'fed', 'cftc', 'finra'],
       },
     },
@@ -760,8 +805,8 @@ function buildStarterRooms(tags: ReadonlySet<string>, tickers: readonly string[]
       room: {
         id: 'custom-plugin-studio',
         title: 'Custom Plugin & Data Studio',
-        desc: 'Scope a custom @jaspers-ai/sdk plugin or local data workflow',
-        summary: 'Helps design and build a custom API feed or custom React grid tile using the built-in coding agent.',
+        desc: 'Scope a custom plugin or data workflow',
+        summary: 'Helps design a custom data feed or grid tile, then has the assistant build it as a plugin.',
         brief: `Help the user scope a custom data feed, REST/MCP connector, or bespoke React view${focusClause} that can be compiled into ~/Jaspers/plugins/ with @jaspers-ai/sdk, placing a concise core/note checklist of data endpoints and views to build.`,
         systemPrompt: 'Be practical and concrete about endpoints, authentication secrets, and grid view design.',
         prompt: `Place a concise build checklist note on the grid for custom data sources or views${focusClause} and outline two custom @jaspers-ai/sdk plugins we can generate with build_plugin.`,
@@ -770,8 +815,11 @@ function buildStarterRooms(tags: ReadonlySet<string>, tickers: readonly string[]
     },
   ]
 
-  candidates.sort((a, b) => b.score - a.score)
-  return candidates.slice(0, 3).map((entry) => entry.room)
+  return candidates
+    .filter((entry): entry is RoomCandidate => entry !== null)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((entry) => entry.room)
 }
 
 /**
@@ -807,7 +855,7 @@ export function buildOnboardingProfile(
 
   const headline = parts.length > 0 ? parts.join(' · ') : 'General Public-Markets Workspace'
   const summary = answered
-    ? 'Saved to Memory (`user-profile`) so Central and future rooms tailor plugin routing, SQL queries, and briefs to your coverage.'
+    ? 'Saved to Memory as user-profile, so the assistant starts from your coverage.'
     : 'Showing a balanced starter kit across equities, macro rates, and live web research—install any plugin or open a room below.'
 
   let memory: OnboardingProfile['memory'] = null

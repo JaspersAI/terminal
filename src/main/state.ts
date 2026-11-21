@@ -80,7 +80,7 @@ export interface MainState {
   /** The secrets the app is asking the user for, one a place at most. Never persisted. */
   secretRequests: SecretRequest[]
   questions: Question[]
-  /** The welcome after setup while it is being said. Never persisted. */
+  /** Onboarding in Central from the end of setup until the user finishes or skips it. Its step, answers, and started rooms are persisted, so a launch picks it up where it was. */
   welcome: Welcome | null
   /** The notices the answer box says now: a task's and the app's own. Never persisted. */
   notices: Notice[]

@@ -8,6 +8,7 @@ import {
   WELCOME_NOTE,
   welcomeIntroFor,
   type OnboardingAnswers,
+  type OnboardingProfile,
   type WelcomeOnboarding,
 } from '../../shared/agent/welcome'
 import { BROWSER_VIEW } from '../../shared/grid/browser'
@@ -35,11 +36,11 @@ import { threadFor } from './utils/thread'
 
 // Workspace onboarding in Central once setup finishes and the main screen is the user's:
 // 1. Docks Central (`core/chat`) at the top-central space of the main window's grid.
-// 2. Files a crisp welcome overview into Central's conversation highlighting the core architecture
-//    from the README (isolated Grid Rooms, local SQLite + FTS5 data plane, MCP Hub + coding agent +
-//    market-calendar delta watches).
+// 2. Files a short welcome into Central's conversation: rooms, the local data, plugins.
 // 3. Drives the skippable 3-question profiling flow, persists `user-profile` to ~/Jaspers/memory/,
 //    and launches tailored starter rooms around Central on demand.
+// It lasts until the user finishes or skips it: a launch before then picks it up at the step it was
+// on (persist.ts keeps it), and says the welcome again, since each launch starts Central's chat anew.
 
 let welcomed = false
 let profileNoteFiled = false
@@ -58,8 +59,8 @@ function hasExistingWorkspaceActivity(): boolean {
 }
 
 /**
- * Starts workspace onboarding once per install on a fresh conversation: docks Central at the
- * top-center of the active tab's grid, files the opening overview, and opens Question 1 of 3.
+ * Starts workspace onboarding, or picks up the one a quit left partway: docks Central at the
+ * top-center of the active tab's grid, files the opening overview, and opens the step it is on.
  */
 function startWelcome(): void {
   const state = getState()
@@ -78,7 +79,9 @@ async function beginOnboarding(): Promise<void> {
   if (state.workspaceOnboarded) return
   const config = modelFor(CENTRAL_CHAT)
   if (!config) return
-  if (threadFor(CENTRAL_CHAT, config).length > 0 || hasExistingWorkspaceActivity()) {
+  const resumed = state.welcome?.onboarding ?? null
+  // Someone who used the terminal before onboarding existed is not new to it.
+  if (!resumed && (threadFor(CENTRAL_CHAT, config).length > 0 || hasExistingWorkspaceActivity())) {
     update((s) => (s.workspaceOnboarded ? s : { ...s, workspaceOnboarded: true }))
     return
   }
@@ -87,12 +90,13 @@ async function beginOnboarding(): Promise<void> {
   if (!chatElement(grid)) {
     placeChecked(workspaceId, MAIN_WINDOW, { kind: 'view', view: CHAT_VIEW }, undefined, chatPlacementFor(grid))
   }
-  const onboarding: WelcomeOnboarding = {
-    step: 0,
-    answers: { ...EMPTY_ONBOARDING_ANSWERS },
-    profile: null,
-    startedRooms: {},
-  }
+  const onboarding: WelcomeOnboarding = resumed
+    ? {
+        ...resumed,
+        profile:
+          resumed.step === 'recommendations' ? (resumed.profile ?? profileFor(resumed.answers)) : resumed.profile,
+      }
+    : { step: 0, answers: { ...EMPTY_ONBOARDING_ANSWERS }, profile: null, startedRooms: {} }
   update((s) => ({
     ...s,
     welcome: { workspaceId, said: 0, onboarding },
@@ -148,13 +152,7 @@ async function handleOnboarding(raw: unknown): Promise<void> {
   }
 
   if (action.kind === 'start-room') {
-    const profile =
-      current.profile ??
-      buildOnboardingProfile(current.answers, {
-        signedIn: signedIn(),
-        installedPlugins: Object.keys(state.plugins),
-        firstName: state.collab.firstName,
-      })
+    const profile = current.profile ?? profileFor(current.answers)
     const room = profile.rooms.find((one) => one.id === action.roomId)
     if (!room) throw new Error('Unknown starter room.')
     if (current.startedRooms[room.id]) return
@@ -232,12 +230,7 @@ async function finalizeProfile(
   answers: OnboardingAnswers,
   startedRooms: Record<string, string>,
 ): Promise<void> {
-  const state = getState()
-  const profile = buildOnboardingProfile(answers, {
-    signedIn: signedIn(),
-    installedPlugins: Object.keys(state.plugins),
-    firstName: state.collab.firstName,
-  })
+  const profile = profileFor(answers)
   if (profile.memory) {
     const refusal = await writeMemory(profile.memory.name, profile.memory.about, profile.memory.body)
     if (refusal) console.warn('[welcome] memory:', refusal)
@@ -248,11 +241,20 @@ async function finalizeProfile(
     profile,
     startedRooms,
   })
-  update((s) => (s.workspaceOnboarded ? s : { ...s, workspaceOnboarded: true }))
   if (!profileNoteFiled) {
     profileNoteFiled = true
     await say(workspaceId, profileReplyFor(profile))
   }
+}
+
+/** The suggestions for these answers, with what this terminal has now: the sign-in and the plugins in. */
+function profileFor(answers: OnboardingAnswers): OnboardingProfile {
+  const state = getState()
+  return buildOnboardingProfile(answers, {
+    signedIn: signedIn(),
+    installedPlugins: Object.keys(state.plugins),
+    firstName: state.collab.firstName,
+  })
 }
 
 function setOnboarding(onboarding: WelcomeOnboarding): void {

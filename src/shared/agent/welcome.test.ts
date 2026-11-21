@@ -4,41 +4,28 @@ import { checkMemory } from './memory.ts'
 import {
   buildOnboardingProfile,
   EMPTY_ONBOARDING_ANSWERS,
-  EXAMPLE_ASK,
-  EXPLANATION,
-  GREETING,
-  greetingFor,
   ONBOARDING_QUESTIONS,
   parseWatchlistTickers,
   profileReplyFor,
   readOnboardingAction,
+  readSavedOnboarding,
+  savedOnboarding,
   WELCOME_NOTE,
   welcomeIntroFor,
 } from './welcome.ts'
 
-test('the explanation and welcome intro cover voice Orb, Dock, and the core README capabilities', () => {
-  assert.match(EXPLANATION, /hold the orb/)
-  assert.match(EXPLANATION, /Dock/)
-  assert.ok(EXPLANATION.indexOf('talk') < EXPLANATION.indexOf('Typing'))
-
+test('the welcome intro greets by name and names the controls it says to use', () => {
   const intro = welcomeIntroFor('Seth')
   assert.match(intro, /Welcome to Jaspers Terminal, Seth\./)
-  assert.match(intro, /100×100 Grid & Isolated Rooms/)
-  assert.match(intro, /jaspers\.db/)
+  assert.match(intro, /\*\*Orb\*\*/)
+  assert.match(intro, /\*\*Dock\*\*/)
   assert.match(intro, /Jaspers Hub/)
-  assert.match(intro, /build_plugin/)
-  assert.match(intro, /speak: "changed"/)
   assert.match(welcomeIntroFor(''), /\*\*Welcome to Jaspers Terminal\.\*\*/)
 })
 
-test('the notes are one parenthesized line each, the shape the transcript tells apart from typing', () => {
-  for (const note of [WELCOME_NOTE, EXAMPLE_ASK]) {
-    assert.match(note, /^\(.*\)$/s)
-    assert.doesNotMatch(note, /\n/)
-  }
-  assert.notEqual(GREETING, '')
-  assert.equal(greetingFor('Seth'), 'Hi Seth, I’m Jaspers, the assistant in this terminal. Welcome.')
-  assert.equal(greetingFor(''), GREETING)
+test('the welcome note is one parenthesized line, the shape the transcript tells apart from typing', () => {
+  assert.match(WELCOME_NOTE, /^\(.*\)$/s)
+  assert.doesNotMatch(WELCOME_NOTE, /\n/)
 })
 
 test('onboarding questions highlight core terminal concepts across 3 skippable steps', () => {
@@ -60,6 +47,44 @@ test('parseWatchlistTickers extracts clean uppercase ticker symbols without matc
   assert.deepEqual(parseWatchlistTickers('nvda, msft, tsm'), ['NVDA', 'MSFT', 'TSM'])
   assert.deepEqual(parseWatchlistTickers('semiconductors and software'), [])
   assert.deepEqual(parseWatchlistTickers('semiconductors and NVDA'), ['NVDA'])
+  // In a phrase, only a word written as a symbol is one.
+  assert.deepEqual(parseWatchlistTickers('NVDA, TSM and the CPI print'), ['NVDA', 'TSM'])
+  assert.deepEqual(parseWatchlistTickers('I like big tech'), [])
+  assert.deepEqual(parseWatchlistTickers('long $f and GOOGL'), ['F', 'GOOGL'])
+})
+
+test('starter rooms name only the tickers the user gave', () => {
+  const macroOnly = buildOnboardingProfile({ ...EMPTY_ONBOARDING_ANSWERS, style: ['macro'] })
+  assert.equal(macroOnly.rooms[0]?.id, 'macro-yield-curve')
+  for (const profile of [macroOnly, buildOnboardingProfile(EMPTY_ONBOARDING_ANSWERS)]) {
+    const text = JSON.stringify(profile.rooms)
+    assert.doesNotMatch(text, /NVDA|MSFT|AAPL/)
+    assert.ok(!profile.rooms.some((r) => r.id === 'filing-deep-dive' || r.id === 'trading-flow-desk'))
+  }
+  const one = buildOnboardingProfile({ ...EMPTY_ONBOARDING_ANSWERS, style: ['trading'], focusText: 'AMD' })
+  const desk = one.rooms.find((r) => r.id === 'trading-flow-desk')
+  assert.match(desk?.title ?? '', /^AMD /)
+  assert.doesNotMatch(JSON.stringify(one.rooms), /MSFT|AAPL|tracking/)
+})
+
+test('onboarding left partway reads back off state.json, and anything else is nothing to resume', () => {
+  const onboarding = {
+    step: 1 as const,
+    answers: { style: ['macro'], coverage: [], workflows: [], focusText: 'TLT' },
+    profile: null,
+    startedRooms: { 'macro-yield-curve': 'Room 1' },
+  }
+  const saved = savedOnboarding('w1', onboarding)
+  assert.deepEqual(readSavedOnboarding(JSON.parse(JSON.stringify(saved))), saved)
+  assert.equal(readSavedOnboarding(undefined), null)
+  assert.equal(readSavedOnboarding({ ...saved, step: 3 }), null)
+  assert.equal(readSavedOnboarding({ ...saved, workspaceId: '' }), null)
+  assert.equal(readSavedOnboarding({ ...saved, answers: { ...saved.answers, style: 'macro' } }), null)
+  assert.equal(readSavedOnboarding({ ...saved, startedRooms: { x: 1 } }), null)
+  assert.deepEqual(
+    readSavedOnboarding({ ...saved, answers: { ...saved.answers, style: ['macro', 'bogus'] } })?.answers.style,
+    ['macro'],
+  )
 })
 
 test('buildOnboardingProfile tailors memory, Hub plugin suggestions, and starter rooms by investor profile', () => {
