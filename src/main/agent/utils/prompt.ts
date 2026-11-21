@@ -5,6 +5,7 @@ import {
   describeInstalledFor,
   describeInstalledToRoute,
   describeNow,
+  describeRoomTasks,
   describeRound,
   describeTiles,
   LOOP_PLACEMENT,
@@ -139,14 +140,17 @@ export function loopStateNow(workspaceId: string, loopId: string): string {
   const loop = loopsOf(workspaceId).list.find((one) => one.id === loopId)
   const myFullName = fullName(state.collab)
   const userLine = myFullName ? `User: ${myFullName}.` : ''
+  const clock = defaultClock()
+  const roomTasks = state.tasks.filter((task) => task.roomId === loopId)
   return [
     ...(userLine ? [userLine] : []),
     ...(loop ? [describeTiles(state, workspaceId, loop, (id) => getView(id)?.instructions)] : []),
-    describeNow(defaultClock()),
+    describeNow(clock),
+    ...(roomTasks.length > 0 ? [describeRoomTasks(roomTasks, clock)] : []),
     describeFiled(sourcesSeen(), state.sources),
   ].join('\n')
 }
 
-export function taskPreface(id: string, commands: readonly string[] = []): string {
-  return buildTaskPreface(id, commands, getState().proMode.enabled)
+export function taskPreface(id: string, commands: readonly string[] = [], inRoom = false): string {
+  return buildTaskPreface(id, commands, getState().proMode.enabled, inRoom)
 }

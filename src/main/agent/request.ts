@@ -1,5 +1,5 @@
 import { shownQuestion, splitAttachments } from '../../shared/agent/attachments'
-import { forkOf, forkReading } from '../../shared/agent/fork'
+import { forkOf, forkReading, portableFork } from '../../shared/agent/fork'
 import { CENTRAL_CHAT, closeOff } from '../../shared/agent/history'
 import { failedNote, mask, STOPPED_NOTE } from '../../shared/agent/transcript'
 import { handedTurn } from '../../shared/agent/typed'
@@ -13,11 +13,12 @@ import { touchLoop } from '../loops/loops'
 import { expandSlash } from '../skills/skills'
 import { agentLoop, type Request, type RunPrompt, type UserTurn } from './agent'
 import { startTerminalSession, waitForThreads } from './thread-file'
+import { threadKey } from './threads'
 import { forgetApprovals } from './tools/shell'
 import type { Tool, ToolContext } from './tools/types'
 import { asTeammateReads } from './utils/private-calls'
 import { begin, emit, end, isStopped, stepsOf } from './utils/runs'
-import { configuredFor, knownSecrets } from './utils/settings'
+import { configured, configuredFor, knownSecrets } from './utils/settings'
 import {
   conversationOf,
   eraOf,
@@ -68,6 +69,8 @@ export interface Asked {
    * the user allowed it for that task.
    */
   task?: string
+  /** Optional model override when run on behalf of a scheduled task with a pinned model. */
+  model?: string | null
   /** The window's own name for the request, said back as the run begins so the window knows which of its questions the run is answering. */
   ask?: string
   /** What of the thread goes on under the request, done in place before the request joins it. */
@@ -114,6 +117,7 @@ export async function userRequest({
   input,
   written,
   task,
+  model,
   added,
   ask,
   goesOn,
@@ -125,13 +129,14 @@ export async function userRequest({
   fromTeammate,
 }: Asked): Promise<string> {
   if (chat === CENTRAL_CHAT) await waitForThreads()
-  const config = configuredFor(chat)
-  const thread = threadFor(chat, config)
+  const threadConfig = configuredFor(chat)
+  const config = model ? configured(model) : threadConfig
+  const thread = threadFor(chat, threadConfig)
   const conversationId = conversationOf(chat)
   // /new starts the thread over, unless the user has a skill by that name, which is theirs to have.
   // A run still in flight goes on and is shown, and what it says does not join the new conversation.
   if (NEW_THREAD.test(input) && expandSlash(input) === null) {
-    startOver(chat, config, thread)
+    startOver(chat, threadConfig, thread)
     forgetApprovals(conversationId)
     if (chat === CENTRAL_CHAT) startTerminalSession()
     // In the chat like anything else said: it marks where what the assistant remembers begins.
@@ -155,7 +160,8 @@ export async function userRequest({
   const era = eraOf(thread)
   // A teammate's prompt reads the room's conversation without what the owner's private sources
   // answered, the earlier read_again included; what it adds still joins the thread as usual.
-  const fork = fromTeammate ? forkReading(thread, asTeammateReads) : forkOf(thread)
+  const baseFork = fromTeammate ? forkReading(thread, asTeammateReads) : forkOf(thread)
+  const fork = threadKey(config) === threadKey(threadConfig) ? baseFork : portableFork(baseFork)
   const turns = fork.turns
   const context: ToolContext = {
     runId: entry.runId,

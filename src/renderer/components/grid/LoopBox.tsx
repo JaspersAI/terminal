@@ -248,6 +248,7 @@ export function LoopBox({
   const bar = useRef<HTMLDivElement>(null)
   const resizeCleanup = useRef<(() => void) | null>(null)
   const readingOlder = useRef(false)
+  const lastSeenActiveAt = useRef(loop.lastActiveAt)
 
   useEffect(() => () => resizeCleanup.current?.(), [])
 
@@ -269,9 +270,11 @@ export function LoopBox({
   }, [asked, zoom])
 
   // What was said before: read on mount with no finished row up, when opened with unread exchanges,
-  // or when a shared room's lastActiveAt timestamp advances remotely while idle.
+  // or when a room's lastActiveAt timestamp advances (e.g. a room-bound scheduled task or shared update) while idle.
   useEffect(() => {
-    if (!shouldRead && (!loop.shareId || working)) return
+    const activeAdvanced = loop.lastActiveAt !== lastSeenActiveAt.current
+    lastSeenActiveAt.current = loop.lastActiveAt
+    if (!shouldRead && (!activeAdvanced || working)) return
     let current = true
     const done = over(now.current)
     readingOlder.current = false

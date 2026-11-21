@@ -22,6 +22,7 @@ import {
 } from '../grid/grid.ts'
 import { panelTargetOfCall, type Task, type TaskCall } from '../tasks/tasks.ts'
 import {
+  findAnyRoom,
   frameOf,
   loopChat,
   loopName,
@@ -637,6 +638,7 @@ export function taskTargetsRoom(
   sourceTabId: string,
   sourceGrids?: Record<number, Grid>,
 ): boolean {
+  if (task.roomId !== undefined) return task.roomId === room.loop.id
   const elementIds = new Set(room.elements.map((e) => e.id))
   const panelIds = new Set(room.panels.flatMap((p) => [p.id, p.elementId]))
   const closedAt = [...(room.loop.log ?? [])].reverse().find((c) => c.change === 'closed')?.at
@@ -901,4 +903,95 @@ export function unifyTabRooms(
   }
 
   return changed ? { grids: nextGrids, loops: nextLoops } : { grids: gridsByTab, loops: loopsByTab }
+}
+
+function findRoomTabInLoops(loopsByTab: Record<string, Loops>, loopId: string): string | undefined {
+  for (const [tabId, loops] of Object.entries(loopsByTab)) {
+    if (loops.list.some((one) => one.id === loopId) || closedLoop(loops, loopId) !== undefined) {
+      return tabId
+    }
+  }
+  return undefined
+}
+
+function publicLoopsOf(loopsByTab: Record<string, Loops>): {
+  loops: Record<string, readonly Loop[]>
+  closedLoops: Record<string, readonly Loop[]>
+} {
+  const loops: Record<string, readonly Loop[]> = {}
+  const closedLoops: Record<string, readonly Loop[]> = {}
+  for (const [tabId, one] of Object.entries(loopsByTab)) {
+    loops[tabId] = one.list
+    if (one.closed && one.closed.length > 0) {
+      closedLoops[tabId] = one.closed.map((c) => c.loop)
+    }
+  }
+  return { loops, closedLoops }
+}
+
+/**
+ * Where a task schedule_task makes belongs. One made in a room is that room's, and a room names no
+ * other. One made in Central is the room it names (open or closed, on any tab, by name or title), or
+ * Central's when it names none.
+ */
+export function resolveScheduledTaskRoom(options: {
+  loopsByTab: Record<string, Loops>
+  workspaceId: string
+  currentLoopId?: string
+  rawRoom?: string
+}): { workspaceId: string; roomId?: string } {
+  const { loopsByTab, workspaceId, currentLoopId } = options
+  const rawRoom = options.rawRoom?.trim() || undefined
+  if (currentLoopId !== undefined) {
+    return ownRoom(loopsByTab, workspaceId, currentLoopId, rawRoom, 'A room can only schedule tasks for itself.')
+  }
+  if (rawRoom === undefined) return { workspaceId }
+  const found = findAnyRoom(publicLoopsOf(loopsByTab), workspaceId, rawRoom)
+  return { workspaceId: found.workspaceId, roomId: found.loop.id }
+}
+
+/** The room update_task moves a task to; an empty name (null) takes it out of its room, which a room cannot. */
+export function resolveUpdatedTaskRoom(options: {
+  loopsByTab: Record<string, Loops>
+  workspaceId: string
+  currentLoopId?: string
+  rawRoom: string
+}): { roomId: string | null; workspaceId?: string } {
+  const { loopsByTab, workspaceId, currentLoopId } = options
+  const rawRoom = options.rawRoom.trim()
+  const refusal = 'A room can only manage tasks for itself.'
+  if (currentLoopId !== undefined) {
+    if (!rawRoom) throw new Error(refusal)
+    return ownRoom(loopsByTab, workspaceId, currentLoopId, rawRoom, refusal)
+  }
+  if (!rawRoom) return { roomId: null }
+  const found = findAnyRoom(publicLoopsOf(loopsByTab), workspaceId, rawRoom)
+  return { roomId: found.loop.id, workspaceId: found.workspaceId }
+}
+
+/** A room's own tasks are on the tab that holds it; a room named that is not this one is refused. */
+function ownRoom(
+  loopsByTab: Record<string, Loops>,
+  workspaceId: string,
+  currentLoopId: string,
+  rawRoom: string | undefined,
+  refusal: string,
+): { workspaceId: string; roomId: string } {
+  const ownerTab = findRoomTabInLoops(loopsByTab, currentLoopId) ?? workspaceId
+  if (rawRoom !== undefined) {
+    const loops = loopsByTab[ownerTab] ?? NO_LOOPS
+    const own = loops.list.find((one) => one.id === currentLoopId) ?? closedLoop(loops, currentLoopId)?.loop
+    if (!own || !named([own], rawRoom)) throw new Error(refusal)
+  }
+  return { workspaceId: ownerTab, roomId: currentLoopId }
+}
+
+/** Whether a room's agent (`currentLoopId`) or Central on `workspaceId` may change or cancel `task`: a room only its own, Central its tab's and any room's. */
+export function canAccessTask(
+  task: Pick<Task, 'workspaceId' | 'roomId'>,
+  workspaceId: string,
+  currentLoopId?: string,
+): boolean {
+  if (currentLoopId !== undefined) return task.roomId === currentLoopId
+  return task.workspaceId === workspaceId || task.roomId !== undefined
 }

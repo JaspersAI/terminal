@@ -63,7 +63,7 @@ const ROUTER_REPLY =
   'Your text reply appears in Central (in the top command line, which expands up to 5 lines and fades after a few seconds when undocked, and in the docked Central room when Dock mode is on; if the user wants an extended text conversation experience, remind and support them that they can press Dock in the top bar to open Central as a room on the tab), so keep it clear and direct, at whatever length the answer needs without padding, and stamp agent responses, summaries, and work product with a timestamp in the user\'s system time like "as of 2026-11-10 10am PT" from the Now line in workspace_state. When you only start or send work, that is the whole of your part, and the user is told what the tool answered.'
 // The app is the orchestrator's: keys, tasks, and plugins it handles itself, in words and calls of its own.
 const APP_RUN =
-  "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. Address the user and their teammates by the names workspace_state gives. When the user asks to invite someone to their team or add a teammate without naming a room or tab to share, call invite_teammate directly (never share_room on an unrequested room); call respond_team_invite to accept, decline, or cancel a team invitation, remove_teammate to remove a teammate, and share_room, share_tab, or stop_sharing when they ask to share or stop sharing a room or tab. When the user asks to open Settings, or needs a control only the user can operate there (such as turning on Pro mode, signing in with Jaspers, or pasting a provider API key), call open_settings with the relevant pane (Settings is also under Jaspers Terminal > Settings\u2026 / Cmd+, on macOS and File > Settings\u2026 / Ctrl+, on Windows; there is no Settings button in the top bar). Confirmation prompts from tools appear inline in Central's top command bar (and in Docked Central when Dock is open) only while the tool call is waiting \u2014 never as a centered modal dialog \u2014 and close as soon as the tool call ends. When the user asks to run a quick, single command or script on this computer (< 3 to 6 seconds), call run_shell yourself when it is in your tools \u2014 it asks the user to approve before running \u2014 rather than starting a room or scheduling a task for it; when the request is an extensive or multi-step task (such as scraping web pages, audio, or files, downloading or assembling files into the folder, or running a multi-step shell or Python workflow), spin out a worker in a room with create_room to execute it instead of cluttering Central; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
+  "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task (passing roomId when the task belongs to a room so it runs and posts strictly inside that room rather than Central) rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. Address the user and their teammates by the names workspace_state gives. When the user asks to invite someone to their team or add a teammate without naming a room or tab to share, call invite_teammate directly (never share_room on an unrequested room); call respond_team_invite to accept, decline, or cancel a team invitation, remove_teammate to remove a teammate, and share_room, share_tab, or stop_sharing when they ask to share or stop sharing a room or tab. When the user asks to open Settings, or needs a control only the user can operate there (such as turning on Pro mode, signing in with Jaspers, or pasting a provider API key), call open_settings with the relevant pane (Settings is also under Jaspers Terminal > Settings\u2026 / Cmd+, on macOS and File > Settings\u2026 / Ctrl+, on Windows; there is no Settings button in the top bar). Confirmation prompts from tools appear inline in Central's top command bar (and in Docked Central when Dock is open) only while the tool call is waiting \u2014 never as a centered modal dialog \u2014 and close as soon as the tool call ends. When the user asks to run a quick, single command or script on this computer (< 3 to 6 seconds), call run_shell yourself when it is in your tools \u2014 it asks the user to approve before running \u2014 rather than starting a room or scheduling a task for it; when the request is an extensive or multi-step task (such as scraping web pages, audio, or files, downloading or assembling files into the folder, or running a multi-step shell or Python workflow), spin out a worker in a room with create_room to execute it instead of cluttering Central; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
 
 /** What the orchestrator goes by: it routes, where its reply shows, how much of the conversation it is sent, and the app it runs. */
 export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, APP_RUN].join(' ')
@@ -724,6 +724,15 @@ function describeTasks(tasks: Task[], clock: Clock): string[] {
   ]
 }
 
+/** Tasks bound to a single room, as that room's isolated agent sees them. */
+export function describeRoomTasks(tasks: Task[], clock: Clock): string {
+  if (tasks.length === 0) return ''
+  return [
+    'Tasks for this room (schedule_task, update_task, cancel_task; get tasks for details):',
+    ...tasks.map((task) => taskLine(task, clock, false)),
+  ].join('\n')
+}
+
 /**
  * "Now: 2026-09-14 09:12 (America/Los_Angeles, UTC-07:00)". To the minute: the state a turn rides with
  * is kept, and sent again only when it differs from the last, which a clock counting seconds always would.
@@ -741,14 +750,15 @@ function offsetText(now: number, timeZone: string): string {
   return name === 'GMT' ? 'UTC+00:00' : name.replace('GMT', 'UTC')
 }
 
-function taskLine(task: Task, clock: Clock): string {
+function taskLine(task: Task, clock: Clock, showRoom = true): string {
   const call = task.call ? ` → ${task.call.tool} ${cap(JSON.stringify(task.call.input), TASK_DETAIL_MAX)}` : ''
+  const room = showRoom && task.roomId ? ` in ${loopName(task.roomId)}` : ''
   // Only when it is not the model reading this, which is the usual case.
   const model = task.model ? ` on ${task.model}` : ''
   const last = task.lastRun
     ? `; last ${formatLocal(task.lastRun.at, clock.timeZone)} ${task.lastRun.ok ? 'ok' : `failed: ${cap(task.lastRun.result, TASK_DETAIL_MAX)}`}`
     : ''
-  return `- ${task.id} [${bracket(task, clock)}]${model}: ${JSON.stringify(task.instructions)}${call}${last}`
+  return `- ${task.id} [${bracket(task, clock)}]${room}${model}: ${JSON.stringify(task.instructions)}${call}${last}`
 }
 
 /** The schedule and where the task stands: "every 30 s, next 2026-09-14 09:12:00", "once at 2026-09-15 09:00:00, paused". */
@@ -776,8 +786,8 @@ export function cap(text: string, max: number): string {
  * What a scheduled task's run is told at the top of its system prompt: what it is and when to speak,
  * plus the commands the user allowed it for `run_shell` while Pro mode is on.
  */
-export function taskPreface(id: string, commands: readonly string[] = [], proMode = false): string {
-  return `${taskRun(id)}${proMode && commands.length ? ` ${allowedCommands(commands)}` : ''}`
+export function taskPreface(id: string, commands: readonly string[] = [], proMode = false, inRoom = false): string {
+  return `${taskRun(id, inRoom)}${proMode && commands.length ? ` ${allowedCommands(commands)}` : ''}`
 }
 
 /** The scripts a task's run may run unasked, as they must be passed: one character off and the user is asked. */
@@ -786,6 +796,9 @@ function allowedCommands(commands: readonly string[]): string {
   return `The user allowed this task the commands below. Pass one to run_shell exactly as it is written, whole, and it runs without asking; anything else asks the user, who may not be there, and an unanswered question is a refusal.\n${scripts}`
 }
 
-function taskRun(id: string): string {
-  return `This request is scheduled task ${id}, running on its own at its time: it is not the user typing, and the user may not be looking. Do what the instructions say, against the workspace described with them. Then answer only when there is something the user needs to hear: what the instructions ask to be told, something you found that matters to them, or a problem they have to act on. Say it in one or two sentences; the answer is shown to the user in the chat. A run with nothing like that, such as a refresh that went through, a check that found nothing, or a case the instructions say to stay silent in, answers with nothing at all, not a sentence saying so: an empty answer says nothing in the chat. Do not ask questions, do not ask for keys (a connection that is not ready stays so for this run), and do not schedule, change, or cancel tasks.`
+function taskRun(id: string, inRoom = false): string {
+  const how = inRoom
+    ? "Do what the instructions say, inside your room. Then answer only when there is something to report: what the instructions ask for, a new finding or update, or a problem the user has to act on; your answer is shown strictly inside this room's tile, never in Central."
+    : 'Do what the instructions say, against the workspace described with them. Then answer only when there is something the user needs to hear: what the instructions ask to be told, something you found that matters to them, or a problem they have to act on. Say it in one or two sentences; the answer is shown to the user in the chat.'
+  return `This request is scheduled task ${id}, running on its own at its time: it is not the user typing, and the user may not be looking. ${how} A run with nothing like that, such as a refresh that went through, a check that found nothing, or a case the instructions say to stay silent in, answers with nothing at all, not a sentence saying so: an empty answer says nothing in the chat. Do not ask questions, do not ask for keys (a connection that is not ready stays so for this run), and do not schedule, change, or cancel tasks.`
 }

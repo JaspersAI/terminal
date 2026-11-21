@@ -28,6 +28,8 @@ export interface ToolContext {
   unread?: boolean
   /** Set when a teammate in a shared room asked the room's agent: viewer and write sources are refused. */
   fromTeammate?: boolean
+  /** A task's run handed work to a room, whose conversation then has what came of it, so Central's does not. */
+  handedToRoom?: () => void
 }
 
 /**

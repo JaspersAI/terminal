@@ -23,6 +23,7 @@ import {
   describeCatalog,
   describeOthers,
   describePlugin,
+  describeRoomTasks,
   describeRound,
   describeTiles,
   describeWork,
@@ -1502,4 +1503,45 @@ test('describeLoops, describeLoop, and ROUTER_RULES identify shared teammate roo
     describeLoops(offlineState, WS, () => 'idle'),
     /- room_5, idle, owned by alice@fund\.com \(offline\): "Shared research memo"\. Tile: e1\./,
   )
+})
+
+test('room-affiliated tasks show their room in workspace state, render per-room task lists, and carry a room-scoped preface', () => {
+  const state = tree(EMPTY_GRID)
+  const roomTask = {
+    id: 't7',
+    workspaceId: WS,
+    roomId: 'f110',
+    instructions: 'Post morning competitive intelligence brief',
+    call: null,
+    executeAt: CLOCK.now,
+    every: 900_000,
+    at: null,
+    speak: 'always' as const,
+    model: null,
+    enabled: true,
+    createdAt: CLOCK.now,
+    runs: 0,
+    lastRun: null,
+    nextAt: CLOCK.now + 900_000,
+    running: false,
+    history: [],
+    commands: [],
+  }
+  state.tasks = [roomTask]
+  const lines = describeContext(state, WS, instructionsFor, CLOCK).split('\n')
+  assert.ok(
+    lines.includes(
+      '- t7 [every 15 min, next 2026-09-14 09:27:00] in room_110: "Post morning competitive intelligence brief"',
+    ),
+  )
+
+  const roomSection = describeRoomTasks([roomTask], CLOCK)
+  assert.match(roomSection, /^Tasks for this room \(schedule_task, update_task, cancel_task; get tasks for details\):/)
+  assert.match(
+    roomSection,
+    /- t7 \[every 15 min, next 2026-09-14 09:27:00\]: "Post morning competitive intelligence brief"/,
+  )
+
+  const preface = taskPreface('t7', [], false, true)
+  assert.match(preface, /shown strictly inside this room's tile, never in Central/)
 })

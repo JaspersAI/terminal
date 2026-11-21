@@ -72,6 +72,8 @@ export interface Handed {
   task?: string
   /** Set when a teammate in a shared room asked the room's agent: viewer and write sources stay hidden and refused. */
   fromTeammate?: boolean
+  /** Optional model override when handed over from a scheduled task with a pinned model. */
+  model?: string | null
 }
 
 /**

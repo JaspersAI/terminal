@@ -9,7 +9,7 @@ import {
   isWakeLag,
   pruneFinished,
   resolveWakeGrace,
-  runNotice,
+  routeTaskOutput,
   shouldDeferTaskRun,
   STARTUP_GRACE_MS,
   TASKS_MAX,
@@ -24,7 +24,7 @@ import {
 } from '../../shared/tasks/tasks'
 import { delta, type Delta } from '../../shared/tasks/delta'
 import { TASK_COMMANDS_MAX } from '../../shared/app/pro-mode'
-import type { TaskRequest } from '../agent/orchestrator'
+import type { TaskAskResult, TaskRequest } from '../agent/orchestrator'
 import { addNotice } from '../app/notices'
 import { getState, subscribe, update } from '../state'
 import { watch } from '../data/store'
@@ -42,10 +42,10 @@ export interface SchedulerDeps {
   toolExists(name: string): boolean
   /** One tool call, the way the orchestrator would make it, on the task's workspace. Resolves with the tool's answer. */
   runCall(call: TaskCall, workspaceId: string): Promise<string>
-  /** The task's instructions as a request to the orchestrator. Resolves with its reply. */
-  runAsk(task: TaskRequest): Promise<string>
-  /** A reply, into the task's workspace's conversation. Resolves whether it went in. */
-  intoChat(workspaceId: string, task: string, reply: string): Promise<boolean>
+  /** The task's instructions as a request: to its room's agent when it has one, else the orchestrator. Resolves with its reply. */
+  runAsk(task: TaskRequest): Promise<TaskAskResult>
+  /** A reply, into the room's conversation when `roomId` is given, else the workspace's. Resolves whether it went in. */
+  intoChat(workspaceId: string, task: string, reply: string, roomId?: string | null): Promise<boolean>
   /** Called when a timer fires late enough past its deadline that the machine woke before resume arrived. */
   onWake?: () => void
   /** Remaining milliseconds to hold off task execution while the machine or auth state is sleeping or waking (0 when ready, Infinity while sleeping). */
@@ -180,16 +180,19 @@ export function scheduleTask(raw: TaskInput, at = now()): Task {
 
 /** Changes what is given and recomputes when the task runs next. With a workspace, only a task of that workspace. */
 export function updateTask(id: string, patch: TaskPatch, at = now(), workspaceId?: string): Task {
-  const merged: Task = { ...getTask(id, workspaceId), ...patch }
+  // The room is what checkTaskInput settles: one taken away (null) is none.
+  const { roomId, ...merged } = { ...getTask(id, workspaceId), ...patch }
   const checked = checkTaskInput(
     {
       workspaceId: merged.workspaceId,
+      roomId,
       instructions: merged.instructions,
       executeAt: merged.executeAt,
       every: merged.every,
       at: merged.at,
       speak: merged.speak,
       call: merged.call,
+      model: merged.model,
       commands: merged.commands,
     },
     CHECK,
@@ -328,16 +331,21 @@ async function execute(task: Task): Promise<void> {
   const at = now()
   let ok = true
   let result = ''
+  let inRoom = false
+  const ask = async (instructions: string): Promise<string> => {
+    const answer = await run.runAsk({
+      id: current.id,
+      instructions,
+      workspaceId: current.workspaceId,
+      roomId: current.roomId,
+      model: current.model,
+      commands: current.commands,
+    })
+    inRoom = answer.inRoom
+    return answer.text
+  }
   try {
-    result = current.call
-      ? await run.runCall(current.call, current.workspaceId)
-      : await run.runAsk({
-          id: current.id,
-          instructions: current.instructions,
-          workspaceId: current.workspaceId,
-          model: current.model,
-          commands: current.commands,
-        })
+    result = current.call ? await run.runCall(current.call, current.workspaceId) : await ask(current.instructions)
   } catch (err) {
     ok = false
     result = err instanceof Error ? err.message : String(err)
@@ -365,13 +373,9 @@ async function execute(task: Task): Promise<void> {
       console.log(`[tasks] ${current.id} watch: changed`)
       // Something moved, so the instructions get their turn, with the change in front of them.
       try {
-        result = await run.runAsk({
-          id: current.id,
-          instructions: `${current.instructions}\n\nWhat you are watching changed. This is the difference since last time:\n\n${found.text}`,
-          workspaceId: current.workspaceId,
-          model: current.model,
-          commands: current.commands,
-        })
+        result = await ask(
+          `${current.instructions}\n\nWhat you are watching changed. This is the difference since last time:\n\n${found.text}`,
+        )
       } catch (err) {
         ok = false
         result = err instanceof Error ? err.message : String(err)
@@ -399,18 +403,29 @@ async function execute(task: Task): Promise<void> {
   const before = getState().tasks.find((t) => t.id === current.id)
   if (!before) return
   replace(afterRun(before, { at, ok, result, ms }))
-  const notice = runNotice(
+  const sink = routeTaskOutput(
     taskLabel(current),
-    { call: current.call, every: current.every, lastRun: before.lastRun, history: before.history },
-    { ok, result, changed: found?.changed ?? false },
+    {
+      roomId: current.roomId,
+      call: current.call,
+      every: current.every,
+      lastRun: before.lastRun,
+      history: before.history,
+    },
+    { ok, result, changed: found?.changed ?? false, inRoom },
   )
-  if (!notice) return
+  if (sink.kind === 'none') return
+  // A room's task says what it found in that room alone: Central's chat and its notices stay out of it.
+  if (sink.kind === 'room') {
+    await run.intoChat(current.workspaceId, current.id, result.trim(), sink.roomId).catch(() => false)
+    return
+  }
   // A run that went well and speaks is the assistant's reply, which joins the conversation, where
   // the chat shows it and a follow-up can refer to it. A failure is the app's to say, so it stays a
   // notice alone. The notice goes either way: the inbox keeps it, and the system shows it while the
   // window is away.
   const inChat = ok && (await run.intoChat(current.workspaceId, current.id, result.trim()).catch(() => false))
-  addNotice('tasks', notice, inChat ? current.workspaceId : undefined)
+  addNotice('tasks', sink.notice, inChat ? current.workspaceId : undefined)
 }
 
 /**

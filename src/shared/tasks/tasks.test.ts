@@ -4,9 +4,11 @@ import { ORCHESTRATOR_TOOLS } from '../loops/loops.ts'
 import {
   afterRun,
   checkCommands,
+  checkRoomId,
   checkTaskInput,
   missingInRun,
   needsShellInRun,
+  routeTaskOutput,
   SHELL_TOOL,
   TASK_EXCLUDED_TOOLS,
   TASK_MODEL_MAX,
@@ -821,4 +823,76 @@ test('formatAsOf and formatLocalStamp format timestamps as "as of YYYY-MM-DD <12
   assert.equal(formatLocalStamp(0, 'America/Los_Angeles'), '')
   assert.equal(formatAsOf(0, 'America/Los_Angeles'), '')
   assert.equal(formatAsOf(Number.NaN, 'America/Los_Angeles'), '')
+})
+
+test('a room is named as room_3, loop_3, or f3 and kept as f3; nothing, null, or empty is no room', () => {
+  assert.equal(checkRoomId(undefined), undefined)
+  assert.equal(checkRoomId(null), undefined)
+  assert.equal(checkRoomId('  '), undefined)
+  assert.equal(checkRoomId('room_110'), 'f110')
+  assert.equal(checkRoomId(' @Room 73 '), 'f73')
+  assert.equal(checkRoomId('loop_91'), 'f91')
+  assert.equal(checkRoomId('f12'), 'f12')
+  assert.throws(() => checkRoomId('not-a-room'), /roomId must name a room/)
+
+  const ok = { toolExists: () => true }
+  const base = {
+    workspaceId: 'ws-1',
+    instructions: 'Scan competitive updates',
+    executeAt: T0,
+    every: 15 * MIN,
+    at: null,
+    speak: 'always' as const,
+    call: null,
+  }
+  assert.equal(checkTaskInput({ ...base, roomId: 'room_110' }, ok).roomId, 'f110')
+  assert.equal('roomId' in checkTaskInput({ ...base, roomId: null }, ok), false)
+  assert.equal('roomId' in checkTaskInput({ ...base, roomId: '' }, ok), false)
+  // Words that name a room do not make the task that room's: only roomId does.
+  assert.equal('roomId' in checkTaskInput({ ...base, instructions: 'Tell me what room_73 found' }, ok), false)
+})
+
+test("a room's task says what it found in that room alone, a failure is a notice wherever, and Central's goes on as before", () => {
+  // A room's task: its words go to its room and nowhere else, and nothing when it has nothing to say.
+  const bound = task({ id: 't10', roomId: 'f110', call: null, instructions: 'Post daily intelligence brief' })
+  assert.deepEqual(routeTaskOutput('t10', bound, { ok: true, result: '### Morning Brief', changed: false }), {
+    kind: 'room',
+    roomId: 'f110',
+  })
+  assert.deepEqual(routeTaskOutput('t10', bound, { ok: true, result: '   ', changed: false }), { kind: 'none' })
+  // It ran in the room, or handed its work to rooms: their conversations have it already.
+  assert.deepEqual(routeTaskOutput('t10', bound, { ok: true, result: 'Done.', changed: false, inRoom: true }), {
+    kind: 'none',
+  })
+  const handing = task({ id: 't28', call: null, instructions: 'Update both sentiment rooms' })
+  assert.deepEqual(routeTaskOutput('t28', handing, { ok: true, result: 'Updated.', changed: false, inRoom: true }), {
+    kind: 'none',
+  })
+
+  // A failure is the app's to say, so it is a notice for a room's task too, by the rule any task's is.
+  const once = { ...bound, every: null }
+  assert.deepEqual(routeTaskOutput('t10', once, { ok: false, result: 'timeout', changed: false }), {
+    kind: 'central',
+    notice: 't10 failed: timeout',
+  })
+
+  // A watch of a room's: quiet while nothing changed, in its room when something did.
+  const roomWatch = task({
+    id: 't30',
+    roomId: 'f110',
+    speak: 'changed',
+    call: { tool: 'run_source', input: { source: 'sec/filings' } },
+  })
+  assert.deepEqual(routeTaskOutput('t30', roomWatch, { ok: true, result: '[]', changed: false }), { kind: 'none' })
+  assert.deepEqual(routeTaskOutput('t30', roomWatch, { ok: true, result: 'New 8-K filed', changed: true }), {
+    kind: 'room',
+    roomId: 'f110',
+  })
+
+  // Central's task, even one whose words name a room, says it in Central's chat with a notice.
+  const centralTask = task({ id: 't31', call: null, instructions: 'Tell me what room_73 found' })
+  assert.deepEqual(routeTaskOutput('t31', centralTask, { ok: true, result: 'It found 3 leads.', changed: false }), {
+    kind: 'central',
+    notice: 't31: It found 3 leads.',
+  })
 })
