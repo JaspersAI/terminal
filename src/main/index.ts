@@ -15,7 +15,11 @@ import { registerLiveIpc, setReplicaLiveReader } from './plugins/live-ipc'
 import { flush } from './persist'
 import { killAllHosts, quittingHosts, stopAllHosts, suspendHosts, wakeHosts } from './plugins/plugin-host'
 import { deferPluginStartup, startPlugins } from './plugins/plugins'
-import { registerBuiltins } from './plugins/registry'
+import { recordPanelThreadApproval } from './plugins/approvals'
+import { getSource, registerBuiltins } from './plugins/registry'
+import { getSyncedBundle } from './plugins/synced-bundles'
+import { viewPlugin } from '../shared/loops/loops'
+import { routePanelSourceCall } from '../shared/plugins/approvals'
 import { startSkills } from './skills/skills'
 import { datasetRows, runSource } from './data/sources'
 import { getState, start, toPublic } from './state'
@@ -179,26 +183,45 @@ app.whenReady().then(async () => {
 
   // A view runs a source and then reads its rows; the orchestrator reaches the same two functions
   // through its tools. Datasets stay in main: only the rows a view asked for cross.
-  ipcMain.handle('source:run', (_event, source: unknown, args: unknown, options: unknown) => {
+  ipcMain.handle('source:run', async (_event, source: unknown, args: unknown, options: unknown) => {
     if (typeof source !== 'string' || !source) throw new Error('A source id is required.')
     const { fresh, workspaceId, panelId } = (typeof options === 'object' && options !== null ? options : {}) as {
       fresh?: unknown
       workspaceId?: unknown
       panelId?: unknown
     }
+    const state = getState()
     // A view names the workspace it is on, since a plugin's code reads that one; main checks it is real.
     if (
       workspaceId !== undefined &&
-      (typeof workspaceId !== 'string' || !getState().workspaces.some((w) => w.id === workspaceId))
+      (typeof workspaceId !== 'string' || !state.workspaces.some((w) => w.id === workspaceId))
     )
       throw new Error('Unknown workspace.')
-    const tab = typeof workspaceId === 'string' ? workspaceId : getState().currentWorkspaceId
-    // A view in a teammate's room is answered by the room's owner, never here: what it asks for is
-    // the room's, and the view itself may be a teammate's code.
+    const tab = typeof workspaceId === 'string' ? workspaceId : state.currentWorkspaceId
+    // A view in a teammate's room is answered by the room's owner, except for `scope: 'viewer'`
+    // sources, which run on the viewer's own terminal (or fail locally when uninstalled).
     const replica = typeof panelId === 'string' ? replicaAt(tab, panelId) : null
-    if (replica) return replicaSource(tab, replica, source, args)
+    const plugin = viewPlugin(source)
+    const localPluginInstalled = plugin !== null && Object.hasOwn(state.plugins, plugin)
+    const registered = getSource(source)
+    const syncedViewerSources =
+      plugin !== null && !localPluginInstalled ? getSyncedBundle(plugin)?.viewerSources : undefined
+    const route = routePanelSourceCall({
+      sourceId: source,
+      isReplica: replica !== null,
+      tilePlugin: replica?.view ? viewPlugin(replica.view) : null,
+      localPluginInstalled,
+      localSourceScope: registered?.def.scope,
+      syncedViewerSources,
+    })
+    if (route.kind === 'plugin-not-installed') throw new Error(route.message)
+    if (route.kind === 'replica-owner' && replica) return replicaSource(tab, replica, source, args)
     // Fresh skips a dataset still good for the arguments: a view refreshing asks for it.
-    return runSource(source, args, { fresh: fresh === true, workspaceId: tab })
+    const result = await runSource(source, args, { fresh: fresh === true, workspaceId: tab })
+    if (replica === null && registered?.def.confirm) {
+      recordPanelThreadApproval(registered.plugin, registered.def.confirm, args, result.text)
+    }
+    return result
   })
   ipcMain.handle('store:query', (_event, sql: unknown, limit: unknown, from: unknown) => {
     if (typeof sql !== 'string') throw new Error('sql has to be a string.')

@@ -1,4 +1,4 @@
-import { describeLoop, describePlugin } from '../../../shared/agent/prompt'
+import { describeLoop, describePlugin, withoutOwnerPrivateSources } from '../../../shared/agent/prompt'
 import { layoutOf } from '../../../shared/grid/grid'
 import { globalRoomLog, searchRooms } from '../../../shared/loops/closed'
 import { findAnyRoom, findLoop, frameOf, loopChat, loopName } from '../../../shared/loops/loops'
@@ -136,13 +136,13 @@ function usePluginTool(loop: string): Tool {
       properties: { id: { type: 'string', description: 'The plugin id, as the list of other plugins names it.' } },
       required: ['id'],
     },
-    async run(input, { workspaceId }) {
+    async run(input, { workspaceId, fromTeammate }) {
       const id = asPathString(input.id).trim()
-      const state = toPublic(getState())
+      const state = fromTeammate ? withoutOwnerPrivateSources(toPublic(getState())) : toPublic(getState())
       if (!(id in state.plugins)) {
         throw new Error(`Unknown plugin ${id}. Installed: ${Object.keys(state.plugins).join(', ') || 'none'}.`)
       }
-      usePlugin(workspaceId, loop, id)
+      if (!fromTeammate) usePlugin(workspaceId, loop, id)
       return describePlugin(state, id, (viewId) => getView(viewId)?.instructions)
     },
   }

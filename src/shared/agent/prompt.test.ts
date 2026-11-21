@@ -34,6 +34,7 @@ import {
   taskPreface,
   tilePrimer,
   toldOf,
+  withoutOwnerPrivateSources,
 } from './prompt.ts'
 import { VIEW_TOOLS } from '../loops/loops.ts'
 import { skill } from '../skills/skill-fixture.ts'
@@ -157,6 +158,7 @@ function tree(
     eye: EYE_OFF,
     jaspers: { signedIn: false, email: null, reason: null },
     collab: EMPTY_COLLAB,
+    sourceApprovals: [],
   }
 }
 
@@ -890,6 +892,56 @@ test("a plugin's own server is not among the connections the model is told of", 
   const own: ConnectionInfo = { ...READY, internal: true }
   const told = describeContext(tree(EMPTY_GRID, {}, {}, { 'jaspers/sec': own }), WS, instructionsFor)
   assert.ok(!told.includes('jaspers/sec'), told)
+})
+
+test('teammate-triggered room prompts never see viewer-scoped, noStore, or write sources', () => {
+  const slackSend: SourceInfo = {
+    id: 'slack/send',
+    plugin: 'slack',
+    description: 'Post a message to Slack.',
+    connection: null,
+    tool: null,
+    internal: false,
+    parameterNames: 'channel, text',
+    scope: 'viewer',
+    noStore: true,
+    writes: true,
+  }
+  const slackPlugin: PluginInfo = {
+    id: 'slack',
+    dir: '/h/plugins/slack',
+    status: 'ready',
+    version: 1,
+    sources: ['slack/send'],
+    views: [],
+    errors: [],
+    capabilities: [],
+    frames: [],
+    secrets: [],
+    connections: [],
+    skills: [],
+    host: 'ready',
+    jobs: [],
+    usage: { calls: 0, input: 0, output: 0 },
+    origin: 'local',
+    install: null,
+    built: null,
+  }
+  const base = tree(
+    EMPTY_GRID,
+    { 'core/note': NOTE },
+    { 'screener/screen': SCREEN, 'slack/send': slackSend },
+    {},
+    { slack: slackPlugin },
+  )
+  const ownerPrompt = describeInstalledFor(base, ['screener', 'slack'], [])
+  assert.ok(ownerPrompt.includes('slack/send'))
+
+  const teammateState = withoutOwnerPrivateSources(base)
+  const teammatePrompt = describeInstalledFor(teammateState, ['screener', 'slack'], [])
+  assert.ok(!teammatePrompt.includes('slack/send'), 'teammate prompt hides private/write sources')
+  assert.ok(teammatePrompt.includes('screener/screen'), 'room-scoped read sources remain visible')
+  assert.ok(!describePlugin(teammateState, 'slack').includes('slack/send'), 'use_plugin hides them too')
 })
 
 test('a tool no source reaches says what it takes, so it is not called bare to find out', () => {

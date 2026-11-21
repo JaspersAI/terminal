@@ -53,6 +53,11 @@ defineSource({
 - `ctx.fetch` reaches only the hosts in `hosts`.
 - An API that takes its key as HTTP Basic auth, like `curl -u KEY:`, gets it as the address's user: `ctx.fetch('https://${secret:apikey}:@api.example.com/v1/rates')` sends it as an `Authorization: Basic` header and the address without it.
 - `internal: true` keeps a source for the plugin's own views; the assistant is not offered it.
+- `scope: 'viewer'` runs a panel's call on the viewer's own terminal with their own credentials in a shared room (returning `PLUGIN_NOT_INSTALLED` locally if uninstalled) instead of forwarding to the room owner, and keeps it off teammate-triggered room prompts. Only the plugin's own views run it this way; another plugin's view in a shared room cannot.
+- `noStore: true` skips caching, dataset retention, SQLite filing, shared-room part sync, and Eye frame capture while a view rendering it is visible. The assistant reads an answer in the run that asked for it, and its saved conversation keeps a note in the answer's place.
+- A connection with any of these sources is reached only through the sources its plugin declares: a generic `core/mcp` call on a declared tool keeps to that source's policy, and the connection's other tools are not offered to the assistant.
+- `writes: true` marks a source with external side effects so calls serialize rather than batching as read-only, and get a 30-second execution cap in Central.
+- `confirm: { destinationArg, threadArg?, labelArg?, actionLabel? }` asks the user in the command bar before an LLM run writes to an unapproved destination (or destination + thread), remembers explicit approvals in Settings > Plugins, and fails closed when unattended.
 - Return an array of objects, or an object with the array under `rows`, `companies`, `items`, `results`, or `data`. Those become the rows and the rest becomes `meta`. Anything else comes back as text.
 - An object's `citations`, each `{ id, title, url?, quote? }`, are sources the assistant can cite in the chat as `[^id]`: see [Citations in the chat](connections-and-data.md#citations-in-the-chat).
 
@@ -156,7 +161,7 @@ export default definePlugin({
 
 A source's `mcp` names one of the plugin's own connections, or another plugin's as `<plugin>/<name>`. A server only the plugin's own code should drive, such as a local store its views and agents work through, is declared `internal: true`: plugins still call its tools with `ctx.tools`, and the assistant is never offered them, so it goes through the plugin's views and sources instead. The first time something needs the key, the assistant asks for it in a secure field; Settings > Plugins takes it too. The key is sealed with the OS keychain and never reaches the plugin, the assistant, or the logs. An `oauth` connection to a server that signs its users in through Jaspers (its protected resource metadata names `https://account.jsprai.com`) takes the app's sign-in with Jaspers as its bearer, with nothing for the plugin to declare; any other `oauth` server is authorized from Settings under Plugins.
 
-Before one of the plugin's own sources runs, the app asks for every declared key that is not set yet. A key that only some calls need, such as a live account's beside a paper account's, is declared `{ label: "Live API key", optional: true }`: it is not asked for up front, and a `ctx.fetch` that fills it in while it is unset fails and names `set_secret`.
+Before one of the plugin's own sources runs, the app asks for every declared key that is not set yet. A key that only some calls need, such as a live account's beside a paper account's, is declared `{ label: "Live API key", optional: true }`: it is not asked for up front, and a `ctx.fetch` that fills it in while it is unset fails and names `set_secret`. A secret that supports a public-client PKCE OAuth 2.0 flow can also declare `oauth: { clientId, authorizeUrl, tokenUrl, loopbackPort, authorizeParams }`, offering a 1-click browser sign-in (`useBridge().authorizeSecret(key)` and **Sign in** in Settings > Plugins) that seals the resulting token and refresh token in the local OS keychain with zero backend storage.
 
 ## Debugging
 

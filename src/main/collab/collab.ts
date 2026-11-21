@@ -98,12 +98,16 @@ function bundleOf(plugin: string): SyncedBundle | null {
   } catch {
     // A plugin need not have styles of its own.
   }
+  const viewerSources = Object.values(state.sources)
+    .filter((source) => source.plugin === plugin && source.scope === 'viewer')
+    .map((source) => source.id)
   const bundle: SyncedBundle = {
     plugin,
     bundleJs,
     ...(bundleCss ? { bundleCss } : {}),
     frames: info.frames,
     views: Object.values(state.views).filter((view) => view.plugin === plugin),
+    ...(viewerSources.length > 0 ? { viewerSources } : {}),
   }
   built.set(plugin, { version: info.version, bundle })
   return bundle
@@ -158,7 +162,7 @@ const engine = createCollabEngine({
   hasPlugin: (plugin) => Object.hasOwn(getState().plugins, plugin),
   emptyGrids: (state) => withWindows({}, state.windows, state.gridSize),
 
-  runPrompt: (workspaceId, loopId, input) => sendToLoop(workspaceId, loopId, { typed: input }),
+  runPrompt: (workspaceId, loopId, input) => sendToLoop(workspaceId, loopId, { typed: input, fromTeammate: true }),
   fileMessage: (workspaceId, loopId, question) => {
     const loop = (getState().loops[workspaceId] ?? NO_LOOPS).list.find((one) => one.id === loopId)
     fileDirectExchange(loopChat(workspaceId, loop ?? loopId), question, HUMAN_ROOM_ANSWER)

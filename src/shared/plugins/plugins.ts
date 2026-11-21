@@ -11,6 +11,7 @@ import { untilAborted } from '../abort.ts'
 import { messageOf } from '../rpc.ts'
 import { checkConnection, secretRefs, type Connection } from './connections.ts'
 import { RESERVED_PLUGIN_NAMES } from './id.ts'
+import { checkSecretOAuthSpec } from './secret-oauth.ts'
 
 /** A plugin id, a folder name, a source name, a view name: all the same shape. */
 const NAME = /^[a-z0-9][a-z0-9-]*$/
@@ -210,7 +211,12 @@ function secretList(value: unknown, id: string): Record<string, SecretSpec> {
     const optional = entry['optional']
     if (optional !== undefined && typeof optional !== 'boolean')
       throw new Error(`Plugin ${id}: secret ${key} has optional as true or false; ${show(optional)} is neither.`)
-    out[key] = optional ? { label: entry['label'], optional: true } : { label: entry['label'] }
+    const oauth = entry['oauth'] !== undefined ? checkSecretOAuthSpec(entry['oauth'], id, key) : undefined
+    out[key] = {
+      label: entry['label'],
+      ...(optional ? { optional: true } : {}),
+      ...(oauth ? { oauth } : {}),
+    }
   }
   return out
 }
@@ -243,6 +249,23 @@ function source(value: unknown, id: string, plugin: string, connections: Record<
   if (mcp) checkMcpRef(def['mcp'] as string, id, plugin, connections)
   if (def['internal'] !== undefined && typeof def['internal'] !== 'boolean')
     throw new Error(`Source ${id}: internal is true or false.`)
+  if (def['scope'] !== undefined && def['scope'] !== 'room' && def['scope'] !== 'viewer')
+    throw new Error(`Source ${id}: scope is 'room' or 'viewer'.`)
+  if (def['noStore'] !== undefined && typeof def['noStore'] !== 'boolean')
+    throw new Error(`Source ${id}: noStore is true or false.`)
+  if (def['writes'] !== undefined && typeof def['writes'] !== 'boolean')
+    throw new Error(`Source ${id}: writes is true or false.`)
+  if (def['confirm'] !== undefined) {
+    const confirm = asRecord(def['confirm'])
+    if (!confirm || typeof confirm['destinationArg'] !== 'string' || !confirm['destinationArg'].trim()) {
+      throw new Error(`Source ${id}: confirm needs { destinationArg }.`)
+    }
+    for (const opt of ['threadArg', 'labelArg', 'actionLabel'] as const) {
+      if (confirm[opt] !== undefined && (typeof confirm[opt] !== 'string' || !confirm[opt].trim())) {
+        throw new Error(`Source ${id}: confirm.${opt} has to be a non-empty string.`)
+      }
+    }
+  }
   return def as unknown as SourceDef
 }
 

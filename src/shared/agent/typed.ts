@@ -70,6 +70,8 @@ export interface Handed {
   written?: string
   /** The scheduled task whose run handed it over: the run it starts is on that task's limits. */
   task?: string
+  /** Set when a teammate in a shared room asked the room's agent: viewer and write sources stay hidden and refused. */
+  fromTeammate?: boolean
 }
 
 /**

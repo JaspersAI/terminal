@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { Turn } from '../llm/llm.ts'
-import { forkOf, moved, portableFork, putBack, standing } from './fork.ts'
+import { forkOf, forkReading, moved, portableFork, putBack, standing } from './fork.ts'
+import { withoutAnswers } from './history.ts'
 
 const asked = (text: string): Turn => ({ role: 'user', text })
 const replied = (text: string, raw: unknown[] | null = null): Turn => ({ role: 'assistant', text, toolCalls: [], raw })
@@ -140,4 +141,33 @@ test('a run begun on another model goes back with none of that model\u2019s payl
   assert.equal(moved(thread, fork), false)
   putBack(thread, portableFork(fork))
   assert.deepEqual(thread, [asked('one'), replied('1'), asked('two'), replied('2')])
+})
+
+test('a run that reads the thread its own way adds to it and leaves what it read differently as it was', () => {
+  const call = { id: 'c1', name: 'run_source', input: { source: 'slack/read' } }
+  const thread: Turn[] = [
+    asked('read the thread'),
+    { role: 'assistant', text: '', toolCalls: [call], raw: [THOUGHT] },
+    { role: 'tool', results: [{ callId: 'c1', output: 'private words', isError: false }] },
+    replied('done'),
+  ]
+  const hidden = (turns: Turn[]): Turn[] =>
+    withoutAnswers(
+      turns,
+      (one) => one.id === 'c1',
+      () => '[hidden]',
+    )
+  const fork = forkReading(thread, hidden)
+  const result = fork.turns[2]
+  assert.equal(result?.role === 'tool' && result.results[0]!.output, '[hidden]')
+  assert.equal(fork.turns[0], thread[0], 'turns it did not change are the same objects')
+  assert.equal(moved(thread, fork), true)
+
+  fork.turns.push(asked('what did it say?'), replied('I cannot see it', [THOUGHT, WORDS]))
+  putBack(thread, fork)
+  const kept = thread[2]
+  assert.equal(kept?.role === 'tool' && kept.results[0]!.output, 'private words')
+  assert.equal(thread.length, 6)
+  const last = thread[5]
+  assert.deepEqual(last?.role === 'assistant' && last.raw, [WORDS], 'its thinking does not go back')
 })

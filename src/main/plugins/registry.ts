@@ -56,6 +56,8 @@ export interface ViewDef {
   instructions?: string
   /** The sources this view runs itself. */
   renders?: RenderRef[]
+  /** Set on a synced replica view whose rendered source is `noStore`. */
+  noStore?: boolean
   /** One line about what the view is showing, for the model's map. */
   summarize?: (state: unknown, output: unknown) => string
 }
@@ -131,6 +133,7 @@ export function registerSyncedViews(plugin: string, syncedViews: readonly ViewIn
       state: z.record(z.string(), z.unknown()),
       output: z.record(z.string(), z.unknown()),
       renders: info.renders,
+      ...(info.noStore ? { noStore: true } : {}),
     })
     changed = true
   }
@@ -166,12 +169,15 @@ export function allSources(): RegisteredSource[] {
 export function viewInfos(): Record<string, ViewInfo> {
   const infos: Record<string, ViewInfo> = {}
   for (const def of views.values()) {
+    const renders = (def.renders ?? []).map((ref) => renderId(def.id, ref)).filter((id): id is string => id !== null)
+    const noStore = def.noStore === true || renders.some((id) => sources.get(id)?.def.noStore === true)
     infos[def.id] = {
       id: def.id,
       plugin: def.plugin,
       title: def.title,
-      renders: (def.renders ?? []).map((ref) => renderId(def.id, ref)).filter((id): id is string => id !== null),
+      renders,
       stateSchema: z.toJSONSchema(def.state) as Record<string, unknown>,
+      ...(noStore ? { noStore: true } : {}),
     }
   }
   return infos
@@ -198,6 +204,9 @@ export function sourceInfos(): Record<string, SourceInfo> {
       internal: def.internal === true,
       parameterNames: parameterNames(sourceParameters(def, tool)),
       ...(usesTools ? { usesTools: true } : {}),
+      ...(def.scope ? { scope: def.scope } : {}),
+      ...(def.noStore ? { noStore: true } : {}),
+      ...(def.writes ? { writes: true } : {}),
     }
   }
   return infos

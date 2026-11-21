@@ -18,6 +18,7 @@ import { allThreads, clearCentralExchanges, readCentralExchanges, saveThread } f
 import { jaspersHome } from '../home'
 import { getState } from '../state'
 import type { ThreadStore } from './threads'
+import { asKept } from './utils/private-calls'
 import { knownSecrets } from './utils/settings'
 
 // The assistant's threads, kept between sessions, each under its chat's key. Read once at startup,
@@ -206,7 +207,7 @@ export const threadFile: ThreadStore = {
 
   save(chat, key, turns) {
     if (turns.length === 0) return
-    saveThread(chat, Date.now(), key, JSON.stringify(settle(turns)))
+    saveThread(chat, Date.now(), key, JSON.stringify(asKept(settle(turns))))
   },
 }
 

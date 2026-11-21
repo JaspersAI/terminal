@@ -503,6 +503,17 @@ export function onMissingSecret(ask: (id: string) => Promise<void>): void {
   askForMissingSecret = ask
 }
 
+/** Refreshes a plugin's own browser sign-ins that are near expiry. Main sets it at startup; see onSecretRefresh. */
+let refreshSecrets: ((plugin: string) => Promise<void>) | null = null
+
+/**
+ * What a call does first with a plugin whose key is its own browser sign-in: refresh it when near
+ * expiry. A refreshed key connects its connections again with it, and the call waits for that.
+ */
+export function onSecretRefresh(refresh: (plugin: string) => Promise<void>): void {
+  refreshSecrets = refresh
+}
+
 /**
  * One tool call on one connection. A connection missing its key asks the user for it first; one that
  * is still not ready says what it needs instead.
@@ -513,6 +524,12 @@ export async function call(
   args: Record<string, unknown>,
   opts: { signal?: AbortSignal; timeoutMs?: number; from?: Caller } = {},
 ): Promise<unknown> {
+  const owner = getConnection(id)?.plugin
+  if (refreshSecrets && owner) {
+    await untilAborted(refreshSecrets(owner), opts.signal)
+    const reconnecting = connecting.get(id)
+    if (reconnecting) await untilAborted(reconnecting, opts.signal)
+  }
   if (askForMissingSecret && !clients.has(id) && getState().connections[id]?.status === 'needs-secret') {
     await untilAborted(askForMissingSecret(id), opts.signal)
   }

@@ -136,6 +136,130 @@ test('no frame is taken while a key field or a question is on screen', () => {
   assert.equal(captureBlocked({}), null)
 })
 
+test('no frame is taken while a view rendering a noStore source is visible, and frames resume when it is hidden or minimized', () => {
+  const views = {
+    'slack/thread': { renders: ['slack/read-thread'] },
+    'replica/thread': { renders: [], noStore: true },
+    'core/table': { renders: [] },
+    'core/note': { renders: [] },
+  }
+  const sources = {
+    'slack/read-thread': { noStore: true },
+    'yfinance/quotes': { noStore: false },
+  }
+
+  // Visible inside an open room frame in window 1 -> blocked.
+  const visibleInRoom = {
+    currentWorkspaceId: 'ws-1',
+    workspaces: [{ id: 'ws-1' }, { id: 'ws-2' }],
+    views,
+    sources,
+    grids: {
+      'ws-1': {
+        1: {
+          elements: [
+            { id: 'e1', panelId: 'p1', mode: 'tiled' },
+            { id: 'e2', panelId: 'p2', mode: 'tiled', parent: 'e1' },
+          ],
+          panels: [
+            { id: 'p1', content: { kind: 'frame' as const } },
+            { id: 'p2', content: { kind: 'view' as const, view: 'slack/thread' } },
+          ],
+        },
+      },
+      'ws-2': { 1: { elements: [], panels: [] } },
+    },
+  }
+  assert.match(captureBlocked(visibleInRoom) ?? '', /non-stored view/)
+
+  // Switching to another tab where it is not shown -> unblocked.
+  assert.equal(captureBlocked({ ...visibleInRoom, currentWorkspaceId: 'ws-2' }), null)
+
+  // Minimizing the tile or its parent room frame -> unblocked.
+  assert.equal(
+    captureBlocked({
+      ...visibleInRoom,
+      grids: {
+        ...visibleInRoom.grids,
+        'ws-1': {
+          1: {
+            ...visibleInRoom.grids['ws-1'][1],
+            elements: [
+              { id: 'e1', panelId: 'p1', mode: 'tiled' },
+              { id: 'e2', panelId: 'p2', mode: 'minimized', parent: 'e1' },
+            ],
+          },
+        },
+      },
+    }),
+    null,
+  )
+  assert.equal(
+    captureBlocked({
+      ...visibleInRoom,
+      grids: {
+        ...visibleInRoom.grids,
+        'ws-1': {
+          1: {
+            ...visibleInRoom.grids['ws-1'][1],
+            elements: [
+              { id: 'e1', panelId: 'p1', mode: 'minimized' },
+              { id: 'e2', panelId: 'p2', mode: 'tiled', parent: 'e1' },
+            ],
+          },
+        },
+      },
+    }),
+    null,
+  )
+
+  // Covered by another maximized room frame -> unblocked.
+  assert.equal(
+    captureBlocked({
+      ...visibleInRoom,
+      grids: {
+        ...visibleInRoom.grids,
+        'ws-1': {
+          1: {
+            elements: [
+              { id: 'e1', panelId: 'p1', mode: 'tiled' },
+              { id: 'e2', panelId: 'p2', mode: 'tiled', parent: 'e1' },
+              { id: 'e3', panelId: 'p3', mode: 'maximized' },
+            ],
+            panels: [
+              { id: 'p1', content: { kind: 'frame' as const } },
+              { id: 'p2', content: { kind: 'view' as const, view: 'slack/thread' } },
+              { id: 'p3', content: { kind: 'view' as const, view: 'core/note' } },
+            ],
+          },
+        },
+      },
+    }),
+    null,
+  )
+
+  // Visible in a detached extension window (window 2) or via synced replica ViewInfo.noStore -> blocked.
+  assert.match(
+    captureBlocked({
+      currentWorkspaceId: 'ws-2',
+      windows: [2],
+      workspaces: [{ id: 'ws-2' }, { id: 'ws-1', window: 2 }],
+      views,
+      sources,
+      grids: {
+        'ws-2': { 1: { elements: [], panels: [] } },
+        'ws-1': {
+          2: {
+            elements: [{ id: 'e9', panelId: 'p9', mode: 'tiled' }],
+            panels: [{ id: 'p9', content: { kind: 'view' as const, view: 'replica/thread' } }],
+          },
+        },
+      },
+    }) ?? '',
+    /non-stored view/,
+  )
+})
+
 const batch = (session: string, at: number, bytes: number): QueuedBatch => ({ session, at, bytes, files: 1 })
 
 test('nothing is dropped while the queue is inside its limits', () => {

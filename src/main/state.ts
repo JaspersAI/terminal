@@ -112,6 +112,8 @@ export interface MainState {
    * said so. Persisted in state.json, read in app-consent.ts, and never sent to a window.
    */
   allowedApps: Record<string, string>
+  /** Approved write destinations and bound threads for `confirm` sources. Persisted in state.json. */
+  sourceApprovals: AppState['sourceApprovals']
 }
 
 /** Eye in main: what is stored, plus the counters of this session. */
@@ -283,6 +285,7 @@ export function toPublic(state: MainState): AppState {
     // Whether, and as whom: the tokens themselves stay here.
     jaspers: { signedIn: state.jaspers.tokens !== null, email: state.jaspers.email, reason: state.jaspers.reason },
     collab: state.collab,
+    sourceApprovals: state.sourceApprovals,
     eye: {
       recording: state.eye.recording,
       asked: state.eye.consent === EYE_CONSENT,

@@ -16,6 +16,7 @@ import { evaluatePlugin } from './plugin-eval'
 import { removeHost, startHost } from './plugin-host'
 import type { PluginInfo } from '../../shared/state'
 import { registerConnections, secretValues, unregisterConnections } from './connections'
+import { registerPluginSecretOAuth, unregisterPluginSecretOAuth } from './secret-oauth-service'
 import { useUnpackedEsbuild } from './esbuild-path'
 import { addNotice } from '../app/notices'
 import { homePluginsRoot, pluginRoots } from '../home'
@@ -144,6 +145,7 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
       if (refused) throw new Error(refused)
       lastBuilt.set(id, { dir, code, bundle, stamp, shell })
       // Its connections first, so a source's line in the prompt finds the connection it runs on.
+      registerPluginSecretOAuth(id, validated.secrets)
       registerConnections(id, dir, validated.connections)
       registerPlugin(id, validated.sources, viewDefs(validated), validated.capabilities)
       const currentPlugin = getState().plugins[id]
@@ -167,11 +169,12 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
         errors: [],
         capabilities: validated.capabilities,
         frames: validated.frames,
-        secrets: Object.entries(validated.secrets).map(([key, { label, optional }]) => ({
+        secrets: Object.entries(validated.secrets).map(([key, { label, optional, oauth }]) => ({
           key,
           label,
           set: values[key] !== undefined,
-          ...(optional ? { optional } : {}),
+          ...(optional ? { optional: true } : {}),
+          ...(oauth ? { oauth: { hasClientId: Boolean(oauth.clientId?.trim()) } } : {}),
         })),
         connections: Object.keys(validated.connections).map((name) => `${id}/${name}`),
         host,
@@ -289,6 +292,7 @@ function rescanSkills(id: string): void {
 function remove(id: string): void {
   lastBuilt.delete(id)
   unregisterPlugin(id)
+  unregisterPluginSecretOAuth(id)
   unregisterConnections(id)
   unregisterPluginSkills(id)
   void removeHost(id, 'plugin removed')

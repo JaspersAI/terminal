@@ -346,8 +346,10 @@ async function loop({
       }
       // Kept before the calls are run: one of them may take as long as a build.
       keep?.()
-      const readsOnly = (call: { name: string }): boolean =>
-        available.find((tool) => tool.name === call.name)?.readsOnly === true
+      const readsOnly = (call: { name: string; input: Record<string, unknown> }): boolean => {
+        const flag = available.find((tool) => tool.name === call.name)?.readsOnly
+        return typeof flag === 'function' ? flag(call.input) : flag === true
+      }
       const earlyJoined = !signal.aborted && shouldDeferForAdded(reply.toolCalls, readsOnly) ? (added?.() ?? []) : []
       // All results from one round go back together, in one turn, with the state they left behind.
       const results = await runCalls(

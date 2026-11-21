@@ -6,6 +6,7 @@ import {
   type Connection,
 } from '../../shared/plugins/connections'
 import { stableStringify } from '../../shared/data/hash'
+import { openSecretAccessToken } from '../../shared/plugins/secret-oauth'
 import type { ConnectionInfo } from '../../shared/state'
 import { connect, forget } from './mcp'
 import { unseal } from '../secrets'
@@ -49,7 +50,7 @@ export function secretValues(plugin: string): Record<string, string> {
   const sealed = getState().secrets[plugin] ?? {}
   const open: Record<string, string> = {}
   for (const [key, value] of Object.entries(sealed)) {
-    const plain = unseal(value)
+    const plain = openSecretAccessToken(unseal(value))
     if (plain) open[key] = plain
   }
   return open

@@ -2,7 +2,7 @@ import { useId, useState, type FormEvent, type ReactElement, type ReactNode } fr
 import { TEAM_CHAT_PLUGIN_ID, TEAM_CHAT_PLUGIN_TITLE } from '../../../shared/collab/team-chat'
 import { BROWSER_PLUGIN_ID, BROWSER_PLUGIN_TITLE } from '../../../shared/grid/browser'
 import type { ConnectionSummary } from '../../../shared/paths'
-import type { Action, ConnectionInfo, PluginInfo } from '../../../shared/state'
+import type { Action, ConnectionInfo, PluginInfo, SourceApproval } from '../../../shared/state'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
 import { Directory } from './Directory'
@@ -176,6 +176,8 @@ function PluginSection({ plugin, connections, installer }: SectionProps): ReactE
   // Two lines, not one falling back to the other: a dispatch that failed stays until the next one
   // starts, and it must not stand in front of the build error its author is here to read.
   const [failed, setFailed] = useState<string | null>(null)
+  const sourceApprovals = useAppState((s) => s.sourceApprovals)
+  const approvals = sourceApprovals.filter((a) => a.plugin === plugin.id)
   const builtIn = plugin.dir === 'built-in'
   return (
     <section aria-label={`Plugin ${plugin.id}`}>
@@ -203,6 +205,7 @@ function PluginSection({ plugin, connections, installer }: SectionProps): ReactE
         {connections.map((connection) => (
           <ConnectionBlock key={connection.id} connection={connection} onFail={setFailed} />
         ))}
+        {approvals.length > 0 && <ApprovalsBlock approvals={approvals} onFail={setFailed} />}
         {plugin.origin === 'installed' && plugin.install && (
           <InstalledRow plugin={plugin} install={plugin.install} installer={installer} />
         )}
@@ -251,6 +254,57 @@ interface InstalledProps {
   plugin: PluginInfo
   install: NonNullable<PluginInfo['install']>
   installer: Install
+}
+
+const APPROVAL_VIA: Record<SourceApproval['via'], string> = {
+  tile: 'bound thread',
+  prompt: 'standing approval',
+  task: 'scheduled task',
+}
+
+function ApprovalsBlock({
+  approvals,
+  onFail,
+}: {
+  approvals: readonly SourceApproval[]
+  onFail: (message: string | null) => void
+}): ReactElement {
+  return (
+    <div className="border-b border-border py-3 text-sm" aria-label="Approved destinations">
+      <div className="font-medium">Approved destinations</div>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        Channels or threads the assistant and scheduled tasks may write to without asking again.
+      </p>
+      <ul className="mt-2 flex flex-col gap-1.5">
+        {approvals.map((entry) => {
+          const title = entry.label ? `${entry.label} (${entry.destination})` : entry.destination
+          const scope = entry.thread ? `thread ${entry.thread}` : 'whole channel'
+          return (
+            <li key={entry.id} className="flex items-center justify-between gap-3 border border-border px-2.5 py-1.5">
+              <div className="min-w-0">
+                <div className="truncate font-mono text-xs">{title}</div>
+                <div className="text-xs text-muted-foreground">
+                  {scope} · {APPROVAL_VIA[entry.via]}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onFail(null)
+                  void Promise.resolve(dispatch({ type: 'sourceApproval.remove', id: entry.id })).catch(
+                    (err: unknown) => onFail(errorMessage(err)),
+                  )
+                }}
+                className={BUTTON}
+              >
+                Remove
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
 }
 
 /** An installed plugin: where it came from, a new version from there, or away with it. */
@@ -419,6 +473,8 @@ interface SecretProps {
 
 function SecretRow({ plugin, secret, onFail }: SecretProps): ReactElement {
   const [value, setValue] = useState('')
+  const [clientId, setClientId] = useState('')
+  const [signingIn, setSigningIn] = useState(false)
   const field = useId()
 
   function save(event: FormEvent<HTMLFormElement>): void {
@@ -433,23 +489,72 @@ function SecretRow({ plugin, secret, onFail }: SecretProps): ReactElement {
     )
   }
 
+  function signIn(): void {
+    if (signingIn) return
+    onFail(null)
+    setSigningIn(true)
+    dispatch({
+      type: 'plugin.authorizeSecret',
+      plugin,
+      key: secret.key,
+      ...(clientId.trim() ? { clientId: clientId.trim() } : {}),
+    })
+      .catch((err: unknown) => onFail(errorMessage(err)))
+      .finally(() => setSigningIn(false))
+  }
+
+  function clear(): void {
+    onFail(null)
+    dispatch({ type: 'plugin.clearSecret', plugin, key: secret.key }).catch((err: unknown) => onFail(errorMessage(err)))
+  }
+
   return (
-    <Row label={secret.label} htmlFor={field} hint={secret.set ? 'Saved' : 'Not set'}>
-      <form onSubmit={save} className="flex gap-2">
-        <input
-          id={field}
-          name={secret.key}
-          type="password"
-          value={value}
-          autoComplete="off"
-          placeholder={secret.set ? 'Paste to replace' : 'Paste the value'}
-          onChange={(event) => setValue(event.target.value)}
-          className={`${FIELD} min-w-0 flex-1 font-mono`}
-        />
-        <button type="submit" className={BUTTON}>
-          Save
-        </button>
-      </form>
+    <Row label={secret.label} htmlFor={field} hint={secret.set ? 'Saved in system keychain' : 'Not set'}>
+      <div className="flex flex-col items-end gap-2">
+        {secret.oauth && (
+          <div className="flex w-full flex-wrap items-center justify-end gap-2">
+            {!secret.oauth.hasClientId && (
+              <input
+                type="text"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                placeholder="OAuth Client ID"
+                className={`${FIELD} min-w-0 flex-1 font-mono`}
+              />
+            )}
+            <button
+              type="button"
+              disabled={signingIn || (!secret.oauth.hasClientId && !clientId.trim())}
+              onClick={signIn}
+              className={PRIMARY}
+            >
+              {signingIn ? 'Waiting for browser…' : secret.set ? 'Reconnect' : 'Sign in'}
+            </button>
+            {secret.set && (
+              <button type="button" onClick={clear} className={BUTTON}>
+                Disconnect
+              </button>
+            )}
+          </div>
+        )}
+        <form onSubmit={save} className="flex w-full gap-2">
+          <input
+            id={field}
+            name={secret.key}
+            type="password"
+            value={value}
+            autoComplete="off"
+            placeholder={
+              secret.set ? 'Paste token to replace' : secret.oauth ? 'Or paste token directly' : 'Paste the value'
+            }
+            onChange={(event) => setValue(event.target.value)}
+            className={`${FIELD} min-w-0 flex-1 font-mono`}
+          />
+          <button type="submit" className={BUTTON}>
+            Save
+          </button>
+        </form>
+      </div>
     </Row>
   )
 }

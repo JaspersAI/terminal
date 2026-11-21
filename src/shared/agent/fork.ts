@@ -25,6 +25,18 @@ export function forkOf(thread: Turn[]): Fork {
   return { turns: [...thread], own: thread.length, length: thread.length, tail: thread[thread.length - 1] ?? null }
 }
 
+/**
+ * A copy for a run that reads the thread as `reads` gives it, not as it is. What it read is not the
+ * thread, so it is taken as moved from the start: only what the run adds goes back, without its
+ * thinking, and what the thread holds stays as it was.
+ */
+export function forkReading(thread: Turn[], reads: (turns: Turn[]) => Turn[]): Fork {
+  return { turns: reads([...thread]), own: thread.length, length: thread.length, tail: MOVED }
+}
+
+/** The tail of a copy that never matches its thread's, so the copy always reads as moved. */
+const MOVED: Turn = { role: 'user', text: '' }
+
 /** Whether the thread has changed since the copy was taken: another run joined it, or it was cut. */
 export function moved(thread: Turn[], fork: Fork): boolean {
   return thread.length !== fork.length || (thread[thread.length - 1] ?? null) !== fork.tail

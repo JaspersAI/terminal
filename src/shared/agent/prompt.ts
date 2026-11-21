@@ -15,6 +15,7 @@ import { MAIN_WINDOW } from '../grid/windows.ts'
 import { cellName, formatRect, gridMap, layoutOf, type GridSize, type Panel } from '../grid/grid.ts'
 import { frameOf, loopName, notPlaced, type Loop, type LoopStatus } from '../loops/loops.ts'
 import { unsetRequiredSecret } from '../plugins/plugins.ts'
+import { isOwnerPrivateSource } from '../plugins/approvals.ts'
 import type { Exchange } from './transcript.ts'
 import { stateShape } from './view-state.ts'
 import { parameterNames } from '../data/tool-parameters.ts'
@@ -318,6 +319,32 @@ export function describePlugin(
     ...describePlugins(told.plugins),
     ...describeSkills(told),
   ].join('\n')
+}
+
+/**
+ * A copy of `state` with owner-private sources (`scope: 'viewer'`, `noStore`, or `writes`) stripped,
+ * and the connections they run on, so a room agent running on a teammate's prompt never sees them in
+ * its prompt or through `use_plugin`.
+ */
+export function withoutOwnerPrivateSources(state: AppState): AppState {
+  const hidden = Object.values(state.sources).filter((s) => isOwnerPrivateSource(s))
+  if (hidden.length === 0) return state
+  const privateConnections = new Set(hidden.flatMap((s) => (s.connection ? [s.connection] : [])))
+  const sources = Object.fromEntries(Object.entries(state.sources).filter(([, s]) => !isOwnerPrivateSource(s)))
+  const connections = Object.fromEntries(
+    Object.entries(state.connections).filter(([id]) => !privateConnections.has(id)),
+  )
+  const plugins = Object.fromEntries(
+    Object.entries(state.plugins).map(([id, info]) => [
+      id,
+      {
+        ...info,
+        sources: info.sources.filter((src) => Object.hasOwn(sources, src)),
+        connections: info.connections.filter((conn) => !privateConnections.has(conn)),
+      },
+    ]),
+  )
+  return { ...state, sources, connections, plugins }
 }
 
 /** What is installed, as a loop's agent is told: its own plugins' and the built-ins in full, the rest by name. */

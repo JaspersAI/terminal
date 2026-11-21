@@ -24,7 +24,7 @@ import { call as callTool, waitForConnections } from './mcp'
 import { complete } from '../llm/llm'
 import { jaspersWakeDelayMs } from '../jaspers/jaspers'
 import { clearLive, deleteLive, hasLive, setLive } from './live'
-import { secretValues } from './connections'
+import { freshSecretValues } from './secret-oauth-service'
 import { fileNotice } from '../app/notices'
 import { setPluginInfo } from './plugin-info'
 import { waitForPluginRegistration } from './plugins'
@@ -191,7 +191,7 @@ export async function runInHost(id: string, name: string, args: unknown, workspa
       // stay in the plugin's own process, which is where an MCP server's env already puts them.
       return await host.rpc.request(
         'source.run',
-        { name, args, workspaceId, secrets: secretValues(id) },
+        { name, args, workspaceId, secrets: await freshSecretValues(id) },
         timeout.signal,
       )
     } catch (err) {
