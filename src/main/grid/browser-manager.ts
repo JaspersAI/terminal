@@ -1217,8 +1217,10 @@ export function createBrowserManager(deps: BrowserManagerDeps): BrowserManager {
       active.persistedUrl = isGoogleAuthUrl(rawUrl) ? active.persistedUrl || rawUrl : rawUrl
       active.title = ''
       active.theater = isVideoPageUrl(rawUrl)
-      persistEntryState(entry, { touch: false })
+      // Load first: until it starts, the tab is idle on the page it showed, and persisting reads the
+      // live address, which would write that page back over the one just asked for.
       loadTabAddress(entry, active, rawUrl)
+      persistEntryState(entry, { touch: false })
       return
     }
 

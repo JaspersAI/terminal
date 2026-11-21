@@ -848,7 +848,7 @@ export function readBrowserState(state: unknown): BrowserState {
   const foundIndex = tabs.findIndex((t) => t.id === rawActiveId)
   const activeIndex = foundIndex >= 0 ? foundIndex : 0
 
-  if (explicitUrl && explicitUrl !== tabs[activeIndex]!.url && !(activeIndex > 0 && explicitUrl === tabs[0]!.url)) {
+  if (explicitUrl && explicitUrl !== tabs[activeIndex]!.url) {
     tabs[activeIndex] = { id: tabs[activeIndex]!.id, url: explicitUrl }
   }
 

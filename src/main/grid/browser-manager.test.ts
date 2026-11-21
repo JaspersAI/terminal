@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   BROWSER_VIEW,
   googleAuthUserAgent,
+  readBrowserState,
   type BrowserBounds,
   type BrowserSnapshot,
 } from '../../shared/grid/browser.ts'
@@ -226,12 +227,19 @@ function createHarness(
         if (!grid.panels.some((p) => p.id === panelId || p.elementId === panelId)) continue
         const updated = replacePanelState(grid, panelId, { ...nextState }).grid
         if (updated === grid) return
-        state = {
-          ...state,
-          grids: { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], [Number(winKey)]: updated } },
+        const write = (): void => {
+          state = {
+            ...state,
+            grids: { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], [Number(winKey)]: updated } },
+          }
         }
-        // Mirror main's synchronous state.ts:update subscriber notification.
-        manager.sweep(state)
+        // Inside `dispatchGrid`, as in main's state.ts:update, a write made while subscribers are being
+        // told of a change lands after them, with the grid it computed now. Elsewhere it lands at once.
+        if (notifying) pending.push(write)
+        else {
+          write()
+          manager.sweep(state)
+        }
         return
       }
     },
@@ -245,6 +253,26 @@ function createHarness(
 
   const updateGrid = (workspaceId: string, nextGrid: Grid): void => {
     state = { ...state, grids: { ...state.grids, [workspaceId]: { ...state.grids[workspaceId], 1: nextGrid } } }
+  }
+
+  // Main's state.ts:update: subscribers (the sweep) hear of one change at a time, and a write a
+  // subscriber makes meanwhile is queued and applied after them.
+  let notifying = false
+  const pending: (() => void)[] = []
+  const dispatchGrid = (workspaceId: string, nextGrid: Grid): void => {
+    notifying = true
+    try {
+      let step: (() => void) | undefined = () => updateGrid(workspaceId, nextGrid)
+      for (let steps = 0; step; steps++) {
+        if (steps === 100) throw new Error('The sweep kept writing panel state: a write loop.')
+        step()
+        manager.sweep(state)
+        step = pending.shift()
+      }
+    } finally {
+      pending.length = 0
+      notifying = false
+    }
   }
 
   return {
@@ -263,6 +291,7 @@ function createHarness(
       state = next
     },
     updateGrid,
+    dispatchGrid,
   }
 }
 
@@ -1294,4 +1323,50 @@ test('preserves multi-tab state across room close, reopen, cross-tab move, non-c
   assert.deepEqual(panelOf(ws2Reopened.grids[1]!, panelId).state, { url: 'https://www.bloomberg.com/live' })
 
   manager.closeAll()
+})
+
+test('a state.url write navigates the active tab and is kept, not overwritten by the page still showing, while other tabs stay', async () => {
+  const { manager, placed, views, getState, dispatchGrid } = createHarness({
+    hydrationDelaysMs: [],
+    hydrationWindowMs: 0,
+    postActionDelayMs: 0,
+  })
+  const panelId = placed.panel.id
+  const panelState = () => getState().grids['ws-1']![1]!.panels.find((p) => p.id === panelId)!.state
+
+  // One tab, settled on its page: the assistant sets state.url.
+  await manager.sync(1, 'ws-1', panelId, { x: 16, y: 60, width: 680, height: 420 }, true)
+  assert.equal(views[0]!.getURL(), 'https://www.bloomberg.com/live')
+  dispatchGrid('ws-1', setPanelState(getState().grids['ws-1']![1]!, panelId, ['url'], 'https://www.sec.gov').grid)
+  assert.equal(views[0]!.getURL(), 'https://www.sec.gov/')
+  assert.equal(readBrowserState(panelState()).url, 'https://www.sec.gov/')
+  assert.equal(panelState()['tabs'], undefined)
+
+  // Two tabs, the second active and settled: the write navigates it and keeps the first.
+  await manager.navigate(1, 'ws-1', panelId, 'new-tab', 'https://www.bloomberg.com/')
+  assert.equal(views[1]!.getURL(), 'https://www.bloomberg.com/')
+  dispatchGrid('ws-1', setPanelState(getState().grids['ws-1']![1]!, panelId, ['url'], 'https://x.com/home').grid)
+  assert.equal(views[1]!.getURL(), 'https://x.com/home')
+  assert.equal(views[0]!.getURL(), 'https://www.sec.gov/')
+  const persisted = readBrowserState(panelState())
+  assert.equal(persisted.url, 'https://x.com/home')
+  assert.equal(persisted.activeTabId, 't2')
+  assert.deepEqual(
+    persisted.tabs?.map((t) => [t.id, t.url]),
+    [
+      ['t1', 'https://www.sec.gov/'],
+      ['t2', 'https://x.com/home'],
+    ],
+  )
+
+  // The address another tab already shows is still the active tab's to load.
+  dispatchGrid('ws-1', setPanelState(getState().grids['ws-1']![1]!, panelId, ['url'], 'https://www.sec.gov/').grid)
+  assert.equal(views[1]!.getURL(), 'https://www.sec.gov/')
+  assert.deepEqual(
+    readBrowserState(panelState()).tabs?.map((t) => [t.id, t.url]),
+    [
+      ['t1', 'https://www.sec.gov/'],
+      ['t2', 'https://www.sec.gov/'],
+    ],
+  )
 })
