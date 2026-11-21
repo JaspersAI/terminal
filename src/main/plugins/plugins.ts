@@ -23,6 +23,7 @@ import { homePluginsRoot, pluginRoots } from '../home'
 import { hubItem } from '../hub/hub'
 import { readInstallRecord } from './install-record'
 import { latestReleaseTag } from './install-stage'
+import { fetchAndCachePluginIcon, inspectPluginIconSync } from './plugin-icon'
 import { setPluginInfo } from './plugin-info'
 import { checkPluginUpdates, type PluginUpdateDeps } from './plugin-updates'
 import { isNewerVersion } from '../../shared/plugins/semver'
@@ -56,6 +57,8 @@ const registrationGate = createPluginRegistrationGate()
 let releaseStartup: (() => void) | null = null
 /** Last good build output per plugin so unchanged watcher rescans do not bump version or restart hosts. */
 const lastBuilt = new Map<string, { dir: string; code: string; bundle: string; stamp: string; shell: boolean }>()
+/** Active background favicon fetches keyed by plugin id so concurrent rescans coalesce cleanly. */
+const iconFetches = new Map<string, string>()
 let checkingUpdates: Promise<void> | null = null
 let updatesStarted = false
 
@@ -127,6 +130,7 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
     registerPluginSkills(id, dir)
     try {
       const outPath = bundlePath(id)
+      const cacheDir = path.dirname(outPath)
       const code = await bundlePlugin(dir, outPath)
       let bundle = ''
       try {
@@ -136,6 +140,12 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
       }
       if (getState().plugins[id]?.status === 'ready' && samePluginBuild(previousBuilt, { dir, code, bundle, shell })) {
         lastBuilt.set(id, { dir, code, bundle, stamp, shell })
+        const iconNow = inspectPluginIconSync(id, dir, cacheDir, evaluatePlugin(code, id))
+        const prev = getState().plugins[id]
+        if (prev && ((prev.icon ?? null) !== iconNow.icon || (prev.iconKey ?? null) !== iconNow.iconKey)) {
+          setPluginInfo(id, { icon: iconNow.icon, iconKey: iconNow.iconKey })
+        }
+        queuePluginIconFetch(id, dir, cacheDir, iconNow)
         return
       }
       const validated = evaluatePlugin(code, id)
@@ -152,6 +162,7 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
       const version = (currentPlugin?.version ?? 0) + 1
       const values = secretValues(id)
       const nextProvenance = provenance(dir, currentPlugin?.install?.available ?? null)
+      const resolvedIcon = inspectPluginIconSync(id, dir, cacheDir, validated)
       const host = validated.hasBackend
         ? currentPlugin?.host && currentPlugin.host !== 'none'
           ? currentPlugin.host
@@ -178,9 +189,12 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
         })),
         connections: Object.keys(validated.connections).map((name) => `${id}/${name}`),
         host,
+        icon: resolvedIcon.icon,
+        iconKey: resolvedIcon.iconKey,
       })
       console.log(`plugins: ${id} ready (v${version})`)
       finishRegistration()
+      queuePluginIconFetch(id, dir, cacheDir, resolvedIcon)
       // Code the plugin runs after registration runs in its own process, on this build: from now when
       // the plugin defines start, and from its first source run when it does not.
       if (validated.hasBackend)
@@ -204,6 +218,26 @@ async function build(id: string, dir: string, fromWatch = false): Promise<void> 
 }
 
 /** A plugin's views as the registry holds them: prefixed ids, and renders read back as ids. */
+function queuePluginIconFetch(
+  id: string,
+  dir: string,
+  cacheDir: string,
+  resolved: ReturnType<typeof inspectPluginIconSync>,
+): void {
+  if (resolved.pendingOrigins.length === 0 || iconFetches.get(id) === resolved.sourceKey) return
+  const key = resolved.sourceKey
+  iconFetches.set(id, key)
+  void fetchAndCachePluginIcon(id, cacheDir, resolved.pendingOrigins, key)
+    .then((iconUrl) => {
+      if (iconFetches.get(id) === key && iconUrl && getState().plugins[id]?.dir === dir) {
+        setPluginInfo(id, { icon: iconUrl })
+      }
+    })
+    .finally(() => {
+      if (iconFetches.get(id) === key) iconFetches.delete(id)
+    })
+}
+
 function viewDefs(validated: ValidatedPlugin): ViewDef[] {
   const idOf = new Map<unknown, string>(
     Object.entries(validated.sources).map(([name, def]) => [def, `${validated.id}/${name}`]),
@@ -291,6 +325,7 @@ function rescanSkills(id: string): void {
 
 function remove(id: string): void {
   lastBuilt.delete(id)
+  iconFetches.delete(id)
   unregisterPlugin(id)
   unregisterPluginSecretOAuth(id)
   unregisterConnections(id)

@@ -8,6 +8,7 @@ import { dispatch, useAppState } from '../../lib/state'
 import { Directory } from './Directory'
 import { HubItems, PublishToHub } from './HubPublish'
 import { StatusLine } from './InstallPrompt'
+import { PluginMark } from './PluginMark'
 import { useInstall, type Install } from './use-install'
 import { BUTTON, FIELD, PRIMARY, Row } from './Row'
 import { Entry, ListHeading, PinnedEntry, PlusIcon, Split } from './Split'
@@ -82,19 +83,15 @@ export function PluginList({ plugins, connections, installs = false }: ListProps
               <ul>
                 {list.map((plugin) => {
                   const { version, status, alert } = pluginLine(plugin, connectionsOf(plugin))
+                  const title = pluginTitle(plugin.id)
                   return (
                     <Entry
                       key={plugin.id}
                       id={plugin.id}
                       selected={shown.id === plugin.id}
                       onSelect={() => setOpen(plugin.id)}
-                      title={
-                        plugin.id === BROWSER_PLUGIN_ID
-                          ? BROWSER_PLUGIN_TITLE
-                          : plugin.id === TEAM_CHAT_PLUGIN_ID
-                            ? TEAM_CHAT_PLUGIN_TITLE
-                            : plugin.id
-                      }
+                      icon={<PluginMark id={plugin.id} title={title} plugin={plugin} size="xs" />}
+                      title={title}
                       line={
                         <>
                           {version} · <span className={alert ? 'text-destructive' : undefined}>{status}</span>
@@ -172,6 +169,10 @@ interface SectionProps {
  * plugin, and the bridge deliberately carries no such call. A value goes straight to main and never
  * comes back; all the section ever learns is that it is set.
  */
+function pluginTitle(id: string): string {
+  return id === BROWSER_PLUGIN_ID ? BROWSER_PLUGIN_TITLE : id === TEAM_CHAT_PLUGIN_ID ? TEAM_CHAT_PLUGIN_TITLE : id
+}
+
 function PluginSection({ plugin, connections, installer }: SectionProps): ReactElement {
   // Two lines, not one falling back to the other: a dispatch that failed stays until the next one
   // starts, and it must not stand in front of the build error its author is here to read.
@@ -179,20 +180,18 @@ function PluginSection({ plugin, connections, installer }: SectionProps): ReactE
   const sourceApprovals = useAppState((s) => s.sourceApprovals)
   const approvals = sourceApprovals.filter((a) => a.plugin === plugin.id)
   const builtIn = plugin.dir === 'built-in'
+  const title = pluginTitle(plugin.id)
   return (
     <section aria-label={`Plugin ${plugin.id}`}>
       {/* Clear of the close cross in the corner. */}
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pr-8">
-        <h3 className="text-base font-semibold">
-          {plugin.id === BROWSER_PLUGIN_ID
-            ? BROWSER_PLUGIN_TITLE
-            : plugin.id === TEAM_CHAT_PLUGIN_ID
-              ? TEAM_CHAT_PLUGIN_TITLE
-              : plugin.id}
-        </h3>
-        <span className={`text-sm ${PLUGIN_COLOR[plugin.status]}`}>{PLUGIN_STATUS[plugin.status]}</span>
-        {/* Builds, not the package's version, which the Installed row and the list show. */}
-        <span className="text-sm text-muted-foreground">{builtIn ? 'built-in' : `build ${plugin.version}`}</span>
+      <div className="flex items-center gap-3 pr-8">
+        <PluginMark id={plugin.id} title={title} plugin={plugin} size="sm" />
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h3 className="text-base font-semibold">{title}</h3>
+          <span className={`text-sm ${PLUGIN_COLOR[plugin.status]}`}>{PLUGIN_STATUS[plugin.status]}</span>
+          {/* Builds, not the package's version, which the Installed row and the list show. */}
+          <span className="text-sm text-muted-foreground">{builtIn ? 'built-in' : `build ${plugin.version}`}</span>
+        </div>
       </div>
       {builtIn && plugin.built?.purpose && <p className="mt-1 text-sm text-muted-foreground">{plugin.built.purpose}</p>}
       {plugin.errors[0] && <p className="mt-1 text-sm break-words text-destructive">{plugin.errors[0]}</p>}

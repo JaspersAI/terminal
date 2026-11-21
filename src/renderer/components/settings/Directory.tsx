@@ -1,8 +1,8 @@
 import { useId, useState, type ReactElement } from 'react'
 import { BROWSER_PLUGIN_ID } from '../../../shared/grid/browser'
 import type { HubItem } from '../../../shared/hub/hub'
+import type { PluginInfo } from '../../../shared/state'
 import {
-  initials,
   itemKey,
   searchItems,
   standing,
@@ -13,6 +13,7 @@ import {
 } from '../../lib/hub-directory'
 import { useAppState } from '../../lib/state'
 import { StatusLine } from './InstallPrompt'
+import { PluginMark } from './PluginMark'
 import type { Install } from './use-install'
 import { BUTTON, FIELD } from './Row'
 
@@ -20,34 +21,6 @@ import { BUTTON, FIELD } from './Row'
 // plugin there by stars. An entry installs through the three calls a pasted link uses, so nothing
 // about trust changes: main checks the archive against the hash Hub sent, and the prompt still asks.
 // While Hub cannot be reached, each part says so with Retry, and installing from a link still works.
-
-/**
- * A logo per plugin id, bundled from `assets/providers/<id>.png`. Dropping a file in there is the
- * whole of adding one; an item with no file falls back to its title's letters.
- */
-const LOGOS = import.meta.glob<string>('../../assets/providers/*.png', {
-  eager: true,
-  query: '?url',
-  import: 'default',
-})
-
-/** The square in front of a title: the plugin's logo, or its letters when we bundle none. */
-function Mark({ item, size }: { item: HubItem; size: 'sm' | 'lg' }): ReactElement {
-  const logo = LOGOS[`../../assets/providers/${item.name}.png`]
-  const box = size === 'lg' ? 'h-12 w-12' : 'h-8 w-8'
-  if (logo)
-    return <img src={logo} alt="" aria-hidden className={`${box} shrink-0 border border-border object-contain`} />
-  return (
-    <span
-      aria-hidden
-      className={`${box} flex shrink-0 items-center justify-center border border-border bg-muted font-mono tracking-tight text-muted-foreground ${
-        size === 'lg' ? 'text-[11px]' : 'text-[9px]'
-      }`}
-    >
-      {initials(item.title)}
-    </span>
-  )
-}
 
 /**
  * The Plugins pane's way in, and onboarding's last step: the featured plugins, the rest of Hub, and
@@ -71,6 +44,7 @@ export function Directory({ installer, search }: { installer: Install; search: b
 
   const entry = (item: HubItem): EntryProps => ({
     item,
+    plugin: plugins[item.name],
     standing: item.name === BROWSER_PLUGIN_ID ? 'installed' : standing(item, plugins),
     installing: installing === item.name,
     busy: installer.busy || installing !== null,
@@ -194,6 +168,7 @@ function Unreachable({ error, onRetry }: { error: string; onRetry: () => void })
 
 interface EntryProps {
   item: HubItem
+  plugin?: PluginInfo | undefined
   standing: Standing
   /** Being installed with no prompt, as what a Jaspers sign-up comes with is. */
   installing: boolean
@@ -204,11 +179,11 @@ interface EntryProps {
 
 /** A featured plugin: what it is, who published it, and the way in. */
 function FeatureCard(props: EntryProps): ReactElement {
-  const { item, line } = props
+  const { item, plugin, line } = props
   return (
     <div className="flex flex-col border border-border p-4">
       <div className="flex items-start gap-3">
-        <Mark item={item} size="lg" />
+        <PluginMark id={item.name} title={item.title} plugin={plugin} size="lg" />
         <div className="min-w-0">
           <h5 className="text-sm font-semibold">{item.title}</h5>
           <Facts item={item} />
@@ -226,11 +201,11 @@ function FeatureCard(props: EntryProps): ReactElement {
 
 /** Any other plugin: its mark, what it is, who published it, and where it stands. */
 function SourceRow(props: EntryProps): ReactElement {
-  const { item, line } = props
+  const { item, plugin, line } = props
   return (
     <li className="border-b border-border py-2.5">
       <div className="flex items-center gap-3">
-        <Mark item={item} size="sm" />
+        <PluginMark id={item.name} title={item.title} plugin={plugin} size="sm" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm">{item.title}</p>
           <p className="truncate text-xs text-muted-foreground">{item.description}</p>
