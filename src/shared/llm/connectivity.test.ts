@@ -9,6 +9,7 @@ import {
   isConnectivityMessage,
   isLocalUnreachableMessage,
   isLoopbackUrl,
+  isServerRefusedMessage,
 } from './connectivity.ts'
 
 test('isLoopbackUrl distinguishes local model servers from cloud endpoints', () => {
@@ -90,6 +91,41 @@ test('classifyFetchFailure and formatFetchFailure turn raw fetch/DNS/offline err
   )
   assert.equal(isLocalUnreachableMessage(localMsg), true)
   assert.equal(isConnectivityMessage(localMsg), false)
+
+  // Any other network failure on a loopback server (a reset as Ollama restarts, a port fetch will not
+  // use) is the local server's too, never the internet's.
+  const localUrl = 'http://localhost:11434/v1/chat/completions'
+  const localReset = new TypeError('fetch failed', {
+    cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+  })
+  const badPort = new TypeError('fetch failed', { cause: new Error('bad port') })
+  for (const [err, url] of [
+    [localReset, localUrl],
+    [badPort, 'http://localhost:1/v1/chat/completions'],
+  ] as const) {
+    assert.equal(classifyFetchFailure(err, url, true), 'local-unreachable', String(err.cause))
+    const msg = formatFetchFailure('Ollama', err, url, true)
+    assert.equal(isLocalUnreachableMessage(msg), true, msg)
+    assert.equal(isConnectivityMessage(msg), false, msg)
+  }
+
+  // A remote server that refuses the connection was reached: the service is down, not the internet.
+  const serverRefused = new TypeError('fetch failed', {
+    cause: Object.assign(new Error('connect ECONNREFUSED 203.0.113.7:443'), { code: 'ECONNREFUSED' }),
+  })
+  assert.equal(
+    classifyFetchFailure(serverRefused, 'https://llm.example.com/v1/chat/completions', true),
+    'server-refused',
+  )
+  const refusedMsg = formatFetchFailure('Custom', serverRefused, 'https://llm.example.com/v1/chat/completions', true)
+  assert.equal(
+    refusedMsg,
+    "Couldn't connect to Custom (llm.example.com) — the server refused the connection. The service may be down; try again shortly.",
+  )
+  assert.equal(isServerRefusedMessage(refusedMsg), true)
+  assert.equal(isConnectivityMessage(refusedMsg), false)
+  // Offline outranks a refusal: with no network, the refusal is not the service's.
+  assert.equal(classifyFetchFailure(serverRefused, 'https://llm.example.com/v1/chat/completions', false), 'offline')
 })
 
 test('classifyFetchFailure leaves auth refusals, timeouts, sleep interrupts, and TLS errors untouched', () => {
@@ -133,7 +169,10 @@ test('connectivityRetryHeadline, isConnectivityMessage, and connectivityBannerTe
 
   assert.equal(isConnectivityMessage(offlineMsg), true)
   assert.equal(isConnectivityMessage(issueMsg), true)
-  assert.equal(isConnectivityMessage('Jaspers: fetch failed'), true)
+  // Bare `fetch failed` says nothing of where: it may be a local server's, so it is not taken for the internet's.
+  assert.equal(isConnectivityMessage('Jaspers: fetch failed'), false)
+  assert.equal(isConnectivityMessage('Ollama: fetch failed (read ECONNRESET)'), false)
+  assert.equal(isConnectivityMessage('Voice: getaddrinfo ENOTFOUND api.openai.com'), true)
   assert.equal(isConnectivityMessage('Anthropic returned 401: invalid x-api-key'), false)
 
   assert.equal(connectivityRetryHeadline(offlineMsg), "No internet connection — couldn't reach Jaspers")
@@ -165,7 +204,7 @@ test('connectivityRetryHeadline, isConnectivityMessage, and connectivityBannerTe
   assert.match(
     connectivityBannerText({ browserOnline: true, recentConnectivityIssue: true, dismissed: false, localLlm: false }) ??
       '',
-    /Connection issue — Terminal could not reach the internet/,
+    /^Connection issue — the last request could not get through\. This clears once one does\.$/,
   )
   assert.equal(
     connectivityBannerText({ browserOnline: false, recentConnectivityIssue: true, dismissed: true, localLlm: false }),

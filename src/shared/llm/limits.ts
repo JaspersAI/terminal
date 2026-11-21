@@ -2,11 +2,16 @@
 // try and how long to wait for it, and which one means the conversation has outgrown its model. Pure.
 
 import { everyText, WAKE_GRACE_MS } from '../tasks/tasks.ts'
-import { connectivityRetryHeadline, isConnectivityMessage, isLocalUnreachableMessage } from './connectivity.ts'
+import {
+  connectivityRetryHeadline,
+  isConnectivityMessage,
+  isLocalUnreachableMessage,
+  isServerRefusedMessage,
+} from './connectivity.ts'
 
 /** What an in-flight provider request throws when system sleep or wake drops its socket. */
 export const SLEEP_INTERRUPTED_MESSAGE = 'connection dropped across sleep'
-/** How many quick retries a connectivity/offline failure performs before surfacing a clear message to the user. */
+/** How many quick retries a service that could not be reached (offline, no route, refused) gets before its message is the answer. */
 export const CONNECTIVITY_RETRIES_MAX = 2
 
 /** Runs at most `max` of the given calls at a time; the rest wait their turn, in order. */
@@ -25,10 +30,18 @@ export function createLimiter(max: number): <T>(run: () => Promise<T>) => Promis
   }
 }
 
+/**
+ * A remote service that could not be reached, for want of a network or because it refused: worth a
+ * try or two, never the long waits a busy provider gets, so the answer is on screen in seconds.
+ */
+function couldNotReach(message: string): boolean {
+  return isConnectivityMessage(message) || isServerRefusedMessage(message)
+}
+
 /** A provider's rate limit, its server failing or overloaded, a timeout, or the connection dropping. Not a refusal, not an abort. */
 export function isRetryable(message: string): boolean {
   if (isLocalUnreachableMessage(message)) return false
-  if (isConnectivityMessage(message)) return true
+  if (couldNotReach(message)) return true
   if (/returned (408|429|5\d\d)\b/.test(message)) return true
   if (/returned 4\d\d\b/.test(message)) return false
   return /fetch failed|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|across sleep|overloaded|nothing arrived for \d+ s|aborted due to timeout|timed out|\bterminated\b|other side closed|premature close/i.test(
@@ -119,7 +132,7 @@ export function shouldRetryRoundError(
   if (timedOut && (restateOnTimeout || abortOnSleep || attempt >= 1)) {
     return { action: 'throw', sleepInterrupted: false }
   }
-  if (isConnectivityMessage(message) && attempt >= CONNECTIVITY_RETRIES_MAX) {
+  if (couldNotReach(message) && attempt >= CONNECTIVITY_RETRIES_MAX) {
     return { action: 'throw', sleepInterrupted: false }
   }
   const waitMs = isRetryable(message) ? retryWait(attempt, effectiveRetryAfterMs, random) : null
