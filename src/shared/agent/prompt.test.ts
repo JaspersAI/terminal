@@ -1624,11 +1624,16 @@ test('describeWork labels room-bound tasks, describeOtherTabTasks lists tasks on
   assert.match(centralWork, /- t5 \(in Rates\) \[every 15 min/)
   assert.match(centralWork, /- t6 \(room_4 in Rates\) \[every 15 min/)
 
-  // Room 4 sees only its own task t6, not Central's multi-room t5 or room_5's t7.
-  const room4Lines = describeRoomTasks(multiTabState, 'ws-rates', room4, CLOCK).join('\n')
+  // Room 4 sees only its own task t6: not Central's t5 or t8, though they name room_4, nor room_5's t7.
+  const central = multiTabState.tasks.find((t) => t.id === 't5')!
+  const withCentral = {
+    ...multiTabState,
+    tasks: [...multiTabState.tasks, { ...central, id: 't8', instructions: 'Call update_room on room_4' }],
+  }
+  const room4Lines = describeRoomTasks(withCentral, room4, CLOCK).join('\n')
   assert.match(room4Lines, /Tasks in this room/)
   assert.match(room4Lines, /- t6 \(room_4\)/)
-  assert.doesNotMatch(room4Lines, /t4|t5|t7/)
+  assert.doesNotMatch(room4Lines, /t4|t5|t7|t8/)
 
   const centralTaskPreface = taskPreface('t5', [], false, false)
   assert.match(centralTaskPreface, /never repeat, summarize, or announce a room's scheduled update in Central/i)

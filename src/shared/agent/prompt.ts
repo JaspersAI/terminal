@@ -14,7 +14,6 @@ import { everyText, formatAsOf, formatLocal, taskStatus, type Task } from '../ta
 import { MAIN_WINDOW } from '../grid/windows.ts'
 import { cellName, formatRect, gridMap, layoutOf, type GridSize, type Panel } from '../grid/grid.ts'
 import { frameOf, loopName, notPlaced, type Loop, type LoopStatus } from '../loops/loops.ts'
-import { taskForRoom } from '../loops/closed.ts'
 import { unsetRequiredSecret } from '../plugins/plugins.ts'
 import { isOwnerPrivateSource } from '../plugins/approvals.ts'
 import type { Exchange } from './transcript.ts'
@@ -403,14 +402,8 @@ export function describeOtherTabTasks(state: AppState, workspaceId: string, cloc
  * The time, and any scheduled tasks belonging to this room alone (keeping the room agent blind to
  * other rooms' and workspace-wide tasks).
  */
-export function describeRoomTasks(
-  state: AppState,
-  workspaceId: string,
-  loop: Loop,
-  clock: Clock = defaultClock(),
-): string[] {
-  const grids = state.grids[workspaceId] ?? {}
-  const mine = state.tasks.filter((t) => taskForRoom(t, loop, workspaceId, grids))
+export function describeRoomTasks(state: AppState, loop: Loop, clock: Clock = defaultClock()): string[] {
+  const mine = state.tasks.filter((t) => t.loop === loop.id)
   if (mine.length === 0) return [describeNow(clock)]
   return [
     describeNow(clock),

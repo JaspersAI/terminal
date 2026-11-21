@@ -19,7 +19,6 @@ import {
   reopenRoomTasks,
   roomCounts,
   searchRooms,
-  taskForRoom,
   unifyTabRooms,
   withoutLoop,
   withoutRoomTasks,
@@ -781,10 +780,6 @@ test('room-scoped tasks (task.loop) follow their room across tabs, skip cleanly 
     instructions: 'Summarize other stories',
     call: null,
   })
-
-  // taskForRoom matches by task.loop even when instructions name no element or room number.
-  assert.equal(taskForRoom(roomTask, both.list[0]!, 't1', t1Grids), true)
-  assert.equal(taskForRoom(roomTask, both.list[1]!, 't1', t1Grids), false)
 
   // Moving f1 onto t2 moves its room-scoped task with it while leaving f2's task on t1.
   const moved = reopenAcrossTabs(

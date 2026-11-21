@@ -672,18 +672,6 @@ export function taskTargetsRoom(
   return true
 }
 
-/** Whether a scheduled task belongs to `room` open on `tabId` (either bound via `task.loop` or exclusively targeting `room` or its tiles/panels). */
-export function taskForRoom(task: Task, room: Loop, tabId: string, grids: Record<number, Grid> = {}): boolean {
-  if (task.loop) return task.loop === room.id
-  const frame = frameOf(grids, room.id)
-  const grid = frame ? grids[frame.window] : undefined
-  const inside = frame && grid ? grid.elements.filter((e) => e.parent === frame.element.id) : []
-  const elements = frame ? [frame.element, ...inside] : []
-  const ids = new Set(elements.map((e) => e.id))
-  const panels = grid ? grid.panels.filter((p) => ids.has(p.elementId)) : []
-  return taskTargetsRoom(task, { loop: room, window: frame?.window ?? 1, elements, panels }, tabId, grids)
-}
-
 function retargetTask(
   task: Task,
   targetTabId: string,

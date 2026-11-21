@@ -12,7 +12,6 @@ import {
 import { coerceViewState, schemaAt } from '../../../shared/agent/view-state'
 import { BROWSER_VIEW } from '../../../shared/grid/browser'
 import { panelOf, type Panel } from '../../../shared/grid/grid'
-import { taskForRoom } from '../../../shared/loops/closed'
 import { loopName } from '../../../shared/loops/loops'
 import type { Task } from '../../../shared/tasks/tasks'
 import { RESEARCH_PLUGIN, RESEARCH_THREAD_SOURCE, researchLiveText, researchRoomOf } from '../../../shared/plugins/live'
@@ -137,16 +136,11 @@ export const stateTools: Tool[] = [
       await syncPathPanels(workspaceId, path, signal)
       const state = toPublic(getState())
       const rawValue = readPath(state, workspaceId, path)
-      const room = loop !== undefined ? (state.loops[workspaceId] ?? []).find((one) => one.id === loop) : undefined
       const value =
         loop !== undefined && path.kind === 'panels' && Array.isArray(rawValue)
           ? rawValue.filter((entry: { loop?: string | null }) => entry.loop === loopName(loop))
           : loop !== undefined && path.kind === 'tasks' && Array.isArray(rawValue)
-            ? rawValue.filter((entry: Task) =>
-                room !== undefined
-                  ? taskForRoom(entry, room, workspaceId, state.grids[workspaceId])
-                  : entry.loop === loop,
-              )
+            ? rawValue.filter((entry: Task) => entry.loop === loop)
             : rawValue
       const error = path.kind === 'panel' && path.field !== 'error' ? panelErrorAt(state, workspaceId, path) : null
       if (

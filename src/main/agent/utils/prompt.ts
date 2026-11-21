@@ -146,7 +146,7 @@ export function loopStateNow(workspaceId: string, loopId: string): string {
   return [
     ...(userLine ? [userLine] : []),
     ...(loop ? [describeTiles(state, workspaceId, loop, (id) => getView(id)?.instructions)] : []),
-    ...(loop ? describeRoomTasks(state, workspaceId, loop, clock) : [describeNow(clock)]),
+    ...(loop ? describeRoomTasks(state, loop, clock) : [describeNow(clock)]),
     describeFiled(sourcesSeen(), state.sources),
   ].join('\n')
 }

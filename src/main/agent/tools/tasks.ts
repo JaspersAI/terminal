@@ -1,5 +1,4 @@
 import { JASPERS } from '../../../shared/llm/providers'
-import { taskForRoom } from '../../../shared/loops/closed'
 import { findLoop, loopName, named } from '../../../shared/loops/loops'
 import { parseSlash, skillUsable } from '../../../shared/skills/skills'
 import {
@@ -218,13 +217,7 @@ const TOOLS: Tool[] = [
       const existing = accessibleTask(id, context)
       const now = Date.now()
       const patch: TaskPatch = {}
-      const targetLoop =
-        context.loop !== undefined && given(input.instructions) && !existing.loop
-          ? context.loop
-          : (existing.loop ?? null)
-      if (context.loop !== undefined && given(input.instructions) && !existing.loop) {
-        patch.loop = context.loop
-      }
+      const targetLoop = existing.loop ?? null
       const nextCall = given(input.call) ? asCall(input.call) : existing.call
       const nextWatch = typeof input.watch === 'boolean' ? input.watch : existing.speak === 'changed'
       if (given(input.instructions)) {
@@ -382,12 +375,10 @@ function resolveTaskTarget(rawRoom: unknown, context: ToolContext): { workspaceI
   return { workspaceId: ownerTabId, loop: room.id }
 }
 
+/** Central reaches every task; a room only the tasks bound to it. */
 function accessibleTask(id: string, context: ToolContext): Task {
-  if (context.loop === undefined) return getTask(id)
-  const task = getTask(id, context.workspaceId)
-  const state = getState()
-  const room = (state.loops[context.workspaceId]?.list ?? []).find((l) => l.id === context.loop)
-  if (!room || !taskForRoom(task, room, context.workspaceId, state.grids[context.workspaceId])) {
+  const task = getTask(id)
+  if (context.loop !== undefined && task.loop !== context.loop) {
     throw new Error(`Unknown task ${id} in this room; get tasks lists this room's tasks.`)
   }
   return task
