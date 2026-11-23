@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactElement } from 'react'
 import type { PreparedInstall } from '../../../shared/plugins/install'
+import { PluginMark } from './PluginMark'
 import type { InstallLine } from './use-install'
 import { BUTTON } from './Row'
 
@@ -48,10 +49,13 @@ export function InstallPrompt({ install, onInstall, onCancel }: PromptProps): Re
         tabIndex={-1}
         className="w-full max-w-lg border border-border bg-background p-6 shadow-2xl outline-none"
       >
-        <h2 id="install-title" className="text-base font-semibold">
-          Install {id} {version}?
-        </h2>
-        {description && <p className="mt-1 text-sm">{description}</p>}
+        <div className="flex items-center gap-3">
+          <PluginMark id={id} title={id} size="sm" />
+          <h2 id="install-title" className="text-base font-semibold">
+            Install {id} {version}?
+          </h2>
+        </div>
+        {description && <p className="mt-2 text-sm">{description}</p>}
         <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
           <dt className="text-muted-foreground">From</dt>
           <dd className="break-all">

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { APP_SCHEME } from '../../shared/plugins/apps'
 import { viewPolicy } from '../../shared/plugins/plugins'
 import { pageAt } from './app-pages'
+import { readCachedPluginIcon } from './plugin-icon'
 import { bundlePath } from './plugins'
 import { getSyncedBundle } from './synced-bundles'
 import { getState } from '../state'
@@ -80,6 +81,18 @@ export function registerViewHost(): void {
     if (url.pathname === '/index.html') {
       return new Response(indexHtml((local ? local.frames : synced?.frames) ?? []), {
         headers: headers(TYPES['.html']!),
+      })
+    }
+    if (url.pathname === '/icon') {
+      if (!local) return notFound()
+      const cached = await readCachedPluginIcon(path.dirname(bundlePath(id)))
+      if (!cached) return notFound()
+      return new Response(Buffer.from(cached.bytes), {
+        headers: {
+          ...headers(cached.mime),
+          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'",
+          'x-content-type-options': 'nosniff',
+        },
       })
     }
     if (!PLUGIN_FILES.has(url.pathname)) return notFound()

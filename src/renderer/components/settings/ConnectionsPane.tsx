@@ -12,6 +12,7 @@ import { ErrorText } from '../composer/ErrorText'
 import { errorMessage } from '../../lib/errors'
 import { dispatch, useAppState } from '../../lib/state'
 import { BUTTON, FIELD, Row } from './Row'
+import { PluginMark } from './PluginMark'
 import { Entry, ListHeading, PinnedEntry, PlusIcon, Split } from './Split'
 import { shownEntry } from './summary'
 
@@ -74,6 +75,7 @@ export function ConnectionsPane(): ReactElement {
                   <ConnectionEntry
                     key={connection.id}
                     connection={connection}
+                    plugin={plugins[pluginOf(connection.id)]}
                     selected={shown.id === connection.id}
                     onSelect={() => setOpen(connection.id)}
                   />
@@ -85,6 +87,7 @@ export function ConnectionsPane(): ReactElement {
                   <ConnectionEntry
                     key={connection.id}
                     connection={connection}
+                    plugin={plugins[pluginOf(connection.id)]}
                     selected={shown.id === connection.id}
                     onSelect={() => setOpen(connection.id)}
                   />
@@ -125,18 +128,22 @@ function pluginOf(id: string): string {
 
 function ConnectionEntry({
   connection,
+  plugin,
   selected,
   onSelect,
 }: {
   connection: ConnectionInfo
+  plugin?: PluginInfo | undefined
   selected: boolean
   onSelect: () => void
 }): ReactElement {
+  const pluginId = pluginOf(connection.id)
   return (
     <Entry
       id={connection.id}
       selected={selected}
       onSelect={onSelect}
+      icon={<PluginMark id={pluginId} title={pluginId} plugin={plugin} size="xs" />}
       title={connection.id}
       line={
         <>

@@ -8,31 +8,10 @@ import {
 } from '../../../shared/agent/welcome'
 import { BROWSER_PLUGIN_ID } from '../../../shared/grid/browser'
 import { errorMessage } from '../../lib/errors'
-import { initials } from '../../lib/hub-directory'
 import { useAppState } from '../../lib/state'
 import { StatusLine } from '../settings/InstallPrompt'
+import { PluginMark } from '../settings/PluginMark'
 import { useInstall } from '../settings/use-install'
-
-const LOGOS = import.meta.glob<string>('../../assets/providers/*.png', {
-  eager: true,
-  query: '?url',
-  import: 'default',
-})
-
-function PluginMark({ name, title }: { name: string; title: string }): ReactElement {
-  const logo = LOGOS[`../../assets/providers/${name}.png`]
-  if (logo) {
-    return <img src={logo} alt="" aria-hidden className="h-7 w-7 shrink-0 border border-border object-contain" />
-  }
-  return (
-    <span
-      aria-hidden
-      className="flex h-7 w-7 shrink-0 items-center justify-center border border-border bg-muted font-mono text-[9px] tracking-tight text-muted-foreground"
-    >
-      {initials(title)}
-    </span>
-  )
-}
 
 interface Props {
   onboarding: WelcomeOnboarding
@@ -204,7 +183,7 @@ export function OnboardingCard({ onboarding }: Props): ReactElement {
                   className="flex flex-col justify-between gap-2 border border-border bg-background p-2.5"
                 >
                   <div className="flex items-start gap-2.5">
-                    <PluginMark name={plugin.name} title={plugin.title} />
+                    <PluginMark id={plugin.name} title={plugin.title} plugin={plugins[plugin.name]} size="md" />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="font-medium text-foreground">{plugin.title}</span>

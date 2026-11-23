@@ -117,7 +117,7 @@ export function appendPage(shown: HubItem[], next: HubItem[]): HubItem[] {
 /** The first letters of a title's first two words, for an item with no logo bundled. */
 export function initials(title: string): string {
   return title
-    .split(/\s+/)
+    .split(/[\s_-]+/)
     .flatMap((word) => /[A-Za-z0-9]/.exec(word)?.[0] ?? [])
     .slice(0, 2)
     .join('')

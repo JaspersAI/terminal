@@ -165,6 +165,10 @@ export interface PluginInfo {
   } | null
   /** A built plugin's record: what it is for, and when the user approved it. */
   built: { purpose: string; at: string } | null
+  /** `jaspers-plugin://<id>/icon?v=<stamp>` when main staged a local icon file or cached a service favicon. */
+  icon?: string | null
+  /** Matched bundled provider asset id (`<iconKey>.png`) when `id` itself is not the asset's name. */
+  iconKey?: string | null
 }
 
 /**

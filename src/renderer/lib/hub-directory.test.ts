@@ -114,6 +114,7 @@ test("an item without a logo is marked with its title's first letters", () => {
   assert.equal(initials('Fed Treasury Yield Curve (H.15)'), 'FT')
   assert.equal(initials('treasury'), 'T')
   assert.equal(initials('(beta) charts'), 'BC')
+  assert.equal(initials('my-fred-plugin'), 'MF')
 })
 
 test("a part that Hub could not give says so once, in the app's words, and why", () => {

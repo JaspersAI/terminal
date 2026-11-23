@@ -49,6 +49,7 @@ interface EntryProps {
   id: string
   selected: boolean
   onSelect: () => void
+  icon?: ReactNode
   title: ReactNode
   /** A muted line under the title. */
   line?: ReactNode
@@ -61,7 +62,16 @@ interface EntryProps {
  * right is marked only while it is there: the narrow layout shows its list when nothing is picked,
  * and then marks nothing.
  */
-export function Entry({ id, selected, onSelect, title, line, tag }: EntryProps): ReactElement {
+export function Entry({ id, selected, onSelect, icon, title, line, tag }: EntryProps): ReactElement {
+  const body = (
+    <>
+      <span className="flex items-baseline gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
+        {tag && <span className="shrink-0 text-xs text-muted-foreground">{tag}</span>}
+      </span>
+      {line && <span className="block truncate text-xs text-muted-foreground">{line}</span>}
+    </>
+  )
   return (
     <li data-entry={id}>
       <button
@@ -72,11 +82,14 @@ export function Entry({ id, selected, onSelect, title, line, tag }: EntryProps):
           selected ? '@min-[36rem]:bg-muted @min-[36rem]:shadow-[inset_2px_0_0_var(--jaspers-foreground)]' : ''
         }`}
       >
-        <span className="flex items-baseline gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
-          {tag && <span className="shrink-0 text-xs text-muted-foreground">{tag}</span>}
-        </span>
-        {line && <span className="block truncate text-xs text-muted-foreground">{line}</span>}
+        {icon ? (
+          <span className="flex items-center gap-2.5">
+            <span className="shrink-0">{icon}</span>
+            <span className="min-w-0 flex-1">{body}</span>
+          </span>
+        ) : (
+          body
+        )}
       </button>
     </li>
   )

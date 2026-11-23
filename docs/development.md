@@ -10,7 +10,7 @@ The plugin view runtime is a separate build, `scripts/build-host-runtime.mjs`, r
 
 The app bundles the SDK from source using `jaspers-source` in TypeScript, electron-vite, the runtime build, and Node tests. `packages/sdk/scripts/build.mjs` builds the published entries and declarations; the app never consumes that build. Plugins import `@jaspers-ai/sdk`; `/define`, `/skills`, and `/host` are app-facing entries. SDK files import nothing from `src/`.
 
-Assets are never inlined: the renderer's policy is `default-src 'self'; frame-src jaspers-plugin: jaspers-app:`, which refuses data-URI images. Network and filesystem work belong in main behind preload. Main refuses navigation and new windows; allowed https links open in the browser.
+Assets are never inlined: the renderer's policy is `default-src 'self'; img-src 'self' jaspers-plugin:; frame-src jaspers-plugin: jaspers-app:`, which refuses data-URI and external images while permitting verified plugin icons from `jaspers-plugin://<id>/icon`. Network and filesystem work belong in main behind preload. Main refuses navigation and new windows; allowed https links open in the browser.
 
 ## State and persistence
 
@@ -108,7 +108,7 @@ Stdio `node` commands run Electron's Node. Startup merges the login shell's PATH
 
 ## Plugin view isolation
 
-`jaspers-plugin://<id>/` serves each plugin's page and bundle; `jaspers-host://runtime/` serves the runtime. Only allowed paths are served, with confinement checks. The iframe bridge checks `event.source` on both sides and uses the frame's workspace, not a workspace claimed in a message. A framed third-party page must not gain access to the parent bridge.
+`jaspers-plugin://<id>/` serves each plugin's page, bundle, and verified cached icon (`/icon`); `jaspers-host://runtime/` serves the runtime. Only allowed paths are served, with confinement checks. The iframe bridge checks `event.source` on both sides and uses the frame's workspace, not a workspace claimed in a message. A framed third-party page must not gain access to the parent bridge.
 
 The page links the theme, `src/host-runtime/theme.css`, which the runtime build copies beside the runtime and the renderer's stylesheet imports; it is the one place the colors are written. Main sets `nativeTheme.themeSource` from the Appearance setting, and that decides `prefers-color-scheme` in the renderer and every frame at once.
 

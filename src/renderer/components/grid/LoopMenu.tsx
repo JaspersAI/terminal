@@ -6,6 +6,7 @@ import { menuOf } from '../../../shared/loops/menu'
 import { formatAsOf } from '../../../shared/tasks/tasks'
 import { dispatch, useAppState } from '../../lib/state'
 import { SharePanel } from '../collab/SharePanel'
+import { PluginMark } from '../settings/PluginMark'
 import { PAGE } from '../composer/request'
 import { sendToRoom } from './LoopBox'
 import { send } from './send'
@@ -361,9 +362,12 @@ export function LoopMenu({
           <ul>
             {menu.plugins.map((plugin) => (
               <li key={plugin.id} data-plugin={plugin.id} className="mb-1 last:mb-0">
-                <p className="truncate">
-                  {plugin.id}
-                  {plugin.installed ? '' : ' · not installed'}
+                <p className="flex items-center gap-1.5 truncate">
+                  <PluginMark id={plugin.id} title={plugin.id} plugin={plugins[plugin.id]} size="2xs" />
+                  <span className="truncate">
+                    {plugin.id}
+                    {plugin.installed ? '' : ' · not installed'}
+                  </span>
                 </p>
                 {plugin.connections.map((one) => (
                   <p key={one.id} data-connection={one.id} className="truncate pl-2 text-muted-foreground">
