@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { checkRule, nextByRule, parseClockRule, ruleText, type ClockRule } from './clock-rule.ts'
+import { checkRule, nextByRule, nextInWindow, parseClockRule, ruleText, type ClockRule } from './clock-rule.ts'
 import { dayIn } from './market-calendar.ts'
 
 const NY = 'America/New_York'
@@ -87,4 +87,54 @@ test('a rule reads back the way it was meant', () => {
     ruleText({ days: ['mon', 'tue', 'wed', 'thu', 'fri'], time: '09:30', timeZone: NY, marketOnly: true }),
     'every weekday at 09:30 America/New_York, when the market is open',
   )
+  assert.equal(
+    ruleText({
+      days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+      time: '09:30',
+      until: '16:00',
+      timeZone: NY,
+      marketOnly: true,
+    }),
+    'every weekday from 09:30 to 16:00 America/New_York, when the market is open',
+  )
+})
+
+test('a daily window repeats from time through until and sleeps overnight, on weekends, and on market holidays', () => {
+  const rule = parseClockRule({
+    days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+    time: '09:30',
+    until: '16:00',
+    timeZone: NY,
+    marketOnly: true,
+  })!
+  const every = 15 * 60_000
+
+  // Before open on Wednesday 2026-11-25 (EST, UTC-5): starts at 09:30.
+  const preOpen = nextInWindow(rule, every, at('2026-11-25T11:00:00Z'))!
+  assert.equal(dayIn(preOpen, NY), '2026-11-25')
+  assert.equal(localTime(preOpen), '09:30')
+
+  // Mid-session at 11:07 EST: aligns to the next 15-minute slot from 09:30 (11:15).
+  const midSession = nextInWindow(rule, every, at('2026-11-25T16:07:00Z'))!
+  assert.equal(dayIn(midSession, NY), '2026-11-25')
+  assert.equal(localTime(midSession), '11:15')
+
+  // Closing bell slot at 16:00 EST runs, and right after 16:00 skips overnight and Thanksgiving (Nov 26) to Friday 09:30.
+  const atClose = nextInWindow(rule, every, at('2026-11-25T21:00:00Z'))!
+  assert.equal(dayIn(atClose, NY), '2026-11-25')
+  assert.equal(localTime(atClose), '16:00')
+
+  const afterClose = nextInWindow(rule, every, at('2026-11-25T21:00:01Z'))!
+  assert.equal(dayIn(afterClose, NY), '2026-11-27')
+  assert.equal(localTime(afterClose), '09:30')
+
+  // Friday after close skips the weekend to Monday 09:30.
+  const afterFriday = nextInWindow(rule, every, at('2026-11-27T21:01:00Z'))!
+  assert.equal(dayIn(afterFriday, NY), '2026-11-30')
+  assert.equal(localTime(afterFriday), '09:30')
+
+  // Malformed until bounds fail validation.
+  assert.throws(() => parseClockRule({ time: '09:30', until: '09:30', timeZone: NY }), /later on the same day/)
+  assert.throws(() => parseClockRule({ time: '16:00', until: '09:30', timeZone: NY }), /later on the same day/)
+  assert.throws(() => parseClockRule({ time: '09:30', until: '4pm', timeZone: NY }), /HH:MM/)
 })

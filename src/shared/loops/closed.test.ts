@@ -822,6 +822,7 @@ test('resolveScheduledTaskRoom, resolveUpdatedTaskRoom, canAccessTask, and room 
   assert.equal(canAccessTask(room110Task, 't1', 'f73'), false)
   assert.equal(canAccessTask(centralTask, 't1', 'f110'), false)
   assert.equal(canAccessTask(room110Task, 't2', undefined), true)
+  assert.equal(canAccessTask(centralTask, 't2', undefined), true)
 
   // A task with explicit roomId moves with its room across tabs and is removed when its room is deleted,
   // even when its instructions mention no room or element id.

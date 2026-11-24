@@ -1,6 +1,6 @@
 import { unsetRequiredSecret } from '../../../shared/plugins/plugins.ts'
 import type { ConnectionInfo, PluginInfo, SkillInfo } from '../../../shared/state'
-import { everyText, shortLocal, taskStatus, type Task, type TaskStatus } from '../../../shared/tasks/tasks.ts'
+import { scheduleText, shortLocal, taskStatus, type Task, type TaskStatus } from '../../../shared/tasks/tasks.ts'
 
 // What a row in a Settings list says of its entry, in one short line, and which entry a split list
 // shows. Pure, so a test reads it.
@@ -46,7 +46,9 @@ export function taskLine(task: Task, now: number, timeZone: string): { status: s
   return {
     status: TASK_STATUS[status],
     when:
-      task.every === null ? `once at ${shortLocal(task.executeAt, now, timeZone)}` : `every ${everyText(task.every)}`,
+      task.at !== null || task.every !== null
+        ? scheduleText(task)
+        : `once at ${shortLocal(task.executeAt, now, timeZone)}`,
     alert: status === 'failed',
   }
 }

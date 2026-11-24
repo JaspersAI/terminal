@@ -33,6 +33,7 @@ import {
   parseAt,
   pruneFinished,
   resolveWakeGrace,
+  scheduleText,
   HISTORY_MAX,
   HISTORY_RESULT_MAX,
   RESULT_MAX,
@@ -1050,4 +1051,59 @@ test('daily budget exhaustion pauses only LLM-spending tasks due before reset an
     }),
     null,
   )
+})
+
+test('a task with a daily market-hours window checks every + until, computes slots inside the window, and formats cleanly', () => {
+  const ok = { toolExists: () => true }
+  const marketWindow = {
+    days: ['mon', 'tue', 'wed', 'thu', 'fri'] as ('mon' | 'tue' | 'wed' | 'thu' | 'fri')[],
+    time: '09:30',
+    until: '16:00',
+    timeZone: 'America/New_York',
+    marketOnly: true,
+  }
+  const base = {
+    workspaceId: 'ws-1',
+    roomId: 'room_73',
+    instructions: 'Refresh Bloomberg feed and summarize new headlines',
+    executeAt: Date.parse('2026-11-24T20:30:00Z'),
+    every: 15 * MIN,
+    at: marketWindow,
+    speak: 'always' as const,
+    call: null,
+  }
+  const checked = checkTaskInput(base, ok)
+  assert.equal(checked.every, 15 * MIN)
+  assert.equal(checked.at?.until, '16:00')
+  assert.equal(
+    scheduleText(checked),
+    'every 15 min, every weekday from 09:30 to 16:00 America/New_York, when the market is open',
+  )
+
+  // Passing every + on without until fails rather than silently dropping every.
+  const onceRule = { days: marketWindow.days, time: '09:30', timeZone: 'America/New_York', marketOnly: true }
+  assert.throws(() => checkTaskInput({ ...base, at: onceRule }, ok), /until/)
+  // Passing until without every fails rather than guessing an interval.
+  assert.throws(() => checkTaskInput({ ...base, every: null }, ok), /needs every/)
+
+  // After the 16:00 EST slot (21:00 UTC), afterRun schedules the next run at 09:30 EST the next trading day (14:30 UTC).
+  const windowed = task({
+    id: 't43',
+    roomId: 'f73',
+    call: null,
+    every: 15 * MIN,
+    at: checked.at,
+    executeAt: Date.parse('2026-11-24T14:30:00Z'),
+    nextAt: Date.parse('2026-11-24T21:00:00Z'),
+  })
+  const afterClose = afterRun(windowed, {
+    at: Date.parse('2026-11-24T21:00:00Z'),
+    ok: true,
+    result: 'Closing summary',
+    ms: 5_000,
+  })
+  assert.equal(afterClose.nextAt, Date.parse('2026-11-25T14:30:00Z'))
+  // When paused for daily budget exhaustion mid-afternoon, nextAfterBudgetReset resumes at 09:30 EST next trading day.
+  const paused = pauseTasksForDailyBudget([windowed], Date.parse('2026-11-25T05:00:00Z'))
+  assert.equal(paused[0]?.nextAt, Date.parse('2026-11-25T14:30:00Z'))
 })

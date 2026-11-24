@@ -109,7 +109,7 @@ export const stateTools: Tool[] = [
     name: 'get',
     readsOnly: true,
     description:
-      "Read app state by path: panels (every panel), panels/<id> (that one panel's entry: its window, view, summary, and any runtime error), panels/<id>/state[/key…], panels/<id>/output[/key…], panels/<id>/summary, panels/<id>/text, panels/<id>/error, tasks (this workspace's, with their last runs), views, sources, connections, connections/<id>, plugins. <id> is an element id like e3 or a panel id like p3, or a connection id like plugin/name. A view's text is the whole of what it shows, like a transcript, and comes 50,000 characters at a time from offset (pass the returned next offset when present). Other long values are cut, and say so.",
+      "Read app state by path: panels (every panel), panels/<id> (that one panel's entry: its window, view, summary, and any runtime error), panels/<id>/state[/key…], panels/<id>/output[/key…], panels/<id>/summary, panels/<id>/text, panels/<id>/error, tasks (scheduled tasks, with their last runs), views, sources, connections, connections/<id>, plugins. <id> is an element id like e3 or a panel id like p3, or a connection id like plugin/name. A view's text is the whole of what it shows, like a transcript, and comes 50,000 characters at a time from offset (pass the returned next offset when present). Other long values are cut, and say so.",
     parameters: {
       type: 'object',
       properties: {
@@ -135,7 +135,15 @@ export const stateTools: Tool[] = [
       }
       await syncPathPanels(workspaceId, path, signal)
       const state = toPublic(getState())
-      const rawValue = readPath(state, workspaceId, path)
+      const tabNameOf = new Map(state.workspaces.map((w) => [w.id, w.name]))
+      const rawValue =
+        path.kind === 'tasks' && path.workspaceId === undefined
+          ? state.tasks.map((entry) => ({
+              ...entry,
+              tab: tabNameOf.get(entry.workspaceId) ?? null,
+              ...(entry.roomId ? { room: loopName(entry.roomId) } : {}),
+            }))
+          : readPath(state, workspaceId, path)
       const value =
         loop !== undefined && path.kind === 'panels' && Array.isArray(rawValue)
           ? rawValue.filter((entry: { loop?: string | null }) => entry.loop === loopName(loop))
