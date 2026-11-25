@@ -1,4 +1,14 @@
-import { frameOf, NO_LOOPS, notOwn, withActivity, withPlugin, type Loops } from '../../shared/loops/loops'
+import {
+  frameOf,
+  NO_LOOPS,
+  notOwn,
+  withActivity,
+  withLoopUpdated,
+  withPlugin,
+  type LoopPatch,
+  type Loops,
+} from '../../shared/loops/loops'
+import type { ModelClass, RoutingEffort } from '../../shared/agent/model'
 import { closedLoop, closedWithout } from '../../shared/loops/closed'
 import type { Grid } from '../../shared/grid/grid'
 import type { ToolContext } from '../agent/tools/types'
@@ -67,4 +77,41 @@ export function notOwnFrame(context: ToolContext, elementId: string): void {
 /** A loop's agent was told of a plugin: it is kept on the record, so later runs are told of it from the start. */
 export function usePlugin(workspaceId: string, loopId: string, plugin: string): void {
   update((state) => withLoops(state, workspaceId, withPlugin(state.loops[workspaceId] ?? NO_LOOPS, loopId, plugin)))
+}
+
+/** Records a room's latest completed outcome (`lastResult` digest and consecutive `failures` counter). */
+export function noteLoopOutcome(
+  workspaceId: string,
+  loopId: string,
+  outcome: { ok: boolean; text: string; at?: number },
+): void {
+  update((state) => {
+    const tabId = state.loops[workspaceId]?.list.some((r) => r.id === loopId)
+      ? workspaceId
+      : (findRoomTab(state, loopId) ?? workspaceId)
+    const loops = state.loops[tabId] ?? NO_LOOPS
+    const current = loops.list.find((r) => r.id === loopId)
+    const prevFailures = current?.failures ?? 0
+    const patch: LoopPatch = {
+      lastResult: outcome.text,
+      failures: outcome.ok ? null : prevFailures + 1,
+    }
+    return withLoops(state, tabId, withLoopUpdated(loops, loopId, patch, outcome.at ?? Date.now()))
+  })
+}
+
+/** Applies a routing tier update (`modelClass` / `effort`) to an open or closed room across any tab. */
+export function setLoopRouting(
+  workspaceId: string,
+  loopId: string,
+  routing: { modelClass?: ModelClass; effort?: RoutingEffort },
+  at = Date.now(),
+): void {
+  update((state) => {
+    const tabId = state.loops[workspaceId]?.list.some((r) => r.id === loopId)
+      ? workspaceId
+      : (findRoomTab(state, loopId) ?? workspaceId)
+    const loops = state.loops[tabId] ?? NO_LOOPS
+    return withLoops(state, tabId, withLoopUpdated(loops, loopId, routing, at))
+  })
 }

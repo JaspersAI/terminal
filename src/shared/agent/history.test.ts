@@ -71,8 +71,10 @@ test('a thread of no more than the last few exchanges goes on as it is, the same
   assert.equal(recent(none), none)
 })
 
-test('a longer thread goes on with its last three exchanges, each with the calls and results of its run', () => {
+test('a longer thread goes on with its last RECENT (6) exchanges, each with the calls and results of its run', () => {
   const turns: Turn[] = [
+    asked('zero'),
+    replied('0'),
     asked('one'),
     replied('1'),
     asked('two'),
@@ -87,8 +89,16 @@ test('a longer thread goes on with its last three exchanges, each with the calls
     replied('4'),
     asked('five'),
     replied('5'),
+    asked('six'),
+    replied('6'),
   ]
   assert.deepEqual(recent(turns), [
+    asked('one'),
+    replied('1'),
+    asked('two'),
+    called,
+    tool('two ran'),
+    replied('2'),
     asked('three'),
     replied('3'),
     asked('four'),
@@ -97,28 +107,42 @@ test('a longer thread goes on with its last three exchanges, each with the calls
     replied('4'),
     asked('five'),
     replied('5'),
+    asked('six'),
+    replied('6'),
   ])
-  assert.deepEqual(recent(turns, 1), [asked('five'), replied('5')])
+  assert.deepEqual(recent(turns, 1), [asked('six'), replied('6')])
 })
 
 test('what a task said unasked is an exchange like any other', () => {
   const turns: Turn[] = [
-    asked('one'),
-    replied('1'),
+    asked('zero'),
+    replied('0'),
     asked(taskNote('t3')),
     replied('SPY crossed 760.'),
+    asked('one'),
+    replied('1'),
     asked('two'),
     replied('2'),
     asked('three'),
     replied('3'),
+    asked('four'),
+    replied('4'),
+    asked('five'),
+    replied('5'),
   ]
   assert.deepEqual(recent(turns), [
     asked(taskNote('t3')),
     replied('SPY crossed 760.'),
+    asked('one'),
+    replied('1'),
     asked('two'),
     replied('2'),
     asked('three'),
     replied('3'),
+    asked('four'),
+    replied('4'),
+    asked('five'),
+    replied('5'),
   ])
 })
 

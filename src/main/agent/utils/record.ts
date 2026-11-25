@@ -95,9 +95,22 @@ export type LlmCall = {
   label: string
   provider: string
   model: string
+  modelClass?: string
+  effort?: string
+  surface?: string
   ms: number
 } & (
-  | { ok: true; stop: string; input: number; output: number; cacheRead: number; cacheWrite: number }
+  | {
+      ok: true
+      stop: string
+      input: number
+      output: number
+      cacheRead: number
+      cacheWrite: number
+      reasoningTokens?: number
+      resolvedModel?: string
+      ttftMs?: number
+    }
   | { ok: false; status: number | null; message: string; retryAfterMs: number | null }
 )
 
@@ -109,7 +122,14 @@ export function noteLlm(runId: string, call: LlmCall): void {
     begun.output += call.output
   }
   const label = call.label.trim()
-  const head = { provider: call.provider, attempt: call.attempt, ...(label ? { label } : {}) }
+  const head = {
+    provider: call.provider,
+    attempt: call.attempt,
+    ...(label ? { label } : {}),
+    ...(call.modelClass ? { modelClass: call.modelClass } : {}),
+    ...(call.effort ? { effort: call.effort } : {}),
+    ...(call.surface ? { surface: call.surface } : {}),
+  }
   record({
     kind: 'llm',
     run: runId,
@@ -125,6 +145,9 @@ export function noteLlm(runId: string, call: LlmCall): void {
           output: call.output,
           cacheRead: call.cacheRead,
           cacheWrite: call.cacheWrite,
+          ...(call.reasoningTokens !== undefined ? { reasoningTokens: call.reasoningTokens } : {}),
+          ...(call.resolvedModel ? { resolvedModel: call.resolvedModel } : {}),
+          ...(call.ttftMs !== undefined ? { ttftMs: call.ttftMs } : {}),
         }
       : { ...head, status: call.status, message: call.message, retryAfterMs: call.retryAfterMs },
   })

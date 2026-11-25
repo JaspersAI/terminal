@@ -1,4 +1,4 @@
-import type { Completion, ToolDefinition, Turn } from './llm'
+import type { Completion, LlmEffort, ModelClass, ToolDefinition, Turn } from './llm'
 import type { Skills } from './skills'
 
 // What a plugin's backend code reaches the app through: `ctx`, with every capability on it. Types
@@ -45,12 +45,16 @@ export interface Live {
   delete(key: string): void
 }
 
-/** One model call: the app's configured provider, or another model on it. The token never reaches the plugin. */
+/** One model call: the app's configured provider, or another model/class on it. The token never reaches the plugin. */
 export interface LlmRequest {
   system: string
   turns: Turn[]
   tools?: ToolDefinition[]
   model?: string
+  /** Semantic model class (`fast | main | code`) honored under Jaspers One and mapped to `fastModel` vs `model` on BYOK providers. */
+  modelClass?: ModelClass
+  /** Reasoning effort (`low | medium | high`) requested from providers that support thinking levels. */
+  effort?: LlmEffort
   /** Default 16000, at most 32000. */
   maxTokens?: number
   signal?: AbortSignal

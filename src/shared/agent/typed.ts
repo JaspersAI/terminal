@@ -9,6 +9,7 @@
 // the user's.
 
 import type { Turn } from '../llm/llm'
+import type { RoutingEffort, WorkRouting } from './model.ts'
 // The extension is explicit because Node's test runner resolves this import at run time.
 import { stripSkillContent } from '../skills/skills.ts'
 import { stripAttachedFiles } from './attachments.ts'
@@ -76,6 +77,10 @@ export interface Handed {
   fromTeammate?: boolean
   /** Optional model override when handed over from a scheduled task with a pinned model. */
   model?: string | null
+  /** Optional routing override (`surface: 'task'`, composer effort override, etc.). */
+  routing?: WorkRouting
+  /** Optional composer effort toggle selected by the user. */
+  composerEffort?: RoutingEffort | null
 }
 
 /**

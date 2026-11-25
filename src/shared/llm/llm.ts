@@ -1,10 +1,22 @@
 // The neutral shape of a conversation with a language model, which main's requests convert per
 // provider. The shapes a plugin sees too belong to the SDK; what only the app sets is here.
 
-export type { Citation, Completion, ToolCall, ToolDefinition, ToolResult, Turn } from '@jaspers-ai/sdk/define'
+export type {
+  Citation,
+  Completion,
+  LlmEffort,
+  ModelClass,
+  ToolCall,
+  ToolDefinition,
+  ToolResult,
+  Turn,
+} from '@jaspers-ai/sdk/define'
 
 /** How hard the model works at a reply, on the providers that take a say in it. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/** Logical calling surface, sent to the Jaspers gateway so Central requests receive Priority PayGo. */
+export type LlmSurface = 'central' | 'room' | 'task' | 'build' | 'plugin'
 
 /** What a caller may set on one request beyond the configured provider's defaults. */
 export interface CompleteOptions {
@@ -36,6 +48,8 @@ export interface CompleteOptions {
   stream?: boolean
   /** How hard to think, where the provider takes a say. Left out, the provider's own default stands. */
   effort?: Effort
+  /** Calling surface inside the Terminal, forwarded to the Jaspers gateway as `X-Jaspers-Surface`. */
+  surface?: LlmSurface
   /**
    * This request is one round of a tool loop rather than a single question. The conversation is
    * marked for the provider's cache, since the next round sends it all again; the state each turn

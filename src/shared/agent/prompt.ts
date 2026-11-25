@@ -5,6 +5,7 @@
 // off the tree: they are for the model, and the renderer has no use for them.
 
 import { RECENT } from './history.ts'
+import { formatRoutingLabel } from './model.ts'
 import { memoryIndex } from './memory.ts'
 import { skillsPrompt } from '@jaspers-ai/sdk/skills'
 import type { AppState, ConnectionInfo, PluginInfo, SkillInfo, SourceInfo, ViewInfo } from '../state'
@@ -65,8 +66,11 @@ const ROUTER_REPLY =
 const APP_RUN =
   "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task (passing roomId when the task belongs to a room so it runs and posts strictly inside that room rather than Central) rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. Address the user and their teammates by the names workspace_state gives. When the user asks to invite someone to their team or add a teammate without naming a room or tab to share, call invite_teammate directly (never share_room on an unrequested room); call respond_team_invite to accept, decline, or cancel a team invitation, remove_teammate to remove a teammate, and share_room, share_tab, or stop_sharing when they ask to share or stop sharing a room or tab. When the user asks to open Settings, or needs a control only the user can operate there (such as turning on Pro mode, signing in with Jaspers, or pasting a provider API key), call open_settings with the relevant pane (Settings is also under Jaspers Terminal > Settings\u2026 / Cmd+, on macOS and File > Settings\u2026 / Ctrl+, on Windows; there is no Settings button in the top bar). Confirmation prompts from tools appear inline in Central's top command bar (and in Docked Central when Dock is open) only while the tool call is waiting \u2014 never as a centered modal dialog \u2014 and close as soon as the tool call ends. When the user asks to run a quick, single command or script on this computer (< 3 to 6 seconds), call run_shell yourself when it is in your tools \u2014 it asks the user to approve before running \u2014 rather than starting a room or scheduling a task for it; when the request is an extensive or multi-step task (such as scraping web pages, audio, or files, downloading or assembling files into the folder, or running a multi-step shell or Python workflow), spin out a worker in a room with create_room to execute it instead of cluttering Central; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
 
-/** What the orchestrator goes by: it routes, where its reply shows, how much of the conversation it is sent, and the app it runs. */
-export const ROUTER_RULES = [ROUTE, ROUTER_REPLY, SENT, APP_RUN].join(' ')
+const ROUTING_RUBRIC =
+  'Model routing: you have a compact index of installed views, sources, plugins, and skills in your system prompt, so pass plugins, modelClass, and effort directly in create_room (and update them in update_room when a room\u2019s scope expands): choose modelClass "fast" with effort "low" for single-view chart, quote, yield-curve, browser, or team-chat rooms and routine standalone scheduled watches; choose modelClass "main" with effort "medium" for multi-view dashboards, quantitative or qualitative stock screens, multi-source comparisons, web company profiles, and multi-step shell or scraping workflows; and choose modelClass "main" with effort "high" for deep SEC filing synthesis (10-K, 10-Q, 8-K, proxy, earnings transcripts), accounting or valuation forensics, and cross-filing audits.'
+
+/** What the orchestrator goes by: it routes, chooses room tiers, where its reply shows, how much of the conversation it is sent, and the app it runs. */
+export const ROUTER_RULES = [ROUTE, ROUTING_RUBRIC, ROUTER_REPLY, SENT, APP_RUN].join(' ')
 
 // A loop that is not a deep research one has its conversation all the same, folded behind the label
 // in its bar, and its views are what is seen first. So the reply is short, and what is to be looked at
@@ -164,19 +168,35 @@ export function toldOf(state: AppState, plugins: readonly string[], skills: read
 }
 
 /**
- * What is installed, as the orchestrator is told: the plugins and how their connections stand, and the
- * skills by id, which it manages, and what is remembered. No views, no sources, no skill to load: it
- * does no work with them, and the work it starts is set up with them in a call of its own (`setup.ts`).
+ * Live MCP connection statuses, rendered in `stateNow` (each round's turn context) rather than in
+ * the cached system prompt so connection state transitions never invalidate Central's prefix cache.
+ */
+export function describeConnectionStatuses(connections: Record<string, ConnectionInfo>): string[] {
+  const list = Object.values(connections).filter((c) => !c.internal)
+  if (list.length === 0) return []
+  return ['Connections:', ...list.map((c) => `- ${c.id}: ${c.status}${connectionFix(c)}`)]
+}
+
+/**
+ * What is installed, as the orchestrator is told in its cached static system prompt: plugins, a
+ * compact 1-line index of placeable views and callable sources (no full state schemas, keeping the
+ * prompt lean while letting Central pick `plugins`, `modelClass`, and `effort` directly without an
+ * extra setup call), skills by id, and memories. Live connection statuses live in `stateNow`.
  */
 export function describeInstalledToRoute(state: AppState): string {
-  const list = Object.values(state.connections).filter((c) => !c.internal)
-  const connections =
-    list.length === 0 ? [] : ['Connections:', ...list.map((c) => `- ${c.id}: ${c.status}${connectionFix(c)}`)]
   const plugins = describePlugins(state.plugins)
+  const views = placeable(state.views)
+  const sources = Object.values(state.sources).filter((s) => !s.internal)
   const skills = Object.values(state.skills).sort((a, b) => a.id.localeCompare(b.id))
+  const viewLines = views.length === 0 ? [] : ['Views, by id:', ...views.map((v) => viewLine(v))]
+  const sourceLines =
+    sources.length === 0
+      ? []
+      : ['Sources, by id:', ...sources.map((s) => `- ${s.id}: ${cap(firstSentence(s.description), SOURCE_MAX)}`)]
   return [
     ...(plugins.length === 0 ? ['No plugins are installed.'] : plugins),
-    ...connections,
+    ...viewLines,
+    ...sourceLines,
     ...(skills.length === 0
       ? []
       : [
@@ -243,6 +263,34 @@ function shareClause(state: AppState, workspaceId: string, loop: Loop): string {
   return note ? `, ${note}` : ''
 }
 
+function roomDigestSuffix(state: AppState, tabId: string, loop: Loop): string {
+  const hasRouting = Boolean(loop.modelClass || loop.effort || loop.model)
+  const hasMeta = hasRouting || loop.plugins.length > 0 || Boolean(loop.lastResult) || Boolean(loop.failures)
+  if (!hasMeta) return ''
+  const grids = state.grids[tabId] ?? {}
+  const frame = frameOf(grids, loop.id)
+  const grid = frame ? grids[frame.window] : undefined
+  const views =
+    frame && grid
+      ? layoutOf(grid, frame.element.id)
+          .panels.filter((p) => p.content.kind === 'view')
+          .map((p) => {
+            const viewId = p.content.kind === 'view' ? p.content.view : ''
+            return p.summary ? `${viewId} (${cap(p.summary, 60)})` : viewId
+          })
+      : []
+  const bracket: string[] = []
+  if (loop.model) bracket.push(`model: ${loop.model}`)
+  else if (loop.modelClass || loop.effort) bracket.push(`tier: ${formatRoutingLabel(loop.modelClass, loop.effort)}`)
+  if (loop.plugins.length > 0) bracket.push(`plugins: ${loop.plugins.join(', ')}`)
+  if (views.length > 0) bracket.push(`views: ${views.join(', ')}`)
+  const clauses: string[] = []
+  if (bracket.length > 0) clauses.push(`[${bracket.join('; ')}]`)
+  if (loop.failures && loop.failures > 0) clauses.push(`Failures: ${loop.failures}.`)
+  if (loop.lastResult) clauses.push(`Last result: ${JSON.stringify(cap(loop.lastResult, 180))}.`)
+  return clauses.length > 0 ? ` ${clauses.join(' ')}` : ''
+}
+
 export function describeLoops(
   state: AppState,
   workspaceId: string,
@@ -255,7 +303,7 @@ export function describeLoops(
     .flatMap(([tabId, list]) =>
       list.map(
         (one) =>
-          `${loopLabel(one)} (in ${tabNameOf.get(tabId)!}, ${statusOf(one, tabId)}${shareClause(state, tabId, one)}): ${JSON.stringify(one.desc)}`,
+          `${loopLabel(one)} (in ${tabNameOf.get(tabId)!}, ${statusOf(one, tabId)}${shareClause(state, tabId, one)}): ${JSON.stringify(one.desc)}${roomDigestSuffix(state, tabId, one)}`,
       ),
     )
   const closed = Object.values(state.closedLoops).flat()
@@ -264,7 +312,12 @@ export function describeLoops(
     closed.length === 0
       ? []
       : [
-          `Closed work, which reopen_room brings back: ${closed.map((one) => `${loopLabel(one)}, ${JSON.stringify(one.desc)}`).join('; ')}.`,
+          `Closed work, which reopen_room brings back: ${closed
+            .map(
+              (one) =>
+                `${loopLabel(one)}, ${JSON.stringify(one.desc)}${one.lastResult ? ` (last: ${JSON.stringify(cap(one.lastResult, 120))})` : ''}`,
+            )
+            .join('; ')}.`,
         ]
   if (loops.length === 0) return ['Work on this workspace: none.', ...otherLine, ...shut].join('\n')
   const grids = state.grids[workspaceId] ?? {}
@@ -272,7 +325,7 @@ export function describeLoops(
     'Work on this workspace, each piece with a tile and an agent of its own:',
     ...loops.map((one) => {
       const tile = frameOf(grids, one.id)?.element.id ?? 'none'
-      return `- ${loopLabel(one)}, ${statusOf(one, workspaceId)}${shareClause(state, workspaceId, one)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.`
+      return `- ${loopLabel(one)}, ${statusOf(one, workspaceId)}${shareClause(state, workspaceId, one)}: ${JSON.stringify(one.desc)}. Tile: ${tile}.${roomDigestSuffix(state, workspaceId, one)}`
     }),
     ...otherLine,
     ...shut,

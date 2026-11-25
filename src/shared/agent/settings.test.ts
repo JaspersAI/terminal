@@ -59,7 +59,7 @@ test('a provider switch keeps what is set on the same provider, takes the defaul
       input: {
         providerId: 'jaspers',
         baseUrl: 'https://account.jsprai.com/v1',
-        model: 'gemini-4-argon',
+        model: 'main',
         token: '',
       },
     },

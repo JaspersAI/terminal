@@ -1273,3 +1273,56 @@ test('prepareRoomUpdate patches own rooms locally and forwards prompts to replic
     /alice@fund\.com is offline/,
   )
 })
+
+test('startQuestion, prepareRoomUpdate, withLoopUpdated, and readLoops support modelClass, effort, lastResult, and failures', () => {
+  assert.equal(
+    startQuestion('NVDA Chart', ['tradingview'], null, [], { modelClass: 'fast', effort: 'low' }),
+    'Start a new room for this: NVDA Chart, with tradingview (fast · low)?',
+  )
+  assert.equal(
+    startQuestion('SMCI 10-K Audit', ['agents', 'sec'], null, [], { modelClass: 'main', effort: 'high' }),
+    'Start a new room for this: SMCI 10-K Audit, with agents, sec (main · high)?',
+  )
+
+  const t0 = 1_000_000
+  const warmFast = {
+    id: 'f1',
+    desc: 'Chart',
+    brief: 'Show NVDA',
+    plugins: ['tradingview'],
+    skills: [],
+    createdAt: t0,
+    lastActiveAt: t0 + 5_000,
+    modelClass: 'fast' as const,
+    effort: 'low' as const,
+  }
+  const promoted = prepareRoomUpdate(warmFast, {
+    message: 'Now audit Q3 10-Q margins',
+    modelClass: 'main',
+    effort: 'high',
+    now: t0 + 10_000,
+  })
+  assert.deepEqual(promoted.patch, { modelClass: 'main', effort: 'high' })
+
+  // Warm main room ignores non-explicit downgrade to fast
+  const warmMain = { ...warmFast, modelClass: 'main' as const, effort: 'medium' as const }
+  const kept = prepareRoomUpdate(warmMain, {
+    message: 'Switch timeframe',
+    modelClass: 'fast',
+    effort: 'low',
+    now: t0 + 10_000,
+  })
+  assert.equal(kept.patch, null)
+
+  const updated = withLoopUpdated(
+    { seq: 1, list: [warmFast] },
+    'f1',
+    { modelClass: 'main', effort: 'high', lastResult: 'Margins expanded 180 bps.', failures: 2 },
+    t0 + 20_000,
+  )
+  const reloaded = readLoops(updated.list, updated.seq)
+  assert.equal(reloaded.list[0]?.modelClass, 'main')
+  assert.equal(reloaded.list[0]?.effort, 'high')
+  assert.equal(reloaded.list[0]?.lastResult, 'Margins expanded 180 bps.')
+  assert.equal(reloaded.list[0]?.failures, 2)
+})

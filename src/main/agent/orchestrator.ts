@@ -2,6 +2,13 @@ import { ipcMain } from 'electron'
 import { askedIn, matchChoice } from '../../shared/agent/asking'
 import { shownQuestion } from '../../shared/agent/attachments'
 import { CENTRAL_CHAT } from '../../shared/agent/history'
+import {
+  isRoutingEffort,
+  parsePromptRouting,
+  type ModelClass,
+  type RoutingEffort,
+  type WorkRouting,
+} from '../../shared/agent/model'
 import { taskNote } from '../../shared/agent/transcript'
 import { EXCHANGES_MAX } from '../../shared/data/store'
 import { closedCallMessage, closedLoop } from '../../shared/loops/closed'
@@ -17,7 +24,7 @@ import { getState, update } from '../state'
 import { expandSlash } from '../skills/skills'
 import { agentLoop } from './agent'
 import { parseAttachment } from './attachments'
-import { callOff, loopHistory, handOver, roomSaid, runLoop, sendToLoop } from './loop'
+import { callOff, loopHistory, handOver, roomSaid, runLoop, sendToLoop, setRoomDoneHook } from './loop'
 import { NEW_THREAD, turnText, userRequest, type Added } from './request'
 import { routerTools } from './router'
 import { findTool, orchestratorTools } from './tools'
@@ -78,7 +85,7 @@ function tools(context: ToolContext): Tool[] {
  * routes: the work itself is a loop's, started or handed the request by the router's tools. One
  * the user addressed to a loop by name is not routed at all.
  */
-function run(input: string, ask?: string): Promise<string> {
+function run(input: string, ask?: string, composerEffort?: RoutingEffort | null): Promise<string> {
   const state = getState()
   const workspaceId = state.currentWorkspaceId
   // A message that starts with a room's @name is that room's: it goes straight to its agent
@@ -94,16 +101,31 @@ function run(input: string, ask?: string): Promise<string> {
       if (blocked) throw new Error(blocked)
     }
     const ownerTab = allOpen.find((one) => one.loop.id === to.loop.id)?.tabId ?? workspaceId
-    handOver(ownerTab, to.loop.id, { typed: to.message })
+    handOver(ownerTab, to.loop.id, { typed: to.message, composerEffort })
     const reply = `Sent to ${loopName(to.loop.id)}.`
     fileDirectExchange(CENTRAL_CHAT, input, reply)
     return Promise.resolve(reply)
   }
+  const directive = parsePromptRouting(input, {
+    composerEffort,
+    hasSkill: (name) => expandSlash(`/${name}`) !== null,
+  })
+  const routing: WorkRouting | undefined = directive.explicit
+    ? {
+        ...(directive.modelClass ? { modelClass: directive.modelClass } : {}),
+        ...(directive.effort ? { effort: directive.effort } : {}),
+      }
+    : directive.attachmentFloor
+      ? { effort: directive.attachmentFloor }
+      : undefined
+  const effectiveInput = directive.cleanedInput
   const request = (): Promise<string> =>
     userRequest({
       workspaceId,
       chat: CENTRAL_CHAT,
-      input,
+      input: effectiveInput,
+      ...(effectiveInput !== input ? { shownInput: input } : {}),
+      ...(routing ? { routing } : {}),
       ask,
       goesOn: centralGoesOn,
       prompt: orchestratorPrompt(workspaceId, []),
@@ -112,7 +134,7 @@ function run(input: string, ask?: string): Promise<string> {
       added: () => turns.takeWaiting<Added>(CENTRAL_CHAT),
     })
   // /new and /clear do not wait: they start the conversation over under whatever is still working.
-  if (expandSlash(input) === null && NEW_THREAD.test(input)) {
+  if (expandSlash(effectiveInput) === null && NEW_THREAD.test(effectiveInput)) {
     turns.clear(CENTRAL_CHAT)
     const open = askedIn(getState().questions)
     if (open) answerQuestion(open.id, '')
@@ -125,7 +147,7 @@ function run(input: string, ask?: string): Promise<string> {
     answerQuestion(open.id, matchChoice(open.choices, input))
     return Promise.resolve('')
   }
-  const says: Added = { text: turnText(input), shown: shownQuestion(input), ask }
+  const says: Added = { text: turnText(effectiveInput), shown: shownQuestion(input), ask }
   return turns.take(CENTRAL_CHAT, ask, request, '', says)
 }
 
@@ -141,6 +163,10 @@ export interface TaskRequest {
   roomId?: string
   /** A model on the configured provider, or null for whatever the app is set to. */
   model?: string | null
+  /** Semantic model class (`fast | main | code`) for standalone scheduled tasks. */
+  modelClass?: ModelClass | null
+  /** Reasoning effort (`low | medium | high`) for standalone scheduled tasks. */
+  effort?: RoutingEffort | null
   /** The scripts the user allowed this task, which the run is told so it can pass one to the letter. */
   commands?: readonly string[]
   /** Set when the user explicitly clicked Run now on the task. */
@@ -175,20 +201,27 @@ export function runTask(task: TaskRequest): Promise<TaskAskResult> {
       const ownerTabId = findRoomTab(getState(), room)
       const loops = ownerTabId ? (getState().loops[ownerTabId] ?? NO_LOOPS) : NO_LOOPS
       if (ownerTabId && loops.list.some((one) => one.id === room)) {
+        // Room-affiliated tasks inherit their room's modelClass so `request.ts` shares the room's
+        // warm prefix cache instead of running `portableFork` on a stripped history.
         const text = await sendToLoop(ownerTabId, room, {
           written: said,
           task: task.id,
           manualTask: task.manual,
           model: task.model,
+          routing: { surface: 'task' },
         })
         return { text, inRoom: true }
       }
       if (closedLoop(loops, room)) return { text: '', inRoom: true }
       throw new Error(`Unknown room ${loopName(room)}.`)
     }
-    // The provider stays the app's, since its key and base URL are what main holds; only the model
-    // changes, so a watch can run on a cheap one, unless the provider is Jaspers, which picks its own.
-    const config = configured(task.model)
+    // Standalone tasks start on a fresh 1-turn thread, defaulting to `fast` + `low` unless overridden.
+    const config = configured({
+      model: task.model,
+      modelClass: task.modelClass ?? 'fast',
+      effort: task.effort ?? 'low',
+      surface: 'task',
+    })
     const history: Turn[] = [{ role: 'user', text: said, context: stateNow(task.workspaceId) }]
     const entry = begin(task.manual ? 'user' : 'task', task.workspaceId, `task ${task.id}`, task.instructions)
     let handed = false
@@ -294,15 +327,26 @@ export function taskSaid(workspaceId: string, task: string, text: string, roomId
 /** A tile's element id, which a message for a tile names it by. */
 const ELEMENT_ID = /^e[1-9]\d*$/
 
+export function roomCompletionNote(loopId: string): string {
+  return `[Completed in ${loopName(loopId)}]`
+}
+
 export function registerAgentIpc(): void {
+  setRoomDoneHook((workspaceId, loopId, reply) => {
+    const summary = reply.trim().replace(/\s+/g, ' ').slice(0, 280)
+    if (summary) void said(workspaceId, roomCompletionNote(loopId), summary)
+  })
   // An argument left out arrives as undefined or as null, depending on what came after it.
-  ipcMain.handle('agent:run', (_event, input: unknown, ask: unknown, on: unknown) => {
+  ipcMain.handle('agent:run', (_event, input: unknown, ask: unknown, on: unknown, effort: unknown) => {
     if (typeof input !== 'string' || !input.trim()) throw new Error('Nothing to send.')
     if (ask != null && (typeof ask !== 'string' || !ASK_ID.test(ask)))
       throw new Error('agent:run names a request with a short id.')
     if (on != null && (typeof on !== 'string' || (!ELEMENT_ID.test(on) && !LOOP_ID.test(on))))
       throw new Error('agent:run names the tile or room a message is for by its id.')
-    return on == null ? run(input.trim(), ask ?? undefined) : runLoop(input.trim(), on, ask ?? undefined)
+    const composerEffort = isRoutingEffort(effort) ? effort : null
+    return on == null
+      ? run(input.trim(), ask ?? undefined, composerEffort)
+      : runLoop(input.trim(), on, ask ?? undefined, composerEffort)
   })
   ipcMain.handle('agent:stop', (_event, runId: unknown, ask: unknown) => {
     const id = typeof runId === 'string' && runId ? runId : undefined

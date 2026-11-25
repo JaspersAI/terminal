@@ -853,6 +853,12 @@ test('a room is named as room_3, loop_3, or f3 and kept as f3; nothing, null, or
   }
   assert.equal(checkTaskInput({ ...base, roomId: 'room_110' }, ok).roomId, 'f110')
   assert.equal('roomId' in checkTaskInput({ ...base, roomId: null }, ok), false)
+  const routed = checkTaskInput({ ...base, modelClass: 'fast', effort: 'low' }, ok)
+  assert.equal(routed.modelClass, 'fast')
+  assert.equal(routed.effort, 'low')
+  const cleared = checkTaskInput({ ...base, modelClass: null, effort: null }, ok)
+  assert.equal(cleared.modelClass, null)
+  assert.equal(cleared.effort, null)
   assert.equal('roomId' in checkTaskInput({ ...base, roomId: '' }, ok), false)
   // Words that name a room do not make the task that room's: only roomId does.
   assert.equal('roomId' in checkTaskInput({ ...base, instructions: 'Tell me what room_73 found' }, ok), false)

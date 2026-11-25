@@ -9,6 +9,14 @@
 // them where tiles are placed and removed.
 
 import type { Asking } from '../agent/asking.ts'
+import {
+  formatRoutingLabel,
+  isModelClass,
+  isRoutingEffort,
+  resolveStickyRoomTier,
+  type ModelClass,
+  type RoutingEffort,
+} from '../agent/model.ts'
 import { typedWords } from '../agent/typed.ts'
 import {
   CHAT_VIEW,
@@ -57,6 +65,14 @@ export interface Loop {
   lastActiveAt?: number
   /** Model chosen by Central for this room's agent, or null/undefined for the configured default. */
   model?: string | null
+  /** Semantic model class (`fast | main | code`) assigned to this room's agent. */
+  modelClass?: ModelClass
+  /** Reasoning effort (`low | medium | high`) assigned to this room's agent. */
+  effort?: RoutingEffort
+  /** Concise digest of the room's most recent completed reply or failure, shown to Central in `workspace_state`. */
+  lastResult?: string
+  /** Consecutive failed runs on this room (reset on a successful run), used for deterministic escalation and digests. */
+  failures?: number
   /** Custom system prompt populated by Central for this room's agent. */
   systemPrompt?: string
   /** Canonical chat key (`<originTabId>/<id>`) so a room moved or reopened across tabs keeps its thread. */
@@ -104,6 +120,7 @@ export const NO_LOOPS: Loops = { seq: 0, list: [] }
 
 export const DESC_MAX = 80
 export const ROOM_TITLE_MAX = 160
+export const LAST_RESULT_MAX = 240
 
 /** What is known of a tile when its loop is made for it: its view's title and plugin, and what it shows. */
 export interface TileSeen {
@@ -124,6 +141,8 @@ export interface LoopSpec {
   plugins: string[]
   skills: string[]
   model?: string | null
+  modelClass?: ModelClass
+  effort?: RoutingEffort
   systemPrompt?: string
   chat?: string
 }
@@ -132,6 +151,10 @@ export interface LoopPatch {
   desc?: string
   brief?: string
   systemPrompt?: string | null
+  modelClass?: ModelClass
+  effort?: RoutingEffort
+  lastResult?: string | null
+  failures?: number | null
 }
 
 /**
@@ -195,12 +218,16 @@ export function handoffSummary(
  * when the share is currently read-only (owner offline or disconnected).
  */
 export function prepareRoomUpdate(
-  loop: Pick<Loop, 'replica' | 'shareId'>,
+  loop: Partial<Pick<Loop, 'replica' | 'shareId' | 'modelClass' | 'effort' | 'lastActiveAt' | 'createdAt'>>,
   spec: {
     message?: string
     desc?: string
     brief?: string
     systemPrompt?: string
+    modelClass?: ModelClass
+    effort?: RoutingEffort
+    now?: number
+    explicit?: boolean
   },
   readOnlyReason?: (shareId: string) => string | null,
 ): { patch: LoopPatch | null; written: string | undefined } {
@@ -212,13 +239,28 @@ export function prepareRoomUpdate(
     }
     return { patch: null, written }
   }
-  const hasPatch = spec.desc !== undefined || spec.brief !== undefined || spec.systemPrompt !== undefined
+  const tier =
+    spec.modelClass !== undefined || spec.effort !== undefined
+      ? resolveStickyRoomTier(
+          {
+            modelClass: loop.modelClass,
+            effort: loop.effort,
+            lastActiveAt: loop.lastActiveAt,
+            createdAt: loop.createdAt ?? 0,
+          },
+          { modelClass: spec.modelClass, effort: spec.effort },
+          { now: spec.now ?? Date.now(), explicit: spec.explicit },
+        )
+      : null
+  const hasPatch =
+    spec.desc !== undefined || spec.brief !== undefined || spec.systemPrompt !== undefined || Boolean(tier?.changed)
   return {
     patch: hasPatch
       ? {
           ...(spec.desc !== undefined ? { desc: spec.desc } : {}),
           ...(spec.brief !== undefined ? { brief: spec.brief } : {}),
           ...(spec.systemPrompt !== undefined ? { systemPrompt: spec.systemPrompt } : {}),
+          ...(tier?.changed ? { modelClass: tier.modelClass, effort: tier.effort } : {}),
         }
       : null,
     written,
@@ -247,15 +289,49 @@ function patchLoopRecord(loop: Loop, patch: LoopPatch, now?: number): Loop {
         ? patch.systemPrompt.trim()
         : undefined
       : loop.systemPrompt
-  if (nextDesc === loop.desc && nextBrief === loop.brief && nextSystemPrompt === loop.systemPrompt) {
+  const nextModelClass =
+    patch.modelClass !== undefined && isModelClass(patch.modelClass) ? patch.modelClass : loop.modelClass
+  const nextEffort = patch.effort !== undefined && isRoutingEffort(patch.effort) ? patch.effort : loop.effort
+  const nextLastResult =
+    patch.lastResult !== undefined
+      ? typeof patch.lastResult === 'string' && patch.lastResult.trim()
+        ? patch.lastResult.trim().replace(/\s+/g, ' ').slice(0, LAST_RESULT_MAX)
+        : undefined
+      : loop.lastResult
+  const nextFailures =
+    patch.failures !== undefined
+      ? typeof patch.failures === 'number' && patch.failures > 0
+        ? Math.floor(patch.failures)
+        : undefined
+      : loop.failures
+  if (
+    nextDesc === loop.desc &&
+    nextBrief === loop.brief &&
+    nextSystemPrompt === loop.systemPrompt &&
+    nextModelClass === loop.modelClass &&
+    nextEffort === loop.effort &&
+    nextLastResult === loop.lastResult &&
+    nextFailures === loop.failures
+  ) {
     return loop
   }
-  const { systemPrompt: _prevSystem, ...rest } = loop
+  const {
+    systemPrompt: _prevSystem,
+    modelClass: _prevClass,
+    effort: _prevEffort,
+    lastResult: _prevResult,
+    failures: _prevFailures,
+    ...rest
+  } = loop
   return {
     ...rest,
     desc: nextDesc,
     brief: nextBrief,
     ...(nextSystemPrompt ? { systemPrompt: nextSystemPrompt } : {}),
+    ...(nextModelClass ? { modelClass: nextModelClass } : {}),
+    ...(nextEffort ? { effort: nextEffort } : {}),
+    ...(nextLastResult ? { lastResult: nextLastResult } : {}),
+    ...(nextFailures ? { failures: nextFailures } : {}),
     ...(now !== undefined ? { lastActiveAt: now } : {}),
   }
 }
@@ -295,6 +371,8 @@ export function withLoopAsked(loops: Loops, spec: LoopSpec, now: number, minSeq 
     skills: [...spec.skills],
     createdAt: now,
     ...(spec.model ? { model: spec.model } : {}),
+    ...(spec.modelClass && isModelClass(spec.modelClass) ? { modelClass: spec.modelClass } : {}),
+    ...(spec.effort && isRoutingEffort(spec.effort) ? { effort: spec.effort } : {}),
     ...(spec.systemPrompt ? { systemPrompt: spec.systemPrompt } : {}),
     ...(spec.chat ? { chat: spec.chat } : {}),
   }
@@ -693,6 +771,14 @@ function readRecord(raw: unknown, taken: readonly Loop[]): Loop | null {
     createdAt: typeof one.createdAt === 'number' ? one.createdAt : 0,
     ...(typeof one.lastActiveAt === 'number' ? { lastActiveAt: one.lastActiveAt } : {}),
     ...(typeof one.model === 'string' && one.model.trim() ? { model: one.model.trim() } : {}),
+    ...(isModelClass(one.modelClass) ? { modelClass: one.modelClass } : {}),
+    ...(isRoutingEffort(one.effort) ? { effort: one.effort } : {}),
+    ...(typeof one.lastResult === 'string' && one.lastResult.trim()
+      ? { lastResult: one.lastResult.trim().slice(0, LAST_RESULT_MAX) }
+      : {}),
+    ...(typeof one.failures === 'number' && Number.isInteger(one.failures) && one.failures > 0
+      ? { failures: one.failures }
+      : {}),
     ...(typeof one.systemPrompt === 'string' && one.systemPrompt.trim()
       ? { systemPrompt: one.systemPrompt.trim() }
       : {}),
@@ -1090,12 +1176,17 @@ export function startQuestion(
   plugins: readonly string[],
   model?: string | null,
   sharedWith?: readonly string[],
+  routing?: { modelClass?: ModelClass | null; effort?: RoutingEffort | null },
 ): string {
   const what = desc.slice(0, DESC_MAX)
   const withPlugins = plugins.length > 0 ? `, with ${plugins.join(', ')}` : ''
-  const withModel = model ? ` (model: ${model})` : ''
+  const tierLabel = model
+    ? ` (model: ${model})`
+    : routing?.modelClass || routing?.effort
+      ? ` (${formatRoutingLabel(routing.modelClass, routing.effort)})`
+      : ''
   const withPeople = sharedWith && sharedWith.length > 0 ? `, shared with ${sharedWith.join(', ')}` : ''
-  return `Start a new room for this: ${what}${withPlugins}${withModel}${withPeople}?`
+  return `Start a new room for this: ${what}${withPlugins}${tierLabel}${withPeople}?`
 }
 
 /**

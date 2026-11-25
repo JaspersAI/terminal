@@ -82,20 +82,30 @@ export async function request({
       await sleep(wakeWait, signal)
     }
     const began = Date.now()
-    const asked = { round, attempt, label, provider: config.provider.id, model: config.model }
+    const asked = {
+      round,
+      attempt,
+      label,
+      provider: config.provider.id,
+      model: config.model,
+      ...(config.modelClass ? { modelClass: config.modelClass } : {}),
+      ...(effort ? { effort } : {}),
+      ...(config.surface ? { surface: config.surface } : {}),
+    }
     try {
       const reply = await complete(config, system, history, tools, {
         signal,
         stream: true,
         loop: true,
         effort,
+        ...(config.surface ? { surface: config.surface } : {}),
         maxTokens,
         timeoutMs,
         onText: text ? (delta) => text.push(delta) : undefined,
         onThinking: says.thinking ? thinker(entry.runId) : undefined,
         onCall: call?.began,
       }).finally(() => call?.end())
-      const { input, output, cacheRead = 0, cacheWrite = 0 } = reply.usage
+      const { input, output, cacheRead = 0, cacheWrite = 0, reasoningTokens } = reply.usage
       noteLlm(entry.runId, {
         ...asked,
         ms: Date.now() - began,
@@ -105,6 +115,9 @@ export async function request({
         output,
         cacheRead,
         cacheWrite,
+        ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+        ...(reply.resolvedModel ? { resolvedModel: reply.resolvedModel } : {}),
+        ...(reply.ttftMs !== undefined ? { ttftMs: reply.ttftMs } : {}),
       })
       return reply
     } catch (err) {

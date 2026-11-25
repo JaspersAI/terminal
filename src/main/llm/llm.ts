@@ -17,7 +17,7 @@ export type { Completion, CompleteOptions, ToolCall, ToolDefinition, ToolResult,
  * what does rides on the turns as their `context`. A prompt that moved each round would sit in front
  * of the whole conversation, and a provider can reuse nothing that comes after a change.
  */
-export function complete(
+export async function complete(
   config: ProviderConfig<'llm'>,
   system: string | string[],
   history: Turn[],
@@ -26,12 +26,44 @@ export function complete(
 ): Promise<Completion> {
   const blocks = typeof system === 'string' ? [system] : system.filter((block) => block.trim())
   const joined = blocks.join('\n\n')
+  const startedAt = Date.now()
+  let ttftMs: number | undefined
+  const markFirst = (): void => {
+    if (ttftMs === undefined) ttftMs = Date.now() - startedAt
+  }
+  const tracked: CompleteOptions =
+    options.stream || options.onText || options.onThinking || options.onCall
+      ? {
+          ...options,
+          onText: (delta) => {
+            markFirst()
+            options.onText?.(delta)
+          },
+          onCall: (name) => {
+            markFirst()
+            options.onCall?.(name)
+          },
+          ...(options.onThinking
+            ? {
+                onThinking: (delta: string) => {
+                  markFirst()
+                  options.onThinking?.(delta)
+                },
+              }
+            : {}),
+        }
+      : options
+  let reply: Completion
   switch (config.provider.api) {
     case 'anthropic':
-      return anthropic(config, blocks, history, tools, options)
+      reply = await anthropic(config, blocks, history, tools, tracked)
+      break
     case 'openai-responses':
-      return openaiResponses(config, joined, history, tools, options)
+      reply = await openaiResponses(config, joined, history, tools, tracked)
+      break
     case 'openai':
-      return openai(config, joined, history, tools, options)
+      reply = await openai(config, joined, history, tools, tracked)
+      break
   }
+  return ttftMs !== undefined && reply.ttftMs === undefined ? { ...reply, ttftMs } : reply
 }

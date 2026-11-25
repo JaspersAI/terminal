@@ -5,6 +5,7 @@
 
 import { isBudgetExhaustedError } from '../agent/budget.ts'
 import { COMMAND_MAX, TASK_COMMANDS_MAX } from '../app/pro-mode.ts'
+import { isModelClass, isRoutingEffort, type ModelClass, type RoutingEffort } from '../agent/model.ts'
 import { refreshGridOnWake, type Grid } from '../grid/grid.ts'
 import { MAIN_WINDOW } from '../grid/windows.ts'
 import { refreshTarget, type Loops } from '../loops/loops.ts'
@@ -135,6 +136,10 @@ export interface Task {
    * to. Nothing for a call, which wakes no model at all.
    */
   model: string | null
+  /** Semantic model class (`fast | main | code`) for standalone ask/watch runs; room tasks inherit their room's class. */
+  modelClass?: ModelClass | null
+  /** Reasoning effort (`low | medium | high`) for standalone ask/watch runs; room tasks inherit their room's effort. */
+  effort?: RoutingEffort | null
   /** False is paused. */
   enabled: boolean
   createdAt: number
@@ -176,6 +181,10 @@ export interface TaskInput {
   call: TaskCall | null
   /** A model on the configured provider; nothing for the app's. */
   model?: string | null
+  /** Semantic model class (`fast | main | code`) for standalone tasks. */
+  modelClass?: ModelClass | null
+  /** Reasoning effort (`low | medium | high`) for standalone tasks. */
+  effort?: RoutingEffort | null
   /** Scripts the user has already been asked about and allowed; nothing for none. */
   commands?: string[]
 }
@@ -184,12 +193,29 @@ export interface TaskInput {
 export type TaskPatch = Partial<
   Pick<
     Task,
-    'workspaceId' | 'instructions' | 'executeAt' | 'every' | 'at' | 'speak' | 'enabled' | 'call' | 'model' | 'commands'
+    | 'workspaceId'
+    | 'instructions'
+    | 'executeAt'
+    | 'every'
+    | 'at'
+    | 'speak'
+    | 'enabled'
+    | 'call'
+    | 'model'
+    | 'modelClass'
+    | 'effort'
+    | 'commands'
   >
 > & { roomId?: string | null }
 
 /** What checkTaskInput answers with: an input whose model and commands have been settled, one way or the other. */
-export type CheckedTaskInput = Omit<TaskInput, 'roomId'> & { roomId?: string; model: string | null; commands: string[] }
+export type CheckedTaskInput = Omit<TaskInput, 'roomId'> & {
+  roomId?: string
+  model: string | null
+  modelClass?: ModelClass | null
+  effort?: RoutingEffort | null
+  commands: string[]
+}
 
 export interface CheckOptions {
   /** Whether the orchestrator has a tool by this name now. */
@@ -584,6 +610,12 @@ export function checkTaskInput(input: TaskInput, options: CheckOptions): Checked
     speak,
     call,
     model: checkModel(input.model),
+    ...(isModelClass(input.modelClass)
+      ? { modelClass: input.modelClass }
+      : input.modelClass === null
+        ? { modelClass: null }
+        : {}),
+    ...(isRoutingEffort(input.effort) ? { effort: input.effort } : input.effort === null ? { effort: null } : {}),
     commands: checkCommands(input.commands, proMode),
   }
 }

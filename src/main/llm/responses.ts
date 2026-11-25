@@ -33,11 +33,17 @@ interface ResponsesItem {
 }
 
 export interface ResponsesReply {
+  model?: string
   status?: string
   incomplete_details?: { reason?: string } | null
   error?: { message?: string } | null
   output?: ResponsesItem[]
-  usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } }
+  usage?: {
+    input_tokens?: number
+    output_tokens?: number
+    input_tokens_details?: { cached_tokens?: number }
+    output_tokens_details?: { reasoning_tokens?: number }
+  }
   [field: string]: unknown
 }
 
@@ -253,6 +259,7 @@ export function readResponse(data: ResponsesReply): Completion {
     trimmed.length > 0 && trimmed[trimmed.length - 1] !== parsed[parsed.length - 1] && cutShort(rawStop) === 'length'
       ? 'completed'
       : rawStop
+  const reasoningTokens = data.usage?.output_tokens_details?.reasoning_tokens ?? 0
   return {
     text,
     toolCalls: trimmed.map(({ id, name, input }) => ({ id, name, input })),
@@ -262,7 +269,9 @@ export function readResponse(data: ResponsesReply): Completion {
       output: data.usage?.output_tokens ?? 0,
       cacheRead: data.usage?.input_tokens_details?.cached_tokens ?? 0,
       cacheWrite: 0,
+      ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
     },
+    ...(typeof data.model === 'string' && data.model ? { resolvedModel: data.model } : {}),
     raw: output,
   }
 }

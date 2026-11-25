@@ -54,6 +54,8 @@ export function Composer(): ReactElement {
     working,
     shown,
     earlier,
+    effortOverride,
+    cycleEffort,
     ask,
     toggleVoice,
     stop,
@@ -235,6 +237,29 @@ export function Composer(): ReactElement {
                   )}
                   <button
                     type="button"
+                    id="central-effort-toggle"
+                    aria-label={`Thinking effort: ${effortOverride ?? 'auto'}`}
+                    title={`Thinking effort: ${effortOverride ?? 'auto'} — click to cycle (Auto → Low → Med → High), or prefix /deep or /fast`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      cycleEffort()
+                    }}
+                    className={`flex h-4 shrink-0 items-center justify-center px-1 text-[10px] leading-none transition-colors ${
+                      effortOverride
+                        ? 'border border-foreground text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {effortOverride === 'high'
+                      ? 'Deep'
+                      : effortOverride === 'medium'
+                        ? 'Med'
+                        : effortOverride === 'low'
+                          ? 'Low'
+                          : 'Auto'}
+                  </button>
+                  <button
+                    type="button"
                     id="central-voice-button"
                     aria-label={phase === 'recording' ? 'Stop listening' : 'Voice input'}
                     title={
@@ -313,6 +338,29 @@ export function Composer(): ReactElement {
                     <span aria-hidden className="relative z-10 h-2.5 w-2.5 bg-background" />
                   </button>
                 )}
+                <button
+                  type="button"
+                  id="central-effort-toggle"
+                  aria-label={`Thinking effort: ${effortOverride ?? 'auto'}`}
+                  title={`Thinking effort: ${effortOverride ?? 'auto'} — click to cycle (Auto → Low → Med → High), or prefix /deep or /fast`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    cycleEffort()
+                  }}
+                  className={`flex h-4 shrink-0 items-center justify-center px-1 text-[10px] leading-none transition-colors ${
+                    effortOverride
+                      ? 'border border-foreground text-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {effortOverride === 'high'
+                    ? 'Deep'
+                    : effortOverride === 'medium'
+                      ? 'Med'
+                      : effortOverride === 'low'
+                        ? 'Low'
+                        : 'Auto'}
+                </button>
                 <button
                   type="button"
                   id="central-voice-button"

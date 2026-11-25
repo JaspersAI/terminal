@@ -66,6 +66,12 @@ export type Turn =
     }
   | { role: 'tool'; results: ToolResult[]; context?: string }
 
+/** Server-owned model class under Jaspers One, or mapped to `fastModel` vs `model` on BYOK providers. */
+export type ModelClass = 'fast' | 'main' | 'code'
+
+/** Reasoning depth requested from a thinking-capable language model. */
+export type LlmEffort = 'low' | 'medium' | 'high'
+
 export interface Completion {
   text: string
   toolCalls: ToolCall[]
@@ -73,7 +79,12 @@ export interface Completion {
   /**
    * `input` is the whole prompt. `cacheRead` and `cacheWrite` are the parts of it the provider served
    * from its prompt cache or wrote to it, when it says: a read is billed at a fraction of the rate.
+   * `reasoningTokens` is the thinking portion of `output` when reported separately by the provider.
    */
-  usage: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+  usage: { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoningTokens?: number }
+  /** Upstream model identifier reported in the provider's response, when present. */
+  resolvedModel?: string
+  /** Milliseconds from request start to the first streamed text, thinking, or tool-call piece. */
+  ttftMs?: number
   raw: unknown[] | null
 }

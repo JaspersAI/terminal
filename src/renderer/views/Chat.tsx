@@ -54,8 +54,22 @@ export function Chat({ panel }: ViewProps): ReactElement {
   const disabledSkills = useAppState((s) => s.disabledSkills)
   const notices = useAppState((s) => s.notices)
   const request = useRequest()
-  const { draft, setDraft, phase, busy, working, shown, earlier, ask, reportResponse, toggleVoice, stop, clear } =
-    request
+  const {
+    draft,
+    setDraft,
+    phase,
+    busy,
+    working,
+    shown,
+    earlier,
+    effortOverride,
+    cycleEffort,
+    ask,
+    reportResponse,
+    toggleVoice,
+    stop,
+    clear,
+  } = request
   const attachments = useAttachments((msg, fileName) => {
     reportResponse(`[Attached: ${fileName}]`, msg)
   })
@@ -268,6 +282,26 @@ export function Chat({ panel }: ViewProps): ReactElement {
                   <span aria-hidden className="relative z-10 h-2.5 w-2.5 bg-background" />
                 </button>
               )}
+              <button
+                type="button"
+                id={tabActive ? 'docked-chat-effort' : undefined}
+                aria-label={`Thinking effort: ${effortOverride ?? 'auto'}`}
+                title={`Thinking effort: ${effortOverride ?? 'auto'} — click to cycle (Auto → Low → Med → High), or prefix /deep or /fast`}
+                onClick={cycleEffort}
+                className={`my-[2px] flex h-4 shrink-0 items-center justify-center px-1 text-[10px] leading-none transition-colors ${
+                  effortOverride
+                    ? 'border border-foreground text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {effortOverride === 'high'
+                  ? 'Deep'
+                  : effortOverride === 'medium'
+                    ? 'Med'
+                    : effortOverride === 'low'
+                      ? 'Low'
+                      : 'Auto'}
+              </button>
               <button
                 type="button"
                 id={tabActive ? 'docked-chat-voice' : undefined}

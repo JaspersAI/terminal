@@ -57,11 +57,21 @@ test('a request reaches the provider streamed, with its model, a capped token li
   const jaspersConfig = {
     provider: { id: 'jaspers', name: 'Jaspers' },
     baseUrl: 'https://account.jsprai.com/v1',
-    model: 'gemini-4-argon',
+    model: 'main',
+    fastModel: 'fast',
     token: null,
   } as unknown as NonNullable<ReturnType<LlmDeps['config']>>
   await createLlm({ ...d, config: () => jaspersConfig }).complete(request, signal)
   assert.equal(seen!.model, undefined)
+  assert.equal(seen!.surface, 'plugin')
+
+  await createLlm({ ...d, config: () => jaspersConfig }).complete(
+    { ...request, modelClass: 'fast', effort: 'low' },
+    signal,
+  )
+  assert.equal(seen!.model, 'fast')
+  assert.equal(seen!.effort, 'low')
+  assert.equal(seen!.surface, 'plugin')
 })
 
 test('a rate limit, gateway timeout, or server error is retried with backoff up to the retry limit; a refusal is not', async () => {

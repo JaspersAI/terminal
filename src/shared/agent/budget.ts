@@ -7,8 +7,18 @@
  * of the user's measured 1.6 million input tokens over six turns, so a day of watches is well inside
  * this and something spending past it is stuck rather than working.
  */
+import type { ModelClass } from '../llm/llm.ts'
+
 export const DAILY_TOKENS_DEFAULT = 25_000_000
 export const DAILY_TOKENS_MIN = 10_000
+
+/** Relative token-cost multiplier for background task budget accounting (`fast` ~0.25x `main`). */
+export const FAST_TASK_TOKEN_WEIGHT = 0.25
+
+export function weightedTaskTokens(tokens: number, modelClass?: ModelClass | null): number {
+  if (!(tokens > 0 && Number.isFinite(tokens))) return 0
+  return modelClass === 'fast' ? Math.ceil(tokens * FAST_TASK_TOKEN_WEIGHT) : Math.round(tokens)
+}
 
 export interface Spent {
   input: number

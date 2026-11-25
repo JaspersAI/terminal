@@ -1,12 +1,21 @@
 import { untilAborted } from '../../shared/abort'
 import type { Place } from '../../shared/agent/asking'
 import { shownQuestion } from '../../shared/agent/attachments'
+import { isBudgetExhaustedError } from '../../shared/agent/budget'
+import {
+  parsePromptRouting,
+  resolveStickyRoomTier,
+  shouldEscalateFastRun,
+  type RoutingEffort,
+  type WorkRouting,
+} from '../../shared/agent/model'
 import type { Handed } from '../../shared/agent/typed'
 import { closedLoop } from '../../shared/loops/closed'
 import { fullName, othersIn, parseRoomInput, replicaPromptInput, roomSharing } from '../../shared/collab/collab'
 import { loopChat, frameOf, gone, LOOP_ID, shut } from '../../shared/loops/loops'
 import type { Exchange } from '../../shared/agent/transcript'
-import { findRoomTab, loopsOf, touchLoop } from '../loops/loops'
+import { isSleepWakeError } from '../../shared/tasks/tasks'
+import { findRoomTab, loopsOf, noteLoopOutcome, setLoopRouting, touchLoop } from '../loops/loops'
 import { getGrids } from '../grid/grid'
 import { expandSlash } from '../skills/skills'
 import { getState, subscribe } from '../state'
@@ -40,9 +49,15 @@ interface CollabHooks {
   said(workspaceId: string, loopId: string): void
 }
 let collab: CollabHooks | null = null
+let roomDoneHook: ((workspaceId: string, loopId: string, reply: string) => void) | null = null
 
 export function setCollabLoopHooks(hooks: CollabHooks): void {
   collab = hooks
+}
+
+/** Registers Central's completion listener so handed-over rooms feed concise completion notes back into Central. */
+export function setRoomDoneHook(hook: ((workspaceId: string, loopId: string, reply: string) => void) | null): void {
+  roomDoneHook = hook
 }
 
 /** The room a tile or room id belongs to, and which tab holds it. The docked chat has none. */
@@ -72,9 +87,14 @@ function loopOn(preferredTabId: string, on: string): { workspaceId: string; loop
 }
 
 /** A message sent from a tile's box. */
-export function runLoop(input: string, on: string, ask?: string): Promise<string> {
+export function runLoop(
+  input: string,
+  on: string,
+  ask?: string,
+  composerEffort?: RoutingEffort | null,
+): Promise<string> {
   const { workspaceId, loop, elementId } = loopOn(getState().currentWorkspaceId, on)
-  return runOn(workspaceId, loop, elementId, { input, ask })
+  return runOn(workspaceId, loop, elementId, { input, ask, composerEffort })
 }
 
 /**
@@ -106,6 +126,8 @@ export async function sendToLoop(workspaceId: string, loopId: string, handed: Ha
     manualTask: handed.manualTask,
     fromTeammate: handed.fromTeammate,
     model: handed.model,
+    routing: handed.routing,
+    composerEffort: handed.composerEffort,
   })
 }
 
@@ -125,6 +147,10 @@ interface Sent {
   fromTeammate?: boolean
   /** Optional model override when run on behalf of a scheduled task. */
   model?: string | null
+  /** Optional routing override (`surface: 'task'`, etc.). */
+  routing?: WorkRouting
+  /** Optional composer effort toggle selected by the user. */
+  composerEffort?: RoutingEffort | null
 }
 
 /** One request of a room's, shown in its frame: its own chat, prompt, and tools, in its turn. */
@@ -132,7 +158,7 @@ function runOn(
   workspaceId: string,
   loop: string,
   on: string,
-  { input, ask, written, task, manualTask, fromTeammate, model }: Sent,
+  { input, ask, written, task, manualTask, fromTeammate, model, routing, composerEffort }: Sent,
 ): Promise<string> {
   const state = getState()
   const record = loopsOf(workspaceId).list.find((one) => one.id === loop)
@@ -182,21 +208,63 @@ function runOn(
     }
   }
 
-  touchLoop(workspaceId, loop)
+  const now = Date.now()
+  const directive =
+    task === undefined && !fromTeammate
+      ? parsePromptRouting(input, {
+          composerEffort,
+          hasSkill: (name) => expandSlash(`/${name}`) !== null,
+        })
+      : { cleanedInput: input, explicit: false }
 
+  // Evaluate pre-run tier updates BEFORE touchLoop mutates lastActiveAt so idle-gap detection sees the real gap.
+  if (record && !record.replica && task === undefined && !fromTeammate) {
+    if (directive.explicit && (directive.modelClass || directive.effort)) {
+      const updated = resolveStickyRoomTier(
+        record,
+        { modelClass: directive.modelClass, effort: directive.effort },
+        { now, explicit: true },
+      )
+      if (updated.changed)
+        setLoopRouting(workspaceId, loop, { modelClass: updated.modelClass, effort: updated.effort }, now)
+    } else if (
+      shouldEscalateFastRun({
+        modelClass: record.modelClass ?? 'main',
+        round: 1,
+        toolErrors: 0,
+        priorFailures: record.failures,
+      })
+    ) {
+      setLoopRouting(workspaceId, loop, { modelClass: 'main', effort: 'medium' }, now)
+    } else if (directive.attachmentFloor) {
+      const updated = resolveStickyRoomTier(record, { effort: directive.attachmentFloor }, { now, explicit: false })
+      if (updated.changed)
+        setLoopRouting(workspaceId, loop, { modelClass: updated.modelClass, effort: updated.effort }, now)
+    }
+  }
+
+  touchLoop(workspaceId, loop, now)
+
+  const effectiveInput = directive.cleanedInput
   const request = (): Promise<string> => {
     // Where it shows is the work's frame, read as the run begins.
     const place: Place = { workspaceId, on: frameOf(getGrids(workspaceId), loop)?.element.id ?? on }
     return userRequest({
       workspaceId,
       chat,
-      input,
+      input: effectiveInput,
+      ...(effectiveInput !== input ? { shownInput: input } : {}),
       written,
       task,
       manualTask,
       model,
+      routing,
       ask,
       label: `${loop} `,
+      onEscalate: () => {
+        setLoopRouting(workspaceId, loop, { modelClass: 'main', effort: 'medium' })
+        return modelFor(chat)
+      },
       // The whole of it goes on: a room's conversation is its memory of the work.
       goesOn: () => {},
       // Work a task's run started is told so, as the task's own run is: it answers only when there is
@@ -211,18 +279,34 @@ function runOn(
       // What is sent to this room while the run is at work joins it. A run on a task's limits or a
       // teammate's prompt takes nothing: what the user sends then waits, and runs as theirs.
       added: task === undefined && !fromTeammate ? () => turns.takeWaiting<Added>(chat) : undefined,
-    }).finally(() => {
-      collab?.said(workspaceId, loop)
     })
+      .then((reply) => {
+        if (reply.trim()) noteLoopOutcome(workspaceId, loop, { ok: true, text: reply })
+        if (written !== undefined && task === undefined && reply.trim()) {
+          roomDoneHook?.(workspaceId, loop, reply)
+        }
+        return reply
+      })
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err)
+        const deferredBudget = task !== undefined && !manualTask && isBudgetExhaustedError(message)
+        if (!isSleepWakeError(message) && !deferredBudget) {
+          noteLoopOutcome(workspaceId, loop, { ok: false, text: message })
+        }
+        throw err
+      })
+      .finally(() => {
+        collab?.said(workspaceId, loop)
+      })
   }
   // /new does not wait: it starts the conversation over under whatever is still working, as it does
   // in the global box.
-  if (!fromTeammate && expandSlash(input) === null && NEW_THREAD.test(input)) return request()
+  if (!fromTeammate && expandSlash(effectiveInput) === null && NEW_THREAD.test(effectiveInput)) return request()
   // Waiting its turn, it says what it is, so the run at work can take it rather than leave it to run
   // after. A task's handoff or a teammate's prompt says nothing: it is never taken into another run.
   const says: Added | undefined =
     task === undefined && !fromTeammate
-      ? { text: turnText(input, written), shown: shownQuestion(written ?? input), ask }
+      ? { text: turnText(effectiveInput, written), shown: shownQuestion(written ?? input), ask }
       : undefined
   return turns.take(chat, ask, request, '', says)
 }

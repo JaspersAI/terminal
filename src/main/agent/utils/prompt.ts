@@ -1,5 +1,6 @@
 import {
   defaultClock,
+  describeConnectionStatuses,
   describeFiled,
   describeLoops,
   describeInstalledFor,
@@ -73,12 +74,14 @@ export function stateNow(workspaceId: string): string {
   const myFullName = fullName(state.collab)
   const userLine = myFullName ? `User: ${myFullName}${state.jaspers.email ? ` (${state.jaspers.email})` : ''}.` : ''
   const collabLines = describeCollabState(state.collab)
+  const connectionLines = describeConnectionStatuses(state.connections)
   return [
     ...(userLine ? [userLine] : []),
     ...(tabsLine ? [tabsLine] : []),
     ...collabLines,
     describeGrid(workspaceId, windowSize, focusedWindow()),
     describeLoops(state, workspaceId, (loop, tabId = workspaceId) => statusNow(state, tabId, loop.id)),
+    ...connectionLines,
     // What the focused element shows, without its view's instructions: those are for whoever drives it.
     describeRound(state, workspaceId, () => undefined, undefined, focusedWindow()),
     ...(filed.length > 0 ? [describeFiled(filed, state.sources)] : []),
