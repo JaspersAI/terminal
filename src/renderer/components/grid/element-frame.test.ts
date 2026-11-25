@@ -481,7 +481,15 @@ test('scaling a shared room conversation to 100% (browser at 0%) keeps RoomPeopl
       ),
     )
     const budgetBadge = findElement(pausedRoomDoc.children, (el) => 'data-room-budget-paused' in el.attribs)
+    const pausedRoomTitle = findElement(pausedRoomDoc.children, (el) => 'data-room-title' in el.attribs)
     assert.ok(budgetBadge, 'expected room header to show Paused (daily budget) when a room task is budget-paused')
+    assert.ok(pausedRoomTitle && hasClass(pausedRoomTitle, 'shrink-0'), 'room title stays readable beside badge')
+    assert.ok(hasClass(budgetBadge, 'truncate'), 'budget badge truncates cleanly on narrow tiles without overflowing')
+    assert.equal(
+      findElement(pausedRoomDoc.children, (el) => 'data-room-header-meta' in el.attribs),
+      null,
+      'budget badge takes the single header meta slot rather than stacking beside roomAsOf',
+    )
   } finally {
     if (prevWindow === undefined) delete (globalThis as { window?: unknown }).window
     else (globalThis as { window?: unknown }).window = prevWindow

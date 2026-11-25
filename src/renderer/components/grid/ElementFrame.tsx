@@ -468,7 +468,7 @@ export function ElementFrame({
       >
         {loop ? (
           <div
-            className={`flex min-w-0 flex-1 items-center px-2 text-xs ${
+            className={`flex min-w-0 flex-1 items-center overflow-hidden px-2 text-xs ${
               focused ? 'font-medium text-foreground' : 'text-muted-foreground'
             }`}
           >
@@ -543,23 +543,30 @@ export function ElementFrame({
                     event.stopPropagation()
                     startRename()
                   }}
-                  className="min-w-0 cursor-text truncate hover:text-foreground hover:underline"
+                  className={`${
+                    budgetPaused || roomAsOf ? 'max-w-[65%] shrink-0' : 'min-w-0'
+                  } cursor-text truncate hover:text-foreground hover:underline`}
                 >
                   {headerTitle}
                 </span>
-                {roomAsOf && (
-                  <span data-room-header-meta title={roomAsOf} className="shrink-0 pl-1 text-muted-foreground">
-                    {`· ${roomAsOf}`}
-                  </span>
-                )}
-                {budgetPaused && (
+                {budgetPaused ? (
                   <span
                     data-room-budget-paused
-                    title="Scheduled tasks in this room are paused until tomorrow's daily token budget reset (or raise Daily budget in Settings > Data)."
-                    className="shrink-0 pl-1 text-muted-foreground"
+                    title={`Scheduled tasks in this room are paused until tomorrow's daily token budget reset (or raise Daily budget in Settings > Data).${roomAsOf ? ` Last updated ${roomAsOf}.` : ''}`}
+                    className="min-w-0 truncate pl-1 text-muted-foreground"
                   >
                     · Paused (daily budget)
                   </span>
+                ) : (
+                  roomAsOf && (
+                    <span
+                      data-room-header-meta
+                      title={roomAsOf}
+                      className="min-w-0 truncate pl-1 text-muted-foreground"
+                    >
+                      {`· ${roomAsOf}`}
+                    </span>
+                  )
                 )}
               </>
             )}
