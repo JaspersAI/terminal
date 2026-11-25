@@ -6,8 +6,14 @@ import {
   checkCommands,
   checkRoomId,
   checkTaskInput,
+  clearExpiredBudgetPauses,
+  hasPendingBudgetTaskBefore,
+  isBudgetPaused,
   missingInRun,
   needsShellInRun,
+  nextAfterBudgetReset,
+  pauseTasksForDailyBudget,
+  resumeBudgetPausedTasks,
   routeTaskOutput,
   SHELL_TOOL,
   TASK_EXCLUDED_TOOLS,
@@ -895,4 +901,147 @@ test("a room's task says what it found in that room alone, a failure is a notice
     kind: 'central',
     notice: 't31: It found 3 leads.',
   })
+})
+
+test('daily budget exhaustion pauses only LLM-spending tasks due before reset and auto-resumes on next-day specs or raised budget', () => {
+  // T0 is 2026-09-14 09:00:00 UTC (Monday). Next UTC midnight is 2026-09-15 00:00:00 UTC.
+  const resetAt = Date.UTC(2026, 8, 15, 0, 0, 0)
+  const now = Date.UTC(2026, 8, 14, 14, 0, 0)
+
+  const roomInterval = task({
+    id: 't1',
+    roomId: 'f91',
+    call: null,
+    instructions: 'Refresh sentiment brief',
+    executeAt: Date.UTC(2026, 8, 14, 9, 7, 0),
+    every: 15 * MIN,
+    nextAt: Date.UTC(2026, 8, 14, 14, 7, 0),
+  })
+  const weekdayClock = task({
+    id: 't2',
+    roomId: 'f92',
+    call: null,
+    instructions: 'Afternoon wrap',
+    executeAt: T0,
+    every: null,
+    at: { days: ['mon', 'tue', 'wed', 'thu', 'fri'], time: '16:00', timeZone: 'UTC' },
+    nextAt: Date.UTC(2026, 8, 14, 16, 0, 0),
+  })
+  const midnightClock = task({
+    id: 't3',
+    call: null,
+    instructions: 'Midnight roll',
+    executeAt: T0,
+    every: null,
+    at: { days: [], time: '00:00', timeZone: 'UTC' },
+    // Simulate a missed midnight slot earlier today that is now held until tomorrow's 00:00.
+    nextAt: Date.UTC(2026, 8, 14, 15, 0, 0),
+  })
+  const oneShotToday = task({
+    id: 't4',
+    call: null,
+    instructions: 'One-off evening check',
+    executeAt: Date.UTC(2026, 8, 14, 18, 0, 0),
+    every: null,
+    nextAt: Date.UTC(2026, 8, 14, 18, 0, 0),
+  })
+  const pureCall = task({
+    id: 't5',
+    call: { tool: 'refresh_element', input: { elementId: 'e1' } },
+    speak: 'always',
+    every: 30 * S,
+    nextAt: now + 30 * S,
+  })
+  const quietWatch = task({
+    id: 't6',
+    call: { tool: 'get', input: { path: 'panels/e1/output' } },
+    speak: 'changed',
+    every: MIN,
+    nextAt: now + MIN,
+  })
+  const alreadyTomorrow = task({
+    id: 't7',
+    call: null,
+    instructions: 'Morning pre-market',
+    executeAt: T0,
+    every: null,
+    at: { days: ['mon', 'tue', 'wed', 'thu', 'fri'], time: '08:00', timeZone: 'UTC' },
+    lastRun: { at: Date.UTC(2026, 8, 14, 8, 0, 0), ok: true, result: 'ok', ms: 100 },
+    nextAt: Date.UTC(2026, 8, 15, 8, 0, 0),
+  })
+
+  const all = [roomInterval, weekdayClock, midnightClock, oneShotToday, pureCall, quietWatch, alreadyTomorrow]
+  assert.equal(hasPendingBudgetTaskBefore(all, resetAt), true)
+
+  const paused = pauseTasksForDailyBudget(all, resetAt)
+  // LLM tasks with slots today pause cleanly until their next-day slots.
+  assert.equal(paused[0]!.budgetPausedUntil, resetAt)
+  assert.equal(paused[0]!.nextAt, Date.UTC(2026, 8, 15, 0, 7, 0))
+  assert.equal(taskStatus(paused[0]!, now), 'budget-paused')
+  assert.equal(isDue(paused[0]!, now), false)
+
+  assert.equal(paused[1]!.budgetPausedUntil, resetAt)
+  assert.equal(paused[1]!.nextAt, Date.UTC(2026, 8, 15, 16, 0, 0))
+
+  // A rule at 00:00 lands right at resetAt (00:00 tomorrow), not a day later.
+  assert.equal(nextAfterBudgetReset(midnightClock, resetAt), resetAt)
+  assert.equal(paused[2]!.nextAt, resetAt)
+
+  // Unrun one-shot today is deferred to resetAt rather than dropped or failed.
+  assert.equal(paused[3]!.nextAt, resetAt)
+  assert.equal(paused[3]!.budgetPausedUntil, resetAt)
+
+  // Zero-token pure call, quiet watch, and already-tomorrow tasks stay scheduled untouched.
+  assert.equal(paused[4], pureCall)
+  assert.equal(paused[5], quietWatch)
+  assert.equal(paused[6], alreadyTomorrow)
+  assert.equal(taskStatus(paused[4]!, now), 'scheduled')
+  assert.equal(taskStatus(paused[5]!, now), 'scheduled')
+
+  // When a watch detects a change and hits the budget, passing its id holds that watch too.
+  const withTriggeredWatch = pauseTasksForDailyBudget(paused, resetAt, 't6')
+  assert.equal(withTriggeredWatch[5]!.budgetPausedUntil, resetAt)
+  assert.equal(taskStatus(withTriggeredWatch[5]!, now), 'budget-paused')
+
+  // Scheduler wakes at resetAt even if all paused tasks run later in the morning.
+  assert.equal(earliestNext([paused[1]!]), resetAt)
+
+  // Manual Run now while budget-paused records its run and preserves tomorrow's hold on recurring tasks.
+  const afterManualRecurring = afterRun(paused[0]!, { at: now + MIN, ok: true, result: 'manual ok', ms: 50 })
+  assert.equal(afterManualRecurring.budgetPausedUntil, resetAt)
+  assert.equal(afterManualRecurring.nextAt, Date.UTC(2026, 8, 15, 0, 7, 0))
+  // Manual Run now on a deferred one-shot finishes it cleanly.
+  const afterManualOneShot = afterRun(paused[3]!, {
+    at: Date.UTC(2026, 8, 14, 19, 0, 0),
+    ok: true,
+    result: 'done',
+    ms: 50,
+  })
+  assert.equal(afterManualOneShot.nextAt, null)
+  assert.equal(afterManualOneShot.budgetPausedUntil, null)
+  assert.equal(taskStatus(afterManualOneShot, Date.UTC(2026, 8, 14, 19, 1, 0)), 'done')
+
+  // Once resetAt arrives, budgetPausedUntil clears and tasks report scheduled / due on their specs.
+  assert.equal(isBudgetPaused(paused[0]!, resetAt), false)
+  assert.equal(taskStatus(paused[0]!, resetAt), 'scheduled')
+  const clearedAtMidnight = clearExpiredBudgetPauses(withTriggeredWatch, resetAt)
+  assert.ok(clearedAtMidnight.every((t) => !t.budgetPausedUntil))
+  assert.equal(isDue(clearedAtMidnight[2]!, resetAt), true)
+
+  // Raising Daily budget mid-day resumes held tasks from now.
+  const raisedAt = Date.UTC(2026, 8, 14, 14, 20, 0)
+  const resumed = resumeBudgetPausedTasks(withTriggeredWatch, raisedAt)
+  assert.equal(resumed[0]!.budgetPausedUntil, null)
+  assert.equal(resumed[0]!.nextAt, Date.UTC(2026, 8, 14, 14, 22, 0))
+  assert.equal(taskStatus(resumed[0]!, raisedAt), 'scheduled')
+
+  // Budget exhaustion never emits a per-task failure streak notice.
+  assert.equal(
+    runNotice('t1', roomInterval, {
+      ok: false,
+      result: "The day's budget for work that runs on its own is spent: 25,000,000 of 25,000,000 tokens.",
+      changed: false,
+    }),
+    null,
+  )
 })

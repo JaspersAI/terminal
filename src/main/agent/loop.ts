@@ -103,6 +103,7 @@ export async function sendToLoop(workspaceId: string, loopId: string, handed: Ha
     input,
     written: handed.written,
     task: handed.task,
+    manualTask: handed.manualTask,
     fromTeammate: handed.fromTeammate,
     model: handed.model,
   })
@@ -118,6 +119,8 @@ interface Sent {
   written?: string
   /** The scheduled task whose run handed it over. */
   task?: string
+  /** Set when the user explicitly clicked Run now on that scheduled task. */
+  manualTask?: boolean
   /** Set when a teammate in a shared room asked the room's agent. */
   fromTeammate?: boolean
   /** Optional model override when run on behalf of a scheduled task. */
@@ -129,7 +132,7 @@ function runOn(
   workspaceId: string,
   loop: string,
   on: string,
-  { input, ask, written, task, fromTeammate, model }: Sent,
+  { input, ask, written, task, manualTask, fromTeammate, model }: Sent,
 ): Promise<string> {
   const state = getState()
   const record = loopsOf(workspaceId).list.find((one) => one.id === loop)
@@ -154,7 +157,7 @@ function runOn(
     const shown = shownQuestion(written ?? input)
     const place: Place = { workspaceId, on: frameOf(getGrids(workspaceId), loop)?.element.id ?? on }
     const entry = begin(
-      task === undefined ? 'user' : 'task',
+      task === undefined || manualTask ? 'user' : 'task',
       workspaceId,
       task === undefined ? '' : `task ${task}`,
       shown,
@@ -190,6 +193,7 @@ function runOn(
       input,
       written,
       task,
+      manualTask,
       model,
       ask,
       label: `${loop} `,

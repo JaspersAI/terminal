@@ -153,7 +153,8 @@ async function loop({
       if (signal.aborted) throw new Stopped()
       // Only work that runs on its own is capped: the user is sitting there waiting for theirs.
       if (entry.origin === 'task') {
-        const refused = overBudget(await spentToday(day, 'task'), budget())
+        const todays = await spentToday(day, 'task')
+        const refused = overBudget({ input: todays.input + cost.input, output: todays.output + cost.output }, budget())
         if (refused) throw new Error(refused)
       }
       rounds = round

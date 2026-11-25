@@ -27,11 +27,58 @@ export function dayOf(at: number, timeZone?: string): string {
   return parts
 }
 
+export const BUDGET_EXHAUSTED_PREFIX = "The day's budget for work that runs on its own is spent:"
+
 /** Whether a background run may take another round, and what to say when it may not. */
 export function overBudget(spent: Spent, budget: number): string | null {
   const used = spent.input + spent.output
   if (used < budget) return null
-  return `The day's budget for work that runs on its own is spent: ${used.toLocaleString()} of ${budget.toLocaleString()} tokens. It starts again tomorrow, and Settings > Data raises it.`
+  return `${BUDGET_EXHAUSTED_PREFIX} ${used.toLocaleString()} of ${budget.toLocaleString()} tokens. Scheduled tasks are paused; it starts again tomorrow, and Settings > Data raises it.`
+}
+
+/** Whether a failure message came from exhausting the daily autonomous token budget. */
+export function isBudgetExhaustedError(message: string): boolean {
+  return message.includes(BUDGET_EXHAUSTED_PREFIX)
+}
+
+function resolveBudgetTimeZone(timeZone?: string): string | undefined {
+  const trimmed = timeZone?.trim()
+  if (!trimmed) return undefined
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: trimmed })
+    return trimmed
+  } catch {
+    return undefined
+  }
+}
+
+function zoneOffsetMs(at: number, timeZone?: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(at))
+  const get = (type: string): number => Number(parts.find((one) => one.type === type)?.value ?? 0)
+  return (
+    Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second')) -
+    Math.floor(at / 1000) * 1000
+  )
+}
+
+/** The start (`00:00:00.000`) of the next local calendar day after `at`, across DST transitions. */
+export function nextLocalDayStart(at: number, timeZone?: string): number {
+  const zone = resolveBudgetTimeZone(timeZone)
+  const [year, month, date] = dayOf(at, zone).split('-').map(Number) as [number, number, number]
+  const guess = Date.UTC(year, month - 1, date + 1, 0, 0, 0)
+  const firstOffset = zoneOffsetMs(guess, zone)
+  const candidate = guess - firstOffset
+  const secondOffset = zoneOffsetMs(candidate, zone)
+  return secondOffset === firstOffset ? candidate : guess - secondOffset
 }
 
 /** A budget the user typed, kept to something that is a budget. */

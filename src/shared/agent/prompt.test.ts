@@ -1544,4 +1544,14 @@ test('room-affiliated tasks show their room in workspace state, render per-room 
 
   const preface = taskPreface('t7', [], false, true)
   assert.match(preface, /shown strictly inside this room's tile, never in Central/)
+
+  const budgetPausedRoomTask = {
+    ...roomTask,
+    budgetPausedUntil: CLOCK.now + 36_000_000,
+    nextAt: CLOCK.now + 36_000_000,
+  }
+  assert.match(
+    describeRoomTasks([budgetPausedRoomTask], CLOCK),
+    /- t7 \[every 15 min, paused \(daily budget\), resumes 2026-09-14 19:12:00\]: "Post morning competitive intelligence brief"/,
+  )
 })

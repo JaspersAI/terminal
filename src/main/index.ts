@@ -30,13 +30,14 @@ import { jaspersHome } from './home'
 import { registerMemoryIpc, startMemory } from './agent/memory'
 import { startThreads } from './agent/thread-file'
 import { startInbox } from './app/notices'
-import { compact, notifications, query, startStore, stats, stopOnQuit, usageToday } from './data/store'
+import { dayOf, nextLocalDayStart, overBudget } from '../shared/agent/budget'
+import { compact, notifications, query, spentToday, startStore, stats, stopOnQuit, usageToday } from './data/store'
 import { startBackground, startsHidden } from './app/background'
 import { deleteRecordings, endSession, eyeFolder, record, startEye, suspendEye, wakeEye } from './eye/eye'
 import { recordAction, recordNote, startTelemetry } from './eye/taps'
 import { closePendingRuns } from './agent/utils/record'
 import { hasLiveRuns, onLiveRunsChange } from './agent/utils/runs'
-import { knownSecrets } from './agent/utils/settings'
+import { budget, knownSecrets } from './agent/utils/settings'
 import { canFlushUploads, flushUploads, startUploads, stopUploads, suspendUploads, wakeUploads } from './eye/upload'
 import { startTheme } from './app/theme'
 import { installUpdate, startUpdates } from './app/updates'
@@ -145,6 +146,11 @@ app.whenReady().then(async () => {
     runCall: runTaskCall,
     runAsk: runTask,
     intoChat: taskSaid,
+    budgetBlock: async (at) => {
+      const limit = budget()
+      const message = overBudget(await spentToday(dayOf(at), 'task'), limit)
+      return message ? { message, resetAt: nextLocalDayStart(at), dailyTokens: limit } : null
+    },
     wakeDelayMs: jaspersWakeDelayMs,
     onWake: () => {
       wakeEye()

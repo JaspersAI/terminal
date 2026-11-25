@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { stepped, STOPPED, type AgentEvent, type AgentOrigin } from '../../../shared/agent/agent'
+import { isBudgetExhaustedError } from '../../../shared/agent/budget'
 import { mask } from '../../../shared/agent/transcript'
 import type { Place } from '../../../shared/agent/asking'
 import { isSleepWakeError } from '../../../shared/tasks/tasks'
@@ -165,7 +166,7 @@ export function ended(entry: Live, work: Promise<string>): Promise<string> {
         throw new Error(STOPPED)
       }
       const message = err instanceof Error ? err.message : String(err)
-      if (entry.origin === 'task' && isSleepWakeError(message)) {
+      if (entry.origin === 'task' && (isSleepWakeError(message) || isBudgetExhaustedError(message))) {
         emit({ kind: 'stopped', runId: entry.runId })
         throw err
       }

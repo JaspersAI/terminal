@@ -75,6 +75,7 @@ function OpenAtLogin(): ReactElement {
 const STATUS_COLOR: Record<TaskStatus, string> = {
   running: 'text-muted-foreground',
   paused: 'text-muted-foreground',
+  'budget-paused': 'text-muted-foreground',
   scheduled: 'text-foreground',
   done: 'text-muted-foreground',
   failed: 'text-destructive',
@@ -156,7 +157,7 @@ export function TaskList({ tasks, about }: ListProps): ReactElement {
  */
 function TaskDetail({ task, now, timeZone }: { task: Task; now: number; timeZone: string }): ReactElement {
   const [failed, setFailed] = useState<string | null>(null)
-  const status = taskStatus(task)
+  const status = taskStatus(task, now)
   const when = (at: number): string => shortLocal(at, now, timeZone)
 
   function act(action: Action): void {
@@ -184,6 +185,12 @@ function TaskDetail({ task, now, timeZone }: { task: Task; now: number; timeZone
         <span className={STATUS_COLOR[status]}>{TASK_STATUS[status]}</span>
         <span className="text-muted-foreground"> · {parts.join(' · ')}</span>
       </p>
+      {status === 'budget-paused' && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Daily autonomous token budget is spent. Resumes automatically tomorrow, or raise Daily budget in Settings &gt;
+          Data.
+        </p>
+      )}
       {task.call && (
         <p className="mt-1 font-mono text-xs break-all text-muted-foreground">
           {task.call.tool} {JSON.stringify(task.call.input)}

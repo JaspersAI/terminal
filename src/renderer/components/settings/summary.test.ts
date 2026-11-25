@@ -185,6 +185,14 @@ test('a task row reads its status and how often it runs', () => {
     when: 'every 24 h',
     alert: false,
   })
+  assert.deepEqual(
+    taskLine(task({ call: null, budgetPausedUntil: NOW + 10 * HOUR, nextAt: NOW + 10 * HOUR }), NOW, 'UTC'),
+    {
+      status: 'Paused (daily budget)',
+      when: 'every 30 s',
+      alert: false,
+    },
+  )
 })
 
 test('a one-shot reads when it runs, the clock alone for today', () => {

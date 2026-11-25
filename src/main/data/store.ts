@@ -140,7 +140,10 @@ export async function spentToday(day: string, origin: string): Promise<Spent> {
   try {
     const current = running()
     const sig = timeout(RECORD_TIMEOUT_MS)
-    const rows = (await current.queue.foreground(() => current.rpc.request('usage.read', { day }, sig), sig)) as {
+    const rows = (await current.queue.foreground(async () => {
+      await current.queue.flushUsage()
+      return current.rpc.request('usage.read', { day }, sig)
+    }, sig)) as {
       origin: string
       input: number
       output: number
@@ -347,10 +350,10 @@ export async function usageToday(): Promise<{ origin: string; input: number; out
   try {
     const current = running()
     const sig = timeout(RECORD_TIMEOUT_MS)
-    return (await current.queue.foreground(
-      () => current.rpc.request('usage.read', { day: dayOf(Date.now()) }, sig),
-      sig,
-    )) as {
+    return (await current.queue.foreground(async () => {
+      await current.queue.flushUsage()
+      return current.rpc.request('usage.read', { day: dayOf(Date.now()) }, sig)
+    }, sig)) as {
       origin: string
       input: number
       output: number

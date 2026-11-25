@@ -311,6 +311,10 @@ function loadTasks(tasks: Task[], workspaces: Workspace[]): Task[] {
         at: task.at ?? null,
         model: task.model ?? null,
         running: false,
+        budgetPausedUntil:
+          typeof task.budgetPausedUntil === 'number' && Number.isFinite(task.budgetPausedUntil)
+            ? task.budgetPausedUntil
+            : null,
         history: Array.isArray(task.history) ? task.history : [],
         // One written before a task could be allowed a command has none, and its runs ask.
         commands: Array.isArray(task.commands) ? task.commands.filter((c) => typeof c === 'string') : [],

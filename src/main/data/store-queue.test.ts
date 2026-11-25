@@ -185,3 +185,38 @@ test('foreground aborts while waiting on ready when its signal aborts without ru
   await assert.rejects(pending, /init timed out/)
   assert.equal(ran, 0)
 })
+
+test('flushUsage flushes queued and in-flight usage writes so immediate budget reads observe just-spent tokens', async () => {
+  const order: string[] = []
+  let releaseFirst!: () => void
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve
+  })
+  let calls = 0
+  const queue = createStoreQueue({
+    ready: Promise.resolve(),
+    sendRecord: async () => undefined,
+    sendUsage: async (usage) => {
+      const n = ++calls
+      order.push(`usage:start:${usage.input}`)
+      if (n === 1) await firstGate
+      order.push(`usage:done:${usage.input}`)
+    },
+  })
+
+  queue.enqueueUsage({ day: '2026-11-25', origin: 'task', input: 1000, output: 100 })
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  queue.enqueueUsage({ day: '2026-11-25', origin: 'task', input: 2000, output: 200 })
+
+  const readDone = queue.foreground(async () => {
+    await queue.flushUsage()
+    order.push('usage:read')
+  })
+
+  releaseFirst()
+  await readDone
+
+  const readIdx = order.indexOf('usage:read')
+  assert.ok(readIdx > order.indexOf('usage:done:1000') && order.indexOf('usage:done:1000') !== -1)
+  assert.ok(readIdx > order.indexOf('usage:done:2000') && order.indexOf('usage:done:2000') !== -1)
+})

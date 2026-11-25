@@ -431,6 +431,57 @@ test('scaling a shared room conversation to 100% (browser at 0%) keeps RoomPeopl
       findElement(unsharedDoc.children, (el) => 'data-room-people' in el.attribs),
       null,
     )
+    assert.equal(
+      findElement(unsharedDoc.children, (el) => 'data-room-budget-paused' in el.attribs),
+      null,
+    )
+
+    // 4. Room with a budget-paused room task renders the clean non-error header badge.
+    currentState = {
+      ...currentState,
+      tasks: [
+        {
+          id: 't27',
+          workspaceId: 'ws-1',
+          roomId: 'f3',
+          instructions: 'Refresh sentiment brief',
+          call: null,
+          executeAt: Date.now() - 60_000,
+          every: 900_000,
+          at: null,
+          speak: 'always',
+          model: null,
+          enabled: true,
+          createdAt: Date.now() - 120_000,
+          runs: 3,
+          lastRun: { at: Date.now() - 60_000, ok: true, result: 'Updated', ms: 100 },
+          nextAt: Date.now() + 36_000_000,
+          running: false,
+          budgetPausedUntil: Date.now() + 36_000_000,
+          commands: [],
+          history: [],
+        },
+      ],
+    }
+    emitState(currentState)
+    const pausedRoomDoc = parseDocument(
+      renderToStaticMarkup(
+        React.createElement(ElementFrame, {
+          workspaceId: 'ws-1',
+          windowNumber: 1,
+          grid: browserGrid,
+          element: browserGrid.elements[0]!,
+          rect: browserGrid.elements[0]!.rect,
+          panel: browserGrid.panels[0],
+          active: true,
+          focused: true,
+          covered: false,
+          onGrab: () => undefined,
+        }),
+      ),
+    )
+    const budgetBadge = findElement(pausedRoomDoc.children, (el) => 'data-room-budget-paused' in el.attribs)
+    assert.ok(budgetBadge, 'expected room header to show Paused (daily budget) when a room task is budget-paused')
   } finally {
     if (prevWindow === undefined) delete (globalThis as { window?: unknown }).window
     else (globalThis as { window?: unknown }).window = prevWindow

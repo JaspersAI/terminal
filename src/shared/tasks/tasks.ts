@@ -3,6 +3,7 @@
 // clock here is pure: milliseconds since the epoch in, milliseconds out, and a time zone only where
 // a time is written for someone to read. Keep this file free of Node and DOM imports.
 
+import { isBudgetExhaustedError } from '../agent/budget.ts'
 import { COMMAND_MAX, TASK_COMMANDS_MAX } from '../app/pro-mode.ts'
 import { refreshGridOnWake, type Grid } from '../grid/grid.ts'
 import { MAIN_WINDOW } from '../grid/windows.ts'
@@ -144,6 +145,11 @@ export interface Task {
   /** A run is in flight. Always false after a load. */
   running: boolean
   /**
+   * When set and in the future (`> now`), this enabled task is paused for today's spent daily
+   * token budget until this timestamp (start of the next local day), when it resumes on schedule.
+   */
+  budgetPausedUntil?: number | null
+  /**
    * The scripts the user allowed this task's runs to run without asking, each whole and to the
    * letter: asked for while the task was made, or at a run that reached for one. Only an answer from
    * the user puts one here, and they go when the task does.
@@ -153,7 +159,7 @@ export interface Task {
   history: TaskRun[]
 }
 
-export type TaskStatus = 'running' | 'paused' | 'scheduled' | 'done' | 'failed'
+export type TaskStatus = 'running' | 'paused' | 'budget-paused' | 'scheduled' | 'done' | 'failed'
 
 /** What a task is made from. */
 export interface TaskInput {
@@ -212,12 +218,88 @@ export function computeNext(task: Pick<Task, 'executeAt' | 'every' | 'at' | 'las
   return nextAfter(executeAt, every, lastRun === null ? now : Math.max(now, lastRun.at + 1))
 }
 
+export function isBudgetPaused(task: Pick<Task, 'enabled' | 'budgetPausedUntil'>, now = Date.now()): boolean {
+  return task.enabled && typeof task.budgetPausedUntil === 'number' && task.budgetPausedUntil > now
+}
+
+/** Whether every scheduled run of this task calls a language model (unlike a pure tool call or quiet watch). */
+export function usesModelAlways(task: Pick<Task, 'call'>): boolean {
+  return task.call === null
+}
+
+/**
+ * The next scheduled slot for a task on or after `resetAt` (start of the next local day), preserving
+ * clock-rule days/times, interval phase, and unrun one-shots deferred past today's spent budget.
+ */
+export function nextAfterBudgetReset(
+  task: Pick<Task, 'executeAt' | 'every' | 'at' | 'lastRun'>,
+  resetAt: number,
+): number | null {
+  const { executeAt, every, at, lastRun } = task
+  if (at) return nextByRule(at, Math.max(resetAt - 1, lastRun === null ? executeAt - 1 : lastRun.at))
+  if (every === null) return lastRun === null || lastRun.at < executeAt ? Math.max(executeAt, resetAt) : null
+  return nextAfter(executeAt, every, lastRun === null ? resetAt : Math.max(resetAt, lastRun.at + 1))
+}
+
+/** Whether any enabled LLM-always task has a scheduled slot before `resetAt` that today's spent budget will hold. */
+export function hasPendingBudgetTaskBefore(tasks: readonly Task[], resetAt: number): boolean {
+  return tasks.some((t) => usesModelAlways(t) && isPending(t) && t.nextAt! < resetAt)
+}
+
+/**
+ * Holds `triggeredTaskId` (including a watch that just saw a change) and any enabled LLM-always
+ * tasks scheduled before `resetAt` until their first slot on or after `resetAt`, leaving pure tool
+ * calls, quiet watches, manually paused tasks, and tasks already scheduled on a future day untouched.
+ */
+export function pauseTasksForDailyBudget(tasks: readonly Task[], resetAt: number, triggeredTaskId?: string): Task[] {
+  let changed = false
+  const next = tasks.map((task) => {
+    const shouldHold =
+      task.enabled &&
+      task.nextAt !== null &&
+      (task.id === triggeredTaskId || (usesModelAlways(task) && task.nextAt < resetAt))
+    if (!shouldHold) return task
+    const nextAt = nextAfterBudgetReset(task, resetAt)
+    const budgetPausedUntil = nextAt !== null ? resetAt : null
+    if (task.nextAt === nextAt && (task.budgetPausedUntil ?? null) === budgetPausedUntil) return task
+    changed = true
+    return { ...task, nextAt, budgetPausedUntil }
+  })
+  return changed ? next : (tasks as Task[])
+}
+
+/** Clears `budgetPausedUntil` on tasks whose daily budget reset time has arrived. */
+export function clearExpiredBudgetPauses(tasks: readonly Task[], now: number): Task[] {
+  let changed = false
+  const next = tasks.map((task) => {
+    if (task.budgetPausedUntil == null || task.budgetPausedUntil > now) return task
+    changed = true
+    return { ...task, budgetPausedUntil: null }
+  })
+  return changed ? next : (tasks as Task[])
+}
+
+/** Resumes all budget-paused tasks from `now` when the user raises the daily token budget above today's spend. */
+export function resumeBudgetPausedTasks(tasks: readonly Task[], now: number): Task[] {
+  let changed = false
+  const next = tasks.map((task) => {
+    if (task.budgetPausedUntil == null) return task
+    changed = true
+    return {
+      ...task,
+      budgetPausedUntil: null,
+      nextAt: task.enabled ? computeNext(task, now) : task.nextAt,
+    }
+  })
+  return changed ? next : (tasks as Task[])
+}
+
 export function isPending(task: Task): boolean {
   return task.enabled && task.nextAt !== null
 }
 
 export function isDue(task: Task, now: number): boolean {
-  return isPending(task) && !task.running && task.nextAt! <= now
+  return isPending(task) && !task.running && !isBudgetPaused(task, now) && task.nextAt! <= now
 }
 
 /** Whether a timer fired late enough past its deadline that the machine slept before resume arrived. */
@@ -374,6 +456,9 @@ export function earliestNext(tasks: Task[]): number | null {
   let earliest: number | null = null
   for (const task of tasks) {
     if (!isPending(task) || task.running) continue
+    if (typeof task.budgetPausedUntil === 'number' && (earliest === null || task.budgetPausedUntil < earliest)) {
+      earliest = task.budgetPausedUntil
+    }
     if (isRefreshCall(task) && holdsBackRefresh(task, tasks)) continue
     if (earliest === null || task.nextAt! < earliest) earliest = task.nextAt!
   }
@@ -459,8 +544,13 @@ export function afterRun(task: Task, run: TaskRun): Task {
         HISTORY_MAX,
       )
     : task.history
+  const finishedAt = run.at + run.ms
   const next = { ...task, runs: task.runs + 1, lastRun, history, running: false }
-  return { ...next, nextAt: computeNext(next, run.at + run.ms) }
+  if (isBudgetPaused(task, finishedAt)) {
+    const nextAt = nextAfterBudgetReset(next, task.budgetPausedUntil!)
+    return { ...next, nextAt, budgetPausedUntil: nextAt === null ? null : task.budgetPausedUntil }
+  }
+  return { ...next, nextAt: computeNext(next, finishedAt), budgetPausedUntil: null }
 }
 
 /** The input a task is made from, checked and trimmed. What is wrong is said for the model and the user alike. */
@@ -573,9 +663,10 @@ function checkCall(call: TaskCall | null, options: CheckOptions): TaskCall | nul
   return { tool, input: call.input }
 }
 
-export function taskStatus(task: Task): TaskStatus {
+export function taskStatus(task: Task, now = Date.now()): TaskStatus {
   if (task.running) return 'running'
   if (!task.enabled) return 'paused'
+  if (isBudgetPaused(task, now)) return 'budget-paused'
   if (task.nextAt !== null) return 'scheduled'
   return task.lastRun !== null && !task.lastRun.ok ? 'failed' : 'done'
 }
@@ -607,7 +698,7 @@ export function runNotice(
   run: Pick<TaskRun, 'ok' | 'result'> & { changed: boolean },
 ): string | null {
   if (!run.ok) {
-    if (isSleepWakeError(run.result)) return null
+    if (isSleepWakeError(run.result) || isBudgetExhaustedError(run.result)) return null
     const before = [task.lastRun, ...task.history]
     const failedBefore = before.findIndex((one) => one === null || one.ok)
     const streak = failedBefore === -1 ? before.length : failedBefore
