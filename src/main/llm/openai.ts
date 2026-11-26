@@ -3,7 +3,7 @@ import type { ProviderConfig } from '../secrets'
 import { getAttachedImages } from '../agent/attachments.ts'
 import { trimToolCalls } from '../../shared/agent/rounds.ts'
 import { cutShort } from '../../shared/agent/stop.ts'
-import { marksCache } from '../../shared/llm/providers.ts'
+import { marksCache, signsIn } from '../../shared/llm/providers.ts'
 import type { Completion, CompleteOptions, Effort, ToolDefinition, Turn } from '../../shared/llm/llm'
 import {
   streams,
@@ -34,6 +34,7 @@ interface OpenAiToolCall {
 }
 
 interface OpenAiResponse {
+  model?: string
   choices?: Array<{
     message?: {
       content?: string | null
@@ -53,6 +54,15 @@ interface OpenAiResponse {
 /** Models that answered only once `reasoning_effort` was left out, this session: asked without it from then on. */
 const withoutReasoningEffort = new Set<string>()
 
+/** Chat Completions `reasoning_effort` ladder (`low | medium | high`). */
+const CHAT_EFFORTS: Record<Effort, 'low' | 'medium' | 'high'> = {
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  xhigh: 'high',
+  max: 'high',
+}
+
 export async function openai(
   config: ProviderConfig<'llm'>,
   system: string,
@@ -65,6 +75,7 @@ export async function openai(
     'content-type': 'application/json',
   }
   if (config.token) headers.authorization = `Bearer ${config.token}`
+  if (signsIn(config.provider) && options.surface) headers['x-jaspers-surface'] = options.surface
 
   const url = `${config.baseUrl}/chat/completions`
   const send = async (effort: Effort | undefined): Promise<Completion> => {
@@ -127,7 +138,7 @@ export async function openai(
       await post<OpenAiResponse>(config, url, headers, JSON.stringify(body), options.timeoutMs, options.signal),
     )
   }
-  const effort = options.effort === 'low' && !withoutReasoningEffort.has(model) ? 'low' : undefined
+  const effort = options.effort && !withoutReasoningEffort.has(model) ? options.effort : undefined
   try {
     return await send(effort)
   } catch (err) {
@@ -209,7 +220,7 @@ export function openaiBody(
   })
   const body: Record<string, unknown> = { model, messages }
   if (cache) body.cache_control = MARK
-  if (effort === 'low') body.reasoning_effort = 'low'
+  if (effort) body.reasoning_effort = CHAT_EFFORTS[effort]
   if (maxTokens !== undefined) body.max_tokens = maxTokens
   if (tools.length) {
     body.tools = tools.map((t) => ({
@@ -269,7 +280,9 @@ export function readOpenai(data: OpenAiResponse): Completion {
       output: Math.max(completion + reasoning, fromTotal),
       cacheRead: data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       cacheWrite: data.usage?.prompt_tokens_details?.cache_write_tokens ?? 0,
+      ...(reasoning > 0 ? { reasoningTokens: reasoning } : {}),
     },
+    ...(typeof data.model === 'string' && data.model ? { resolvedModel: data.model } : {}),
     raw: calls.some((c) => c.extra_content !== undefined) ? calls : null,
   }
 }
@@ -304,6 +317,7 @@ export function openaiStream(
   let content = ''
   let finish = ''
   let looped = false
+  let model: string | undefined
   let usage: OpenAiResponse['usage']
   const calls = new Map<number, { id: string; name: string; arguments: string; extra?: unknown }>()
   return {
@@ -319,6 +333,7 @@ export function openaiStream(
       if (typeof event.error === 'string' && event.error.trim()) {
         throw new OpenAiStreamError(event.error.trim(), null)
       }
+      if (!model && typeof event.model === 'string' && event.model) model = event.model
       if (isRecord(event.usage)) usage = event.usage as OpenAiResponse['usage']
       if (looped) return
       const choice = Array.isArray(event.choices) ? event.choices[0] : undefined
@@ -394,6 +409,7 @@ export function openaiStream(
           finish_reason: finish,
         },
       ],
+      ...(model ? { model } : {}),
       usage,
     }),
   }

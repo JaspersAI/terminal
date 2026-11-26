@@ -1,3 +1,4 @@
+import { isModelClass, isRoutingEffort } from '../../shared/agent/model'
 import { handedBy } from '../../shared/agent/typed'
 import { shareMemberDetail, shareMemberName, shareTargets } from '../../shared/collab/collab'
 import { layoutOf } from '../../shared/grid/grid'
@@ -129,6 +130,17 @@ const updateRoom: Tool = {
         type: 'string',
         description: "Optional updated system prompt instructions for the room's agent.",
       },
+      modelClass: {
+        type: 'string',
+        enum: ['fast', 'main'],
+        description:
+          'Optional updated model class for the room (promote fast -> main when a chart/quote room expands into multi-step analysis or research). Sticky within an active sitting.',
+      },
+      effort: {
+        type: 'string',
+        enum: ['low', 'medium', 'high'],
+        description: 'Optional updated reasoning effort (low, medium, or high) when promoting or re-scoping a room.',
+      },
     },
   },
   async run(input, context) {
@@ -146,7 +158,13 @@ const updateRoom: Tool = {
     const brief = optional(input.brief, (value) => (typeof value === 'string' ? value.trim() : ''))
     const systemPrompt = optional(input.systemPrompt, (value) => (typeof value === 'string' ? value.trim() : ''))
     const message = optional(input.message, (value) => asWords(value, 'message'))
-    const { patch, written } = prepareRoomUpdate(loop, { message, desc, brief, systemPrompt }, readOnly)
+    const modelClass = isModelClass(input.modelClass) ? input.modelClass : undefined
+    const effort = isRoutingEffort(input.effort) ? input.effort : undefined
+    const { patch, written } = prepareRoomUpdate(
+      loop,
+      { message, desc, brief, systemPrompt, modelClass, effort },
+      readOnly,
+    )
     if (patch) updateLoop(context.workspaceId, loop.id, patch)
     return hand(context, loop, written, handoffSummary('Sent to', loop.id, written))
   },
@@ -269,7 +287,19 @@ function createRoomTool(context: ToolContext): Tool {
         model: {
           type: 'string',
           description:
-            'Optional model identifier for the room agent on the configured provider. Leave out to use the default configured model.',
+            'Optional BYOK model identifier for the room agent on the configured provider. Leave out under Jaspers One (use modelClass and effort instead).',
+        },
+        modelClass: {
+          type: 'string',
+          enum: ['fast', 'main'],
+          description:
+            'Model class for the room agent: fast for single-view chart, quote, yield-curve, browser, or team-chat rooms; main for multi-view dashboards, stock screens, multi-source comparisons, web profiles, shell workflows, and deep SEC research.',
+        },
+        effort: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description:
+            'Reasoning effort for the room agent: low for fast single-view rooms, medium for standard multi-step screens/profiles/workflows, high for deep SEC filing forensics and multi-filing synthesis.',
         },
         plugins: {
           type: 'array',
@@ -300,6 +330,8 @@ function createRoomTool(context: ToolContext): Tool {
       const brief = typeof input.brief === 'string' ? input.brief.trim() : ''
       const systemPrompt = typeof input.systemPrompt === 'string' ? input.systemPrompt.trim() : undefined
       const model = checkModel(typeof input.model === 'string' ? input.model : null)
+      const modelClass = isModelClass(input.modelClass) ? input.modelClass : undefined
+      const effort = isRoutingEffort(input.effort) ? input.effort : undefined
       const window = asWindow(input.window)
       const grid = getGrid(workspaceId, window)
       const emptyGrid = layoutOf(grid).elements.every((e) => e.loop === undefined)
@@ -344,7 +376,7 @@ function createRoomTool(context: ToolContext): Tool {
       })
       if (ran.task === undefined && (initialMembers.length > 0 || !asksForLoop(ran.asked, answeredIn(ran.runId)))) {
         const asked = await askUserFor(
-          startQuestion(desc, plugins, model, shareDetailLabels),
+          startQuestion(desc, plugins, model, shareDetailLabels, { modelClass, effort }),
           [START, NO],
           ran.signal,
           startInstructions(brief, systemPrompt, message),
@@ -357,7 +389,16 @@ function createRoomTool(context: ToolContext): Tool {
       const { loop } = createLoop(
         workspaceId,
         window,
-        { desc, brief, plugins, skills, ...(model ? { model } : {}), ...(systemPrompt ? { systemPrompt } : {}) },
+        {
+          desc,
+          brief,
+          plugins,
+          skills,
+          ...(model ? { model } : {}),
+          ...(modelClass ? { modelClass } : {}),
+          ...(effort ? { effort } : {}),
+          ...(systemPrompt ? { systemPrompt } : {}),
+        },
         placement,
       )
       // The room is made and the user said Start: its work begins whatever its sharing comes to, and

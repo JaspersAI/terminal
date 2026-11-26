@@ -19,7 +19,8 @@ import { forgetApprovals } from './tools/shell'
 import type { Tool, ToolContext } from './tools/types'
 import { asTeammateReads } from './utils/private-calls'
 import { begin, emit, end, isStopped, stepsOf } from './utils/runs'
-import { configured, configuredFor, knownSecrets } from './utils/settings'
+import { configured, configuredFor, knownSecrets, type LlmConfig } from './utils/settings'
+import type { WorkRouting } from '../../shared/agent/model'
 import {
   conversationOf,
   eraOf,
@@ -74,6 +75,12 @@ export interface Asked {
   manualTask?: boolean
   /** Optional model override when run on behalf of a scheduled task with a pinned model. */
   model?: string | null
+  /** Optional run-level routing override (`/deep`, `/fast`, composer toggle, attachment floor, or surface). */
+  routing?: WorkRouting
+  /** Optional shown question override when slash routing directives (`/deep`, `/fast`) were stripped from `input`. */
+  shownInput?: string
+  /** Optional escalation callback for `fast` rooms when deterministic runtime triggers fire. */
+  onEscalate?: () => LlmConfig | null
   /** The window's own name for the request, said back as the run begins so the window knows which of its questions the run is answering. */
   ask?: string
   /** What of the thread goes on under the request, done in place before the request joins it. */
@@ -122,6 +129,9 @@ export async function userRequest({
   task,
   manualTask,
   model,
+  routing,
+  shownInput,
+  onEscalate,
   added,
   ask,
   goesOn,
@@ -134,7 +144,7 @@ export async function userRequest({
 }: Asked): Promise<string> {
   if (chat === CENTRAL_CHAT) await waitForThreads()
   const threadConfig = configuredFor(chat)
-  const config = model ? configured(model) : threadConfig
+  let activeConfig: LlmConfig = model ? configured(model) : routing ? configuredFor(chat, routing) : threadConfig
   const thread = threadFor(chat, threadConfig)
   const conversationId = conversationOf(chat)
   // /new starts the thread over, unless the user has a skill by that name, which is theirs to have.
@@ -151,7 +161,7 @@ export async function userRequest({
     throw new Error('Cannot refresh Jaspers sign-in while the computer is sleeping or waking.')
   }
   // What the tile and the chat's log say was asked: the assistant's words for the work when it wrote some.
-  const shown = shownQuestion(written ?? input)
+  const shown = shownQuestion(written ?? shownInput ?? input)
   const entry = begin(
     task === undefined || manualTask ? 'user' : 'task',
     workspaceId,
@@ -165,7 +175,7 @@ export async function userRequest({
   // A teammate's prompt reads the room's conversation without what the owner's private sources
   // answered, the earlier read_again included; what it adds still joins the thread as usual.
   const baseFork = fromTeammate ? forkReading(thread, asTeammateReads) : forkOf(thread)
-  const fork = threadKey(config) === threadKey(threadConfig) ? baseFork : portableFork(baseFork)
+  const fork = threadKey(activeConfig) === threadKey(threadConfig) ? baseFork : portableFork(baseFork)
   const turns = fork.turns
   const context: ToolContext = {
     runId: entry.runId,
@@ -181,10 +191,17 @@ export async function userRequest({
   }
   const asked: Turn = { role: 'user', text: turnText(input, written), context: state() }
   // The thread is kept as the run goes, from the user's own message on.
-  const keep = (): void => keepOpen(chat, config, thread, fork, era)
+  const keep = (): void => keepOpen(chat, activeConfig, thread, fork, era)
+  const escalate =
+    onEscalate &&
+    ((): LlmConfig | null => {
+      const upgraded = onEscalate()
+      if (upgraded) activeConfig = upgraded
+      return upgraded
+    })
   const request: Request = {
     label,
-    config,
+    config: activeConfig,
     history: turns,
     context,
     prompt,
@@ -192,6 +209,7 @@ export async function userRequest({
     run: entry,
     quiet: false,
     keep,
+    ...(escalate ? { onEscalate: escalate } : {}),
     // Each message taken is said, so its box shows it in this run's trail and the log keeps it there.
     // A run whose conversation was started over since it began takes nothing: what is sent now is
     // for the new conversation, and waits to begin it.
@@ -217,7 +235,7 @@ export async function userRequest({
     const work = (): Promise<string> => (tile ? asksFor(tile.place, () => agentLoop(request)) : agentLoop(request))
     const reply = await (task === undefined ? work() : withoutSecretPrompts(work))
     emit({ kind: 'done', runId: entry.runId, text: reply })
-    join(chat, config, thread, fork, era)
+    join(chat, activeConfig, thread, fork, era)
     file(chat, turns, stepsOf(entry.runId))
     if (tile) touchLoop(workspaceId, tile.loop)
     return reply
@@ -237,7 +255,7 @@ export async function userRequest({
       } else {
         closeOff(turns, stopped || deferredTask ? STOPPED_NOTE : failedNote(message))
       }
-      join(chat, config, thread, fork, era)
+      join(chat, activeConfig, thread, fork, era)
     }
     if (stopped) {
       if (held) file(chat, turns, stepsOf(entry.runId))

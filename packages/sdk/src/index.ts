@@ -72,4 +72,4 @@ export {
 } from './hooks.ts'
 export type { Dataset, RunResult } from './datasets.ts'
 export type { QueryResult } from './query.ts'
-export type { Citation, Completion, ToolCall, ToolDefinition, ToolResult, Turn } from './llm.ts'
+export type { Citation, Completion, LlmEffort, ModelClass, ToolCall, ToolDefinition, ToolResult, Turn } from './llm.ts'

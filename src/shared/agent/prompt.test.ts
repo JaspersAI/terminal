@@ -16,6 +16,7 @@ import {
   describeContext,
   describeFiled,
   describeLoop,
+  describeConnectionStatuses,
   describeLoops,
   describeInstalled,
   describeInstalledFor,
@@ -728,7 +729,7 @@ test('the orchestrator is told to use invite_teammate for team invites, open_set
   assert.match(ROUTER_RULES, /never as a centered modal dialog/)
 })
 
-test('the orchestrator is told of the plugins and how their connections stand, and of no view or source', () => {
+test('the orchestrator cached catalog gives a compact 1-line index of views and sources without state schemas, while live connection status lives separately for stateNow', () => {
   const needing: ConnectionInfo = {
     ...READY,
     id: 'jaspers/keyed',
@@ -745,12 +746,14 @@ test('the orchestrator is told of the plugins and how their connections stand, a
   )
   const told = describeInstalledToRoute(state)
   assert.match(told, /^Plugins:\n- jaspers: ready/)
+  assert.match(told, /\nViews, by id:\n- tradingview\/chart: Chart\./)
+  assert.match(told, /\nSources, by id:\n- screener\/screen: Screen companies\./)
+  // No full state schemas and no volatile connection statuses in the cached static block.
+  assert.doesNotMatch(told, /Connections:|tools without a source|state:/)
   assert.match(
-    told,
-    /\nConnections:\n- jaspers\/sec: ready\n- jaspers\/keyed: needs-secret \(needs a key: ask the user with set_secret/,
+    describeConnectionStatuses(state.connections).join('\n'),
+    /^Connections:\n- jaspers\/sec: ready\n- jaspers\/keyed: needs-secret \(needs a key: ask the user with set_secret/,
   )
-  // No tool lists on a ready connection, no views, no sources.
-  assert.doesNotMatch(told, /tools without a source|tradingview\/chart|jaspers\/screen|run_source|state:/)
   assert.equal(describeInstalledToRoute(tree(EMPTY_GRID, {})), 'No plugins are installed.')
 })
 
@@ -853,6 +856,22 @@ test('the orchestrator is told each room on the tab by its name: what it is doin
   assert.match(
     describeLoops(withShare, WS, () => 'idle'),
     /- room_107, idle, owned by Seth Johnson \(sj\+testuser@jsprai\.com\): "ASCII cat art"\. Tile: e1\./,
+  )
+
+  const richRoom = {
+    ...NOTE_LOOP,
+    id: 'f9',
+    desc: 'NVDA Audit',
+    plugins: ['agents', 'sec'],
+    modelClass: 'main' as const,
+    effort: 'high' as const,
+    failures: 1,
+    lastResult: 'Q3 data center margin expanded 180 bps YoY.',
+  }
+  const richGrid = placeView(EMPTY_GRID, { content: { kind: 'frame' }, loop: 'f9' }).grid
+  assert.match(
+    describeLoops({ ...tree(richGrid), loops: { [WS]: [richRoom] } }, WS, () => 'idle'),
+    /- room_9, idle: "NVDA Audit"\. Tile: e1\. \[tier: main · high; plugins: agents, sec\] Failures: 1\. Last result: "Q3 data center margin expanded 180 bps YoY\."\./,
   )
 })
 
@@ -1015,7 +1034,8 @@ test("a loop's rules keep what applies to it and drop what does not", () => {
   // A build takes minutes, and work that long belongs in a tile: its agent starts one.
   assert.match(LOOP_RULES, /call build_plugin with the whole request/)
   // The orchestrator's say where its reply shows and how much of the conversation it is sent.
-  assert.match(ROUTER_RULES, /fades after a few seconds.*You are sent only the last 3 exchanges/s)
+  assert.match(ROUTER_RULES, /fades after a few seconds.*You are sent only the last 6 exchanges/s)
+  assert.match(ROUTER_RULES, /Model routing:.*modelClass "fast" with effort "low"/s)
 })
 
 test("a loop's agent is told its tile, how the views inside it are laid out, and what each holds", () => {

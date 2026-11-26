@@ -38,6 +38,7 @@ import {
   type Resolved,
 } from '../shared/grid/grid'
 import { askedIn, samePlace, type Place } from '../shared/agent/asking'
+import { isModelClass, isRoutingEffort } from '../shared/agent/model'
 import {
   LOOP_ID,
   frameOf,
@@ -1312,10 +1313,14 @@ function asLoopPatch(raw: Record<string, unknown>): LoopPatch {
   const brief = raw.brief === undefined ? undefined : asString(raw.brief)
   const systemPrompt =
     raw.systemPrompt === undefined ? undefined : raw.systemPrompt === null ? null : asString(raw.systemPrompt)
+  const modelClass = isModelClass(raw.modelClass) ? raw.modelClass : undefined
+  const effort = isRoutingEffort(raw.effort) ? raw.effort : undefined
   return {
     ...(desc !== undefined ? { desc } : {}),
     ...(brief !== undefined ? { brief } : {}),
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+    ...(modelClass !== undefined ? { modelClass } : {}),
+    ...(effort !== undefined ? { effort } : {}),
   }
 }
 

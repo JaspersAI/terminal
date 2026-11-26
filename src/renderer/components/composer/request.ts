@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import { CENTRAL_CHAT } from '../../../shared/agent/history'
+import type { RoutingEffort } from '../../../shared/agent/model'
 import { rejoin, type Exchange } from '../../../shared/agent/transcript'
 import { noteConnectivityFailure, noteConnectivityRecovered } from '../../lib/connectivity'
 import { errorMessage } from '../../lib/errors'
@@ -47,6 +48,7 @@ interface CentralStore {
   earlier: Exchange[]
   sequence: number
   orbOpen: boolean
+  effortOverride: RoutingEffort | null
 }
 
 let store: CentralStore = {
@@ -58,6 +60,23 @@ let store: CentralStore = {
   earlier: [],
   sequence: 0,
   orbOpen: false,
+  effortOverride: null,
+}
+
+const EFFORT_CYCLE: readonly (RoutingEffort | null)[] = [null, 'low', 'medium', 'high']
+
+export function cycleEffortOverride(current: RoutingEffort | null): RoutingEffort | null {
+  const idx = EFFORT_CYCLE.indexOf(current)
+  return EFFORT_CYCLE[(idx + 1) % EFFORT_CYCLE.length] ?? null
+}
+
+export function setCentralEffortOverride(effortOverride: RoutingEffort | null): void {
+  if (store.effortOverride === effortOverride) return
+  emitStore({ effortOverride })
+}
+
+export function cycleCentralEffort(): void {
+  setCentralEffortOverride(cycleEffortOverride(store.effortOverride))
 }
 
 const listeners = new Set<() => void>()
@@ -172,7 +191,7 @@ export async function askCentral(text: string, options?: { fromOrb?: boolean }):
   })
   void reread(true, begun.done)
   try {
-    const reply = await window.app.agent.run(text, name)
+    const reply = await window.app.agent.run(text, name, undefined, store.effortOverride ?? undefined)
     console.log('[agent]', reply)
     const clearOrbDraft = orbDraftText !== null && store.draft === orbDraftText
     if (clearOrbDraft) orbDraftText = null
@@ -309,7 +328,7 @@ export function cancelVoice(): void {
  */
 export function useRequest() {
   const snap = useSyncExternalStore(subscribeCentral, getCentral)
-  const { draft, responsePreview, voice, error, live, earlier, sequence } = snap
+  const { draft, responsePreview, voice, error, live, earlier, sequence, effortOverride } = snap
   const busy = voice !== 'idle'
   const shown = useMemo(() => shownOn(live, CENTRAL_CHAT), [live])
   const away = useMemo(() => awayOn(live, CENTRAL_CHAT), [live])
@@ -358,6 +377,9 @@ export function useRequest() {
     away,
     earlier,
     sequence,
+    effortOverride,
+    setEffortOverride: setCentralEffortOverride,
+    cycleEffort: cycleCentralEffort,
     ask: askCentral,
     reportResponse: reportCentralResponse,
     toggleVoice,

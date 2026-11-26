@@ -53,7 +53,7 @@ test('a form shows what is saved for the saved provider, and the defaults for an
   }
   assert.deepEqual(providerFields(staleJaspers, jaspers), {
     baseUrl: 'https://account.jsprai.com/v1',
-    model: 'gemini-4-argon',
+    model: 'main',
     fastModel: 'fast',
   })
 })
@@ -181,7 +181,7 @@ test('voice on another provider stays, and any other language model leaves voice
 })
 
 test('Jaspers is one address for every kind, takes no key or user-selected model, and needs the sign-in', () => {
-  assert.equal(findProvider('llm', 'jaspers')!.model, 'gemini-4-argon')
+  assert.equal(findProvider('llm', 'jaspers')!.model, 'main')
   assert.equal(findProvider('llm', 'jaspers')!.baseUrl, findProvider('voice', 'jaspers')!.baseUrl)
   assert.equal(signsIn(findProvider('llm', 'jaspers')!), true)
   assert.equal(signsIn(ANTHROPIC), false)
@@ -206,7 +206,7 @@ test('signing in sets Jaspers up wherever the user has no provider, and leaves e
     llm: {
       providerId: 'jaspers',
       baseUrl: 'https://account.jsprai.com/v1',
-      model: 'gemini-4-argon',
+      model: 'main',
       token: null,
     },
     voice: {

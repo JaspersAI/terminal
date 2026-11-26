@@ -1,44 +1,49 @@
 import { DAILY_TOKENS_DEFAULT, readBudget } from '../../../shared/agent/budget'
-import { chatRunsOn, workRunsOn, type RunsOn } from '../../../shared/agent/model'
-import type { Effort } from '../../../shared/llm/llm'
+import { chatRunsOn, workRunsOn, type RunsOn, type WorkRouting } from '../../../shared/agent/model'
 import { loopOfChat } from '../../../shared/loops/loops'
 import { secretValues } from '../../plugins/connections'
 import { getProviderConfig, type ProviderConfig } from '../../secrets'
 import { getState } from '../../state'
 
-/** The language model as a piece of work runs on it: the provider as configured, on that work's model, at its effort. */
-export type LlmConfig = ProviderConfig<'llm'> & { effort: Effort }
+/** The language model as a piece of work runs on it: the provider as configured, on that work's model/class, at its effort. */
+export type LlmConfig = ProviderConfig<'llm'> & RunsOn
 
-/** The provider as it is configured, on the model and at the effort a piece of work runs on. */
+/** The provider as it is configured, on the model, class, effort, and surface a piece of work runs on. */
 function on(base: ProviderConfig<'llm'>, runs: RunsOn): LlmConfig {
   return { ...base, ...runs }
 }
 
 /**
- * What work with no chat of its own runs on: a task's run, on the thinking model or the one the task
- * names. The provider stays the app's, since its key and base URL are what main holds; only the
- * model changes.
+ * What work with no chat of its own runs on: a standalone task's run or setup fallback, on the
+ * model/class and effort requested (`workRunsOn`).
  */
-export function configured(own?: string | null): LlmConfig {
+export function configured(own?: string | null | WorkRouting): LlmConfig {
   const base = getProviderConfig('llm')
   if (!base) throw new Error('No language model configured.')
   return on(base, workRunsOn(base, own))
 }
 
 /**
- * What a chat runs on now, or null with no language model set: Central's on the fast model, a
- * room's on the model Central chose for it, every other chat on the thinking model
- * (`chatRunsOn`). Whatever reads a chat's thread asks here, so a thread is never asked for under two
- * models, which would turn it into the other's words and calls each time (`createThreads`).
+ * What a chat runs on now, or null with no language model set: Central on `main` (`low` default
+ * effort, Priority PayGo under Jaspers One), `build/*` on `code` (`medium` effort), and a room on
+ * its saved `modelClass` + `effort` (or BYOK `model`), merged with any run-level `override`.
  */
-export function modelFor(chat: string): LlmConfig | null {
+export function modelFor(chat: string, override?: WorkRouting): LlmConfig | null {
   const base = getProviderConfig('llm')
-  return base && on(base, chatRunsOn(chat, base, loopOfChat(getState().loops, chat)?.model))
+  if (!base) return null
+  const loop = loopOfChat(getState().loops, chat)
+  const routing: WorkRouting = {
+    ...(loop?.model !== undefined ? { model: loop.model } : {}),
+    ...(loop?.modelClass !== undefined ? { modelClass: loop.modelClass } : {}),
+    ...(loop?.effort !== undefined ? { effort: loop.effort } : {}),
+    ...override,
+  }
+  return on(base, chatRunsOn(chat, base, routing))
 }
 
 /** `modelFor`, for a request about to go: without a language model there is nothing to send it to. */
-export function configuredFor(chat: string): LlmConfig {
-  const config = modelFor(chat)
+export function configuredFor(chat: string, override?: WorkRouting): LlmConfig {
+  const config = modelFor(chat, override)
   if (!config) throw new Error('No language model configured.')
   return config
 }

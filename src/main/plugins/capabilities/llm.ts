@@ -1,5 +1,13 @@
 import { untilAborted } from '../../../shared/abort.ts'
-import type { Completion, CompleteOptions, ToolDefinition, Turn } from '../../../shared/llm/llm.ts'
+import { isModelClass, isRoutingEffort, wireModelForClass } from '../../../shared/agent/model.ts'
+import type {
+  Completion,
+  CompleteOptions,
+  LlmEffort,
+  ModelClass,
+  ToolDefinition,
+  Turn,
+} from '../../../shared/llm/llm.ts'
 import { createLimiter, isRetryable, isTurnTimeout, retryWait } from '../../../shared/llm/limits.ts'
 import { signsIn } from '../../../shared/llm/providers.ts'
 import { isSleepWakeError } from '../../../shared/tasks/tasks.ts'
@@ -49,8 +57,13 @@ export function createLlm(deps: LlmDeps): {
       return limit(async () => {
         const config = deps.config()
         if (!config) throw new Error('No language model is configured.')
+        const resolvedModel = signsIn(config.provider)
+          ? request.modelClass
+          : (request.model ?? (request.modelClass ? wireModelForClass(config, request.modelClass) : undefined))
         const options: CompleteOptions = {
-          model: signsIn(config.provider) ? undefined : request.model,
+          model: resolvedModel,
+          ...(request.effort ? { effort: request.effort } : {}),
+          ...(signsIn(config.provider) ? { surface: 'plugin' as const } : {}),
           maxTokens: request.maxTokens === undefined ? undefined : Math.min(request.maxTokens, TOKENS_MAX),
           signal,
           stream: true,
@@ -106,22 +119,26 @@ function asRequest(raw: unknown): {
   turns: Turn[]
   tools: ToolDefinition[]
   model?: string
+  modelClass?: ModelClass
+  effort?: LlmEffort
   maxTokens?: number
 } {
   const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
-  const { system, turns, tools, model, maxTokens } = value
+  const { system, turns, tools, model, modelClass, effort, maxTokens } = value
   if (
     typeof system !== 'string' ||
     !Array.isArray(turns) ||
     (tools !== undefined && tools !== null && !Array.isArray(tools))
   ) {
-    throw new Error('llm.complete takes { system, turns, tools?, model?, maxTokens? }.')
+    throw new Error('llm.complete takes { system, turns, tools?, model?, modelClass?, effort?, maxTokens? }.')
   }
   return {
     system,
     turns: turns as Turn[],
     tools: (tools ?? []) as ToolDefinition[],
     model: typeof model === 'string' && model.trim() ? model.trim() : undefined,
+    modelClass: isModelClass(modelClass) ? modelClass : undefined,
+    effort: isRoutingEffort(effort) ? effort : undefined,
     maxTokens: typeof maxTokens === 'number' && Number.isInteger(maxTokens) && maxTokens > 0 ? maxTokens : undefined,
   }
 }

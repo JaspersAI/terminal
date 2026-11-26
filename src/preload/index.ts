@@ -50,8 +50,8 @@ const api = {
      * tile whose box the message was typed in, by its element's id: its loop's own agent answers, one
      * request at a time, on a conversation of its own. Left out, the global assistant answers.
      */
-    run: (input: string, ask?: string, on?: string): Promise<string> =>
-      ipcRenderer.invoke('agent:run', input, ask ?? null, on ?? null),
+    run: (input: string, ask?: string, on?: string, effort?: 'low' | 'medium' | 'high'): Promise<string> =>
+      ipcRenderer.invoke('agent:run', input, ask ?? null, on ?? null, effort ?? null),
     /** Parses an attached file in main into its name and extracted text. */
     parseFile: (name: string, bytes: ArrayBuffer): Promise<AttachedFile> =>
       ipcRenderer.invoke('agent:parse-file', name, bytes),

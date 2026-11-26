@@ -68,7 +68,7 @@ function isThinking(block: unknown): boolean {
 }
 
 /** Exchanges the model is still given when a new one joins a thread. */
-export const RECENT = 3
+export const RECENT = 6
 
 /** Single canonical chat key for Central across all tabs. */
 export const CENTRAL_CHAT = 'central'

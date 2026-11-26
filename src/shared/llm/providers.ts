@@ -56,7 +56,7 @@ export const PROVIDERS: { llm: Provider<LlmApi>[]; voice: Provider<VoiceApi>[]; 
       hint: 'Models, voice, and web search with one sign-in',
       api: 'openai',
       baseUrl: JASPERS_URL,
-      model: 'gemini-4-argon',
+      model: 'main',
       fastModel: 'fast',
       tokenRequired: true,
     },

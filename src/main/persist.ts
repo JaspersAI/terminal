@@ -310,6 +310,8 @@ function loadTasks(tasks: Task[], workspaces: Workspace[]): Task[] {
         ...task,
         at: task.at ?? null,
         model: task.model ?? null,
+        ...(task.modelClass ? { modelClass: task.modelClass } : {}),
+        ...(task.effort ? { effort: task.effort } : {}),
         running: false,
         budgetPausedUntil:
           typeof task.budgetPausedUntil === 'number' && Number.isFinite(task.budgetPausedUntil)

@@ -1,4 +1,5 @@
 import { JASPERS } from '../../../shared/llm/providers'
+import { isModelClass, isRoutingEffort } from '../../../shared/agent/model'
 import { canAccessTask, resolveScheduledTaskRoom, resolveUpdatedTaskRoom } from '../../../shared/loops/closed'
 import { loopName } from '../../../shared/loops/loops'
 import { parseSlash, skillUsable } from '../../../shared/skills/skills'
@@ -135,7 +136,18 @@ const TOOLS: Tool[] = [
         model: {
           type: 'string',
           description:
-            'The model to run the instructions on, on the same provider. Leave out for the one this conversation is on. A task that only has to notice something can name a cheaper one.',
+            'Optional BYOK model name on the configured provider. Leave out under Jaspers One (use modelClass instead).',
+        },
+        modelClass: {
+          type: 'string',
+          enum: ['fast', 'main'],
+          description:
+            'Model class for standalone scheduled tasks (default fast for routine checks/watches; main for multi-step analysis). Room-affiliated tasks inherit their room modelClass.',
+        },
+        effort: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description: 'Reasoning effort for standalone scheduled tasks (default low for fast watches).',
         },
         roomId: {
           type: 'string',
@@ -154,6 +166,8 @@ const TOOLS: Tool[] = [
       // script is never approved for a task that is then refused for its schedule.
       const instructions = asTaskInstructions(input.instructions, context)
       const { workspaceId, roomId } = resolveScheduledRoom(input.roomId ?? input.room, context)
+      const modelClass = isModelClass(input.modelClass) ? input.modelClass : undefined
+      const effort = isRoutingEffort(input.effort) ? input.effort : undefined
       const draft = {
         workspaceId,
         ...(roomId ? { roomId } : {}),
@@ -164,6 +178,8 @@ const TOOLS: Tool[] = [
         speak: input.watch === true ? ('changed' as const) : ('always' as const),
         call: optional(input.call, asCall) ?? null,
         model: getState().llm?.providerId === JASPERS ? null : (optional(input.model, asPathString) ?? null),
+        ...(modelClass ? { modelClass } : {}),
+        ...(effort ? { effort } : {}),
       }
       const wanted = checkCommands(asCommands(input.commands), getState().proMode.enabled)
       const destTargets = collectTaskDestinations(draft.call, input.destinations)
@@ -207,6 +223,16 @@ const TOOLS: Tool[] = [
           description:
             "The model its instructions run on, on the same provider. An empty string puts it back on the app's.",
         },
+        modelClass: {
+          type: 'string',
+          enum: ['fast', 'main'],
+          description: 'Model class for standalone scheduled tasks (fast or main).',
+        },
+        effort: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description: 'Reasoning effort for standalone scheduled tasks (low, medium, or high).',
+        },
         enabled: { type: 'boolean' },
       },
       required: ['taskId'],
@@ -230,6 +256,8 @@ const TOOLS: Tool[] = [
       if (typeof input.watch === 'boolean') patch.speak = input.watch ? 'changed' : 'always'
       if (given(input.model))
         patch.model = getState().llm?.providerId === JASPERS ? null : asPathString(input.model).trim() || null
+      if (given(input.modelClass)) patch.modelClass = isModelClass(input.modelClass) ? input.modelClass : null
+      if (given(input.effort)) patch.effort = isRoutingEffort(input.effort) ? input.effort : null
       if (typeof input.enabled === 'boolean') patch.enabled = input.enabled
       if (input.commands !== undefined && input.commands !== null) {
         // The list given replaces the task's: one it already had stays allowed, a new one is asked about.

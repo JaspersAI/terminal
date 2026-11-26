@@ -1,5 +1,7 @@
 import { READ_AGAIN, startOf } from '../../shared/agent/aside'
-import { dayOf, overBudget } from '../../shared/agent/budget'
+import { dayOf, overBudget, weightedTaskTokens } from '../../shared/agent/budget'
+import { portable } from '../../shared/agent/history'
+import { shouldEscalateFastRun } from '../../shared/agent/model'
 import {
   afterRound,
   handoffReply,
@@ -106,6 +108,11 @@ export interface Request {
    * then, however long the run still has to go. A run that keeps nothing leaves it out.
    */
   keep?: () => void
+  /**
+   * Called when deterministic runtime outcome triggers escalate a `fast` room to `main`: upgrades
+   * room state and returns the promoted `LlmConfig`.
+   */
+  onEscalate?: () => LlmConfig | null
 }
 
 /** One run of the agent loop, for whoever asks: the user, a task, a loop, the builder. */
@@ -130,6 +137,7 @@ async function loop({
   outOfRounds,
   added,
   keep,
+  onEscalate,
 }: Request): Promise<string> {
   const log = (line: string): void => console.log(`[agent] ${label}${line}`)
   const tell = telling(entry.runId, log)
@@ -140,6 +148,29 @@ async function loop({
   const signal = entry.controller.signal
   const day = dayOf(Date.now())
   const cost = { input: 0, output: 0 }
+  let activeConfig = config
+  let toolErrors = 0
+  let escalated = false
+  const tryEscalate = (triggers: { refused?: boolean; timedOut?: boolean }, nextRound: number): boolean => {
+    if (escalated || !onEscalate) return false
+    if (
+      !shouldEscalateFastRun({
+        modelClass: activeConfig.modelClass,
+        round: nextRound,
+        toolErrors,
+        ...triggers,
+      })
+    ) {
+      return false
+    }
+    const upgraded = onEscalate()
+    if (!upgraded) return false
+    escalated = true
+    activeConfig = upgraded
+    history.splice(0, history.length, ...portable(history))
+    tell('Escalating room to main model')
+    return true
+  }
   let most = limit
   let rounds = 0
   let mends = 0
@@ -154,11 +185,17 @@ async function loop({
       // Only work that runs on its own is capped: the user is sitting there waiting for theirs.
       if (entry.origin === 'task') {
         const todays = await spentToday(day, 'task')
-        const refused = overBudget({ input: todays.input + cost.input, output: todays.output + cost.output }, budget())
+        const refused = overBudget(
+          {
+            input: todays.input + weightedTaskTokens(cost.input, activeConfig.modelClass),
+            output: todays.output + weightedTaskTokens(cost.output, activeConfig.modelClass),
+          },
+          budget(),
+        )
         if (refused) throw new Error(refused)
       }
       rounds = round
-      log(`call ${round}: ${config.provider.name} ${config.model}`)
+      log(`call ${round}: ${activeConfig.provider.name} ${activeConfig.model}`)
       emit({ kind: 'round', runId: entry.runId, round })
 
       // What the rounds so far brought may be more than the request keeps whole in front of its model.
@@ -185,7 +222,7 @@ async function loop({
         reply = await request({
           round,
           label,
-          config,
+          config: activeConfig,
           system: prompt.system(),
           history: sentOf(history, sending),
           tools: available,
@@ -229,6 +266,7 @@ async function loop({
           })
           cuts = outcome.cuts
           if (outcome.kind === 'restate') {
+            tryEscalate({ timedOut: true }, round)
             tell(outcome.tell)
             restate(history, prompt.round(), outcome.note)
             round--
@@ -271,9 +309,14 @@ async function loop({
 
       const short = cutShort(reply.stopReason)
       if (short === 'refusal') {
+        if (tryEscalate({ refused: true }, round)) {
+          restate(history, prompt.round())
+          round--
+          continue
+        }
         const outcome = resolveRefusal({
-          providerName: config.provider.name,
-          model: config.model,
+          providerName: activeConfig.provider.name,
+          model: activeConfig.model,
           stopReason: reply.stopReason,
           text: reply.text,
           round,
@@ -298,7 +341,7 @@ async function loop({
         // whoever asked, so a reply cut off before any call is not an answer either: it is asked again.
         if (++cuts > CUTS_MAX) {
           if (partial) return finishPartial([reply.text, CUT_OFF].filter(Boolean).join('\n\n'))
-          throw new Error(`${config.provider.name} kept running past its output limit.`)
+          throw new Error(`${activeConfig.provider.name} kept running past its output limit.`)
         }
         tell(
           reply.toolCalls.length > 0
@@ -362,6 +405,7 @@ async function loop({
         earlierTurns,
         earlyJoined.length > 0,
       )
+      toolErrors += results.filter((r) => r.isError).length
       // What the user added while this round was in flight joins the thread after its results. The
       // state rides on the last turn of the round, so it is said once. A run stopped under its calls
       // takes nothing: what was added then is left for the run after it.
@@ -374,6 +418,7 @@ async function loop({
         history.push(at === joined.length - 1 ? { ...turn, context: next.riding } : turn)
         log(`user added: ${userLine(turn.text)}`)
       })
+      tryEscalate({}, round + 1)
       keep?.()
       // A round that only handed the request over is the run's end: the work goes on in runs of its
       // own, and what each handoff answered is the reply. A run stopped under its calls is not one.
@@ -396,16 +441,17 @@ async function loop({
     }
     throw new Error(`Gave up after ${most} rounds of tool calls.`)
   } finally {
-    // However it ended, what it spent is what it spent.
+    // However it ended, what it spent is what it spent; background tasks weight `fast` tokens at 0.25x.
     if (rounds > 0) {
+      const weightClass = entry.origin === 'task' ? activeConfig.modelClass : undefined
       recordUsage({
         day,
         at: Date.now(),
         origin: entry.origin,
-        provider: config.provider.id,
-        model: config.model,
-        input: cost.input,
-        output: cost.output,
+        provider: activeConfig.provider.id,
+        model: activeConfig.model,
+        input: entry.origin === 'task' ? weightedTaskTokens(cost.input, weightClass) : cost.input,
+        output: entry.origin === 'task' ? weightedTaskTokens(cost.output, weightClass) : cost.output,
         rounds,
       })
     }

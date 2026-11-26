@@ -733,6 +733,9 @@ test('through OpenRouter a tool loop asks for automatic caching and marks the sy
 
   const lowEffort = openaiBody('gemini-4-argon', 'S', PLACED, [], undefined, false, 'low')
   assert.equal(lowEffort.reasoning_effort, 'low')
+  assert.equal(openaiBody('gemini-4-argon', 'S', PLACED, [], undefined, false, 'medium').reasoning_effort, 'medium')
+  assert.equal(openaiBody('gemini-4-argon', 'S', PLACED, [], undefined, false, 'high').reasoning_effort, 'high')
+  assert.equal(openaiBody('gemini-4-argon', 'S', PLACED, [], undefined, false, 'max').reasoning_effort, 'high')
 })
 
 test('what OpenRouter served from its cache and wrote to it is read into the usage', () => {
@@ -747,8 +750,9 @@ test('what OpenRouter served from its cache and wrote to it is read into the usa
   assert.deepEqual(usage, { input: 10339, output: 60, cacheRead: 10318, cacheWrite: 21 })
 })
 
-test('what Vertex AI spent on thinking is counted into the output, whether completion_tokens leaves it out or is omitted', () => {
+test('what Vertex AI spent on thinking is counted into the output and exposed as reasoningTokens', () => {
   const withBoth = readOpenai({
+    model: 'google/gemini-4-argon',
     choices: [{ message: { content: 'Hi.' }, finish_reason: 'stop' }],
     usage: {
       prompt_tokens: 400,
@@ -757,7 +761,8 @@ test('what Vertex AI spent on thinking is counted into the output, whether compl
       completion_tokens_details: { reasoning_tokens: 120 },
     },
   })
-  assert.deepEqual(withBoth.usage, { input: 400, output: 150, cacheRead: 0, cacheWrite: 0 })
+  assert.equal(withBoth.resolvedModel, 'google/gemini-4-argon')
+  assert.deepEqual(withBoth.usage, { input: 400, output: 150, cacheRead: 0, cacheWrite: 0, reasoningTokens: 120 })
 
   const onlyReasoning = readOpenai({
     choices: [{ message: { content: null }, finish_reason: 'tool_calls' }],
@@ -766,7 +771,7 @@ test('what Vertex AI spent on thinking is counted into the output, whether compl
       completion_tokens_details: { reasoning_tokens: 90 },
     },
   })
-  assert.deepEqual(onlyReasoning.usage, { input: 400, output: 90, cacheRead: 0, cacheWrite: 0 })
+  assert.deepEqual(onlyReasoning.usage, { input: 400, output: 90, cacheRead: 0, cacheWrite: 0, reasoningTokens: 90 })
 
   const fromTotal = readOpenai({
     choices: [{ message: { content: null }, finish_reason: 'tool_calls' }],
@@ -1505,5 +1510,37 @@ test('a refusal that is not about the effort is still the answer, and the effort
     )
   } finally {
     served.close()
+  }
+})
+
+test('complete attaches x-jaspers-surface for Jaspers One and captures streamed ttftMs and resolvedModel', async () => {
+  let seenHeaders: Record<string, string | string[] | undefined> = {}
+  const server = createServer((req, res) => {
+    seenHeaders = req.headers
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write(
+      `data: ${JSON.stringify({ model: 'google/gemini-4-argon', choices: [{ delta: { content: 'Ready.' }, finish_reason: 'stop' }] })}\n\n`,
+    )
+    res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 50, completion_tokens: 2 } })}\n\n`)
+    res.end('data: [DONE]\n\n')
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = (server.address() as AddressInfo).port
+  try {
+    const jaspers = findProvider('llm', 'jaspers')!
+    const reply = await complete(
+      { provider: jaspers, baseUrl: `http://127.0.0.1:${port}/v1`, model: 'main', token: 'tok', fetch },
+      'System',
+      [{ role: 'user', text: 'hi' }],
+      [],
+      { effort: 'low', surface: 'central', stream: true },
+    )
+    assert.equal(seenHeaders['x-jaspers-surface'], 'central')
+    assert.equal(reply.text, 'Ready.')
+    assert.equal(reply.resolvedModel, 'google/gemini-4-argon')
+    assert.equal(typeof reply.ttftMs, 'number')
+    assert.ok((reply.ttftMs ?? -1) >= 0)
+  } finally {
+    server.close()
   }
 })

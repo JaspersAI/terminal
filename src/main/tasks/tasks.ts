@@ -269,6 +269,8 @@ export function updateTask(id: string, patch: TaskPatch, at = now(), workspaceId
       speak: merged.speak,
       call: merged.call,
       model: merged.model,
+      modelClass: merged.modelClass,
+      effort: merged.effort,
       commands: merged.commands,
     },
     CHECK,
@@ -430,6 +432,8 @@ async function execute(task: Task, options?: { manual?: boolean }): Promise<void
       workspaceId: current.workspaceId,
       roomId: current.roomId,
       model: current.model,
+      modelClass: current.modelClass,
+      effort: current.effort,
       commands: current.commands,
       ...(manual ? { manual: true } : {}),
     })

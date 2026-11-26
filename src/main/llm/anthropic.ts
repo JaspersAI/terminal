@@ -61,6 +61,7 @@ interface AnthropicUsage {
 }
 
 interface AnthropicResponse {
+  model?: string
   content?: AnthropicBlock[]
   stop_reason?: string
   usage?: AnthropicUsage
@@ -414,6 +415,7 @@ export function readAnthropic(data: AnthropicResponse): Completion {
     toolCalls: trimmed.map(({ id, name, input }) => ({ id, name, input })),
     stopReason,
     usage: readUsage(data.usage ?? {}),
+    ...(typeof data.model === 'string' && data.model ? { resolvedModel: data.model } : {}),
     raw: content,
   }
 }
@@ -458,7 +460,10 @@ export function anthropicStream(
       const index = typeof event.index === 'number' ? event.index : 0
       switch (event.type) {
         case 'message_start': {
-          if (isRecord(event.message) && isRecord(event.message.usage)) reply.usage = counted(event.message.usage)
+          if (isRecord(event.message)) {
+            if (typeof event.message.model === 'string' && event.message.model) reply.model = event.message.model
+            if (isRecord(event.message.usage)) reply.usage = counted(event.message.usage)
+          }
           return
         }
         case 'content_block_start': {

@@ -18,7 +18,7 @@ export type {
   WebPage,
   WebResult,
 } from './context'
-export type { Citation, Completion, ToolCall, ToolDefinition, ToolResult, Turn } from './llm'
+export type { Citation, Completion, LlmEffort, ModelClass, ToolCall, ToolDefinition, ToolResult, Turn } from './llm'
 export type { Dataset, RunResult } from './datasets'
 export type { SkillEntry, SkillFilePart, Skills } from './skills'
 
