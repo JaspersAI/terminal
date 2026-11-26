@@ -1,4 +1,5 @@
 import { shownQuestion, splitAttachments } from '../../shared/agent/attachments'
+import { isBudgetExhaustedError } from '../../shared/agent/budget'
 import { forkOf, forkReading, portableFork } from '../../shared/agent/fork'
 import { CENTRAL_CHAT, closeOff } from '../../shared/agent/history'
 import { failedNote, mask, STOPPED_NOTE } from '../../shared/agent/transcript'
@@ -69,6 +70,8 @@ export interface Asked {
    * the user allowed it for that task.
    */
   task?: string
+  /** Set when the user explicitly clicked Run now on a scheduled task, so it runs as user-initiated rather than against the autonomous budget. */
+  manualTask?: boolean
   /** Optional model override when run on behalf of a scheduled task with a pinned model. */
   model?: string | null
   /** The window's own name for the request, said back as the run begins so the window knows which of its questions the run is answering. */
@@ -117,6 +120,7 @@ export async function userRequest({
   input,
   written,
   task,
+  manualTask,
   model,
   added,
   ask,
@@ -149,7 +153,7 @@ export async function userRequest({
   // What the tile and the chat's log say was asked: the assistant's words for the work when it wrote some.
   const shown = shownQuestion(written ?? input)
   const entry = begin(
-    task === undefined ? 'user' : 'task',
+    task === undefined || manualTask ? 'user' : 'task',
     workspaceId,
     task === undefined ? '' : `task ${task}`,
     shown,
@@ -172,6 +176,7 @@ export async function userRequest({
     asked: input,
     ...(tile ? { loop: tile.loop } : {}),
     ...(task === undefined ? {} : { task }),
+    ...(manualTask ? { manualTask: true } : {}),
     ...(fromTeammate ? { fromTeammate: true } : {}),
   }
   const asked: Turn = { role: 'user', text: turnText(input, written), context: state() }
@@ -219,7 +224,8 @@ export async function userRequest({
   } catch (err) {
     const stopped = isStopped(entry, err)
     const message = err instanceof Error ? err.message : String(err)
-    const deferredTask = task !== undefined && isSleepWakeError(message)
+    const deferredTask =
+      task !== undefined && !manualTask && (isSleepWakeError(message) || isBudgetExhaustedError(message))
     // What it got done before it ended stays in the thread, closed off with why, whether the user
     // stopped it or it failed: the grid keeps what its rounds did, and "try again" only makes sense to
     // a model that knows what was tried. A conversation its provider refuses outright is started over

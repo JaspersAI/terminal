@@ -34,6 +34,7 @@ export function pluginLine(
 export const TASK_STATUS: Record<TaskStatus, string> = {
   running: 'Running',
   paused: 'Paused',
+  'budget-paused': 'Paused (daily budget)',
   scheduled: 'Scheduled',
   done: 'Done',
   failed: 'Failed',
@@ -41,7 +42,7 @@ export const TASK_STATUS: Record<TaskStatus, string> = {
 
 /** The second line of a task's row: where it stands, and how often it runs. */
 export function taskLine(task: Task, now: number, timeZone: string): { status: string; when: string; alert: boolean } {
-  const status = taskStatus(task)
+  const status = taskStatus(task, now)
   return {
     status: TASK_STATUS[status],
     when:

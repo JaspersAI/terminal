@@ -103,7 +103,7 @@ function asRoomArg(input: Record<string, unknown>): string {
  */
 async function hand(context: ToolContext, loop: Loop, written: string | undefined, went: string): Promise<string> {
   const tabId = findRoomTab(getState(), loop.id) ?? context.workspaceId
-  const handed = handedBy(context.asked, context.task, written)
+  const handed = handedBy(context.asked, context.task, written, context.manualTask)
   if (context.task !== undefined) {
     context.handedToRoom?.()
     return sendToLoop(tabId, loop.id, handed)

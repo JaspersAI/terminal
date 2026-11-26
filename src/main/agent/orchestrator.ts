@@ -143,6 +143,8 @@ export interface TaskRequest {
   model?: string | null
   /** The scripts the user allowed this task, which the run is told so it can pass one to the letter. */
   commands?: readonly string[]
+  /** Set when the user explicitly clicked Run now on the task. */
+  manual?: boolean
 }
 
 /** What a task's run said, and whether a room's conversation already has it. */
@@ -173,7 +175,12 @@ export function runTask(task: TaskRequest): Promise<TaskAskResult> {
       const ownerTabId = findRoomTab(getState(), room)
       const loops = ownerTabId ? (getState().loops[ownerTabId] ?? NO_LOOPS) : NO_LOOPS
       if (ownerTabId && loops.list.some((one) => one.id === room)) {
-        const text = await sendToLoop(ownerTabId, room, { written: said, task: task.id, model: task.model })
+        const text = await sendToLoop(ownerTabId, room, {
+          written: said,
+          task: task.id,
+          manualTask: task.manual,
+          model: task.model,
+        })
         return { text, inRoom: true }
       }
       if (closedLoop(loops, room)) return { text: '', inRoom: true }
@@ -183,7 +190,7 @@ export function runTask(task: TaskRequest): Promise<TaskAskResult> {
     // changes, so a watch can run on a cheap one, unless the provider is Jaspers, which picks its own.
     const config = configured(task.model)
     const history: Turn[] = [{ role: 'user', text: said, context: stateNow(task.workspaceId) }]
-    const entry = begin('task', task.workspaceId, `task ${task.id}`, task.instructions)
+    const entry = begin(task.manual ? 'user' : 'task', task.workspaceId, `task ${task.id}`, task.instructions)
     let handed = false
     const context: ToolContext = {
       runId: entry.runId,
@@ -191,6 +198,7 @@ export function runTask(task: TaskRequest): Promise<TaskAskResult> {
       // A run of its own, so nothing a task was allowed once carries into the next run.
       conversationId: `task ${task.id} ${entry.runId}`,
       task: task.id,
+      ...(task.manual ? { manualTask: true } : {}),
       // What work this run starts is handed: the task's words, which nobody typed.
       asked: said,
       signal: entry.controller.signal,

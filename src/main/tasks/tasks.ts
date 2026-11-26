@@ -2,13 +2,18 @@ import {
   isWatch,
   afterRun,
   checkTaskInput,
+  clearExpiredBudgetPauses,
   computeNext,
   dueTasks,
   earliestNext,
+  hasPendingBudgetTaskBefore,
+  isBudgetPaused,
   isPending,
   isWakeLag,
+  pauseTasksForDailyBudget,
   pruneFinished,
   resolveWakeGrace,
+  resumeBudgetPausedTasks,
   routeTaskOutput,
   shouldDeferTaskRun,
   STARTUP_GRACE_MS,
@@ -22,6 +27,7 @@ import {
   type TaskInput,
   type TaskPatch,
 } from '../../shared/tasks/tasks'
+import { isBudgetExhaustedError, nextLocalDayStart } from '../../shared/agent/budget'
 import { delta, type Delta } from '../../shared/tasks/delta'
 import { TASK_COMMANDS_MAX } from '../../shared/app/pro-mode'
 import type { TaskAskResult, TaskRequest } from '../agent/orchestrator'
@@ -37,6 +43,12 @@ import { watch } from '../data/store'
 // task, and again whenever the tasks change; a run marks its task running, so a tick during it cannot
 // start another.
 
+export interface BudgetBlock {
+  message: string
+  resetAt: number
+  dailyTokens: number
+}
+
 export interface SchedulerDeps {
   /** Whether the orchestrator has a tool by this name now, for a call to be checked against. */
   toolExists(name: string): boolean
@@ -46,6 +58,8 @@ export interface SchedulerDeps {
   runAsk(task: TaskRequest): Promise<TaskAskResult>
   /** A reply, into the room's conversation when `roomId` is given, else the workspace's. Resolves whether it went in. */
   intoChat(workspaceId: string, task: string, reply: string, roomId?: string | null): Promise<boolean>
+  /** Whether today's autonomous background token budget is exhausted, and when the next local day begins. */
+  budgetBlock?: (at: number) => Promise<BudgetBlock | null>
   /** Called when a timer fires late enough past its deadline that the machine woke before resume arrived. */
   onWake?: () => void
   /** Remaining milliseconds to hold off task execution while the machine or auth state is sleeping or waking (0 when ready, Infinity while sleeping). */
@@ -61,6 +75,8 @@ let expectedAt: number | null = null
 let sleepWakeSeq = 0
 /** The task and time the timer was last armed for, so the log says so once rather than on every change. */
 let armedFor: string | null = null
+/** Deduplicates the daily budget exhaustion notice to one notice per reset window and budget cap. */
+let budgetNotifiedKey: string | null = null
 let stopListening: (() => void) | null = null
 
 const CHECK = { toolExists: (name: string): boolean => deps?.toolExists(name) ?? false }
@@ -93,8 +109,9 @@ function startAfterGrace(ms: number, waking = false): void {
       return
     }
     started = true
+    const at = now()
+    flushExpiredBudgetPauses(at)
     if (waking) {
-      const at = now()
       update((state) => {
         const grids = wakeGrids(state, at)
         return grids === state.grids ? state : { ...state, grids }
@@ -104,11 +121,70 @@ function startAfterGrace(ms: number, waking = false): void {
   }, wait)
 }
 
+function flushExpiredBudgetPauses(at = now()): void {
+  update((state) => {
+    const tasks = clearExpiredBudgetPauses(state.tasks, at)
+    return tasks === state.tasks ? state : { ...state, tasks }
+  })
+}
+
+function holdForDailyBudget(triggeredTaskId: string | undefined, blocked: BudgetBlock): void {
+  let heldAny = false
+  update((state) => {
+    const stopped =
+      triggeredTaskId === undefined
+        ? state.tasks
+        : state.tasks.map((t) => (t.id === triggeredTaskId && t.running ? { ...t, running: false } : t))
+    const paused = pauseTasksForDailyBudget(stopped, blocked.resetAt, triggeredTaskId)
+    if (paused !== stopped) heldAny = true
+    return paused === state.tasks ? state : { ...state, tasks: paused }
+  })
+  if (!heldAny && triggeredTaskId === undefined) return
+  const key = `${blocked.resetAt}:${blocked.dailyTokens}`
+  if (budgetNotifiedKey !== key) {
+    budgetNotifiedKey = key
+    console.log(`[tasks] daily budget spent; paused scheduled tasks until ${new Date(blocked.resetAt).toISOString()}`)
+    addNotice('tasks', blocked.message)
+  }
+}
+
+async function reconcileBudgetChange(): Promise<void> {
+  const run = deps
+  const at = now()
+  if (!run?.budgetBlock) {
+    budgetNotifiedKey = null
+    update((state) => {
+      const tasks = resumeBudgetPausedTasks(state.tasks, at)
+      return tasks === state.tasks ? state : { ...state, tasks }
+    })
+    return
+  }
+  const blocked = await run.budgetBlock(at)
+  if (!blocked) {
+    budgetNotifiedKey = null
+    update((state) => {
+      const tasks = resumeBudgetPausedTasks(state.tasks, at)
+      return tasks === state.tasks ? state : { ...state, tasks }
+    })
+    return
+  }
+  if (hasPendingBudgetTaskBefore(getState().tasks, blocked.resetAt)) {
+    holdForDailyBudget(undefined, blocked)
+  }
+}
+
 /** Wires the dependencies and, after the startup grace, arms the timer; from then on every change to the tasks re-arms it. */
 export function startTasks(next: SchedulerDeps): void {
   deps = next
+  const startupNow = now()
+  const initialState = getState()
+  const alreadyPaused = initialState.tasks.find((t) => isBudgetPaused(t, startupNow))
+  budgetNotifiedKey = alreadyPaused ? `${alreadyPaused.budgetPausedUntil}:${initialState.budgets.dailyTokens}` : null
   stopListening?.()
   stopListening = subscribe((after, before) => {
+    if (after.budgets.dailyTokens !== before.budgets.dailyTokens) {
+      void reconcileBudgetChange()
+    }
     if (started && after.tasks !== before.tasks) arm()
   })
   startAfterGrace(STARTUP_GRACE_MS)
@@ -197,7 +273,7 @@ export function updateTask(id: string, patch: TaskPatch, at = now(), workspaceId
     },
     CHECK,
   )
-  const next: Task = { ...merged, ...checked }
+  const next: Task = { ...merged, ...checked, budgetPausedUntil: null }
   const task: Task = { ...next, nextAt: computeNext(next, at) }
   replace(task)
   return task
@@ -224,7 +300,12 @@ export function allowTaskCommand(id: string, command: string): void {
  */
 export function setTaskEnabled(id: string, enabled: boolean, at = now()): Task {
   const current = getTask(id)
-  const task: Task = { ...current, enabled, nextAt: enabled ? computeNext(current, at) : current.nextAt }
+  const task: Task = {
+    ...current,
+    enabled,
+    budgetPausedUntil: null,
+    nextAt: enabled ? computeNext(current, at) : current.nextAt,
+  }
   replace(task)
   return task
 }
@@ -238,7 +319,7 @@ export function cancelTask(id: string, workspaceId?: string): void {
 export function runTaskNow(id: string): void {
   const task = getTask(id)
   if (task.running) throw new Error(`${id} is running.`)
-  void execute(task)
+  void execute(task, { manual: true })
 }
 
 function replace(task: Task): void {
@@ -257,7 +338,7 @@ function arm(): void {
   }
   const currentNow = now()
   const wait = Math.max(0, at - currentNow)
-  const soonest = tasks.find((t) => isPending(t) && !t.running && t.nextAt === at)
+  const soonest = tasks.find((t) => isPending(t) && !t.running && (t.nextAt === at || t.budgetPausedUntil === at))
   const label = `${soonest?.id ?? '?'}@${at}`
   if (label !== armedFor) {
     armedFor = label
@@ -284,7 +365,9 @@ function tick(): void {
     else suspendTasks()
     return
   }
-  for (const task of dueTasks(getState().tasks, now())) {
+  const tickNow = now()
+  flushExpiredBudgetPauses(tickNow)
+  for (const task of dueTasks(getState().tasks, tickNow)) {
     if (!started) return
     void execute(task)
   }
@@ -312,10 +395,11 @@ function deferAfterSleepWake(): void {
  * and is dropped if the task was removed. Whether it becomes a notice is `runNotice`'s to say; a
  * reply is said in the chat as well.
  */
-async function execute(task: Task): Promise<void> {
+async function execute(task: Task, options?: { manual?: boolean }): Promise<void> {
   const run = deps
   if (!run) return
-  const holdMs = holdOffMs()
+  const manual = options?.manual === true
+  const holdMs = manual ? 0 : holdOffMs()
   if (holdMs > 0) {
     if (Number.isFinite(holdMs)) {
       if (started || !grace) startAfterGrace(holdMs, true)
@@ -329,6 +413,13 @@ async function execute(task: Task): Promise<void> {
   replace({ ...current, running: true })
   const seqAtStart = sleepWakeSeq
   const at = now()
+  if (!manual && current.call === null && run.budgetBlock) {
+    const blocked = await run.budgetBlock(at)
+    if (blocked) {
+      holdForDailyBudget(current.id, blocked)
+      return
+    }
+  }
   let ok = true
   let result = ''
   let inRoom = false
@@ -340,6 +431,7 @@ async function execute(task: Task): Promise<void> {
       roomId: current.roomId,
       model: current.model,
       commands: current.commands,
+      ...(manual ? { manual: true } : {}),
     })
     inRoom = answer.inRoom
     return answer.text
@@ -356,7 +448,7 @@ async function execute(task: Task): Promise<void> {
   let found: Delta | null = null
   let previousWatchText: string | null = null
   if (ok && isWatch(current)) {
-    if (sleepWakeSeq !== seqAtStart || !started || holdOffMs() > 0) {
+    if (!manual && (sleepWakeSeq !== seqAtStart || !started || holdOffMs() > 0)) {
       ok = false
       result = 'Cannot refresh Jaspers sign-in while the computer is sleeping or waking.'
     } else {
@@ -369,6 +461,16 @@ async function execute(task: Task): Promise<void> {
         const still = getState().tasks.find((t) => t.id === current.id)
         if (still) replace(afterRun(still, { at, ok: true, result: 'unchanged', ms }))
         return
+      }
+      if (!manual && run.budgetBlock) {
+        const blocked = await run.budgetBlock(now())
+        if (blocked) {
+          if (previousWatchText !== null) {
+            await watch({ task: current.id, at: Math.max(at, now()), text: previousWatchText })
+          }
+          holdForDailyBudget(current.id, blocked)
+          return
+        }
       }
       console.log(`[tasks] ${current.id} watch: changed`)
       // Something moved, so the instructions get their turn, with the change in front of them.
@@ -384,7 +486,20 @@ async function execute(task: Task): Promise<void> {
   }
 
   const ms = now() - at
+  if (!ok && !manual && isBudgetExhaustedError(result)) {
+    if (previousWatchText !== null) {
+      await watch({ task: current.id, at: Math.max(at, now()), text: previousWatchText })
+    }
+    const atNow = now()
+    holdForDailyBudget(current.id, {
+      message: result,
+      resetAt: nextLocalDayStart(atNow),
+      dailyTokens: getState().budgets.dailyTokens,
+    })
+    return
+  }
   if (
+    !manual &&
     shouldDeferTaskRun(
       { ok, result },
       { started, wakeDelayMs: holdOffMs(), sleptDuringRun: sleepWakeSeq !== seqAtStart },
@@ -403,6 +518,13 @@ async function execute(task: Task): Promise<void> {
   const before = getState().tasks.find((t) => t.id === current.id)
   if (!before) return
   replace(afterRun(before, { at, ok, result, ms }))
+  const checkPostRunBudget = async (): Promise<void> => {
+    if (!ok || manual || !run.budgetBlock || (current.call !== null && !found?.changed)) return
+    const blocked = await run.budgetBlock(now())
+    if (blocked && hasPendingBudgetTaskBefore(getState().tasks, blocked.resetAt)) {
+      holdForDailyBudget(undefined, blocked)
+    }
+  }
   const sink = routeTaskOutput(
     taskLabel(current),
     {
@@ -414,10 +536,14 @@ async function execute(task: Task): Promise<void> {
     },
     { ok, result, changed: found?.changed ?? false, inRoom },
   )
-  if (sink.kind === 'none') return
+  if (sink.kind === 'none') {
+    await checkPostRunBudget()
+    return
+  }
   // A room's task says what it found in that room alone: Central's chat and its notices stay out of it.
   if (sink.kind === 'room') {
     await run.intoChat(current.workspaceId, current.id, result.trim(), sink.roomId).catch(() => false)
+    await checkPostRunBudget()
     return
   }
   // A run that went well and speaks is the assistant's reply, which joins the conversation, where
@@ -426,6 +552,7 @@ async function execute(task: Task): Promise<void> {
   // window is away.
   const inChat = ok && (await run.intoChat(current.workspaceId, current.id, result.trim()).catch(() => false))
   addNotice('tasks', sink.notice, inChat ? current.workspaceId : undefined)
+  await checkPostRunBudget()
 }
 
 /**

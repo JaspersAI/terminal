@@ -765,10 +765,12 @@ function taskLine(task: Task, clock: Clock, showRoom = true): string {
 function bracket(task: Task, clock: Clock): string {
   const schedule =
     task.every === null ? `once at ${formatLocal(task.executeAt, clock.timeZone)}` : `every ${everyText(task.every)}`
-  const status = taskStatus(task)
-  return status === 'scheduled'
-    ? `${schedule}, next ${formatLocal(task.nextAt!, clock.timeZone)}`
-    : `${schedule}, ${status}`
+  const status = taskStatus(task, clock.now)
+  if (status === 'scheduled') return `${schedule}, next ${formatLocal(task.nextAt!, clock.timeZone)}`
+  if (status === 'budget-paused' && task.nextAt !== null) {
+    return `${schedule}, paused (daily budget), resumes ${formatLocal(task.nextAt, clock.timeZone)}`
+  }
+  return `${schedule}, ${status}`
 }
 
 /** The first sentence of a description, or the whole of it when it has no sentence end. */

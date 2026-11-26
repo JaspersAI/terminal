@@ -21,6 +21,7 @@ export interface StoreQueue {
   enqueueUsage(usage: Record<string, unknown>): void
   foreground<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T>
   flushForQuery(sql: string): Promise<void>
+  flushUsage(): Promise<void>
   clear(): void
 }
 
@@ -32,10 +33,24 @@ export function createStoreQueue({ ready, sendRecord, sendUsage, onError }: Stor
   const pendingRecords: RunRecord[] = []
   const pendingUsage: Record<string, unknown>[] = []
   const inFlightRecords = new Map<RunRecord, Promise<void>>()
+  const inFlightUsage = new Set<Promise<void>>()
   let activeForeground = 0
   let idleWaiters: (() => void)[] = []
   let draining = false
   let closed = false
+
+  function sendTrackedUsage(usage: Record<string, unknown>): Promise<void> {
+    const promise = sendUsage(usage)
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        onError?.('usage', error)
+      })
+      .finally(() => {
+        inFlightUsage.delete(promise)
+      })
+    inFlightUsage.add(promise)
+    return promise
+  }
 
   function sendTrackedRecord(run: RunRecord): Promise<void> {
     const promise = sendRecord(run)
@@ -77,11 +92,7 @@ export function createStoreQueue({ ready, sendRecord, sendUsage, onError }: Stor
         if (closed) break
         const usage = pendingUsage.shift()
         if (usage) {
-          try {
-            await sendUsage(usage)
-          } catch (error) {
-            onError?.('usage', error)
-          }
+          await sendTrackedUsage(usage)
           continue
         }
         const run = pendingRecords.shift()
@@ -149,11 +160,25 @@ export function createStoreQueue({ ready, sendRecord, sendUsage, onError }: Stor
       }
     },
 
+    async flushUsage(): Promise<void> {
+      if (closed) return
+      while (!closed) {
+        const usage = pendingUsage.shift()
+        if (usage) {
+          await sendTrackedUsage(usage)
+          continue
+        }
+        if (inFlightUsage.size === 0) break
+        await Promise.all([...inFlightUsage])
+      }
+    },
+
     clear() {
       closed = true
       pendingRecords.length = 0
       pendingUsage.length = 0
       inFlightRecords.clear()
+      inFlightUsage.clear()
       const waiters = idleWaiters
       idleWaiters = []
       for (const wake of waiters) wake()

@@ -34,7 +34,7 @@ import { RoomPeople, TeammateDrop, TeammateShield, useTeammateDrag } from '../co
 import { Board } from './Board'
 import { canGrab, EDGES, frameEdges } from './edges'
 import { loopHeaderTitle, loopTitle, ROOM_TITLE_MAX, showsChat } from '../../../shared/loops/loops'
-import { formatAsOf } from '../../../shared/tasks/tasks'
+import { formatAsOf, isBudgetPaused } from '../../../shared/tasks/tasks'
 import {
   barLabel,
   boxActivity,
@@ -273,6 +273,9 @@ export function ElementFrame({
     [loop, insidePanels, earlier, live],
   )
   const roomAsOf = useMemo(() => (roomStamp ? formatAsOf(roomStamp) : ''), [roomStamp])
+  const budgetPaused = useAppState((s) =>
+    loop ? s.tasks.some((t) => t.workspaceId === workspaceId && t.roomId === loop.id && isBudgetPaused(t)) : false,
+  )
   const empty = frame && !grid.elements.some((e) => e.parent === element.id && !undrawn.has(e.id))
   const label = frame ? headerTitle : title
   const zoom = elementZoom(element)
@@ -465,7 +468,7 @@ export function ElementFrame({
       >
         {loop ? (
           <div
-            className={`flex min-w-0 flex-1 items-center px-2 text-xs ${
+            className={`flex min-w-0 flex-1 items-center overflow-hidden px-2 text-xs ${
               focused ? 'font-medium text-foreground' : 'text-muted-foreground'
             }`}
           >
@@ -540,14 +543,30 @@ export function ElementFrame({
                     event.stopPropagation()
                     startRename()
                   }}
-                  className="min-w-0 cursor-text truncate hover:text-foreground hover:underline"
+                  className={`${
+                    budgetPaused || roomAsOf ? 'max-w-[65%] shrink-0' : 'min-w-0'
+                  } cursor-text truncate hover:text-foreground hover:underline`}
                 >
                   {headerTitle}
                 </span>
-                {roomAsOf && (
-                  <span data-room-header-meta title={roomAsOf} className="shrink-0 pl-1 text-muted-foreground">
-                    {`· ${roomAsOf}`}
+                {budgetPaused ? (
+                  <span
+                    data-room-budget-paused
+                    title={`Scheduled tasks in this room are paused until tomorrow's daily token budget reset (or raise Daily budget in Settings > Data).${roomAsOf ? ` Last updated ${roomAsOf}.` : ''}`}
+                    className="min-w-0 truncate pl-1 text-muted-foreground"
+                  >
+                    · Paused (daily budget)
                   </span>
+                ) : (
+                  roomAsOf && (
+                    <span
+                      data-room-header-meta
+                      title={roomAsOf}
+                      className="min-w-0 truncate pl-1 text-muted-foreground"
+                    >
+                      {`· ${roomAsOf}`}
+                    </span>
+                  )
                 )}
               </>
             )}

@@ -70,6 +70,8 @@ export interface Handed {
   written?: string
   /** The scheduled task whose run handed it over: the run it starts is on that task's limits. */
   task?: string
+  /** Set when the user explicitly clicked Run now on that scheduled task. */
+  manualTask?: boolean
   /** Set when a teammate in a shared room asked the room's agent: viewer and write sources stay hidden and refused. */
   fromTeammate?: boolean
   /** Optional model override when handed over from a scheduled task with a pinned model. */
@@ -82,7 +84,16 @@ export interface Handed {
  * nobody typed anything: the task's instructions and the model's words both go as written, the
  * instructions first, so what was scheduled is never left behind for what a model added.
  */
-export function handedBy(asked: string | undefined, task: string | undefined, written: string | undefined): Handed {
+export function handedBy(
+  asked: string | undefined,
+  task: string | undefined,
+  written: string | undefined,
+  manualTask?: boolean,
+): Handed {
   if (task === undefined) return { typed: asked, written }
-  return { written: [asked, written].filter(Boolean).join('\n\n'), task }
+  return {
+    written: [asked, written].filter(Boolean).join('\n\n'),
+    task,
+    ...(manualTask ? { manualTask: true } : {}),
+  }
 }

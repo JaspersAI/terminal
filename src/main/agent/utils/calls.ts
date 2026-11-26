@@ -1,6 +1,7 @@
 import { ACTIVATE_SKILL, READ_SKILL_FILE } from '@jaspers-ai/sdk/skills'
 import { untilAborted } from '../../../shared/abort'
 import { restoreInput } from '../../../shared/agent/aside'
+import { isBudgetExhaustedError } from '../../../shared/agent/budget'
 import { capOutput } from '../../../shared/agent/history'
 import { cap } from '../../../shared/agent/prompt'
 import { batches, callLine, DEFERRED_FOR_ADDED } from '../../../shared/agent/rounds'
@@ -120,7 +121,10 @@ async function execute(
     const message = messageOf(err)
     log(`tool ${call.name} failed: ${message}`)
     const failed = finish(false, message)
-    if ((entry.origin === 'task' || context.task !== undefined) && isSleepWakeError(message)) {
+    if (
+      (entry.origin === 'task' || (context.task !== undefined && !context.manualTask)) &&
+      (isSleepWakeError(message) || isBudgetExhaustedError(message))
+    ) {
       throw err instanceof Error ? err : new Error(message)
     }
     return failed

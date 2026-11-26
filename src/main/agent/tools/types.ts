@@ -9,6 +9,8 @@ export interface ToolContext {
   conversationId: string
   /** The scheduled task this run is, when it is one: what a command is allowed for, in place of a conversation. */
   task?: string
+  /** Set when the user explicitly clicked Run now on a scheduled task. */
+  manualTask?: boolean
   /** True when the user typed this exact text in this conversation. A key the model offers has to pass it. */
   userSaid: (text: string) => boolean
   /** True when this exact text is already in the conversation, as a tool's answer or in a user turn. A skill loaded before is not sent again. */
