@@ -11,7 +11,7 @@ import { skillsPrompt } from '@jaspers-ai/sdk/skills'
 import type { AppState, ConnectionInfo, PluginInfo, SkillInfo, SourceInfo, ViewInfo } from '../state'
 // The extensions are explicit because Node's test runner resolves these imports at run time.
 import { skillEntry, usableSkills } from '../skills/skills.ts'
-import { everyText, formatAsOf, formatLocal, taskStatus, type Task } from '../tasks/tasks.ts'
+import { formatAsOf, formatLocal, scheduleText, taskStatus, type Task } from '../tasks/tasks.ts'
 import { MAIN_WINDOW } from '../grid/windows.ts'
 import { cellName, formatRect, gridMap, layoutOf, type GridSize, type Panel } from '../grid/grid.ts'
 import { frameOf, loopName, notPlaced, type Loop, type LoopStatus } from '../loops/loops.ts'
@@ -64,7 +64,7 @@ const ROUTER_REPLY =
   'Your text reply appears in Central (in the top command line, which expands up to 5 lines and fades after a few seconds when undocked, and in the docked Central room when Dock mode is on; if the user wants an extended text conversation experience, remind and support them that they can press Dock in the top bar to open Central as a room on the tab), so keep it clear and direct, at whatever length the answer needs without padding, and stamp agent responses, summaries, and work product with a timestamp in the user\'s system time like "as of 2026-11-10 10am PT" from the Now line in workspace_state. When you only start or send work, that is the whole of your part, and the user is told what the tool answered.'
 // The app is the orchestrator's: keys, tasks, and plugins it handles itself, in words and calls of its own.
 const APP_RUN =
-  "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, schedule a task with schedule_task (passing roomId when the task belongs to a room so it runs and posts strictly inside that room rather than Central) rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. Address the user and their teammates by the names workspace_state gives. When the user asks to invite someone to their team or add a teammate without naming a room or tab to share, call invite_teammate directly (never share_room on an unrequested room); call respond_team_invite to accept, decline, or cancel a team invitation, remove_teammate to remove a teammate, and share_room, share_tab, or stop_sharing when they ask to share or stop sharing a room or tab. When the user asks to open Settings, or needs a control only the user can operate there (such as turning on Pro mode, signing in with Jaspers, or pasting a provider API key), call open_settings with the relevant pane (Settings is also under Jaspers Terminal > Settings\u2026 / Cmd+, on macOS and File > Settings\u2026 / Ctrl+, on Windows; there is no Settings button in the top bar). Confirmation prompts from tools appear inline in Central's top command bar (and in Docked Central when Dock is open) only while the tool call is waiting \u2014 never as a centered modal dialog \u2014 and close as soon as the tool call ends. When the user asks to run a quick, single command or script on this computer (< 3 to 6 seconds), call run_shell yourself when it is in your tools \u2014 it asks the user to approve before running \u2014 rather than starting a room or scheduling a task for it; when the request is an extensive or multi-step task (such as scraping web pages, audio, or files, downloading or assembling files into the folder, or running a multi-step shell or Python workflow), spin out a worker in a room with create_room to execute it instead of cluttering Central; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
+  "When a plugin or connection is needs-secret, call set_secret for its plugin and key rather than asking for the key in the conversation; if the user already pasted one, pass it as value. When the user wants something done later, repeatedly, or kept up to date, check existing tasks across tabs in workspace_state first (updating with update_task or removing duplicates with cancel_task rather than scheduling a duplicate) and schedule with schedule_task (passing roomId when the task belongs to a room on any tab so it runs and posts strictly inside that room rather than Central, and pairing every with on including until when repeating during market hours or a daily window so it sleeps outside those hours) rather than doing it once or saying it cannot be done: at its time its instructions are a request of yours, and what needs data goes to a piece of work as it does now; to bring a view's data up to date now, call refresh_element. When the user asks for a plugin, find_plugin searches Jaspers Hub, the library of published plugins, and install_plugin installs one when they say so. When the user asks to change a setting, change_setting does it; it asks them itself before a change that is hard to take back. Address the user and their teammates by the names workspace_state gives. When the user asks to invite someone to their team or add a teammate without naming a room or tab to share, call invite_teammate directly (never share_room on an unrequested room); call respond_team_invite to accept, decline, or cancel a team invitation, remove_teammate to remove a teammate, and share_room, share_tab, or stop_sharing when they ask to share or stop sharing a room or tab. When the user asks to open Settings, or needs a control only the user can operate there (such as turning on Pro mode, signing in with Jaspers, or pasting a provider API key), call open_settings with the relevant pane (Settings is also under Jaspers Terminal > Settings\u2026 / Cmd+, on macOS and File > Settings\u2026 / Ctrl+, on Windows; there is no Settings button in the top bar). Confirmation prompts from tools appear inline in Central's top command bar (and in Docked Central when Dock is open) only while the tool call is waiting \u2014 never as a centered modal dialog \u2014 and close as soon as the tool call ends. When the user asks to run a quick, single command or script on this computer (< 3 to 6 seconds), call run_shell yourself when it is in your tools \u2014 it asks the user to approve before running \u2014 rather than starting a room or scheduling a task for it; when the request is an extensive or multi-step task (such as scraping web pages, audio, or files, downloading or assembling files into the folder, or running a multi-step shell or Python workflow), spin out a worker in a room with create_room to execute it instead of cluttering Central; when run_shell is not in your tools, Pro mode is off, so tell the user to turn it on in Settings > Pro mode."
 
 const ROUTING_RUBRIC =
   'Model routing: you have a compact index of installed views, sources, plugins, and skills in your system prompt, so pass plugins, modelClass, and effort directly in create_room (and update them in update_room when a room\u2019s scope expands): choose modelClass "fast" with effort "low" for single-view chart, quote, yield-curve, browser, or team-chat rooms and routine standalone scheduled watches; choose modelClass "main" with effort "medium" for multi-view dashboards, quantitative or qualitative stock screens, multi-source comparisons, web company profiles, and multi-step shell or scraping workflows; and choose modelClass "main" with effort "high" for deep SEC filing synthesis (10-K, 10-Q, 8-K, proxy, earnings transcripts), accounting or valuation forensics, and cross-filing audits.'
@@ -426,15 +426,16 @@ export function describeRound(
   )
 }
 
-/** What is running, the time, and this workspace's tasks: what a round says after what the request is about. */
+/** What is running, the time, and the tasks across tabs: what a round says after what the request is about. */
 export function describeWork(state: AppState, workspaceId: string, clock: Clock = defaultClock()): string {
-  return [
-    ...describeJobs(state.plugins),
-    ...describeTasks(
-      state.tasks.filter((t) => t.workspaceId === workspaceId),
-      clock,
-    ),
-  ].join('\n')
+  const tabNameOf = new Map(state.workspaces.map((w) => [w.id, w.name]))
+  const own = state.tasks.filter((t) => t.workspaceId === workspaceId)
+  const other = state.tasks.flatMap((t) => {
+    if (t.workspaceId === workspaceId) return []
+    const tabName = tabNameOf.get(t.workspaceId)
+    return tabName ? [{ task: t, tabName }] : []
+  })
+  return [...describeJobs(state.plugins), ...describeTasks(own, other, clock)].join('\n')
 }
 
 /**
@@ -763,27 +764,33 @@ function exchangeLines({ at, question, answer, steps, error }: Exchange): string
   ]
 }
 
+const TASK_TOOLS_HINT = '(schedule_task, update_task, cancel_task; get tasks for details)'
+
 /**
- * The time, then this workspace's tasks: what is scheduled, when, and how its last run went, so the
- * model can turn "at nine" into a time and change or cancel a task by id. Another workspace's tasks
- * are its own business. Always said, since "none" is worth knowing.
+ * The time, then this workspace's tasks and any tasks on other tabs: what is scheduled, when, where
+ * it runs, and how its last run went, so Central sees tasks across every tab (including tasks just
+ * scheduled for rooms on other tabs) and can update or cancel any of them by id.
  */
-function describeTasks(tasks: Task[], clock: Clock): string[] {
-  if (tasks.length === 0) return [describeNow(clock), 'Tasks on this workspace: none.']
-  return [
-    describeNow(clock),
-    'Tasks on this workspace (schedule_task, update_task, cancel_task; get tasks for details):',
-    ...tasks.map((task) => taskLine(task, clock)),
-  ]
+function describeTasks(own: Task[], other: { task: Task; tabName: string }[], clock: Clock): string[] {
+  const lines = [describeNow(clock)]
+  if (own.length === 0) {
+    lines.push('Tasks on this workspace: none.')
+  } else {
+    lines.push(`Tasks on this workspace ${TASK_TOOLS_HINT}:`, ...own.map((task) => taskLine(task, clock)))
+  }
+  if (other.length > 0) {
+    lines.push(
+      own.length === 0 ? `Tasks on other tabs ${TASK_TOOLS_HINT}:` : 'Tasks on other tabs:',
+      ...other.map(({ task, tabName }) => taskLine(task, clock, true, tabName)),
+    )
+  }
+  return lines
 }
 
 /** Tasks bound to a single room, as that room's isolated agent sees them. */
 export function describeRoomTasks(tasks: Task[], clock: Clock): string {
   if (tasks.length === 0) return ''
-  return [
-    'Tasks for this room (schedule_task, update_task, cancel_task; get tasks for details):',
-    ...tasks.map((task) => taskLine(task, clock, false)),
-  ].join('\n')
+  return [`Tasks for this room ${TASK_TOOLS_HINT}:`, ...tasks.map((task) => taskLine(task, clock, false))].join('\n')
 }
 
 /**
@@ -803,21 +810,24 @@ function offsetText(now: number, timeZone: string): string {
   return name === 'GMT' ? 'UTC+00:00' : name.replace('GMT', 'UTC')
 }
 
-function taskLine(task: Task, clock: Clock, showRoom = true): string {
+function taskLine(task: Task, clock: Clock, showRoom = true, tabName?: string): string {
   const call = task.call ? ` → ${task.call.tool} ${cap(JSON.stringify(task.call.input), TASK_DETAIL_MAX)}` : ''
   const room = showRoom && task.roomId ? ` in ${loopName(task.roomId)}` : ''
+  const tab = tabName ? ` (in ${tabName})` : ''
   // Only when it is not the model reading this, which is the usual case.
   const model = task.model ? ` on ${task.model}` : ''
   const last = task.lastRun
     ? `; last ${formatLocal(task.lastRun.at, clock.timeZone)} ${task.lastRun.ok ? 'ok' : `failed: ${cap(task.lastRun.result, TASK_DETAIL_MAX)}`}`
     : ''
-  return `- ${task.id} [${bracket(task, clock)}]${room}${model}: ${JSON.stringify(task.instructions)}${call}${last}`
+  return `- ${task.id} [${bracket(task, clock)}]${room}${tab}${model}: ${JSON.stringify(task.instructions)}${call}${last}`
 }
 
 /** The schedule and where the task stands: "every 30 s, next 2026-09-14 09:12:00", "once at 2026-09-15 09:00:00, paused". */
 function bracket(task: Task, clock: Clock): string {
   const schedule =
-    task.every === null ? `once at ${formatLocal(task.executeAt, clock.timeZone)}` : `every ${everyText(task.every)}`
+    task.at !== null || task.every !== null
+      ? scheduleText(task)
+      : `once at ${formatLocal(task.executeAt, clock.timeZone)}`
   const status = taskStatus(task, clock.now)
   if (status === 'scheduled') return `${schedule}, next ${formatLocal(task.nextAt!, clock.timeZone)}`
   if (status === 'budget-paused' && task.nextAt !== null) {

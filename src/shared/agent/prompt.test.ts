@@ -479,7 +479,7 @@ test('the prompt says what time it is, and that there are no tasks', () => {
   assert.match(pacific, /^Now: 2026-09-14 02:12 \(America\/Los_Angeles, UTC-07:00\)$/m)
 })
 
-test("a task is one line: its schedule and state, its instructions, its call, and its last run; another workspace's tasks are not listed", () => {
+test('a task is one line: its schedule and state, its instructions, its call, and its last run; tasks on other tabs show under Tasks on other tabs with their tab name', () => {
   const state = tree(EMPTY_GRID)
   state.workspaces.push({ id: 'ws-2', name: 'Research' })
   state.tasks = [
@@ -553,10 +553,8 @@ test("a task is one line: its schedule and state, its instructions, its call, an
       '- t1 [every 30 s, next 2026-09-14 09:12:00]: "Refresh the technicals at e3" → refresh_element {"elementId":"e3"}; last 2026-09-14 09:11:30 ok',
     ),
   )
-  assert.equal(
-    lines.some((line) => line.includes('t2')),
-    false,
-  )
+  assert.ok(lines.includes('Tasks on other tabs:'))
+  assert.ok(lines.includes('- t2 [once at 2026-09-15 09:12:00, paused] (in Research): "Post the morning question"'))
   assert.ok(
     lines.includes(
       '- t3 [once at 2026-09-14 09:11:00, failed]: "Check the calendar"; last 2026-09-14 09:11:00 failed: connection_unavailable: earningscall needs its key',
@@ -1573,5 +1571,56 @@ test('room-affiliated tasks show their room in workspace state, render per-room 
   assert.match(
     describeRoomTasks([budgetPausedRoomTask], CLOCK),
     /- t7 \[every 15 min, paused \(daily budget\), resumes 2026-09-14 19:12:00\]: "Post morning competitive intelligence brief"/,
+  )
+
+  // When the active tab has no tasks of its own, tasks scheduled for rooms on other tabs still show in workspace_state
+  // with their room, tab name, and clock-rule / market-hours schedule rather than disappearing behind "none".
+  const multiTab = tree(EMPTY_GRID)
+  multiTab.workspaces.push({ id: 'ws-bbg', name: 'BBG Market Watch' }, { id: 'ws-comps', name: 'Comps' })
+  multiTab.tasks = [
+    {
+      ...roomTask,
+      id: 't43',
+      workspaceId: 'ws-bbg',
+      roomId: 'f73',
+      every: 900_000,
+      at: {
+        days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+        time: '09:30',
+        until: '16:00',
+        timeZone: 'America/New_York',
+        marketOnly: true,
+      },
+      instructions: 'Refresh Bloomberg feed',
+    },
+    {
+      ...roomTask,
+      id: 't46',
+      workspaceId: 'ws-comps',
+      roomId: 'f110',
+      every: null,
+      at: {
+        days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+        time: '09:30',
+        timeZone: 'America/New_York',
+        marketOnly: true,
+      },
+      instructions: 'Run daily competitive intelligence',
+    },
+  ]
+  const multiLines = describeContext(multiTab, WS, instructionsFor, CLOCK).split('\n')
+  assert.ok(multiLines.includes('Tasks on this workspace: none.'))
+  assert.ok(
+    multiLines.includes('Tasks on other tabs (schedule_task, update_task, cancel_task; get tasks for details):'),
+  )
+  assert.ok(
+    multiLines.includes(
+      '- t43 [every 15 min, every weekday from 09:30 to 16:00 America/New_York, when the market is open, next 2026-09-14 09:27:00] in room_73 (in BBG Market Watch): "Refresh Bloomberg feed"',
+    ),
+  )
+  assert.ok(
+    multiLines.includes(
+      '- t46 [every weekday at 09:30 America/New_York, when the market is open, next 2026-09-14 09:27:00] in room_110 (in Comps): "Run daily competitive intelligence"',
+    ),
   )
 })

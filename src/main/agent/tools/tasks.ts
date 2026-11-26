@@ -88,11 +88,25 @@ function withTaskExtras(tool: Tool, pro: boolean, hasConfirm: boolean): Tool {
   }
 }
 
+const CLOCK_RULE_SCHEMA = {
+  type: 'object',
+  description:
+    'A rule in local time, which keeps its hours across a daylight saving change: alone to run once a day at time, or paired with every and until to repeat on that interval between time and until each matching day (for US equity market hours: days ["mon","tue","wed","thu","fri"], time "09:30", until "16:00", timeZone "America/New_York", market true). days are mon to sun, empty for every day; time and optional until are HH:MM on a 24 hour clock; timeZone is an IANA zone; market true skips a day the US equity market is closed.',
+  properties: {
+    days: { type: 'array', items: { type: 'string' } },
+    time: { type: 'string' },
+    until: { type: 'string' },
+    timeZone: { type: 'string' },
+    market: { type: 'boolean' },
+  },
+  required: ['time', 'timeZone'],
+}
+
 const TOOLS: Tool[] = [
   {
     name: 'schedule_task',
     description:
-      'Schedule work for later, or to repeat: a task on this workspace that the app runs at its time, whether or not you are asked again, and whichever workspace is on screen then. instructions say what to do, as a request to yourself that stands alone: name element ids and what to do with them, since each run starts with no memory of this conversation, and acts on this workspace. A run works on its own, with nobody there: it has none of your tools that wait on the user to answer, approve, or paste something, and it cannot schedule, change, or cancel a task, its own included, so schedule only what can be done without those. Add call for a task that is one tool call you could make right now, such as refresh_element on an element to keep its data current: it then runs without you, and may repeat every few seconds. Without call, each run takes your time, so every is at least 60 seconds. Returns the task id and when it first runs.',
+      'Schedule work for later, or to repeat: a task that the app runs at its time, whether or not you are asked again, and whichever tab is on screen then. Check existing tasks across tabs in workspace_state first and use update_task or cancel_task instead of scheduling a duplicate for the same room or work. Pass roomId when the task belongs to a room (on any tab) so each run executes and posts strictly inside that room rather than Central. instructions say what to do, as a request to yourself that stands alone: name element ids and what to do with them, since each run starts with no memory of this conversation. A run works on its own, with nobody there: it has none of your tools that wait on the user to answer, approve, or paste something, and it cannot schedule, change, or cancel a task, its own included, so schedule only what can be done without those. Add call for a task that is one tool call you could make right now, such as refresh_element on an element to keep its data current: it then runs without you, and may repeat every few seconds. Without call, each run takes your time, so every is at least 60 seconds. Pair every with on (including until) when repeating during market hours or a daily window so it sleeps outside those hours. Returns the task id and when it first runs.',
     parameters: {
       type: 'object',
       properties: {
@@ -111,19 +125,13 @@ const TOOLS: Tool[] = [
           minimum: 0,
           description: 'Seconds from now until the first run. Give at or in, or neither for now.',
         },
-        every: { type: 'integer', minimum: 1, description: 'Seconds between runs. Leave out for once.' },
-        on: {
-          type: 'object',
+        every: {
+          type: 'integer',
+          minimum: 1,
           description:
-            'Instead of every: a rule in local time, which keeps its hour across a daylight saving change. days are mon to sun, empty for every day; time is HH:MM; timeZone is an IANA zone; market true skips a day the US equity market is closed.',
-          properties: {
-            days: { type: 'array', items: { type: 'string' } },
-            time: { type: 'string' },
-            timeZone: { type: 'string' },
-            market: { type: 'boolean' },
-          },
-          required: ['time', 'timeZone'],
+            'Seconds between runs (24/7 alone, or within each day’s [time, until] window when paired with on). Leave out for once, or when on runs once a day.',
         },
+        on: CLOCK_RULE_SCHEMA,
         call: {
           ...TASK_CALL,
           description: 'One tool call the app makes itself at every run, with the input you would give it.',
@@ -200,7 +208,7 @@ const TOOLS: Tool[] = [
   {
     name: 'update_task',
     description:
-      "Change one of this workspace's tasks: its instructions, target room (roomId, or an empty string to unbind), when it runs next (at or in), how often (every, in seconds; 0 for once), its call, or enabled false to pause it and true to resume it. Only what you give changes.",
+      'Change a scheduled task: its instructions, target room (roomId, or an empty string to unbind), when it runs next (at or in), how often (every, in seconds; 0 for once), its local-time rule or daily window (on), its call, or enabled false to pause it and true to resume it. Only what you give changes.',
     parameters: {
       type: 'object',
       properties: {
@@ -215,7 +223,7 @@ const TOOLS: Tool[] = [
         at: { type: 'string', description: 'An ISO 8601 date-time with an offset.' },
         in: { type: 'integer', minimum: 0, description: 'Seconds from now.' },
         every: { type: 'integer', minimum: 0, description: 'Seconds between runs; 0 for once.' },
-        on: { type: 'object', description: 'A rule in local time, as schedule_task takes it. Replaces every.' },
+        on: { ...CLOCK_RULE_SCHEMA, description: `${CLOCK_RULE_SCHEMA.description} Without until, replaces every.` },
         call: TASK_CALL,
         watch: { type: 'boolean', description: 'Whether it speaks only when its call answers differently.' },
         model: {
@@ -251,7 +259,8 @@ const TOOLS: Tool[] = [
       }
       if (given(input.at) || given(input.in)) patch.executeAt = whenOf(input.at, input.in, now)
       if (given(input.every)) patch.every = secondsOf(input.every)
-      if (given(input.on)) patch.at = ruleOf(input.on)
+      if (input.on === null) patch.at = null
+      else if (given(input.on)) patch.at = ruleOf(input.on)
       if (given(input.call)) patch.call = asCall(input.call)
       if (typeof input.watch === 'boolean') patch.speak = input.watch ? 'changed' : 'always'
       if (given(input.model))
@@ -278,17 +287,17 @@ const TOOLS: Tool[] = [
           deps: defaultApprovalDeps(askUser),
         })
       }
-      return JSON.stringify(taskShown(updateTask(id, patch, Date.now(), existing.workspaceId)))
+      return JSON.stringify(taskShown(updateTask(id, patch, Date.now())))
     },
   },
   {
     name: 'cancel_task',
-    description: "Cancel one of this workspace's tasks: it never runs again, and it leaves the list.",
+    description: 'Cancel a scheduled task: it never runs again, and it leaves the list.',
     parameters: { type: 'object', properties: { taskId: TASK_ID }, required: ['taskId'] },
     async run(input, context) {
       const id = asTaskId(input.taskId)
-      const existing = accessibleTask(id, context)
-      cancelTask(id, existing.workspaceId)
+      accessibleTask(id, context)
+      cancelTask(id)
       return JSON.stringify({ cancelled: id })
     },
   },
@@ -430,14 +439,17 @@ function asTaskId(value: unknown): string {
 }
 
 function taskShown(task: Task): Record<string, unknown> {
+  const state = getState()
+  const tab = state.workspaces.find((w) => w.id === task.workspaceId)?.name ?? null
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
   return {
     taskId: task.id,
+    tab,
     roomId: task.roomId ? loopName(task.roomId) : null,
     status: taskStatus(task),
     nextAt: task.nextAt === null ? null : formatLocal(task.nextAt, timeZone),
     every: scheduleText(task),
-    at: null,
+    at: task.at,
     watch: task.speak === 'changed',
     model: task.model,
     call: task.call,

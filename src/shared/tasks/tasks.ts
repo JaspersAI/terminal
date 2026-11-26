@@ -10,7 +10,7 @@ import { refreshGridOnWake, type Grid } from '../grid/grid.ts'
 import { MAIN_WINDOW } from '../grid/windows.ts'
 import { refreshTarget, type Loops } from '../loops/loops.ts'
 import type { Workspace } from '../state.ts'
-import { checkRule, nextByRule, ruleText, type ClockRule } from './clock-rule.ts'
+import { checkRule, nextByRule, nextInWindow, ruleText, type ClockRule } from './clock-rule.ts'
 
 export type { ClockRule } from './clock-rule.ts'
 
@@ -238,6 +238,9 @@ export function nextAfter(executeAt: number, every: number, from: number): numbe
  */
 export function computeNext(task: Pick<Task, 'executeAt' | 'every' | 'at' | 'lastRun'>, now: number): number | null {
   const { executeAt, every, at, lastRun } = task
+  if (at?.until && every !== null) {
+    return nextInWindow(at, every, lastRun === null ? Math.max(now, executeAt) : Math.max(now, lastRun.at + 1))
+  }
   // A rule names its own next moment, in its own zone, so nothing here does arithmetic on days.
   if (at) return nextByRule(at, Math.max(now, lastRun === null ? executeAt - 1 : lastRun.at))
   if (every === null) return lastRun === null || lastRun.at < executeAt ? executeAt : null
@@ -262,6 +265,9 @@ export function nextAfterBudgetReset(
   resetAt: number,
 ): number | null {
   const { executeAt, every, at, lastRun } = task
+  if (at?.until && every !== null) {
+    return nextInWindow(at, every, lastRun === null ? Math.max(resetAt, executeAt) : Math.max(resetAt, lastRun.at + 1))
+  }
   if (at) return nextByRule(at, Math.max(resetAt - 1, lastRun === null ? executeAt - 1 : lastRun.at))
   if (every === null) return lastRun === null || lastRun.at < executeAt ? Math.max(executeAt, resetAt) : null
   return nextAfter(executeAt, every, lastRun === null ? resetAt : Math.max(resetAt, lastRun.at + 1))
@@ -597,8 +603,17 @@ export function checkTaskInput(input: TaskInput, options: CheckOptions): Checked
   // time by their nature.
   if (speak === 'changed' && !call)
     throw new Error('A watch needs a call to watch: give call, and instructions saying what to do when it changes.')
-  // One or the other: a rule says when, an interval says how often, and both would disagree.
-  const every = at ? null : checkEvery(input.every, call !== null)
+  if (at?.until && input.every === null) {
+    throw new Error(
+      'until in a clock rule needs every (seconds between runs within the daily window); leave until out to run once a day at time.',
+    )
+  }
+  if (at && !at.until && input.every !== null) {
+    throw new Error(
+      'Give until (HH:MM, like 16:00) in on to repeat every within a daily window, or leave every out to run once a day at time.',
+    )
+  }
+  const every = at && !at.until ? null : checkEvery(input.every, call !== null)
   const roomId = checkRoomId(input.roomId)
   return {
     workspaceId: input.workspaceId,
@@ -663,7 +678,13 @@ function checkAt(at: ClockRule | null | undefined): ClockRule | null {
   if (!at) return null
   const refusal = checkRule(at)
   if (refusal) throw new Error(`at: ${refusal}`)
-  return { days: [...at.days], time: at.time, timeZone: at.timeZone, ...(at.marketOnly ? { marketOnly: true } : {}) }
+  return {
+    days: [...at.days],
+    time: at.time,
+    ...(at.until ? { until: at.until } : {}),
+    timeZone: at.timeZone,
+    ...(at.marketOnly ? { marketOnly: true } : {}),
+  }
 }
 
 function checkEvery(every: number | null, isCall: boolean): number | null {
@@ -763,6 +784,7 @@ export function routeTaskOutput(
 
 /** How often a task runs, however it was said. */
 export function scheduleText(task: Pick<Task, 'every' | 'at'>): string {
+  if (task.at && task.every !== null) return `every ${everyText(task.every)}, ${ruleText(task.at)}`
   if (task.at) return ruleText(task.at)
   return task.every === null ? 'once' : `every ${everyText(task.every)}`
 }

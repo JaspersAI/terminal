@@ -1,9 +1,16 @@
 import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { loopName } from '../../../shared/loops/loops'
 import type { Action } from '../../../shared/state'
-import { everyText, isFinished, shortLocal, taskStatus, type Task, type TaskStatus } from '../../../shared/tasks/tasks'
+import {
+  isFinished,
+  scheduleText,
+  shortLocal,
+  taskStatus,
+  type Task,
+  type TaskStatus,
+} from '../../../shared/tasks/tasks'
 import { errorMessage } from '../../lib/errors'
-import { currentWorkspace, dispatch, useAppState } from '../../lib/state'
+import { dispatch, useAppState } from '../../lib/state'
 import { BUTTON } from './Row'
 import { Entry, PinnedEntry, Split } from './Split'
 import { shownEntry, TASK_STATUS, taskLine } from './summary'
@@ -11,25 +18,28 @@ import { shownEntry, TASK_STATUS, taskLine } from './summary'
 /** The entry above the tasks. Task ids are t<n>. */
 const ABOUT = '+about'
 
-/** Settings' Tasks pane: what tasks are, and the tasks of the workspace on screen, newest first. */
+/** Settings' Tasks pane: what tasks are, and every scheduled task across tabs and rooms, newest first. */
 export function TasksPane(): ReactElement {
-  const all = useAppState((s) => s.tasks)
-  const workspace = useAppState(currentWorkspace)
-  // Filtered here, not in the selector: a selector that builds a new array never settles.
-  const tasks = useMemo(() => all.filter((t) => t.workspaceId === workspace.id), [all, workspace.id])
+  const tasks = useAppState((s) => s.tasks)
+  const workspaces = useAppState((s) => s.workspaces)
+  const tabs = useMemo(
+    () => (workspaces.length > 1 ? new Map(workspaces.map((w) => [w.id, w.name])) : undefined),
+    [workspaces],
+  )
   return (
     <TaskList
       tasks={tasks}
+      tabs={tabs}
       about={
         <>
           <p className="pr-8 text-sm text-muted-foreground">
-            Work the app does at a time on {workspace.name}, once or on an interval: one tool call, or a request to the
-            assistant, which speaks in the chat only when it has something to tell you. Each workspace has its own. Ask
-            the assistant to schedule one.
+            Work the app does at a time or on an interval, inside a room or on a tab: one tool call, or a request to the
+            assistant, which speaks only when it has something to tell you. Ask Central or a room’s assistant to
+            schedule one.
           </p>
           <p className="mt-2 mb-6 text-sm text-muted-foreground">
-            Closing the window keeps Jaspers running in the menu bar, and every workspace's tasks with it. Quit from the
-            menu bar icon to stop them.
+            Closing the window keeps Jaspers running in the menu bar, and every tab’s tasks with it. Quit from the menu
+            bar icon to stop them.
           </p>
           <OpenAtLogin />
         </>
@@ -82,14 +92,16 @@ const STATUS_COLOR: Record<TaskStatus, string> = {
 }
 
 interface ListProps {
-  /** One workspace's. */
+  /** Tasks to show: every tab's in Settings, or one tab's in the core/tasks view. */
   tasks: Task[]
+  /** Tab names by workspace id when showing tasks across multiple tabs. */
+  tabs?: ReadonlyMap<string, string>
   /** What Settings says above the tasks; the core/tasks view leaves it out. */
   about?: ReactNode
 }
 
 /** The tasks, newest first, and the one picked beside them. Settings shows the list, and so does the core/tasks view. */
-export function TaskList({ tasks, about }: ListProps): ReactElement {
+export function TaskList({ tasks, tabs, about }: ListProps): ReactElement {
   const [open, setOpen] = useState<string | null>(null)
   if (about === undefined && tasks.length === 0) {
     return (
@@ -119,12 +131,13 @@ export function TaskList({ tasks, about }: ListProps): ReactElement {
             </PinnedEntry>
           )}
           {newest.length === 0 ? (
-            <p className="px-4 py-2 text-sm text-muted-foreground">No tasks on this workspace.</p>
+            <p className="px-4 py-2 text-sm text-muted-foreground">No scheduled tasks.</p>
           ) : (
             <ul>
               {newest.map((task) => {
                 const { status, when, alert } = taskLine(task, now, timeZone)
                 const room = task.roomId
+                const tab = tabs?.get(task.workspaceId)
                 return (
                   <Entry
                     key={task.id}
@@ -135,7 +148,8 @@ export function TaskList({ tasks, about }: ListProps): ReactElement {
                     line={
                       <>
                         <span className={alert ? 'text-destructive' : undefined}>{status}</span>
-                        {room ? ` · ${loopName(room)}` : ''} · {when}
+                        {room ? ` · ${loopName(room)}` : ''}
+                        {tab ? ` · ${tab}` : ''} · {when}
                       </>
                     }
                   />
@@ -145,7 +159,13 @@ export function TaskList({ tasks, about }: ListProps): ReactElement {
           )}
         </>
       }
-      detail={current ? <TaskDetail task={current} now={now} timeZone={timeZone} /> : about}
+      detail={
+        current ? (
+          <TaskDetail task={current} tab={tabs?.get(current.workspaceId)} now={now} timeZone={timeZone} />
+        ) : (
+          about
+        )
+      }
     />
   )
 }
@@ -155,7 +175,17 @@ export function TaskList({ tasks, about }: ListProps): ReactElement {
  * to do to it, and what its runs said. It dispatches actions itself, as a host component; the bridge
  * carries no such call.
  */
-function TaskDetail({ task, now, timeZone }: { task: Task; now: number; timeZone: string }): ReactElement {
+function TaskDetail({
+  task,
+  tab,
+  now,
+  timeZone,
+}: {
+  task: Task
+  tab?: string
+  now: number
+  timeZone: string
+}): ReactElement {
   const [failed, setFailed] = useState<string | null>(null)
   const status = taskStatus(task, now)
   const when = (at: number): string => shortLocal(at, now, timeZone)
@@ -165,8 +195,10 @@ function TaskDetail({ task, now, timeZone }: { task: Task; now: number; timeZone
     dispatch(action).catch((err: unknown) => setFailed(errorMessage(err)))
   }
 
-  const parts = [task.id, task.every === null ? `once at ${when(task.executeAt)}` : `every ${everyText(task.every)}`]
+  const schedule = task.at !== null || task.every !== null ? scheduleText(task) : `once at ${when(task.executeAt)}`
+  const parts = [task.id, schedule]
   if (task.roomId) parts.push(loopName(task.roomId))
+  if (tab) parts.push(tab)
   if (task.model) parts.push(`on ${task.model}`)
   if (task.enabled && task.nextAt !== null) parts.push(`next ${when(task.nextAt)}`)
   if (task.lastRun) parts.push(`last ${when(task.lastRun.at)} ${task.lastRun.ok ? 'ok' : 'failed'}`)

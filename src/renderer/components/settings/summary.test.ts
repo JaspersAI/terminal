@@ -193,6 +193,47 @@ test('a task row reads its status and how often it runs', () => {
       alert: false,
     },
   )
+  assert.deepEqual(
+    taskLine(
+      task({
+        every: null,
+        at: {
+          days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+          time: '09:30',
+          timeZone: 'America/New_York',
+          marketOnly: true,
+        },
+      }),
+      NOW,
+      'UTC',
+    ),
+    {
+      status: 'Scheduled',
+      when: 'every weekday at 09:30 America/New_York, when the market is open',
+      alert: false,
+    },
+  )
+  assert.deepEqual(
+    taskLine(
+      task({
+        every: 900_000,
+        at: {
+          days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+          time: '09:30',
+          until: '16:00',
+          timeZone: 'America/New_York',
+          marketOnly: true,
+        },
+      }),
+      NOW,
+      'UTC',
+    ),
+    {
+      status: 'Scheduled',
+      when: 'every 15 min, every weekday from 09:30 to 16:00 America/New_York, when the market is open',
+      alert: false,
+    },
+  )
 })
 
 test('a one-shot reads when it runs, the clock alone for today', () => {

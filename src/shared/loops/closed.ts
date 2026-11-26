@@ -986,12 +986,12 @@ function ownRoom(
   return { workspaceId: ownerTab, roomId: currentLoopId }
 }
 
-/** Whether a room's agent (`currentLoopId`) or Central on `workspaceId` may change or cancel `task`: a room only its own, Central its tab's and any room's. */
+/** Whether a room's agent (`currentLoopId`) or Central may change or cancel `task`: a room only its own, Central any task across tabs. */
 export function canAccessTask(
   task: Pick<Task, 'workspaceId' | 'roomId'>,
-  workspaceId: string,
+  _workspaceId: string,
   currentLoopId?: string,
 ): boolean {
   if (currentLoopId !== undefined) return task.roomId === currentLoopId
-  return task.workspaceId === workspaceId || task.roomId !== undefined
+  return true
 }

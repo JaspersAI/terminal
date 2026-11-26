@@ -256,8 +256,17 @@ export function scheduleTask(raw: TaskInput, at = now()): Task {
 
 /** Changes what is given and recomputes when the task runs next. With a workspace, only a task of that workspace. */
 export function updateTask(id: string, patch: TaskPatch, at = now(), workspaceId?: string): Task {
+  const existing = getTask(id, workspaceId)
+  // Switching to a once-daily rule replaces a prior interval; switching to once (`every: null`) or
+  // replacing a once-daily rule with an interval clears the rule.
+  const normalized: TaskPatch = { ...patch }
+  if (patch.at !== undefined && patch.at !== null && !patch.at.until && patch.every === undefined) {
+    normalized.every = null
+  } else if (patch.every !== undefined && patch.at === undefined) {
+    if (patch.every === null || (existing.at && !existing.at.until)) normalized.at = null
+  }
   // The room is what checkTaskInput settles: one taken away (null) is none.
-  const { roomId, ...merged } = { ...getTask(id, workspaceId), ...patch }
+  const { roomId, ...merged } = { ...existing, ...normalized }
   const checked = checkTaskInput(
     {
       workspaceId: merged.workspaceId,
