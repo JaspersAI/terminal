@@ -1,8 +1,9 @@
 // Uploads one platform's release to the terminal-releases Blob store, for release.yml. The files go
-// first, at paths that hold one version each and are never rewritten; the feed goes last, once they
-// are there, rewritten in place and cached for a minute at most so the apps see it soon. Everything
-// lands in the folder of the feed URL the package carries, and must come back at the URL the feed
-// names it by: a store at another address would leave every update unfound.
+// first, at paths that hold one version each and are never rewritten; then both the outgoing live
+// feed and the incoming feed are archived under `<os>/feeds/<version>-<feed>` for instant rollback;
+// the live feed goes next, rewritten in place and cached for a minute at most so the apps see it
+// soon. Everything lands in the folder of the feed URL the package carries, and must come back at
+// the URL the feed names it by: a store at another address would leave every update unfound.
 //
 // `--download <name>` then copies the one uploaded file with that name's extension to that name, the
 // version left out, rewritten each release like the feed: the website's download buttons are sent there
@@ -11,8 +12,9 @@
 //   node upload-release.mjs <feed URL> <feed file> <file>... [--download <name>]
 //
 // It needs BLOB_READ_WRITE_TOKEN, and @vercel/blob installed beside it rather than in the repo: the
-// SDK rather than `vercel blob`, as preview.yml explains.
-import { createReadStream } from 'node:fs'
+// SDK rather than `vercel blob`, as preview.yml explains. Self-contained because release.yml copies
+// this file alone into $RUNNER_TEMP/blob/.
+import { createReadStream, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { copy, put } from '@vercel/blob'
 
@@ -30,6 +32,7 @@ const folder = new URL(feed).pathname.replace(/^\/|\/$/g, '')
 const installer = download && downloadSource(download)
 
 for (const file of files) await upload(file)
+await archiveFeeds(feedFile)
 await upload(feedFile, { allowOverwrite: true, cacheControlMaxAge: 60 })
 if (download) await pointDownload(installer, download)
 
@@ -44,6 +47,56 @@ async function upload(file, options = {}) {
     fail(`${file} went to ${url}, but the app looks for ${feed}/${name}. Fix publish.url in electron-builder.yml.`)
   }
   console.log(url)
+}
+
+/** Archives both the outgoing live feed and incoming release feed under `<folder>/feeds/<version>-<feed>` for rollback. */
+async function archiveFeeds(file) {
+  const feedName = path.basename(file)
+  try {
+    const res = await fetch(`${feed}/${feedName}`, { headers: { 'cache-control': 'no-cache' } })
+    if (res.ok) {
+      const liveText = stripRollbackFields(await res.text())
+      const liveVersion = parseFeedVersion(liveText)
+      if (liveVersion) {
+        await put(`${folder}/feeds/${liveVersion}-${feedName}`, liveText, {
+          access: 'public',
+          allowOverwrite: true,
+          contentType: 'text/yaml',
+        })
+      }
+    }
+  } catch (err) {
+    console.warn(`Could not archive previous ${feedName}:`, err)
+  }
+
+  try {
+    const nextText = stripRollbackFields(readFileSync(file, 'utf8'))
+    const nextVersion = parseFeedVersion(nextText)
+    if (nextVersion) {
+      await put(`${folder}/feeds/${nextVersion}-${feedName}`, nextText, {
+        access: 'public',
+        allowOverwrite: true,
+        contentType: 'text/yaml',
+      })
+    }
+  } catch (err) {
+    console.warn(`Could not archive incoming ${feedName}:`, err)
+  }
+}
+
+function parseFeedVersion(yamlText) {
+  const match = /^version:\s*['"]?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))['"]?\s*$/m.exec(yamlText)
+  return match ? match[1] : null
+}
+
+function stripRollbackFields(yamlText) {
+  return (
+    yamlText
+      .split(/\r?\n/)
+      .filter((line) => !/^rollback(?:UpTo)?\s*:/.test(line))
+      .join('\n')
+      .trimEnd() + '\n'
+  )
 }
 
 /** The file the download name stands for: the one among the files with its extension. Checked before anything is uploaded. */
