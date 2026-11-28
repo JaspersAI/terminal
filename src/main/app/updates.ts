@@ -1,6 +1,12 @@
 import { app, autoUpdater as squirrel } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import { updatesAfter, type UpdateEvent } from '../../shared/app/updates'
+import {
+  shouldAcceptFeedUpdate,
+  shouldWithdrawReadyUpdate,
+  updatesAfter,
+  type FeedVersionMetadata,
+  type UpdateEvent,
+} from '../../shared/app/updates'
 import { flush } from '../persist'
 import { getState, update } from '../state'
 import { addNotice } from './notices'
@@ -32,11 +38,30 @@ export function startUpdates(): void {
     error: (message: unknown) => console.error('[updates]', message),
     debug: () => undefined,
   }
+  // Signed rollbacks are allowed only when the feed explicitly marks `rollback: true`, so preview
+  // builds and release smoke tests ahead of the live feed never downgrade themselves.
+  autoUpdater.allowDowngrade = true
+  const defaultSupported = autoUpdater.isUpdateSupported
+  autoUpdater.isUpdateSupported = async (info) => {
+    if (!(await defaultSupported(info))) return false
+    return shouldAcceptFeedUpdate(app.getVersion(), info as unknown as FeedVersionMetadata)
+  }
   autoUpdater.on('checking-for-update', () => apply({ type: 'checking' }))
-  autoUpdater.on('update-not-available', () => apply({ type: 'none' }))
+  autoUpdater.on('update-not-available', (info) => {
+    if (shouldWithdrawReadyUpdate(getState().updates, info as unknown as { version?: unknown; rollback?: unknown })) {
+      autoUpdater.autoInstallOnAppQuit = false
+      apply({ type: 'withdrawn' })
+      return
+    }
+    apply({ type: 'none' })
+  })
   autoUpdater.on('update-available', (info) => apply({ type: 'found', version: info.version }))
   if (process.platform === 'darwin') watchSquirrel()
-  else autoUpdater.on('update-downloaded', (info) => apply({ type: 'downloaded', version: info.version }))
+  else
+    autoUpdater.on('update-downloaded', (info) => {
+      autoUpdater.autoInstallOnAppQuit = true
+      apply({ type: 'downloaded', version: info.version })
+    })
   // An error event with no listener throws. Being offline is the usual cause, and the tree says so.
   autoUpdater.on('error', (err) => {
     // electron-updater passes Squirrel's errors on too; those are said once, as the refusal they are.
@@ -77,6 +102,7 @@ function watchSquirrel(): void {
   squirrel.on('update-downloaded', () => {
     const version = staging ?? getState().updates.available
     staging = null
+    autoUpdater.autoInstallOnAppQuit = true
     if (version) apply({ type: 'downloaded', version })
   })
   squirrel.on('error', (err) => {
